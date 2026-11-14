@@ -2,6 +2,13 @@
 
 What changed in each release, newest first. From 2.1.7 on, release-please writes these entries from commit messages that follow [Conventional Commits](https://www.conventionalcommits.org/) (`feat:` and `fix:` appear here and set the next version); edit wording in its release PR before merging it.
 
+## [2.1.10](https://github.com/baros4294/parchment/compare/v2.1.9...v2.1.10) (2026-11-14)
+
+
+### Fixes
+
+* **network,ui,platform:** fix usage accounting, optimize UI/IO performance, and harden recovery ([f3df995](https://github.com/baros4294/parchment/commit/f3df99533366bd83667465d7936c849a3e2cb566))
+
 ## [2.1.9](https://github.com/baros4294/parchment/compare/v2.1.8...v2.1.9) (2026-11-14)
 
 
