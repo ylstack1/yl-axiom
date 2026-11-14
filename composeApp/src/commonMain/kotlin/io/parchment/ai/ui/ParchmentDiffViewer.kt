@@ -1,0 +1,403 @@
+package io.parchment.ai.ui
+
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.BasicText
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import io.parchment.ai.strings.Strings
+
+// Line diffs for `fs_edit`, `fs_write` and ```diff blocks, shown as added and removed lines.
+enum class DiffLineKind {
+    CONTEXT,
+    REMOVED,
+    ADDED,
+    COLLAPSED
+}
+
+data class DiffLine(
+    val kind: DiffLineKind,
+    val text: String
+)
+
+/**
+ * A unified line diff using the longest common subsequence, with unchanged runs over 6 lines collapsed.
+ */
+fun computeUnifiedLineDiff(oldText: String, newText: String): List<DiffLine> {
+    val oldLines = if (oldText.isEmpty()) emptyList() else oldText.replace("\r\n", "\n").lines()
+    val newLines = if (newText.isEmpty()) emptyList() else newText.replace("\r\n", "\n").lines()
+    if (oldLines.isEmpty() && newLines.isEmpty()) return emptyList()
+    if (oldLines.isEmpty()) return newLines.take(120).map { DiffLine(DiffLineKind.ADDED, it) }
+    if (newLines.isEmpty()) return oldLines.take(120).map { DiffLine(DiffLineKind.REMOVED, it) }
+
+    // Trim the shared start and end first, so the costly comparison runs only on the changed middle.
+    var prefixLen = 0
+    val minTotal = minOf(oldLines.size, newLines.size)
+    while (prefixLen < minTotal && oldLines[prefixLen] == newLines[prefixLen]) {
+        prefixLen++
+    }
+    var suffixLen = 0
+    while (
+        suffixLen < (minTotal - prefixLen) &&
+        oldLines[oldLines.size - 1 - suffixLen] == newLines[newLines.size - 1 - suffixLen]
+    ) {
+        suffixLen++
+    }
+
+    val midOld = oldLines.subList(prefixLen, oldLines.size - suffixLen)
+    val midNew = newLines.subList(prefixLen, newLines.size - suffixLen)
+
+    val rawDiff = mutableListOf<DiffLine>()
+    for (k in 0 until prefixLen) {
+        rawDiff.add(DiffLine(DiffLineKind.CONTEXT, oldLines[k]))
+    }
+    appendMiddleDiffLines(midOld, midNew, rawDiff)
+    for (k in (oldLines.size - suffixLen) until oldLines.size) {
+        rawDiff.add(DiffLine(DiffLineKind.CONTEXT, oldLines[k]))
+    }
+    return collapseUnchangedContextRuns(rawDiff)
+}
+
+private fun appendMiddleDiffLines(
+    midOld: List<String>,
+    midNew: List<String>,
+    rawDiff: MutableList<DiffLine>
+) {
+    val maxDim = 320
+    if (midOld.isEmpty() && midNew.isEmpty()) return
+    if (midOld.isEmpty()) {
+        midNew.take(200).forEach { rawDiff.add(DiffLine(DiffLineKind.ADDED, it)) }
+        return
+    }
+    if (midNew.isEmpty()) {
+        midOld.take(200).forEach { rawDiff.add(DiffLine(DiffLineKind.REMOVED, it)) }
+        return
+    }
+    if (midOld.size > maxDim || midNew.size > maxDim) {
+        midOld.take(100).forEach { rawDiff.add(DiffLine(DiffLineKind.REMOVED, it)) }
+        midNew.take(100).forEach { rawDiff.add(DiffLine(DiffLineKind.ADDED, it)) }
+        return
+    }
+
+    val m = midOld.size
+    val n = midNew.size
+    val dp = Array(m + 1) { IntArray(n + 1) }
+    for (i in m - 1 downTo 0) {
+        for (j in n - 1 downTo 0) {
+            dp[i][j] = if (midOld[i] == midNew[j]) {
+                1 + dp[i + 1][j + 1]
+            } else {
+                maxOf(dp[i + 1][j], dp[i][j + 1])
+            }
+        }
+    }
+    var i = 0
+    var j = 0
+    while (i < m && j < n) {
+        if (midOld[i] == midNew[j]) {
+            rawDiff.add(DiffLine(DiffLineKind.CONTEXT, midOld[i]))
+            i++
+            j++
+        } else if (dp[i + 1][j] >= dp[i][j + 1]) {
+            rawDiff.add(DiffLine(DiffLineKind.REMOVED, midOld[i]))
+            i++
+        } else {
+            rawDiff.add(DiffLine(DiffLineKind.ADDED, midNew[j]))
+            j++
+        }
+    }
+    while (i < m) {
+        rawDiff.add(DiffLine(DiffLineKind.REMOVED, midOld[i]))
+        i++
+    }
+    while (j < n) {
+        rawDiff.add(DiffLine(DiffLineKind.ADDED, midNew[j]))
+        j++
+    }
+}
+
+private fun collapseUnchangedContextRuns(rawDiff: List<DiffLine>): List<DiffLine> {
+    // Collapse runs of more than 6 unchanged lines to keep the diff focused.
+    val compacted = mutableListOf<DiffLine>()
+    var idx = 0
+    while (idx < rawDiff.size) {
+        if (rawDiff[idx].kind == DiffLineKind.CONTEXT) {
+            var endCtx = idx
+            while (endCtx < rawDiff.size && rawDiff[endCtx].kind == DiffLineKind.CONTEXT) {
+                endCtx++
+            }
+            val runLen = endCtx - idx
+            if (runLen > 6) {
+                compacted.add(rawDiff[idx])
+                compacted.add(rawDiff[idx + 1])
+                compacted.add(DiffLine(DiffLineKind.COLLAPSED, "⋯ ${runLen - 4} unchanged lines ⋯"))
+                compacted.add(rawDiff[endCtx - 2])
+                compacted.add(rawDiff[endCtx - 1])
+            } else {
+                for (k in idx until endCtx) compacted.add(rawDiff[k])
+            }
+            idx = endCtx
+        } else {
+            compacted.add(rawDiff[idx])
+            idx++
+        }
+    }
+    return compacted
+}
+
+@Composable
+fun SepiaDiffLinesList(
+    diffLines: List<DiffLine>,
+    modifier: Modifier = Modifier
+) {
+    val p = LocalParchmentPalette.current
+    val addedColor = p.success
+    val removedColor = p.danger
+
+    Column(
+        modifier = modifier
+            .fillMaxWidth()
+            .horizontalScroll(rememberScrollState())
+            .padding(vertical = Space.s4),
+        verticalArrangement = Arrangement.spacedBy(1.dp)
+    ) {
+        diffLines.forEach { line ->
+            when (line.kind) {
+                DiffLineKind.REMOVED -> DiffSignedLineRow(prefix = "-", text = line.text, lineColor = removedColor)
+                DiffLineKind.ADDED -> DiffSignedLineRow(prefix = "+", text = line.text, lineColor = addedColor)
+                DiffLineKind.COLLAPSED -> {
+                    BasicText(
+                        text = line.text,
+                        style = p.uiLabelStyle.copy(
+                            color = p.mutedInk,
+                            fontFamily = p.codeFontFamily,
+                            fontSize = 11.sp
+                        ),
+                        modifier = Modifier.padding(horizontal = Space.s12, vertical = Space.s2)
+                    )
+                }
+                DiffLineKind.CONTEXT -> {
+                    BasicText(
+                        text = "  ${line.text}",
+                        style = p.monoStyle.copy(color = p.narrationInk, fontSize = 12.sp),
+                        modifier = Modifier.padding(horizontal = Space.s10, vertical = 1.dp)
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun DiffSignedLineRow(
+    prefix: String,
+    text: String,
+    lineColor: Color
+) {
+    val p = LocalParchmentPalette.current
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(lineColor.copy(alpha = 0.14f))
+            .padding(end = Space.s10),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Box(
+            modifier = Modifier
+                .width(Space.s4)
+                .height(20.dp)
+                .background(lineColor)
+        )
+        Spacer(Modifier.width(7.dp))
+        BasicText(
+            text = "$prefix $text",
+            style = p.monoStyle.copy(color = lineColor, fontSize = 12.sp)
+        )
+    }
+}
+
+@Composable
+fun SepiaRawDiffLinesView(
+    rawDiffText: String,
+    modifier: Modifier = Modifier
+) {
+    val parsed = remember(rawDiffText) {
+        rawDiffText.lines().map { rawLine ->
+            when {
+                rawLine.startsWith("+") && !rawLine.startsWith("+++") ->
+                    DiffLine(DiffLineKind.ADDED, rawLine.removePrefix("+").removePrefix(" "))
+                rawLine.startsWith("-") && !rawLine.startsWith("---") ->
+                    DiffLine(DiffLineKind.REMOVED, rawLine.removePrefix("-").removePrefix(" "))
+                rawLine.startsWith("@@") ->
+                    DiffLine(DiffLineKind.COLLAPSED, rawLine)
+                else ->
+                    DiffLine(DiffLineKind.CONTEXT, rawLine.removePrefix(" "))
+            }
+        }
+    }
+    SepiaDiffLinesList(diffLines = parsed, modifier = modifier)
+}
+
+@Composable
+fun SepiaFileDiffCard(
+    filePath: String,
+    actionLabel: String,
+    oldText: String,
+    newText: String,
+    resultSummary: String = "",
+    isError: Boolean = false,
+    modifier: Modifier = Modifier
+) {
+    val p = LocalParchmentPalette.current
+    val diffLines = remember(oldText, newText) { computeUnifiedLineDiff(oldText, newText) }
+    val addedCount = remember(diffLines) { diffLines.count { it.kind == DiffLineKind.ADDED } }
+    val removedCount = remember(diffLines) { diffLines.count { it.kind == DiffLineKind.REMOVED } }
+    var showDiffBody by remember { mutableStateOf(true) }
+    val addedGreen = p.success
+    val shape = RoundedCornerShape(Radius.r8)
+
+    Column(
+        modifier = modifier
+            .fillMaxWidth()
+            .clip(shape)
+            .background(p.cardBg)
+            .border(
+                width = LineWidth.hairline,
+                color = if (isError) p.danger.copy(alpha = 0.7f) else p.border.copy(alpha = 0.8f),
+                shape = shape
+            )
+    ) {
+        // Diff Card Header Bar
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .background(p.sheetBg.copy(alpha = 0.85f))
+                .padding(horizontal = Space.s10, vertical = Space.s6),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            val cleanPath = filePath.replace('\\', '/').ifBlank { "workspace file" }
+            val shortFileName = cleanPath.substringAfterLast('/')
+            val parentDir = if (cleanPath.contains('/')) cleanPath.substringBeforeLast('/') else ""
+            Row(
+                modifier = Modifier.weight(1f).padding(end = Space.s8),
+                horizontalArrangement = Arrangement.spacedBy(Space.s6),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                KissVectorIcon(
+                    icon = KissIcon.DIFF,
+                    tint = if (isError) p.danger else p.accent,
+                    size = IconSize.md
+                )
+                Column(verticalArrangement = Arrangement.spacedBy(1.dp)) {
+                    Row(
+                        horizontalArrangement = Arrangement.spacedBy(5.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        BasicText(
+                            text = actionLabel,
+                            style = p.uiLabelStyle.copy(color = p.narrationInk, fontWeight = FontWeight.SemiBold, fontSize = 11.sp)
+                        )
+                        BasicText(
+                            text = shortFileName,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            style = p.monoStyle.copy(color = p.accent, fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                        )
+                    }
+                    if (parentDir.isNotEmpty()) {
+                        BasicText(
+                            text = parentDir,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            style = p.monoStyle.copy(color = p.mutedInk, fontSize = 11.sp)
+                        )
+                    }
+                }
+            }
+
+            Row(
+                horizontalArrangement = Arrangement.spacedBy(5.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                if (addedCount > 0) {
+                    Box(
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(Radius.r6))
+                            .background(addedGreen.copy(alpha = 0.16f))
+                            .padding(horizontal = Space.s6, vertical = Space.s2)
+                    ) {
+                        BasicText(
+                            text = "+$addedCount",
+                            style = p.monoStyle.copy(color = addedGreen, fontWeight = FontWeight.Bold, fontSize = 11.sp)
+                        )
+                    }
+                }
+                if (removedCount > 0) {
+                    Box(
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(Radius.r6))
+                            .background(p.danger.copy(alpha = 0.16f))
+                            .padding(horizontal = Space.s6, vertical = Space.s2)
+                    ) {
+                        BasicText(
+                            text = "−$removedCount",
+                            style = p.monoStyle.copy(color = p.danger, fontWeight = FontWeight.Bold, fontSize = 11.sp)
+                        )
+                    }
+                }
+                if (diffLines.isNotEmpty()) {
+                    SepiaButton(
+                        text = if (showDiffBody) "▴" else "▾",
+                        contentDescription = if (showDiffBody) Strings.hideChanges else Strings.showChanges,
+                        compact = true,
+                        style = SepiaButtonStyle.GHOST,
+                        onClick = { showDiffBody = !showDiffBody }
+                    )
+                }
+            }
+        }
+
+        if (isError && resultSummary.isNotBlank()) {
+            SepiaDivider()
+            BasicText(
+                text = resultSummary,
+                style = p.monoStyle.copy(color = p.danger, fontSize = 11.sp),
+                modifier = Modifier.padding(9.dp)
+            )
+        } else if (showDiffBody && diffLines.isNotEmpty()) {
+            SepiaDivider()
+            SepiaDiffLinesList(diffLines = diffLines)
+        } else if (resultSummary.isNotBlank()) {
+            SepiaDivider()
+            BasicText(
+                text = resultSummary,
+                style = p.monoStyle.copy(color = p.narrationInk, fontSize = 11.sp),
+                modifier = Modifier.padding(horizontal = Space.s10, vertical = Space.s6)
+            )
+        }
+    }
+}
