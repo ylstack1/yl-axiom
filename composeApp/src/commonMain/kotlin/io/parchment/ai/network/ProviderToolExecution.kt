@@ -391,7 +391,8 @@ internal class ReplayToolCallIds(private val maxLength: Int = 64) {
         var suffix = 1
         while (!used.add(candidate)) {
             suffix++
-            candidate = "${base.take(maxLength - 6)}_$suffix"
+            val suffixStr = "_$suffix"
+            candidate = "${base.take((maxLength - suffixStr.length).coerceAtLeast(1))}$suffixStr"
         }
         candidate
     }

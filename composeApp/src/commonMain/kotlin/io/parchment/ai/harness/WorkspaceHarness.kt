@@ -1,37 +1,29 @@
 package io.parchment.ai.harness
 
-import io.parchment.ai.model.GoalTrackerState
 import io.parchment.ai.model.AgentPermissionPolicy
+import io.parchment.ai.model.GoalTrackerState
 import io.parchment.ai.model.ShellAccess
 import io.parchment.ai.model.ToolApprovalMode
-import io.parchment.ai.model.TodoItem
 import io.parchment.ai.model.ToolCallRecord
 import io.parchment.ai.model.WorkspaceMode
-import io.parchment.ai.platform.HtmlTextConverter
 import io.parchment.ai.platform.PlatformRuntime
 import io.parchment.ai.platform.PlatformWorkspace
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
-import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.booleanOrNull
-import kotlinx.serialization.json.buildJsonArray
-import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.intOrNull
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
-import kotlinx.serialization.json.put
-import kotlinx.serialization.json.putJsonArray
-import kotlinx.serialization.json.putJsonObject
-import kotlin.math.pow
+
 /**
  * The agent's local tools: workspace files, shell, web, goals and todo lists. Runs in-process (no external
  * command-line bridge) and serves the tool loops of every provider wire.
  */
 object WorkspaceHarness {
 
-    private val json = Json { ignoreUnknownKeys = true; isLenient = true }
+    internal val json = Json { ignoreUnknownKeys = true; isLenient = true }
 
     data class ToolDefinition(
         val name: String,
@@ -44,622 +36,32 @@ object WorkspaceHarness {
         val parametersSchemaString: String by lazy { parametersSchema.toString() }
     }
 
-    private val ALL_TOOLS: List<ToolDefinition> = listOf(
-        ToolDefinition(
-            name = "fs_list",
-            description = "List files and directories inside the mounted local workspace folder.",
-            requiresWritePermission = false,
-            parametersSchema = buildJsonObject {
-                put("type", "object")
-                putJsonObject("properties") {
-                    putJsonObject("path") {
-                        put("type", "string")
-                        put("description", "Relative directory path inside workspace (empty string for root).")
-                    }
-                    putJsonObject("recursive") {
-                        put("type", "boolean")
-                        put("description", "Whether to list subdirectories recursively.")
-                    }
-                }
-            }
-        ),
-        ToolDefinition(
-            name = "fs_glob",
-            description = "Find files and directories matching a glob pattern (e.g. '*.kt', '**/*.md', 'src/**/Test*') inside the mounted workspace.",
-            requiresWritePermission = false,
-            parametersSchema = buildJsonObject {
-                put("type", "object")
-                putJsonObject("properties") {
-                    putJsonObject("pattern") {
-                        put("type", "string")
-                        put("description", "Glob pattern to match (e.g. '*.kt', '**/*.md', 'docs/*').")
-                    }
-                    putJsonObject("max_results") {
-                        put("type", "integer")
-                        put("description", "Maximum number of matched paths to return (default 200).")
-                    }
-                }
-                putJsonArray("required") { add(JsonPrimitive("pattern")) }
-            }
-        ),
-        ToolDefinition(
-            name = "fs_read",
-            description = "Read the UTF-8 text contents of a file inside the mounted local workspace with line numbers.",
-            requiresWritePermission = false,
-            parametersSchema = buildJsonObject {
-                put("type", "object")
-                putJsonObject("properties") {
-                    putJsonObject("path") {
-                        put("type", "string")
-                        put("description", "Relative path to the file inside the workspace.")
-                    }
-                    putJsonObject("start_line") {
-                        put("type", "integer")
-                        put("description", "1-based starting line number (default 1).")
-                    }
-                    putJsonObject("max_lines") {
-                        put("type", "integer")
-                        put("description", "Maximum number of lines to read (default 250).")
-                    }
-                }
-                putJsonArray("required") { add(JsonPrimitive("path")) }
-            }
-        ),
-        ToolDefinition(
-            name = "fs_search",
-            description = "Search for literal text or patterns across files in the mounted workspace (manuscript chapters, notes, or source code).",
-            requiresWritePermission = false,
-            parametersSchema = buildJsonObject {
-                put("type", "object")
-                putJsonObject("properties") {
-                    putJsonObject("query") {
-                        put("type", "string")
-                        put("description", "Text or regex pattern to search for.")
-                    }
-                    putJsonObject("file_glob") {
-                        put("type", "string")
-                        put("description", "Optional file extension or substring filter (e.g. '.md', '.kt').")
-                    }
-                }
-                putJsonArray("required") { add(JsonPrimitive("query")) }
-            }
-        ),
-        ToolDefinition(
-            name = "fs_write",
-            description = "Create a new file or overwrite an existing file inside the mounted workspace.",
-            requiresWritePermission = true,
-            parametersSchema = buildJsonObject {
-                put("type", "object")
-                putJsonObject("properties") {
-                    putJsonObject("path") {
-                        put("type", "string")
-                        put("description", "Relative file path inside the workspace.")
-                    }
-                    putJsonObject("content") {
-                        put("type", "string")
-                        put("description", "Full text content to write to the file.")
-                    }
-                }
-                putJsonArray("required") {
-                    add(JsonPrimitive("path"))
-                    add(JsonPrimitive("content"))
-                }
-            }
-        ),
-        ToolDefinition(
-            name = "fs_edit",
-            description = "Perform a surgical search-and-replace edit on an existing file in the mounted workspace.",
-            requiresWritePermission = true,
-            parametersSchema = buildJsonObject {
-                put("type", "object")
-                putJsonObject("properties") {
-                    putJsonObject("path") {
-                        put("type", "string")
-                        put("description", "Relative file path inside the workspace.")
-                    }
-                    putJsonObject("old_text") {
-                        put("type", "string")
-                        put("description", "Exact existing text block to find.")
-                    }
-                    putJsonObject("new_text") {
-                        put("type", "string")
-                        put("description", "Replacement text block.")
-                    }
-                    putJsonObject("replace_all") {
-                        put("type", "boolean")
-                        put("description", "Replace every occurrence if true (default false).")
-                    }
-                }
-                putJsonArray("required") {
-                    add(JsonPrimitive("path"))
-                    add(JsonPrimitive("old_text"))
-                    add(JsonPrimitive("new_text"))
-                }
-            }
-        ),
-        ToolDefinition(
-            name = "fs_multi_edit",
-            description = "Apply multiple search-and-replace edits to a single file atomically in one call. If any edit fails to match, all edits are rolled back.",
-            requiresWritePermission = true,
-            parametersSchema = buildJsonObject {
-                put("type", "object")
-                putJsonObject("properties") {
-                    putJsonObject("path") {
-                        put("type", "string")
-                        put("description", "Relative file path inside the workspace.")
-                    }
-                    putJsonObject("edits") {
-                        put("type", "array")
-                        put("description", "Ordered list of search-and-replace hunks to apply atomically.")
-                        putJsonObject("items") {
-                            put("type", "object")
-                            putJsonObject("properties") {
-                                putJsonObject("old_text") {
-                                    put("type", "string")
-                                    put("description", "Exact existing text block to find.")
-                                }
-                                putJsonObject("new_text") {
-                                    put("type", "string")
-                                    put("description", "Replacement text block.")
-                                }
-                                putJsonObject("replace_all") {
-                                    put("type", "boolean")
-                                    put("description", "Replace every occurrence if true (default false).")
-                                }
-                            }
-                            putJsonArray("required") {
-                                add(JsonPrimitive("old_text"))
-                                add(JsonPrimitive("new_text"))
-                            }
-                        }
-                    }
-                }
-                putJsonArray("required") {
-                    add(JsonPrimitive("path"))
-                    add(JsonPrimitive("edits"))
-                }
-            }
-        ),
-        ToolDefinition(
-            name = "fs_move",
-            description = "Move or rename a file or directory inside the mounted workspace.",
-            requiresWritePermission = true,
-            parametersSchema = buildJsonObject {
-                put("type", "object")
-                putJsonObject("properties") {
-                    putJsonObject("source_path") {
-                        put("type", "string")
-                        put("description", "Existing relative path inside the workspace.")
-                    }
-                    putJsonObject("dest_path") {
-                        put("type", "string")
-                        put("description", "Destination relative path inside the workspace.")
-                    }
-                }
-                putJsonArray("required") {
-                    add(JsonPrimitive("source_path"))
-                    add(JsonPrimitive("dest_path"))
-                }
-            }
-        ),
-        ToolDefinition(
-            name = "fs_delete",
-            description = "Delete a file or directory inside the mounted workspace.",
-            requiresWritePermission = true,
-            parametersSchema = buildJsonObject {
-                put("type", "object")
-                putJsonObject("properties") {
-                    putJsonObject("path") {
-                        put("type", "string")
-                        put("description", "Relative path to delete inside the workspace.")
-                    }
-                }
-                putJsonArray("required") {
-                    add(JsonPrimitive("path"))
-                }
-            }
-        ),
-        ToolDefinition(
-            name = "web_search",
-            description = "Search the live internet for up-to-date information, documentation, news, and facts using a free multi-engine search cascade (DuckDuckGo, Wikipedia, HackerNews), returning titles, URLs, and snippets.",
-            requiresWritePermission = false,
-            requiresWorkspaceFolder = false,
-            parametersSchema = buildJsonObject {
-                put("type", "object")
-                putJsonObject("properties") {
-                    putJsonObject("query") {
-                        put("type", "string")
-                        put("description", "Search query keywords or question.")
-                    }
-                    putJsonObject("max_results") {
-                        put("type", "integer")
-                        put("description", "Maximum number of search results to return (default 6).")
-                    }
-                }
-                putJsonArray("required") {
-                    add(JsonPrimitive("query"))
-                }
-            }
-        ),
-        ToolDefinition(
-            name = "web_fetch",
-            description = "Fetch the contents of any HTTP/HTTPS URL and extract clean readable Markdown/text or JSON.",
-            requiresWritePermission = false,
-            requiresWorkspaceFolder = false,
-            parametersSchema = buildJsonObject {
-                put("type", "object")
-                putJsonObject("properties") {
-                    putJsonObject("url") {
-                        put("type", "string")
-                        put("description", "Full http:// or https:// URL to fetch.")
-                    }
-                    putJsonObject("max_chars") {
-                        put("type", "integer")
-                        put("description", "Maximum characters to return (default 24000).")
-                    }
-                }
-                putJsonArray("required") {
-                    add(JsonPrimitive("url"))
-                }
-            }
-        ),
-        ToolDefinition(
-            name = "calc_eval",
-            description = "Deterministically evaluate a mathematical or scientific expression (supports +, -, *, /, %, ^, parentheses, sqrt, sin, cos, tan, ln, log, abs, round, pi, e).",
-            requiresWritePermission = false,
-            requiresWorkspaceFolder = false,
-            parametersSchema = buildJsonObject {
-                put("type", "object")
-                putJsonObject("properties") {
-                    putJsonObject("expression") {
-                        put("type", "string")
-                        put("description", "Mathematical expression to evaluate, e.g. '(1450 * 1.08^5) / sqrt(16)'.")
-                    }
-                }
-                putJsonArray("required") {
-                    add(JsonPrimitive("expression"))
-                }
-            }
-        ),
-        ToolDefinition(
-            name = "dice_roll",
-            description = "Roll unbiased random dice using standard notation (e.g. '1d20', '2d6+3', '4d6', '1d100') for roleplay checks or story branching outcomes.",
-            requiresWritePermission = false,
-            requiresWorkspaceFolder = false,
-            parametersSchema = buildJsonObject {
-                put("type", "object")
-                putJsonObject("properties") {
-                    putJsonObject("expression") {
-                        put("type", "string")
-                        put("description", "Dice notation such as '1d20', '2d6+3', or '1d100'.")
-                    }
-                    putJsonObject("reason") {
-                        put("type", "string")
-                        put("description", "Optional label or reason for the roll.")
-                    }
-                }
-                putJsonArray("required") {
-                    add(JsonPrimitive("expression"))
-                }
-            }
-        ),
-        ToolDefinition(
-            name = "todo_write",
-            description = "Create or update the structured task checklist for multi-step or long-horizon goals. Always keep one current step 'in_progress' and mark steps 'completed' as you verify them.",
-            requiresWritePermission = false,
-            requiresWorkspaceFolder = false,
-            parametersSchema = buildJsonObject {
-                put("type", "object")
-                putJsonObject("properties") {
-                    putJsonObject("goal") {
-                        put("type", "string")
-                        put("description", "Overarching goal objective and definition of done.")
-                    }
-                    putJsonObject("todos") {
-                        put("type", "array")
-                        put("description", "Ordered list of verifiable task steps.")
-                        putJsonObject("items") {
-                            put("type", "object")
-                            putJsonObject("properties") {
-                                putJsonObject("id") {
-                                    put("type", "string")
-                                    put("description", "Step ID such as '1', '2', '3'.")
-                                }
-                                putJsonObject("content") {
-                                    put("type", "string")
-                                    put("description", "Specific actionable step and verification check.")
-                                }
-                                putJsonObject("status") {
-                                    put("type", "string")
-                                    put("description", "'pending', 'in_progress', 'completed', or 'cancelled'.")
-                                }
-                            }
-                            putJsonArray("required") {
-                                add(JsonPrimitive("id"))
-                                add(JsonPrimitive("content"))
-                                add(JsonPrimitive("status"))
-                            }
-                        }
-                    }
-                }
-                putJsonArray("required") {
-                    add(JsonPrimitive("todos"))
-                }
-            }
-        ),
-        ToolDefinition(
-            name = ComputerUse.TOOL_NAME,
-            description = "See and control this device. The user approves every action. Start with action 'screenshot'; each other action returns a new screenshot. Coordinates are pixels in the latest screenshot.",
-            requiresWritePermission = false,
-            requiresWorkspaceFolder = false,
-            parametersSchema = buildJsonObject {
-                put("type", "object")
-                putJsonObject("properties") {
-                    putJsonObject("action") {
-                        put("type", "string")
-                        putJsonArray("enum") { listOf("screenshot", "click", "double_click", "right_click", "move", "type", "key", "scroll").forEach { add(JsonPrimitive(it)) } }
-                    }
-                    putJsonObject("x") { put("type", "integer") }
-                    putJsonObject("y") { put("type", "integer") }
-                    putJsonObject("text") { put("type", "string"); put("description", "Text to enter, for 'type'.") }
-                    putJsonObject("keys") { put("type", "string"); put("description", "For 'key', such as ctrl+c or enter. On Android: back, home or recents.") }
-                    putJsonObject("amount") { put("type", "integer"); put("description", "For 'scroll': positive scrolls down, negative up.") }
-                }
-                putJsonArray("required") { add(JsonPrimitive("action")) }
-            }
-        ),
-        ToolDefinition(
-            name = "agent_delegate",
-            description = "Hand a self-contained task to a helper with its own separate context, such as searching a large codebase. It can read and search but cannot change anything, and it returns only its findings, which keeps this conversation short. Give it everything it needs in the task, because it cannot see this conversation.",
-            requiresWritePermission = false,
-            requiresWorkspaceFolder = false,
-            parametersSchema = buildJsonObject {
-                put("type", "object")
-                putJsonObject("properties") {
-                    putJsonObject("task") {
-                        put("type", "string")
-                        put("description", "What the helper should find out, written so it makes sense on its own.")
-                    }
-                }
-                putJsonArray("required") { add(JsonPrimitive("task")) }
-            }
-        ),
-        ToolDefinition(
-            name = "skill_load",
-            description = "Load the full instructions of a skill listed under Available skills. Use it when a skill's description fits the task.",
-            requiresWritePermission = false,
-            parametersSchema = buildJsonObject {
-                put("type", "object")
-                putJsonObject("properties") {
-                    putJsonObject("name") {
-                        put("type", "string")
-                        put("description", "The skill's name, exactly as listed.")
-                    }
-                }
-                putJsonArray("required") { add(JsonPrimitive("name")) }
-            }
-        ),
-        ToolDefinition(
-            name = "ask_user",
-            description = "Pause and ask the user a question only they can answer, such as a decision between real options or missing information. Do not use it for confirmation of work you can check yourself.",
-            requiresWritePermission = false,
-            requiresWorkspaceFolder = false,
-            parametersSchema = buildJsonObject {
-                put("type", "object")
-                putJsonObject("properties") {
-                    putJsonObject("question") {
-                        put("type", "string")
-                        put("description", "The question, written so it makes sense on its own.")
-                    }
-                    putJsonObject("options") {
-                        put("type", "array")
-                        putJsonObject("items") { put("type", "string") }
-                        put("description", "Optional short answers to offer. The user can always type their own.")
-                    }
-                }
-                putJsonArray("required") { add(JsonPrimitive("question")) }
-            }
-        ),
-        ToolDefinition(
-            name = "goal_complete",
-            description = "Signal that all steps and acceptance criteria of the active goal have been verified and completed.",
-            requiresWritePermission = false,
-            requiresWorkspaceFolder = false,
-            parametersSchema = buildJsonObject {
-                put("type", "object")
-                putJsonObject("properties") {
-                    putJsonObject("summary") {
-                        put("type", "string")
-                        put("description", "Concise summary of all completed work.")
-                    }
-                    putJsonObject("verification") {
-                        put("type", "string")
-                        put("description", "Verification checks performed to confirm the goal is 100% done.")
-                    }
-                }
-                putJsonArray("required") {
-                    add(JsonPrimitive("summary"))
-                }
-            }
-        ),
-        ToolDefinition(
-            name = "agent_memory",
-            description = "Read or update persistent project/story memory (PARCHMENT_MEMORY.md in workspace) across sessions.",
-            requiresWritePermission = false,
-            parametersSchema = buildJsonObject {
-                put("type", "object")
-                putJsonObject("properties") {
-                    putJsonObject("action") {
-                        put("type", "string")
-                        put("description", "'read', 'append', or 'overwrite'.")
-                    }
-                    putJsonObject("content") {
-                        put("type", "string")
-                        put("description", "Memory notes to append or overwrite when action is 'append' or 'overwrite'.")
-                    }
-                }
-                putJsonArray("required") {
-                    add(JsonPrimitive("action"))
-                }
-            }
-        ),
-        ToolDefinition(
-            name = "shell_exec",
-            description = "Execute a shell command inside the mounted workspace directory and return stdout/stderr.",
-            requiresWritePermission = true,
-            requiresShellPermission = true,
-            parametersSchema = buildJsonObject {
-                put("type", "object")
-                putJsonObject("properties") {
-                    putJsonObject("command") {
-                        put("type", "string")
-                        put("description", "Shell command to run in the workspace directory.")
-                    }
-                    putJsonObject("timeout_seconds") {
-                        put("type", "integer")
-                        put("description", "Timeout in seconds (default 30).")
-                    }
-                }
-                putJsonArray("required") {
-                    add(JsonPrimitive("command"))
-                }
-            }
-        )
-    )
-
-    internal const val MCP_TOOL_PREFIX = "mcp__"
-
-    internal fun isMcpToolName(name: String): Boolean = name.startsWith(MCP_TOOL_PREFIX)
-
-    @kotlin.concurrent.Volatile
-    private var externalToolsProvider: () -> List<ToolDefinition> = { emptyList() }
-
-    internal fun registerExternalToolsProvider(provider: () -> List<ToolDefinition>) {
-        externalToolsProvider = provider
-    }
-
-    fun allTools(): List<ToolDefinition> = ALL_TOOLS + externalToolsProvider()
-
-    private data class CachedWorkspaceContext(
-        val timestampMs: Long,
-        val fileNames: List<String>,
-        val combinedContent: String,
-        val skills: List<WorkspaceSkill> = emptyList()
-    )
-
-    private val workspaceContextCache = mutableMapOf<String, CachedWorkspaceContext>()
-    private const val WORKSPACE_CONTEXT_TTL_MS = 10_000L
-
-    fun invalidateWorkspaceCache(workspaceRoot: String = "") {
-        synchronized(workspaceContextCache) {
-            if (workspaceRoot.isBlank()) {
-                workspaceContextCache.clear()
-            } else {
-                workspaceContextCache.remove(workspaceRoot.trim())
-            }
-        }
-    }
-
-    private fun getOrLoadWorkspaceContext(workspaceRoot: String): CachedWorkspaceContext {
-        val cleanRoot = workspaceRoot.trim()
-        if (cleanRoot.isEmpty()) return CachedWorkspaceContext(0L, emptyList(), "")
-        val now = PlatformRuntime.currentTimeMillis()
-        synchronized(workspaceContextCache) {
-            val cached = workspaceContextCache[cleanRoot]
-            if (cached != null && now - cached.timestampMs <= WORKSPACE_CONTEXT_TTL_MS) {
-                return cached
-            }
-        }
-        val candidates = listOf("AGENTS.md", "CLAUDE.md", "PARCHMENT.md", "PARCHMENT_MEMORY.md")
-        val foundNames = mutableListOf<String>()
-        val sb = StringBuilder()
-        for (fileName in candidates) {
-            PlatformWorkspace.workspaceRead(cleanRoot, fileName, startLine = 1, maxLines = 10_000).onSuccess { content ->
-                if (content.isNotBlank()) {
-                    foundNames.add(fileName)
-                    sb.appendLine("#### Auto-Loaded Workspace File: `$fileName`")
-                    sb.appendLine(content)
-                    sb.appendLine()
-                }
-            }
-        }
-        val skills = scanSkills(cleanRoot)
-        if (skills.isNotEmpty()) {
-            sb.appendLine("#### Available skills")
-            sb.appendLine("Call `skill_load` with a skill's name when its description fits the task.")
-            skills.forEach { sb.appendLine("- ${it.name}: ${it.description}") }
-        }
-        val fresh = CachedWorkspaceContext(
-            timestampMs = now,
-            fileNames = foundNames,
-            skills = skills,
-            combinedContent = sb.toString().trim()
-        )
-        synchronized(workspaceContextCache) {
-            workspaceContextCache[cleanRoot] = fresh
-        }
-        return fresh
-    }
-
     data class WorkspaceSkill(val name: String, val description: String, val path: String)
 
-    private const val SKILL_MAX_LINES = 2_000
-    private const val SKILL_MAX_DESCRIPTION_CHARS = 1_024
-    private const val SKILL_MAX_COUNT = 64
-    private val SKILL_FOLDERS = listOf(".parchment/skills", ".agents/skills", ".claude/skills")
-    private val SKILL_NAME = Regex("[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}")
+    internal const val MCP_TOOL_PREFIX = WorkspaceToolCatalog.MCP_TOOL_PREFIX
+
+    internal fun isMcpToolName(name: String): Boolean = WorkspaceToolCatalog.isMcpToolName(name)
+
+    internal fun registerExternalToolsProvider(provider: () -> List<ToolDefinition>) =
+        WorkspaceToolCatalog.registerExternalToolsProvider(provider)
+
+    fun allTools(): List<ToolDefinition> = WorkspaceToolCatalog.allTools()
+
+    fun invalidateWorkspaceCache(workspaceRoot: String = "") =
+        WorkspaceContextCache.invalidate(workspaceRoot)
 
     /** Reads the `name` and `description` of a SKILL.md, including folded YAML descriptions. */
-    internal fun parseSkillHeader(text: String): Pair<String, String>? {
-        val lines = text.lines()
-        if (lines.firstOrNull()?.trim() != "---") return null
-        val end = lines.drop(1).indexOfFirst { it.trim() == "---" }
-        if (end < 0) return null
-        val header = lines.subList(1, end + 1)
-        fun field(key: String): String {
-            val at = header.indexOfFirst { it.startsWith("$key:") }
-            if (at < 0) return ""
-            val first = header[at].substringAfter(':').trim()
-            if (first.isNotEmpty() && first.first() !in ">|") return first.removeSurrounding("\"").removeSurrounding("'")
-            return header.drop(at + 1).takeWhile { it.isBlank() || it.first().isWhitespace() }.joinToString(" ") { it.trim() }.trim()
-        }
-        return field("name") to field("description")
-    }
-
-    private fun scanSkills(root: String): List<WorkspaceSkill> {
-        val found = linkedMapOf<String, WorkspaceSkill>()
-        for (folder in SKILL_FOLDERS) {
-            val entries = PlatformWorkspace.workspaceList(root, folder, recursive = false).getOrNull() ?: continue
-            for (entry in entries.lines().map { it.trim() }.filter { it.endsWith("/") }.sorted()) {
-                val path = "${entry}SKILL.md"
-                val numbered = PlatformWorkspace.workspaceRead(root, path, startLine = 1, maxLines = 40).getOrNull() ?: continue
-                // The reader adds a header line and line numbers for the model.
-                val text = numbered.lines().drop(1).joinToString("\n") { it.substringAfter(": ", "") }
-                val (declared, description) = parseSkillHeader(text) ?: continue
-                val name = declared.ifBlank { entry.trimEnd('/').substringAfterLast('/') }
-                if (description.isNotBlank() && SKILL_NAME.matches(name) && name !in found && found.size < SKILL_MAX_COUNT) {
-                    found[name] = WorkspaceSkill(name, description.take(SKILL_MAX_DESCRIPTION_CHARS), path)
-                }
-            }
-        }
-        return found.values.toList()
-    }
+    internal fun parseSkillHeader(text: String): Pair<String, String>? =
+        WorkspaceContextCache.parseSkillHeader(text)
 
     fun discoverSkills(workspaceRoot: String): List<WorkspaceSkill> =
-        if (workspaceRoot.isBlank()) emptyList() else getOrLoadWorkspaceContext(workspaceRoot).skills
+        WorkspaceContextCache.discoverSkills(workspaceRoot)
 
-    fun listDiscoveredContextFileNames(workspaceRoot: String): List<String> {
-        if (workspaceRoot.isBlank()) return emptyList()
-        return getOrLoadWorkspaceContext(workspaceRoot).fileNames
-    }
+    fun listDiscoveredContextFileNames(workspaceRoot: String): List<String> =
+        WorkspaceContextCache.listDiscoveredContextFileNames(workspaceRoot)
 
-    fun isParallelSafeReadOnlyTool(toolName: String): Boolean {
-        return when (toolName.lowercase()) {
-            "fs_read", "fs_list", "fs_glob", "fs_search",
-            "web_search", "web_fetch", "calc_eval", "dice_roll" -> true
-            else -> false
-        }
-    }
+    fun isParallelSafeReadOnlyTool(toolName: String): Boolean =
+        WorkspaceToolCatalog.isParallelSafeReadOnlyTool(toolName)
 
     fun activeToolsForMode(
         mode: WorkspaceMode,
@@ -669,39 +71,17 @@ object WorkspaceHarness {
         enableWebTools: Boolean = false,
         includeLocalWebSearchTool: Boolean = enableWebTools,
         policy: AgentPermissionPolicy? = null
-    ): List<ToolDefinition> {
-        val hasMountedWorkspace = mode != WorkspaceMode.OFF && workspacePath.isNotBlank()
-        if (!hasMountedWorkspace && !goalModeActive && !enableWebTools && !includeLocalWebSearchTool && externalToolsProvider().isEmpty() && policy?.computerAccess != true) return emptyList()
-        return allTools().filter { tool ->
-            if (policy != null && !policy.allowsTool(tool.name)) return@filter false
-            if (tool.name == ComputerUse.TOOL_NAME && policy?.computerAccess != true) return@filter false
-            if (tool.name in setOf("web_search", "web_fetch") && !enableWebTools) return@filter false
-            if (tool.name == "web_search" && !includeLocalWebSearchTool) {
-                return@filter false
-            }
-            if (!hasMountedWorkspace) {
-                if (!goalModeActive) {
-                    tool.name == "web_search" || tool.name == "web_fetch" || tool.name == "calc_eval" || tool.name == "dice_roll" || tool.name == "ask_user" || tool.name == "agent_delegate" || tool.name == ComputerUse.TOOL_NAME || isMcpToolName(tool.name)
-                } else {
-                    !tool.requiresWorkspaceFolder
-                }
-            } else {
-                val writeOk = mode == WorkspaceMode.READ_WRITE || !tool.requiresWritePermission
-                val shellOk = !tool.requiresShellPermission || (mode == WorkspaceMode.READ_WRITE && allowShell)
-                writeOk && shellOk
-            }
-        }
-    }
+    ): List<ToolDefinition> = WorkspaceToolCatalog.activeToolsForMode(
+        mode, workspacePath, allowShell, goalModeActive, enableWebTools, includeLocalWebSearchTool, policy
+    )
 
     /**
      * Auto-discovers AGENTS.md, CLAUDE.md, PARCHMENT.md, and PARCHMENT_MEMORY.md in the workspace root.
      * Cached in memory with a 10s TTL (and invalidated immediately on workspace writes) so UI frame rendering
      * and `o200k_base` context breakdown never block on synchronous disk I/O.
      */
-    fun discoverWorkspaceContextFiles(workspaceRoot: String): String {
-        if (workspaceRoot.isBlank()) return ""
-        return getOrLoadWorkspaceContext(workspaceRoot).combinedContent
-    }
+    fun discoverWorkspaceContextFiles(workspaceRoot: String): String =
+        WorkspaceContextCache.discoverContextFiles(workspaceRoot)
 
     /**
      * Formats active workspace & utility tools for Google Gemini Interactions API (`/v1beta/interactions`)
@@ -715,16 +95,9 @@ object WorkspaceHarness {
         enableWebTools: Boolean = false,
         includeLocalWebSearchTool: Boolean = enableWebTools,
         policy: AgentPermissionPolicy? = null
-    ): JsonArray = buildJsonArray {
-        for (tool in activeToolsForMode(mode, workspacePath, allowShell, goalModeActive, enableWebTools, includeLocalWebSearchTool, policy)) {
-            add(buildJsonObject {
-                put("type", "function")
-                put("name", tool.name)
-                put("description", tool.description)
-                put("parameters", tool.parametersSchema)
-            })
-        }
-    }
+    ): JsonArray = WorkspaceToolCatalog.buildFlatFunctionTools(
+        mode, workspacePath, allowShell, goalModeActive, enableWebTools, includeLocalWebSearchTool, policy
+    )
 
     fun buildGeminiInteractionsTools(
         mode: WorkspaceMode,
@@ -734,7 +107,9 @@ object WorkspaceHarness {
         enableWebTools: Boolean = false,
         includeLocalWebSearchTool: Boolean = enableWebTools,
         policy: AgentPermissionPolicy? = null
-    ): JsonArray = buildFlatFunctionTools(mode, workspacePath, allowShell, goalModeActive, enableWebTools, includeLocalWebSearchTool, policy)
+    ): JsonArray = WorkspaceToolCatalog.buildFlatFunctionTools(
+        mode, workspacePath, allowShell, goalModeActive, enableWebTools, includeLocalWebSearchTool, policy
+    )
 
     fun buildOpenAiResponsesTools(
         mode: WorkspaceMode,
@@ -744,7 +119,9 @@ object WorkspaceHarness {
         enableWebTools: Boolean = false,
         includeLocalWebSearchTool: Boolean = enableWebTools,
         policy: AgentPermissionPolicy? = null
-    ): JsonArray = buildFlatFunctionTools(mode, workspacePath, allowShell, goalModeActive, enableWebTools, includeLocalWebSearchTool, policy)
+    ): JsonArray = WorkspaceToolCatalog.buildFlatFunctionTools(
+        mode, workspacePath, allowShell, goalModeActive, enableWebTools, includeLocalWebSearchTool, policy
+    )
 
     /**
      * Formats active workspace & utility tools for OpenAI `/v1/chat/completions`.
@@ -757,18 +134,9 @@ object WorkspaceHarness {
         enableWebTools: Boolean = false,
         includeLocalWebSearchTool: Boolean = enableWebTools,
         policy: AgentPermissionPolicy? = null
-    ): JsonArray = buildJsonArray {
-        for (tool in activeToolsForMode(mode, workspacePath, allowShell, goalModeActive, enableWebTools, includeLocalWebSearchTool, policy)) {
-            add(buildJsonObject {
-                put("type", "function")
-                putJsonObject("function") {
-                    put("name", tool.name)
-                    put("description", tool.description)
-                    put("parameters", tool.parametersSchema)
-                }
-            })
-        }
-    }
+    ): JsonArray = WorkspaceToolCatalog.buildOpenAiChatCompletionsTools(
+        mode, workspacePath, allowShell, goalModeActive, enableWebTools, includeLocalWebSearchTool, policy
+    )
 
     /**
      * Formats active workspace & utility tools for Anthropic Messages API (`/v1/messages`).
@@ -781,14 +149,22 @@ object WorkspaceHarness {
         enableWebTools: Boolean = false,
         includeLocalWebSearchTool: Boolean = enableWebTools,
         policy: AgentPermissionPolicy? = null
-    ): JsonArray = buildJsonArray {
-        for (tool in activeToolsForMode(mode, workspacePath, allowShell, goalModeActive, enableWebTools, includeLocalWebSearchTool, policy)) {
-            add(buildJsonObject {
-                put("name", tool.name)
-                put("description", tool.description)
-                put("input_schema", tool.parametersSchema)
-            })
-        }
+    ): JsonArray = WorkspaceToolCatalog.buildAnthropicTools(
+        mode, workspacePath, allowShell, goalModeActive, enableWebTools, includeLocalWebSearchTool, policy
+    )
+
+    private fun parseArgs(argumentsJson: String): JsonObject =
+        runCatching { json.parseToJsonElement(argumentsJson.ifBlank { "{}" }).jsonObject }
+            .getOrElse { JsonObject(emptyMap()) }
+
+    private inline fun requireWriteMode(
+        mode: WorkspaceMode,
+        action: String,
+        block: () -> Result<String>
+    ): Result<String> = if (mode != WorkspaceMode.READ_WRITE) {
+        Result.failure(IllegalStateException("Workspace is in Read-Only mode. Switch to Agent R/W mode $action."))
+    } else {
+        block()
     }
 
     /**
@@ -796,9 +172,7 @@ object WorkspaceHarness {
      * while a workspace or goal tool is executing.
      */
     fun describeToolCallIntent(toolName: String, argumentsJson: String): String {
-        val args = runCatching {
-            json.parseToJsonElement(argumentsJson.ifBlank { "{}" }).jsonObject
-        }.getOrElse { JsonObject(emptyMap()) }
+        val args = parseArgs(argumentsJson)
         fun strArg(key: String): String = args[key]?.jsonPrimitive?.contentOrNull?.trim().orEmpty()
 
         return when (toolName) {
@@ -843,6 +217,7 @@ object WorkspaceHarness {
             else -> "Executing $toolName"
         }
     }
+
     /**
      * Executes a single tool call requested by the model inside the sandboxed workspace directory
      * (or executes workspace-independent goal/dice tools even when no folder is mounted).
@@ -885,24 +260,14 @@ object WorkspaceHarness {
             )
         }
 
-        val args = runCatching {
-            json.parseToJsonElement(argumentsJson.ifBlank { "{}" }).jsonObject
-        }.getOrElse { JsonObject(emptyMap()) }
-
+        val args = parseArgs(argumentsJson)
         fun strArg(key: String, default: String = ""): String =
             args[key]?.jsonPrimitive?.contentOrNull ?: default
 
         val result: Result<String> = when (toolName) {
             "todo_write" -> runCatching {
                 val goal = strArg("goal", "")
-                val todosArr = args["todos"] as? JsonArray ?: JsonArray(emptyList())
-                val parsed = todosArr.mapNotNull { el ->
-                    val obj = el as? JsonObject ?: return@mapNotNull null
-                    val id = obj["id"]?.jsonPrimitive?.contentOrNull?.ifBlank { "•" } ?: "•"
-                    val content = obj["content"]?.jsonPrimitive?.contentOrNull ?: return@mapNotNull null
-                    val status = obj["status"]?.jsonPrimitive?.contentOrNull?.lowercase() ?: "pending"
-                    TodoItem(id = id, content = content, status = status)
-                }
+                val parsed = ToolOutputAndGoalSupport.parseTodoItems(args)
                 val done = parsed.count { it.status == "completed" }
                 val active = parsed.count { it.status == "in_progress" }
                 val pending = parsed.count { it.status == "pending" }
@@ -924,7 +289,7 @@ object WorkspaceHarness {
                 "Updated Todo Checklist ($done/${parsed.size} completed, $active in_progress, $pending pending).\n$mdSummary"
             }
             "skill_load" -> discoverSkills(workspaceRoot).find { it.name == strArg("name") }
-                ?.let { PlatformWorkspace.workspaceRead(workspaceRoot, it.path, startLine = 1, maxLines = SKILL_MAX_LINES) }
+                ?.let { PlatformWorkspace.workspaceRead(workspaceRoot, it.path, startLine = 1, maxLines = WorkspaceContextCache.SKILL_MAX_LINES) }
                 ?: Result.failure(IllegalArgumentException("No skill named '${strArg("name")}' is available in this workspace."))
             ComputerUse.TOOL_NAME -> Result.failure(IllegalStateException("Computer control is not available in this run."))
             "agent_delegate" -> Result.failure(IllegalStateException("Helpers are not available in this run."))
@@ -934,99 +299,68 @@ object WorkspaceHarness {
                 val verification = strArg("verification", "Verified all acceptance criteria.")
                 "Goal marked 100% COMPLETE.\nSummary: $summary\nVerification: $verification"
             }
-            "fs_list" -> {
-                val rel = strArg("path", "")
-                val rec = args["recursive"]?.jsonPrimitive?.booleanOrNull ?: false
-                PlatformWorkspace.workspaceList(workspaceRoot, rel, rec)
+            "fs_list" -> PlatformWorkspace.workspaceList(
+                workspaceRoot,
+                strArg("path", ""),
+                args["recursive"]?.jsonPrimitive?.booleanOrNull ?: false
+            )
+            "fs_glob" -> PlatformWorkspace.workspaceGlob(
+                workspaceRoot,
+                strArg("pattern"),
+                args["max_results"]?.jsonPrimitive?.intOrNull ?: 200
+            )
+            "fs_read" -> PlatformWorkspace.workspaceRead(
+                workspaceRoot,
+                strArg("path"),
+                args["start_line"]?.jsonPrimitive?.intOrNull ?: 1,
+                args["max_lines"]?.jsonPrimitive?.intOrNull ?: 250
+            )
+            "fs_search" -> PlatformWorkspace.workspaceSearch(
+                workspaceRoot,
+                strArg("query"),
+                strArg("file_glob", "")
+            )
+            "fs_write" -> requireWriteMode(mode, "to allow writing files") {
+                PlatformWorkspace.workspaceWrite(workspaceRoot, strArg("path"), strArg("content"))
             }
-            "fs_glob" -> {
-                val pat = strArg("pattern")
-                val maxRes = args["max_results"]?.jsonPrimitive?.intOrNull ?: 200
-                PlatformWorkspace.workspaceGlob(workspaceRoot, pat, maxRes)
+            "fs_edit" -> requireWriteMode(mode, "to allow editing files") {
+                PlatformWorkspace.workspaceEdit(
+                    workspaceRoot,
+                    strArg("path"),
+                    strArg("old_text"),
+                    strArg("new_text"),
+                    args["replace_all"]?.jsonPrimitive?.booleanOrNull ?: false
+                )
             }
-            "fs_read" -> {
-                val rel = strArg("path")
-                val startLine = args["start_line"]?.jsonPrimitive?.intOrNull ?: 1
-                val maxLines = args["max_lines"]?.jsonPrimitive?.intOrNull ?: 250
-                PlatformWorkspace.workspaceRead(workspaceRoot, rel, startLine, maxLines)
-            }
-            "fs_search" -> {
-                val query = strArg("query")
-                val glob = strArg("file_glob", "")
-                PlatformWorkspace.workspaceSearch(workspaceRoot, query, glob)
-            }
-            "fs_write" -> {
-                if (mode != WorkspaceMode.READ_WRITE) {
-                    Result.failure(IllegalStateException("Workspace is in Read-Only mode. Switch to Agent R/W mode to allow writing files."))
-                } else {
-                    val rel = strArg("path")
-                    val content = strArg("content")
-                    PlatformWorkspace.workspaceWrite(workspaceRoot, rel, content)
+            "fs_multi_edit" -> requireWriteMode(mode, "to allow editing files") {
+                val editsArr = args["edits"] as? JsonArray ?: JsonArray(emptyList())
+                val parsedEdits = editsArr.mapNotNull { el ->
+                    val obj = el as? JsonObject ?: return@mapNotNull null
+                    val oldTxt = obj["old_text"]?.jsonPrimitive?.contentOrNull ?: return@mapNotNull null
+                    val newTxt = obj["new_text"]?.jsonPrimitive?.contentOrNull ?: ""
+                    val repAll = obj["replace_all"]?.jsonPrimitive?.booleanOrNull ?: false
+                    Triple(oldTxt, newTxt, repAll)
                 }
+                PlatformWorkspace.workspaceMultiEdit(workspaceRoot, strArg("path"), parsedEdits)
             }
-            "fs_edit" -> {
-                if (mode != WorkspaceMode.READ_WRITE) {
-                    Result.failure(IllegalStateException("Workspace is in Read-Only mode. Switch to Agent R/W mode to allow editing files."))
-                } else {
-                    val rel = strArg("path")
-                    val oldText = strArg("old_text")
-                    val newText = strArg("new_text")
-                    val replaceAll = args["replace_all"]?.jsonPrimitive?.booleanOrNull ?: false
-                    PlatformWorkspace.workspaceEdit(workspaceRoot, rel, oldText, newText, replaceAll)
-                }
+            "fs_move" -> requireWriteMode(mode, "to allow moving files") {
+                PlatformWorkspace.workspaceMove(workspaceRoot, strArg("source_path"), strArg("dest_path"))
             }
-            "fs_multi_edit" -> {
-                if (mode != WorkspaceMode.READ_WRITE) {
-                    Result.failure(IllegalStateException("Workspace is in Read-Only mode. Switch to Agent R/W mode to allow editing files."))
-                } else {
-                    val rel = strArg("path")
-                    val editsArr = args["edits"] as? JsonArray ?: JsonArray(emptyList())
-                    val parsedEdits = editsArr.mapNotNull { el ->
-                        val obj = el as? JsonObject ?: return@mapNotNull null
-                        val oldTxt = obj["old_text"]?.jsonPrimitive?.contentOrNull ?: return@mapNotNull null
-                        val newTxt = obj["new_text"]?.jsonPrimitive?.contentOrNull ?: ""
-                        val repAll = obj["replace_all"]?.jsonPrimitive?.booleanOrNull ?: false
-                        Triple(oldTxt, newTxt, repAll)
-                    }
-                    PlatformWorkspace.workspaceMultiEdit(workspaceRoot, rel, parsedEdits)
-                }
-            }
-            "fs_move" -> {
-                if (mode != WorkspaceMode.READ_WRITE) {
-                    Result.failure(IllegalStateException("Workspace is in Read-Only mode. Switch to Agent R/W mode to allow moving files."))
-                } else {
-                    val src = strArg("source_path")
-                    val dst = strArg("dest_path")
-                    PlatformWorkspace.workspaceMove(workspaceRoot, src, dst)
-                }
-            }
-            "fs_delete" -> {
-                if (mode != WorkspaceMode.READ_WRITE) {
-                    Result.failure(IllegalStateException("Workspace is in Read-Only mode. Switch to Agent R/W mode to allow deleting files."))
-                } else {
-                    val rel = strArg("path")
-                    PlatformWorkspace.workspaceDelete(workspaceRoot, rel)
-                }
+            "fs_delete" -> requireWriteMode(mode, "to allow deleting files") {
+                PlatformWorkspace.workspaceDelete(workspaceRoot, strArg("path"))
             }
             "web_search" -> {
                 val query = strArg("query")
                 val maxRes = (args["max_results"]?.jsonPrimitive?.intOrNull ?: 6).coerceIn(1, 15)
                 executeFreeWebSearch(query, maxRes, isCancelled)
             }
-            "web_fetch" -> {
-                val url = strArg("url")
-                val maxChars = args["max_chars"]?.jsonPrimitive?.intOrNull ?: 24000
-                PlatformWorkspace.fetchUrlText(url, maxChars, isCancelled)
-            }
-            "calc_eval" -> {
-                val expr = strArg("expression")
-                runCatching { evaluateMathExpression(expr) }
-            }
-            "dice_roll" -> {
-                val expr = strArg("expression", "1d20")
-                val reason = strArg("reason", "")
-                runCatching { evaluateDiceExpression(expr, reason) }
-            }
+            "web_fetch" -> PlatformWorkspace.fetchUrlText(
+                strArg("url"),
+                args["max_chars"]?.jsonPrimitive?.intOrNull ?: 24000,
+                isCancelled
+            )
+            "calc_eval" -> runCatching { evaluateMathExpression(strArg("expression")) }
+            "dice_roll" -> runCatching { MathAndDiceEvaluator.evaluateDice(strArg("expression", "1d20"), strArg("reason", "")) }
             "agent_memory" -> {
                 val action = strArg("action", "read").lowercase()
                 val content = strArg("content", "")
@@ -1056,12 +390,16 @@ object WorkspaceHarness {
             "shell_exec" -> {
                 if (!allowShell) {
                     Result.failure(IllegalStateException("Shell execution is disabled. Enable it explicitly before running commands."))
-                } else if (mode != WorkspaceMode.READ_WRITE) {
-                    Result.failure(IllegalStateException("Workspace is in Read-Only mode. Switch to Agent R/W mode to execute shell commands."))
                 } else {
-                    val cmd = strArg("command")
-                    val timeout = args["timeout_seconds"]?.jsonPrimitive?.intOrNull ?: 30
-                    PlatformWorkspace.workspaceShellExec(workspaceRoot, cmd, timeout, onOutputDelta, isCancelled)
+                    requireWriteMode(mode, "to execute shell commands") {
+                        PlatformWorkspace.workspaceShellExec(
+                            workspaceRoot,
+                            strArg("command"),
+                            args["timeout_seconds"]?.jsonPrimitive?.intOrNull ?: 30,
+                            onOutputDelta,
+                            isCancelled
+                        )
+                    }
                 }
             }
             else -> Result.failure(IllegalArgumentException("Unknown workspace tool '$toolName'."))
@@ -1097,173 +435,14 @@ object WorkspaceHarness {
         )
     }
 
-    private val ANSI_ESCAPE_REGEX = Regex("""\u001B\[[0-?]*[ -/]*[@-~]""")
-    private val PS_CLIXML_BLOCK_REGEX = Regex("""(?s)#< CLIXML\s*<Objs\b.*?</Objs>""")
-    private val EXCESS_BLANK_LINES_REGEX = Regex("""\n{4,}""")
-
     /**
      * Tidies tool output before it reaches the model:
      * - Drops ANSI escape codes, PowerShell progress XML (`#< CLIXML`) and runs of blank lines.
      * - Keeps only the head and tail of long `shell_exec`, `fs_search`, `fs_list` and `fs_glob` output, so one
      *   noisy command can't flood the context. Line ranges asked for with `fs_read` are never cut.
      */
-    fun compressToolOutputWithSizeValve(toolName: String, rawOutput: String): String {
-        if (rawOutput.isEmpty()) return rawOutput
-        val cleaned = rawOutput
-            .replace(ANSI_ESCAPE_REGEX, "")
-            .replace(PS_CLIXML_BLOCK_REGEX, "")
-            .replace("#< CLIXML", "")
-            .replace("\r\n", "\n")
-            .replace(EXCESS_BLANK_LINES_REGEX, "\n\n\n")
-            .trimEnd()
-        if (toolName.equals("fs_read", ignoreCase = true)) {
-            return cleaned
-        }
-        val lines = cleaned.lines()
-        val (headKeep, tailKeep) = when (toolName.lowercase()) {
-            "shell_exec" -> 90 to 90
-            "fs_search" -> 110 to 50
-            "fs_list", "fs_glob" -> 120 to 60
-            else -> 160 to 80
-        }
-        val maxTotalLines = headKeep + tailKeep + 15
-        if (lines.size <= maxTotalLines) {
-            return cleaned
-        }
-        val omittedCount = lines.size - headKeep - tailKeep
-        val headPart = lines.take(headKeep).joinToString("\n")
-        val tailPart = lines.takeLast(tailKeep).joinToString("\n")
-        return "$headPart\n… [$omittedCount middle lines omitted by size valve — refine query or use fs_read with start_line/max_lines] …\n$tailPart"
-    }
-
-    private val DICE_EXPR_REGEX = Regex("""^(\d*)d(\d+)([+-]\d+)?$""")
-    private val HTML_ANY_TAG_REGEX = Regex("(?is)<[^>]+>")
-    private val DDG_MD_LINK_REGEX = Regex("""\[([^\]]+)\]\((https?://[^\s)]+)\)""")
-
-    private fun evaluateDiceExpression(expression: String, reason: String): String {
-        val cleaned = expression.trim().lowercase().replace(" ", "")
-        val match = DICE_EXPR_REGEX.matchEntire(cleaned)
-            ?: error("Invalid dice notation '$expression'. Expected format like '1d20' or '2d6+3'.")
-        val count = (match.groupValues[1].toIntOrNull() ?: 1).coerceIn(1, 100)
-        val sides = (match.groupValues[2].toIntOrNull() ?: 20).coerceIn(2, 10000)
-        val modifier = match.groupValues[3].toIntOrNull() ?: 0
-        val rolls = (1..count).map { kotlin.random.Random.nextInt(1, sides + 1) }
-        val sum = rolls.sum() + modifier
-        val modStr = when {
-            modifier > 0 -> " + $modifier"
-            modifier < 0 -> " - ${-modifier}"
-            else -> ""
-        }
-        val label = if (reason.isNotBlank()) " ($reason)" else ""
-        return "Rolled $expression$label: [${rolls.joinToString(", ")}]$modStr = $sum"
-    }
-
-    internal data class FreeSearchResultItem(
-        val title: String,
-        val url: String,
-        val snippet: String
-    )
-
-    internal fun urlEncodeQuery(raw: String): String {
-        val sb = StringBuilder()
-        for (b in raw.encodeToByteArray()) {
-            val c = b.toInt() and 0xFF
-            if ((c in 'a'.code..'z'.code) || (c in 'A'.code..'Z'.code) || (c in '0'.code..'9'.code) ||
-                c == '-'.code || c == '_'.code || c == '.'.code
-            ) {
-                sb.append(c.toChar())
-            } else if (c == ' '.code) {
-                sb.append('+')
-            } else {
-                sb.append('%')
-                sb.append(c.toString(16).uppercase().padStart(2, '0'))
-            }
-        }
-        return sb.toString()
-    }
-
-    internal fun parseDuckDuckGoMarkdownResults(markdownText: String, maxResults: Int): List<FreeSearchResultItem> {
-        val results = mutableListOf<FreeSearchResultItem>()
-        val seenUrls = HashSet<String>()
-        val lines = markdownText.lines().map { it.trim() }.filter { it.isNotEmpty() }
-        val linkRegex = DDG_MD_LINK_REGEX
-
-        for ((idx, line) in lines.withIndex()) {
-            for (match in linkRegex.findAll(line)) {
-                val title = match.groupValues[1].trim()
-                val rawUrl = match.groupValues[2].trim()
-                val url = HtmlTextConverter.unwrapDuckDuckGoRedirectUrl(rawUrl)
-                val lowerUrl = url.lowercase()
-                if (!url.startsWith("http") ||
-                    lowerUrl.contains("duckduckgo.com") ||
-                    lowerUrl.contains("bing.com/aclick") ||
-                    title.length < 3 ||
-                    !seenUrls.add(lowerUrl)
-                ) {
-                    continue
-                }
-                val nextSnippet = lines.drop(idx + 1).take(3)
-                    .firstOrNull { cand ->
-                        !cand.startsWith("[") && cand.length > 24 && !cand.startsWith("http")
-                    }.orEmpty()
-                results.add(
-                    FreeSearchResultItem(
-                        title = title,
-                        url = url,
-                        snippet = nextSnippet.take(240)
-                    )
-                )
-                if (results.size >= maxResults) return results
-            }
-        }
-        return results
-    }
-
-    internal fun parseWikipediaSearchJson(rawJson: String, maxResults: Int): List<FreeSearchResultItem> {
-        val root = runCatching { json.parseToJsonElement(rawJson).jsonObject }.getOrNull() ?: return emptyList()
-        val searchArr = (root["query"] as? JsonObject)?.get("search") as? JsonArray ?: return emptyList()
-        val results = mutableListOf<FreeSearchResultItem>()
-        for (el in searchArr) {
-            val obj = el as? JsonObject ?: continue
-            val title = obj["title"]?.jsonPrimitive?.contentOrNull?.trim().orEmpty()
-            if (title.isEmpty()) continue
-            val rawSnippet = obj["snippet"]?.jsonPrimitive?.contentOrNull.orEmpty()
-                .replace(HTML_ANY_TAG_REGEX, "")
-                .replace("&quot;", "\"")
-                .replace("&amp;", "&")
-                .trim()
-            val wikiSlug = title.replace(' ', '_')
-            val url = "https://en.wikipedia.org/wiki/$wikiSlug"
-            results.add(FreeSearchResultItem(title = "$title — Wikipedia", url = url, snippet = rawSnippet))
-            if (results.size >= maxResults) break
-        }
-        return results
-    }
-
-    internal fun parseHackerNewsAlgoliaJson(rawJson: String, maxResults: Int): List<FreeSearchResultItem> {
-        val root = runCatching { json.parseToJsonElement(rawJson).jsonObject }.getOrNull() ?: return emptyList()
-        val hitsArr = root["hits"] as? JsonArray ?: return emptyList()
-        val results = mutableListOf<FreeSearchResultItem>()
-        for (el in hitsArr) {
-            val obj = el as? JsonObject ?: continue
-            val title = obj["title"]?.jsonPrimitive?.contentOrNull?.trim().orEmpty()
-            if (title.isEmpty()) continue
-            val objId = obj["objectID"]?.jsonPrimitive?.contentOrNull.orEmpty()
-            val url = obj["url"]?.jsonPrimitive?.contentOrNull?.takeIf { it.startsWith("http") }
-                ?: if (objId.isNotEmpty()) "https://news.ycombinator.com/item?id=$objId" else continue
-            val points = obj["points"]?.jsonPrimitive?.intOrNull ?: 0
-            val comments = obj["num_comments"]?.jsonPrimitive?.intOrNull ?: 0
-            results.add(
-                FreeSearchResultItem(
-                    title = title,
-                    url = url,
-                    snippet = "Hacker News discussion ($points points, $comments comments)."
-                )
-            )
-            if (results.size >= maxResults) break
-        }
-        return results
-    }
+    fun compressToolOutputWithSizeValve(toolName: String, rawOutput: String): String =
+        ToolOutputAndGoalSupport.compressWithSizeValve(toolName, rawOutput)
 
     /**
      * Runs a keyless web search across these engines in turn:
@@ -1271,287 +450,34 @@ object WorkspaceHarness {
      * 2. Wikipedia OpenSearch / Query API (`https://en.wikipedia.org/w/api.php?...`)
      * 3. HackerNews Algolia Search API (`https://hn.algolia.com/api/v1/search?query=...`)
      */
-    fun executeFreeWebSearch(query: String, maxResults: Int = 6, isCancelled: (() -> Boolean)? = null): Result<String> = runCatching {
-        val cleanQuery = query.trim()
-        require(cleanQuery.isNotEmpty()) { "Search query must not be blank." }
-        val encoded = urlEncodeQuery(cleanQuery)
-        val collected = mutableListOf<FreeSearchResultItem>()
-        val seenUrls = HashSet<String>()
-
-        fun addUnique(items: List<FreeSearchResultItem>) {
-            for (item in items) {
-                val key = item.url.lowercase()
-                if (seenUrls.add(key)) {
-                    collected.add(item)
-                    if (collected.size >= maxResults) return
-                }
-            }
-        }
-
-        // 1. Primary: DuckDuckGo HTML search
-        val ddgUrl = "https://html.duckduckgo.com/html/?q=$encoded"
-        PlatformWorkspace.fetchUrlText(ddgUrl, maxChars = 48_000, isCancelled = isCancelled).onSuccess { ddgMd ->
-            addUnique(parseDuckDuckGoMarkdownResults(ddgMd, maxResults))
-        }
-
-        // 2. Fallback / Supplement: Wikipedia Search API
-        if (collected.size < maxResults) {
-            val wikiUrl = "https://en.wikipedia.org/w/api.php?action=query&list=search&srsearch=$encoded&utf8=1&format=json&srlimit=${maxResults.coerceAtMost(5)}"
-            PlatformWorkspace.fetchUrlText(wikiUrl, maxChars = 32_000, isCancelled = isCancelled).onSuccess { wikiJson ->
-                addUnique(parseWikipediaSearchJson(wikiJson, maxResults - collected.size))
-            }
-        }
-
-        // 3. Fallback / Supplement: HackerNews Algolia Search API
-        if (collected.size < maxResults) {
-            val hnUrl = "https://hn.algolia.com/api/v1/search?query=$encoded&tags=story&hitsPerPage=${maxResults.coerceAtMost(5)}"
-            PlatformWorkspace.fetchUrlText(hnUrl, maxChars = 32_000, isCancelled = isCancelled).onSuccess { hnJson ->
-                addUnique(parseHackerNewsAlgoliaJson(hnJson, maxResults - collected.size))
-            }
-        }
-
-        if (collected.isEmpty()) {
-            "No web search results found for '$cleanQuery'."
-        } else {
-            buildString {
-                appendLine("### Web Search Results for \"$cleanQuery\"")
-                collected.forEachIndexed { idx, item ->
-                    appendLine("${idx + 1}. **[${item.title}](${item.url})**")
-                    appendLine("   URL: ${item.url}")
-                    if (item.snippet.isNotBlank()) {
-                        appendLine("   Snippet: ${item.snippet}")
-                    }
-                }
-            }.trim()
-        }
-    }
+    fun executeFreeWebSearch(query: String, maxResults: Int = 6, isCancelled: (() -> Boolean)? = null): Result<String> =
+        WorkspaceWebSearch.search(query, maxResults, isCancelled)
 
     /**
      * Pure-Kotlin deterministic recursive-descent mathematical evaluator for `calc_eval`.
      * Supports +, -, *, /, %, ^, parentheses, pi, e, sqrt, cbrt, abs, round, floor, ceil, sin, cos, tan, asin, acos, atan, ln, log, log10, log2, exp.
      */
-    fun evaluateMathExpression(expression: String): String {
-        val src = expression.trim()
-        require(src.isNotEmpty()) { "Expression must not be empty." }
-        val parser = MathExprParser(src)
-        val value = parser.parseAll()
-        val formatted = if (value.isFinite() && value == kotlin.math.floor(value) && kotlin.math.abs(value) < 9e15) {
-            value.toLong().toString()
-        } else {
-            value.toString()
-        }
-        return "$src = $formatted"
-    }
+    fun evaluateMathExpression(expression: String): String =
+        MathAndDiceEvaluator.evaluateMath(expression)
 
-    private class MathExprParser(private val src: String) {
-        private var pos = 0
-
-        fun parseAll(): Double {
-            val v = parseExpr()
-            skipWs()
-            require(pos == src.length) { "Unexpected trailing text '${src.substring(pos)}' in expression." }
-            return v
-        }
-
-        private fun skipWs() {
-            while (pos < src.length && (src[pos].isWhitespace() || src[pos] == '_')) pos++
-        }
-
-        private fun eat(ch: Char): Boolean {
-            skipWs()
-            if (pos < src.length && src[pos] == ch) {
-                pos++
-                return true
-            }
-            return false
-        }
-
-        private fun parseExpr(): Double {
-            var x = parseTerm()
-            while (true) {
-                skipWs()
-                when {
-                    eat('+') -> x += parseTerm()
-                    eat('-') -> x -= parseTerm()
-                    else -> return x
-                }
-            }
-        }
-
-        private fun parseTerm(): Double {
-            var x = parsePower()
-            while (true) {
-                skipWs()
-                when {
-                    eat('*') -> x *= parsePower()
-                    eat('/') -> {
-                        val d = parsePower()
-                        require(d != 0.0) { "Division by zero." }
-                        x /= d
-                    }
-                    eat('%') -> {
-                        val d = parsePower()
-                        require(d != 0.0) { "Modulo by zero." }
-                        x %= d
-                    }
-                    else -> return x
-                }
-            }
-        }
-
-        private fun parsePower(): Double {
-            val base = parseUnary()
-            skipWs()
-            return if (eat('^')) {
-                base.pow(parsePower())
-            } else {
-                base
-            }
-        }
-
-        private fun parseUnary(): Double {
-            skipWs()
-            if (eat('+')) return parseUnary()
-            if (eat('-')) return -parseUnary()
-            return parsePrimary()
-        }
-
-        private fun parsePrimary(): Double {
-            skipWs()
-            if (eat('(')) {
-                val v = parseExpr()
-                require(eat(')')) { "Missing closing parenthesis ')'." }
-                return v
-            }
-            val start = pos
-            if (pos < src.length && (src[pos].isDigit() || src[pos] == '.')) {
-                while (pos < src.length && (src[pos].isDigit() || src[pos] == '.' || src[pos] == '_')) pos++
-                if (pos < src.length && (src[pos] == 'e' || src[pos] == 'E')) {
-                    pos++
-                    if (pos < src.length && (src[pos] == '+' || src[pos] == '-')) pos++
-                    while (pos < src.length && src[pos].isDigit()) pos++
-                }
-                val numStr = src.substring(start, pos).replace("_", "")
-                return numStr.toDoubleOrNull() ?: error("Invalid number '$numStr'.")
-            }
-            if (pos < src.length && src[pos].isLetter()) {
-                while (pos < src.length && (src[pos].isLetterOrDigit() || src[pos] == '_')) pos++
-                val ident = src.substring(start, pos).lowercase()
-                skipWs()
-                if (eat('(')) {
-                    val args = mutableListOf<Double>()
-                    if (!eat(')')) {
-                        do {
-                            args.add(parseExpr())
-                        } while (eat(','))
-                        require(eat(')')) { "Missing ')' after function '$ident' arguments." }
-                    }
-                    require(args.isNotEmpty()) { "Function '$ident' requires at least 1 argument." }
-                    val a0 = args[0]
-                    return when (ident) {
-                        "sqrt" -> kotlin.math.sqrt(a0)
-                        "cbrt" -> kotlin.math.cbrt(a0)
-                        "abs" -> kotlin.math.abs(a0)
-                        "round" -> kotlin.math.round(a0)
-                        "floor" -> kotlin.math.floor(a0)
-                        "ceil" -> kotlin.math.ceil(a0)
-                        "sin" -> kotlin.math.sin(a0)
-                        "cos" -> kotlin.math.cos(a0)
-                        "tan" -> kotlin.math.tan(a0)
-                        "asin" -> kotlin.math.asin(a0)
-                        "acos" -> kotlin.math.acos(a0)
-                        "atan" -> kotlin.math.atan(a0)
-                        "ln" -> kotlin.math.ln(a0)
-                        "log", "log10" -> kotlin.math.log10(a0)
-                        "log2" -> kotlin.math.log2(a0)
-                        "exp" -> kotlin.math.exp(a0)
-                        "pow" -> {
-                            require(args.size >= 2) { "pow(x, y) requires 2 arguments." }
-                            a0.pow(args[1])
-                        }
-                        "min" -> args.minOrNull() ?: a0
-                        "max" -> args.maxOrNull() ?: a0
-                        else -> error("Unknown math function '$ident'.")
-                    }
-                }
-                return when (ident) {
-                    "pi" -> kotlin.math.PI
-                    "e" -> kotlin.math.E
-                    else -> error("Unknown constant '$ident'.")
-                }
-            }
-            error("Unexpected character at position $pos in '$src'.")
-        }
-    }
     /**
      * Parses `todo_write` or `goal_complete` tool calls into an updated `GoalTrackerState`.
      */
-    fun applyGoalToolUpdate(current: GoalTrackerState?, tc: ToolCallRecord): GoalTrackerState? {
-        if (tc.isError) return current
-        val args = runCatching {
-            json.parseToJsonElement(tc.argumentsJson.ifBlank { "{}" }).jsonObject
-        }.getOrElse { return current }
-
-        return when (tc.name) {
-            "todo_write" -> {
-                val goal = args["goal"]?.jsonPrimitive?.contentOrNull?.takeIf { it.isNotBlank() }
-                    ?: current?.goalObjective.orEmpty()
-                val todosArr = args["todos"] as? JsonArray ?: JsonArray(emptyList())
-                val parsed = todosArr.mapNotNull { el ->
-                    val obj = el as? JsonObject ?: return@mapNotNull null
-                    val id = obj["id"]?.jsonPrimitive?.contentOrNull?.ifBlank { "•" } ?: "•"
-                    val content = obj["content"]?.jsonPrimitive?.contentOrNull ?: return@mapNotNull null
-                    val status = obj["status"]?.jsonPrimitive?.contentOrNull?.lowercase() ?: "pending"
-                    TodoItem(id = id, content = content, status = status)
-                }
-                val allDone = parsed.isNotEmpty() && parsed.all {
-                    it.status == "completed" || it.status == "cancelled"
-                }
-                GoalTrackerState(
-                    goalObjective = goal,
-                    todos = parsed,
-                    isCompleted = allDone,
-                    verificationSummary = current?.verificationSummary.orEmpty()
-                )
-            }
-            "goal_complete" -> {
-                val summary = args["summary"]?.jsonPrimitive?.contentOrNull.orEmpty()
-                val verification = args["verification"]?.jsonPrimitive?.contentOrNull.orEmpty()
-                val base = current ?: GoalTrackerState()
-                base.copy(
-                    todos = base.todos.map {
-                        if (it.status == "in_progress" || it.status == "pending") it.copy(status = "completed") else it
-                    },
-                    isCompleted = true,
-                    verificationSummary = listOf(summary, verification).filter { it.isNotBlank() }.joinToString(" — ")
-                )
-            }
-            else -> current
-        }
-    }
+    fun applyGoalToolUpdate(current: GoalTrackerState?, tc: ToolCallRecord): GoalTrackerState? =
+        ToolOutputAndGoalSupport.applyGoalToolUpdate(current, tc)
 
     /**
      * 3-Layer Rolling Context Compactor.
      * Keeps the most recent `keepRecentCount` tool outputs verbatim, while compacting older verbose
      * tool outputs (>850 chars) into concise 1-line receipts so multi-day runs never overflow context.
      */
-    private const val COMPACTION_BATCH = 8
-
     fun compactStaleToolOutputText(
         stepIndex: Int,
         totalSteps: Int,
         toolName: String,
         rawOutput: String,
         keepRecentCount: Int = 8
-    ): String {
-        // A boundary sliding every step would rewrite earlier text and miss the provider's cache each time.
-        val boundary = if (keepRecentCount > 0) ((totalSteps - keepRecentCount) / COMPACTION_BATCH) * COMPACTION_BATCH else totalSteps
-        if (stepIndex >= boundary || rawOutput.length <= 850) {
-            return rawOutput
-        }
-        val firstLine = rawOutput.lineSequence().firstOrNull()?.take(140).orEmpty()
-        return "[Compacted step #$stepIndex ($toolName): ${rawOutput.length} chars (${rawOutput.lines().size} lines) — \"$firstLine…\". Re-run tool if exact lines are needed.]"
-    }
+    ): String = ToolOutputAndGoalSupport.compactStaleOutput(stepIndex, totalSteps, toolName, rawOutput, keepRecentCount)
 
     /**
      * Repeated-Failure Circuit Breaker & Stop-Hook Work-Check Gate.

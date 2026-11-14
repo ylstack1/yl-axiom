@@ -4,8 +4,8 @@ Updated 2026-11-11. AGENTS.md owns workflow; MEMORY holds contracts. Task IDs st
 
 ## Current status
 
-- **Source:** 2026-11-11 tasks done/pushed: design system/audit, interaction/a11y, Anthropic prompt-cache fix, CI/release, strings table, file splits. 2026-11-12: `codeql.yml` covers Kotlin (desktop + Android, JDK 25), Python and Actions on push, PR and weekly; GitHub's default setup stays off (JDK 17 fails). Issue config and badges. `AgentPermissionUiTest` waits for one selected theme. `dependency-submission.yml` and uncached release SBOM cover shipped runtime classpaths (`check_sbom.py` >=50 libs). Desktop shortcuts work unfocused via `AppShortcutDispatcher` (`KeyboardShortcutTest`). 2026-11-14: turn usage/cost footer and context gauge use warning/token icons with hover hint and breakdown popup instead of inline multi-line text (`TurnUsageUiTest`).
-- **Last verified:** 2026-11-14, `verify.py affected`: 403 desktop tests + Android compile, 2m04s (2026-11-11 `final`: 399 tests, 4.3 MB APK, shrunk desktop).
+- **Source:** 2026-11-11 tasks done/pushed: design system/audit, interaction/a11y, Anthropic cache fix, CI/release, strings table, file splits. 2026-11-12: `codeql.yml` (Kotlin/JDK 25, Python, Actions), SBOM (`check_sbom.py`), unfocused shortcuts (`KeyboardShortcutTest`). 2026-11-14: compact turn usage/cost icons + breakdown popup (`TurnUsageUiTest`); provider wire/protocol fixes and Settings toggles (`StreamRecoveryHttpTest`). 2026-11-15 audit sweep: stream/compaction/Android lifecycle guards, persistence recovery, shell/web/archive safety, card/prompt JSON null & Base64 codec, and slider/prose/sidebar/spend Compose stability (`CardInteropTest`, `ComposerControlsTest`, `ParchmentHydrationPersistenceTest`, `PlatformSharedHelpersTest`).
+- **Last verified:** 2026-11-15, `verify.py affected`: 430 desktop tests, 2m38s (batch C also passed Android compile + 427 tests, 3m44s; 2026-11-11 `final`: 399 tests, 4.3 MB APK, shrunk desktop).
 - **Next action:** the user's screen-reader pass below. Open a new task for anything else.
 
 ## Open tasks
@@ -27,7 +27,7 @@ Not planned; open a task first. Compose 1.12 can fail in its own layout bookkeep
 Reuse these; consult a changed external contract once.
 
 - **OpenAI:** developers.openai.com/api/reference/resources/responses/methods/create; /api/reference/resources/chat/subresources/completions/methods/create; /api/docs/guides/reasoning; /api/docs/guides/prompt-caching.md; /api/docs/pricing; /codex/agent-approvals-security; /codex/sandboxing
-- **Gemini:** aistudio.google.com/api-reference/interactions-api; /docs/interactions-overview; /docs/thinking; ai.google.dev/api/generate-content; ai.google.dev/gemini-api/docs/generate-content/thought-signatures
+- **Gemini:** aistudio.google.com/api-reference/interactions-api; /docs/interactions-overview; /docs/background-execution; /docs/thinking; ai.google.dev/api/generate-content; ai.google.dev/gemini-api/docs/generate-content/thought-signatures
 - **Anthropic:** platform.claude.com/docs/en/api/messages; /build-with-claude/streaming; /build-with-claude/prompt-caching; /build-with-claude/extended-thinking; /build-with-claude/thinking-tool-workflows; /about-claude/pricing; /agents-and-tools/tool-use/web-search-tool
 - **DeepSeek:** api-docs.deepseek.com/guides/thinking_mode
 - **Rates:** models.dev/api.json; openrouter.ai/api/v1/models; vercel.com/docs/ai-gateway/models-and-providers; raw.githubusercontent.com/BerriAI/litellm/main/model_prices_and_context_window.json

@@ -98,6 +98,7 @@ internal fun parseAspect(ratio: String): Pair<Float, Float>? {
 }
 
 internal fun sliderIndexAt(x: Float, width: Float, inset: Float, stepCount: Int): Int {
+    if (stepCount <= 1) return 0
     val usable = (width - inset * 2f).coerceAtLeast(1f)
     return (((x - inset) / usable).coerceIn(0f, 1f) * (stepCount - 1)).roundToInt()
 }
@@ -190,10 +191,13 @@ internal fun StepSlider(stepCount: Int, selected: Int, description: String, valu
 
 /** Typed values are sent exactly as written, so models with their own settings keep working. */
 @Composable
-private fun CustomValueField(value: String, placeholder: String, current: String? = null, onChange: (String) -> Unit) {
+private fun CustomValueField(value: String, placeholder: String, current: String? = null, onChange: (String) -> Unit, resetTick: Int = 0) {
     var draft by remember { mutableStateOf(value) }
     LaunchedEffect(current) {
         if (current != null && current.trim() != draft.trim()) draft = value
+    }
+    LaunchedEffect(resetTick) {
+        if (resetTick > 0) draft = value
     }
     SepiaTextField(
         value = draft,
@@ -292,17 +296,18 @@ internal fun ResolutionControl(value: String, presets: List<String>, highlighted
 @Composable
 internal fun DurationControl(seconds: Int, onChange: (Int) -> Unit) {
     val current = seconds.coerceIn(MIN_VIDEO_SECONDS, MAX_VIDEO_SECONDS)
+    var sliderReset by remember { mutableStateOf(0) }
     val p = LocalParchmentPalette.current
     PopoverChip("${current}s", Strings.howLongTheVideoRuns, current > 5) {
         PopoverHeading(Strings.length, "$current seconds")
-        StepSlider(MAX_VIDEO_SECONDS - MIN_VIDEO_SECONDS + 1, current - MIN_VIDEO_SECONDS, Strings.videoLength, "$current seconds", { onChange(it + MIN_VIDEO_SECONDS) })
+        StepSlider(MAX_VIDEO_SECONDS - MIN_VIDEO_SECONDS + 1, current - MIN_VIDEO_SECONDS, Strings.videoLength, "$current seconds", { onChange(it + MIN_VIDEO_SECONDS); sliderReset++ })
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
             BasicText("$MIN_VIDEO_SECONDS s", style = p.uiLabelStyle)
             BasicText("$MAX_VIDEO_SECONDS s", style = p.uiLabelStyle)
         }
-        CustomValueField("", Strings.secondsFromTo(MIN_VIDEO_SECONDS, MAX_VIDEO_SECONDS)) { typed ->
+        CustomValueField("", Strings.secondsFromTo(MIN_VIDEO_SECONDS, MAX_VIDEO_SECONDS), onChange = { typed ->
             typed.toIntOrNull()?.let { onChange(it.coerceIn(MIN_VIDEO_SECONDS, MAX_VIDEO_SECONDS)) }
-        }
+        }, resetTick = sliderReset)
     }
 }
 
@@ -318,12 +323,13 @@ internal fun VoiceControl(value: String, onChange: (String) -> Unit) {
 @Composable
 internal fun SpeechSpeedControl(speed: Double, onChange: (Double) -> Unit) {
     val index = SPEECH_SPEEDS.indexOf(speed)
+    var sliderReset by remember { mutableStateOf(0) }
     PopoverChip("${speed}x", "How fast the voice speaks", speed != 1.0) {
         PopoverHeading(Strings.speed, "${speed}x")
-        StepSlider(SPEECH_SPEEDS.size, index, Strings.speechSpeed, "${speed}x", { onChange(SPEECH_SPEEDS[it]) })
-        CustomValueField(if (index >= 0) "" else speed.toString(), Strings.customFromTo(MIN_SPEECH_SPEED, MAX_SPEECH_SPEED)) { typed ->
+        StepSlider(SPEECH_SPEEDS.size, index, Strings.speechSpeed, "${speed}x", { onChange(SPEECH_SPEEDS[it]); sliderReset++ })
+        CustomValueField(if (index >= 0) "" else speed.toString(), Strings.customFromTo(MIN_SPEECH_SPEED, MAX_SPEECH_SPEED), onChange = { typed ->
             typed.toDoubleOrNull()?.takeIf { it.isFinite() }?.let { onChange(it.coerceIn(MIN_SPEECH_SPEED, MAX_SPEECH_SPEED)) }
-        }
+        }, resetTick = sliderReset)
     }
 }
 

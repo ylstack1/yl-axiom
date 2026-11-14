@@ -37,7 +37,7 @@ internal object ChatArchiveExtractor {
     private const val DAMAGED = "The archive is damaged or incomplete."
     private const val END_RECORD_SEARCH_BYTES = 65_557
     private val UNSAFE_NAME_CHARS = Regex("[^a-zA-Z0-9._-]")
-    private val WINDOWS_DEVICE_NAME = Regex("(?i)(con|prn|aux|nul|com[1-9]|lpt[1-9])(\\..*)?")
+    private val WINDOWS_DEVICE_NAME = Regex("(?i)(con|prn|aux|nul|com[0-9]|lpt[0-9])(\\..*)?")
 
     private class StagedArchive(val chatJsons: List<String>, val media: Map<String, File>)
 

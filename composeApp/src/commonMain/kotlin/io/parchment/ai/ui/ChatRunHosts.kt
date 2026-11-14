@@ -48,7 +48,7 @@ internal class StorySummaryHost(
     val activeProfile: ProviderProfile,
     val activeSession: ChatSession,
     private val completeAction: (ChatSession) -> ChatSession?,
-    val continueAssistantNodeAt: (Int) -> Unit,
+    val continueAssistantNodeAt: (Int, String) -> Unit,
     val updateSessionStreamState: (String, (SessionStreamRuntime?) -> SessionStreamRuntime?) -> Unit,
     private val updateSession: (String, Boolean, SessionUpdate) -> Unit,
     private val trackedUtility: TrackedUtility

@@ -21,7 +21,11 @@ internal class DesktopMcpProcess(command: String) : McpProcess {
     override fun readLine(): String? {
         val line = ByteArrayOutputStream()
         while (true) {
-            val byte = runCatching { input.read() }.getOrDefault(-1)
+            val byte = try {
+                input.read()
+            } catch (_: java.io.IOException) {
+                return null
+            }
             if (byte < 0) return if (line.size() > 0) line.toString(Charsets.UTF_8) else null
             if (byte == '\n'.code) return line.toString(Charsets.UTF_8).trimEnd('\r')
             check(line.size() < MAX_LINE_BYTES) { "An MCP message was too large." }
@@ -31,9 +35,14 @@ internal class DesktopMcpProcess(command: String) : McpProcess {
 
     override fun close() {
         runCatching { output.close() }
+        runCatching { input.close() }
+        runCatching { process.errorStream.close() }
         val children = runCatching { process.descendants().toList() }.getOrDefault(emptyList())
-        if (!process.waitFor(2, TimeUnit.SECONDS)) process.destroy()
-        if (!process.waitFor(1, TimeUnit.SECONDS)) process.destroyForcibly()
+        if (!process.waitFor(400, TimeUnit.MILLISECONDS)) {
+            process.destroy()
+            children.forEach { child -> if (child.isAlive) child.destroy() }
+        }
+        if (!process.waitFor(400, TimeUnit.MILLISECONDS)) process.destroyForcibly()
         children.forEach { child -> if (child.isAlive) child.destroyForcibly() }
     }
 

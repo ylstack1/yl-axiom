@@ -692,14 +692,28 @@ internal class ParchmentAppController(
         )
     }
 
-    fun continueAssistantNodeAt(nodeIndex: Int) {
-        val complete = completeSessionForAction(activeSession) ?: return
+    private fun stopSessionStream(targetSessionId: String): kotlinx.coroutines.Job? {
+        val curStream = activeStreamsBySession[targetSessionId]
+        curStream?.identity?.let { processState.runs.requestStop(it) }
+        curStream?.job?.cancel()
+        if (curStream != null && curStream.interactionId.isNotBlank() && (curStream.providerContext?.profile ?: activeProfile).useBackgroundLongDecode) {
+            appProcessScope.launch {
+                AiProviderEngine.cancelBackgroundInteraction(curStream.providerContext?.profile ?: activeProfile, curStream.interactionId)
+            }
+        }
+        updateSessionStreamState(targetSessionId) { null }
+        return curStream?.job
+    }
+
+    fun continueAssistantNodeAt(nodeIndex: Int, sessionId: String = activeSession.id) {
+        val rawTarget = appState.sessions.find { it.id == sessionId } ?: activeSession
+        val complete = completeSessionForAction(rawTarget) ?: return
         val targetNode = complete.messages.getOrNull(nodeIndex) ?: return
         if (targetNode.role != MessageRole.ASSISTANT) return
         val historyBefore = complete.messages.subList(0, nodeIndex)
         val existingText = AiProviderEngine.stripInlineErrorNotices(targetNode.activeVariant.content)
         // Clear the inline error at once so the resumed reply starts clean.
-        updateActiveSession(immediate = true) { sess ->
+        updateSessionById(complete.id, immediate = true) { sess ->
             sess.copy(
                 messages = sess.messages.mapIndexed { idx, n ->
                     if (idx != nodeIndex) n
@@ -712,7 +726,7 @@ internal class ParchmentAppController(
             )
         }
         triggerGeneration(
-            sessionId = activeSession.id,
+            sessionId = complete.id,
             historyForCall = historyBefore,
             targetAssistantNodeId = targetNode.id,
             targetVariantId = targetNode.activeVariant.id,
@@ -723,15 +737,7 @@ internal class ParchmentAppController(
     fun triggerAutoSummarizeStory(autoMuteOlderTurns: Boolean = false) = summaryHost.triggerAutoSummarizeStory(autoMuteOlderTurns)
 
     fun clearCurrentChatMessages(targetSessionId: String = activeSession.id) {
-        val curStream = activeStreamsBySession[targetSessionId]
-        curStream?.identity?.let { processState.runs.requestStop(it) }
-        curStream?.job?.cancel()
-        if (curStream != null && curStream.interactionId.isNotBlank() && (curStream.providerContext?.profile ?: activeProfile).useBackgroundLongDecode) {
-            appProcessScope.launch {
-                AiProviderEngine.cancelBackgroundInteraction(curStream.providerContext?.profile ?: activeProfile, curStream.interactionId)
-            }
-        }
-        updateSessionStreamState(targetSessionId) { null }
+        stopSessionStream(targetSessionId)
         queuedPromptsBySession = queuedPromptsBySession - targetSessionId
         pendingAttachmentsBySession = pendingAttachmentsBySession - targetSessionId
         updateSessionById(targetSessionId, immediate = true) { it.copy(messages = emptyList()) }
@@ -808,8 +814,7 @@ internal class ParchmentAppController(
         if (rawInput.equals("/rewind", ignoreCase = true) && currentAtts.isEmpty()) {
             userPromptInput = ""
             if (activeSession.messages.isNotEmpty()) {
-                activeStreamsBySession[sessId]?.job?.cancel()
-                updateSessionStreamState(sessId) { null }
+                stopSessionStream(sessId)
                 val dropCount = if (activeSession.messages.size >= 2 && activeSession.messages.last().role == MessageRole.ASSISTANT) 2 else 1
                 updateActiveSession(immediate = true) {
                     it.copy(
@@ -908,9 +913,7 @@ internal class ParchmentAppController(
         assistantPrefillInput = ""
         pendingAttachmentsBySession = pendingAttachmentsBySession - targetSessId
         uiScope.launch {
-            val runningJob = activeStreamsBySession[targetSessId]?.job
-            runningJob?.cancel()
-            runningJob?.join()
+            stopSessionStream(targetSessId)?.join()
             dispatchPromptItem(
                 sessionId = targetSessId,
                 text = steerText,
@@ -1023,8 +1026,7 @@ internal class ParchmentAppController(
         val targetNode = sess.messages.getOrNull(nodeIndex) ?: return
 
         // Cancel any active stream on this session before mutating the message list
-        activeStreamsBySession[sess.id]?.job?.cancel()
-        updateSessionStreamState(sess.id) { null }
+        stopSessionStream(sess.id)
         val now = PlatformRuntime.currentTimeMillis()
         val curProf = curSnap.profiles.find { it.id == sess.profileId } ?: curSnap.profiles.first()
         val modelUsed = sess.modelOverride.ifBlank { curProf.defaultModel }
@@ -1296,7 +1298,6 @@ internal class ParchmentAppController(
         val tabsToKeep = openTabIds.filterNot { it in emptyTabIds }.ifEmpty { listOf(emptyTabIds.first()) }
         val keptSet = tabsToKeep.toSet()
         val emptyDropSet = emptyTabIds.filterNot { it in keptSet }.toSet()
-        emptyDropSet.forEach { PlatformStorage.deleteChatSessionFile(it) }
         val nextSessions = appState.sessions.filterNot { it.id in emptyDropSet }
         val nextActiveId = if (activeSession.id in tabsToKeep) activeSession.id else tabsToKeep.first()
         val nextSess = nextSessions.find { it.id == nextActiveId }
@@ -1318,7 +1319,13 @@ internal class ParchmentAppController(
     fun rememberForUndo(removed: List<ChatSession>, message: String) {
         pendingUndo = DeletedChats(
             chats = removed.map { s ->
-                s to (if (s.isCompactStub) PlatformStorage.loadChatSessionJsonById(s.id) else compactStateJson.encodeToString(ChatSession.serializer(), s))
+                val rawJson = if (s.isCompactStub) {
+                    appDiskWriter.pendingFullSession(s.id)?.let { compactStateJson.encodeToString(ChatSession.serializer(), it) }
+                        ?: PlatformStorage.loadChatSessionJsonById(s.id)
+                } else {
+                    compactStateJson.encodeToString(ChatSession.serializer(), s)
+                }
+                s to rawJson
             },
             activeSessionId = appState.activeSessionId,
             openTabIds = openTabIds
@@ -1329,7 +1336,13 @@ internal class ParchmentAppController(
     fun undoDelete() {
         val undo = pendingUndo ?: return
         pendingUndo = null
-        undo.chats.forEach { (session, json) -> if (json != null) PlatformStorage.saveChatSessionJson(session.id, json) }
+        val restoredFull = undo.chats.mapNotNull { (session, json) ->
+            if (!session.isCompactStub) session
+            else json?.let { runCatching { compactStateJson.decodeFromString(ChatSession.serializer(), it) }.getOrNull() }
+        }
+        if (restoredFull.isNotEmpty()) {
+            appDiskWriter.enqueue(sessions = restoredFull, urgent = true, notify = false)
+        }
         val restoredIds = undo.chats.map { it.first.id }.toSet()
         val sessions = undo.chats.map { it.first } + appState.sessions.filterNot { it.id in restoredIds }
         val existing = sessions.map { it.id }.toSet()
@@ -1346,11 +1359,9 @@ internal class ParchmentAppController(
 
     fun executeDeleteSingleSession(targetId: String) {
         appState.sessions.find { it.id == targetId }?.let { rememberForUndo(listOf(it), "Deleted \"${it.title}\".") }
-        activeStreamsBySession[targetId]?.job?.cancel()
-        updateSessionStreamState(targetId) { null }
+        stopSessionStream(targetId)
         queuedPromptsBySession = queuedPromptsBySession - targetId
         pendingAttachmentsBySession = pendingAttachmentsBySession - targetId
-        PlatformStorage.deleteChatSessionFile(targetId)
         val remaining = appState.sessions.filterNot { it.id == targetId }
         val remainingTabs = openTabIds.filterNot { it == targetId }
         val remainingForAssistant = remaining.filter {
@@ -1394,11 +1405,7 @@ internal class ParchmentAppController(
         }
         val removedIds = removedSessions.map { it.id }.toSet()
         rememberForUndo(removedSessions, Strings.deletedFor(plural(removedSessions.size, "chat"), activeAssistant.name))
-        removedIds.forEach { id ->
-            activeStreamsBySession[id]?.job?.cancel()
-            PlatformStorage.deleteChatSessionFile(id)
-        }
-        activeStreamsBySession = activeStreamsBySession - removedIds
+        removedIds.forEach { stopSessionStream(it) }
         queuedPromptsBySession = queuedPromptsBySession - removedIds
         pendingAttachmentsBySession = pendingAttachmentsBySession - removedIds
 

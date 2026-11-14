@@ -281,4 +281,47 @@ class PlatformSharedHelpersTest {
             root.deleteRecursively()
         }
     }
+
+    @Test
+    fun globAndSearchHandleWildcardsAndUtf8UrlHelpers() {
+        val root = Files.createTempDirectory("parchment-glob-utf8-").toFile()
+        try {
+            File(root, "src/App.kt").apply { parentFile.mkdirs(); writeText("fun greet() = \"hello\"\n") }
+            File(root, "build.gradle.kts").writeText("fun greet() = \"kts\"\n")
+
+            val desktopScanner = WorkspaceTreeScanner(desktopConfig())
+            val androidScanner = WorkspaceTreeScanner(androidConfig())
+            val desktopGlob = desktopScanner.glob(root.absolutePath, "*.kt", maxResults = 10).getOrThrow()
+            val androidGlob = androidScanner.glob(root.absolutePath, "*.kt", maxResults = 10).getOrThrow()
+            assertTrue("src/App.kt" in desktopGlob)
+            assertFalse("build.gradle.kts" in desktopGlob)
+            assertFalse("build.gradle.kts" in androidGlob)
+
+            val search = desktopScanner.search(root.absolutePath, "hello", "**/*.kt").getOrThrow()
+            assertTrue("src/App.kt:1:" in search, search)
+            assertFalse("build.gradle.kts" in search, search)
+
+            val utf8Cmd = if (System.getProperty("os.name").orEmpty().startsWith("Windows", true)) {
+                "Write-Output 'café — 世界'"
+            } else {
+                "printf 'café — 世界\\n'"
+            }
+            val utf8Shell = DesktopOwnedShell.execute(root.absolutePath, utf8Cmd, 15, null) { false }.getOrThrow()
+            assertTrue("café — 世界" in utf8Shell, utf8Shell)
+        } finally {
+            root.deleteRecursively()
+        }
+
+        assertEquals("café 😀+?", HtmlTextConverter.urlDecodeComponent("café%20😀%2B?"))
+        assertEquals("What_If%3F_100%25_%231", HtmlTextConverter.encodeWikiTitle("What If? 100% #1"))
+        assertEquals(
+            "HTTPS://example.com/a?b=1",
+            HtmlTextConverter.unwrapDuckDuckGoRedirectUrl("//duckduckgo.com/l/?uddg=HTTPS%3A%2F%2Fexample.com%2Fa%3Fb%3D1")
+        )
+        val md = HtmlTextConverter.convertHtmlToReadableText(
+            "<html><body><a href=\"httpx://bad\">Bad</a> <a href=\"https://ok.test\">Good</a></body></html>"
+        )
+        assertFalse("httpx://bad" in md, md)
+        assertTrue("[Good](https://ok.test)" in md, md)
+    }
 }

@@ -28,7 +28,9 @@ import io.parchment.ai.network.AiProviderEngine.StepRetriesExhaustedException
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonArray
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.contentOrNull
@@ -111,6 +113,8 @@ internal suspend fun AiProviderEngine.executeAnthropicMessagesLoop(
     var stripSamplingOnRetry = false
     // "auto" -> adaptive (or budget if thinkingBudgetTokens >= 1024); "adaptive" -> force adaptive; "budget" -> force enabled+budget; "omit" -> omit thinking object
     var thinkingModeOverride = "auto"
+    var triedAdaptiveThinking = false
+    var triedBudgetThinking = false
     var omitNativeWebSearchOnRetry = AgentPermissionResolver.resolve(session, profile = profile).approvalMode != ToolApprovalMode.NEVER
     var loopStep = 0
 
@@ -273,8 +277,8 @@ internal suspend fun AiProviderEngine.executeAnthropicMessagesLoop(
                 usageRequestId = onRequestStarted(UsageDialect.ANTHROPIC)
                 httpClient.preparePost(url) {
                     applyAuthAndCustomHeaders(profile)
-                    header("anthropic-version", "2023-06-01")
-                    if (profile.anthropicBetaHeaders.isNotBlank()) {
+                    applyAnthropicVersionHeader(profile)
+                    if (profile.anthropicBetaHeaders.isNotBlank() && !profile.hasCustomHeader("anthropic-beta")) {
                         header("anthropic-beta", profile.anthropicBetaHeaders.trim())
                     }
                     header("Accept", "text/event-stream")
@@ -418,8 +422,8 @@ internal suspend fun AiProviderEngine.executeAnthropicMessagesLoop(
                                         parseProviderUsage(UsageDialect.ANTHROPIC, null, isFinal = true))
                                 }
                                 "message_delta" -> {
-                                    val stopReason = (evObj["delta"] as? JsonObject)?.get("stop_reason")?.jsonPrimitive?.contentOrNull
-                                    if (stopReason != null) streamFinished = true
+                                    val stopReason = ((evObj["delta"] as? JsonObject)?.get("stop_reason") as? JsonPrimitive)?.contentOrNull
+                                    if (!stopReason.isNullOrBlank()) streamFinished = true
                                     if (stopReason == "max_tokens") onOutputLimit()
                                     if (stopReason == "pause_turn") turnPaused = true
                                     val usage = evObj["usage"] as? JsonObject
@@ -429,7 +433,7 @@ internal suspend fun AiProviderEngine.executeAnthropicMessagesLoop(
                                     }
                                 }
                                 "error" -> {
-                                    val errMsg = (evObj["error"] as? JsonObject)?.get("message")?.jsonPrimitive?.contentOrNull ?: dataLine
+                                    val errMsg = ((evObj["error"] as? JsonObject)?.get("message") as? JsonPrimitive)?.contentOrNull ?: dataLine
                                     error("Anthropic Stream Error: $errMsg")
                                 }
                             }
@@ -437,7 +441,15 @@ internal suspend fun AiProviderEngine.executeAnthropicMessagesLoop(
                         onPlainJsonFallback = { body ->
                             onRawWire(reqStr, body)
                             val root = runCatching { json.parseToJsonElement(body).jsonObject }.getOrNull() ?: return@readSseOrJsonFallback
-                            val id = root["id"]?.jsonPrimitive?.contentOrNull ?: ""
+                            val errObj = root["error"] as? JsonObject
+                            if (errObj != null || (root["type"] as? JsonPrimitive)?.contentOrNull == "error") {
+                                val msg = (errObj?.get("message") as? JsonPrimitive)?.contentOrNull ?: body
+                                error("Anthropic Messages Error: $msg")
+                            }
+                            val stopReason = (root["stop_reason"] as? JsonPrimitive)?.contentOrNull
+                            if (stopReason == "max_tokens") onOutputLimit()
+                            if (stopReason == "pause_turn") turnPaused = true
+                            val id = (root["id"] as? JsonPrimitive)?.contentOrNull ?: ""
                             val usage = root["usage"] as? JsonObject
                             if (usage != null) {
                                 onUsage(usageRequestId, id, UsageDialect.ANTHROPIC,
@@ -446,10 +458,10 @@ internal suspend fun AiProviderEngine.executeAnthropicMessagesLoop(
                             val contentArr = root["content"] as? JsonArray
                             contentArr?.forEachIndexed { idx, el ->
                                 val cb = el as? JsonObject ?: return@forEachIndexed
-                                when (cb["type"]?.jsonPrimitive?.contentOrNull) {
+                                when ((cb["type"] as? JsonPrimitive)?.contentOrNull) {
                                     "thinking" -> {
-                                        val th = cb["thinking"]?.jsonPrimitive?.contentOrNull ?: ""
-                                        val sig = cb["signature"]?.jsonPrimitive?.contentOrNull ?: ""
+                                        val th = (cb["thinking"] as? JsonPrimitive)?.contentOrNull ?: ""
+                                        val sig = (cb["signature"] as? JsonPrimitive)?.contentOrNull ?: ""
                                         val block = AnthropicStreamBlock.Thinking()
                                         block.thinking.append(th)
                                         block.signature.append(sig)
@@ -460,11 +472,14 @@ internal suspend fun AiProviderEngine.executeAnthropicMessagesLoop(
                                         }
                                     }
                                     "redacted_thinking" -> {
-                                        val data = cb["data"]?.jsonPrimitive?.contentOrNull ?: ""
+                                        val data = (cb["data"] as? JsonPrimitive)?.contentOrNull ?: ""
                                         streamBlocksByIndex[idx] = AnthropicStreamBlock.RedactedThinking(data)
                                     }
+                                    "server_tool_use", "web_search_tool_result", "web_fetch_tool_result", "code_execution_tool_result" -> {
+                                        streamBlocksByIndex[idx] = AnthropicStreamBlock.ServerBlock(cb)
+                                    }
                                     "text" -> {
-                                        val txt = cb["text"]?.jsonPrimitive?.contentOrNull ?: ""
+                                        val txt = (cb["text"] as? JsonPrimitive)?.contentOrNull ?: ""
                                         val block = AnthropicStreamBlock.Text()
                                         block.text.append(txt)
                                         streamBlocksByIndex[idx] = block
@@ -475,8 +490,8 @@ internal suspend fun AiProviderEngine.executeAnthropicMessagesLoop(
                                         }
                                     }
                                     "tool_use" -> {
-                                        val callId = cb["id"]?.jsonPrimitive?.contentOrNull ?: "toolu_$idx"
-                                        val name = cb["name"]?.jsonPrimitive?.contentOrNull ?: ""
+                                        val callId = (cb["id"] as? JsonPrimitive)?.contentOrNull ?: "toolu_$idx"
+                                        val name = (cb["name"] as? JsonPrimitive)?.contentOrNull ?: ""
                                         val inputStr = (cb["input"] as? JsonObject)?.toString() ?: "{}"
                                         streamBlocksByIndex[idx] = AnthropicStreamBlock.ToolUse(
                                             id = callId,
@@ -494,6 +509,8 @@ internal suspend fun AiProviderEngine.executeAnthropicMessagesLoop(
             } catch (e: kotlinx.coroutines.CancellationException) {
                 throw e
             } catch (e: Throwable) {
+                if (useAdaptiveMode) triedAdaptiveThinking = true
+                if (useBudgetMode) triedBudgetThinking = true
                 val hasAnyToolUse = streamBlocksByIndex.values.any { it is AnthropicStreamBlock.ToolUse }
                 val errMsg = (e.message ?: e.toString()).lowercase()
                 if (!stepEmittedOutput && !hasAnyToolUse && errMsg.contains("http 400")) {
@@ -509,21 +526,21 @@ internal suspend fun AiProviderEngine.executeAnthropicMessagesLoop(
                         onStatus(Strings.endpointDoesNotSupportNativeWeb)
                         continue
                     }
-                    if (useAdaptiveMode && thinkingModeOverride != "budget" &&
+                    if (useAdaptiveMode && !triedBudgetThinking && thinkingModeOverride != "budget" &&
                         (errMsg.contains("adaptive") || errMsg.contains("output_config") || errMsg.contains("effort") || errMsg.contains("display"))
                     ) {
                         thinkingModeOverride = "budget"
                         onStatus(Strings.endpointDoesNotSupportAdaptiveThinking)
                         continue
                     }
-                    if (useBudgetMode && thinkingModeOverride != "adaptive" &&
+                    if (useBudgetMode && !triedAdaptiveThinking && thinkingModeOverride != "adaptive" &&
                         (errMsg.contains("budget_tokens") || errMsg.contains("enabled") || errMsg.contains("thinking"))
                     ) {
                         thinkingModeOverride = "adaptive"
                         onStatus(Strings.modelUsesAdaptiveThinkingSwitchingFrom)
                         continue
                     }
-                    if (thinkingModeOverride != "omit" && (errMsg.contains("thinking") || errMsg.contains("budget_tokens") || errMsg.contains("output_config") || errMsg.contains("effort"))) {
+                    if (thinkingModeOverride != "omit" && (errMsg.contains("thinking") || errMsg.contains("budget_tokens") || errMsg.contains("output_config") || errMsg.contains("effort") || errMsg.contains("adaptive") || errMsg.contains("display"))) {
                         thinkingModeOverride = "omit"
                         onStatus(Strings.endpointRejectedThinkingConfigurationRetryingWith)
                         continue
@@ -609,24 +626,33 @@ internal suspend fun AiProviderEngine.executeAnthropicMessagesLoop(
             }
         }
 
+        fun appendAssistantExtraBlocks(blocks: List<JsonObject>) {
+            if (blocks.isEmpty()) return
+            val last = extraLoopMessages.lastOrNull()
+            if ((last?.get("role") as? JsonPrimitive)?.contentOrNull == "assistant") {
+                val prevBlocks = (last["content"] as? JsonArray).orEmpty().mapNotNull { it as? JsonObject }
+                extraLoopMessages[extraLoopMessages.lastIndex] = buildJsonObject {
+                    put("role", "assistant")
+                    put("content", JsonArray(prevBlocks + blocks))
+                }
+            } else {
+                extraLoopMessages.add(buildJsonObject {
+                    put("role", "assistant")
+                    put("content", JsonArray(blocks))
+                })
+            }
+        }
+
         if (turnToolCalls.isEmpty()) {
             if (turnPaused && assistantContentBlocksForToolLoop.isNotEmpty()) {
                 // A long provider-run step paused: sending the turn back as it stands lets it continue.
-                extraLoopMessages.add(buildJsonObject {
-                    put("role", "assistant")
-                    put("content", JsonArray(assistantContentBlocksForToolLoop))
-                })
+                appendAssistantExtraBlocks(assistantContentBlocksForToolLoop)
                 onStatus(Strings.continuingALongRunningStep)
                 continue
             }
             val stopHookPrompt = circuitBreaker.evaluateStopHookPrompt()
             if (stopHookPrompt != null) {
-                if (assistantContentBlocksForToolLoop.isNotEmpty()) {
-                    extraLoopMessages.add(buildJsonObject {
-                        put("role", "assistant")
-                        put("content", JsonArray(assistantContentBlocksForToolLoop))
-                    })
-                }
+                appendAssistantExtraBlocks(assistantContentBlocksForToolLoop)
                 extraLoopMessages.add(buildJsonObject {
                     put("role", "user")
                     putJsonArray("content") {
@@ -642,10 +668,7 @@ internal suspend fun AiProviderEngine.executeAnthropicMessagesLoop(
             break
         }
 
-        extraLoopMessages.add(buildJsonObject {
-            put("role", "assistant")
-            put("content", JsonArray(assistantContentBlocksForToolLoop))
-        })
+        appendAssistantExtraBlocks(assistantContentBlocksForToolLoop)
 
         val firstSignedThinkingBlock = orderedBlocks.filterIsInstance<AnthropicStreamBlock.Thinking>()
             .firstOrNull { it.signature.isNotEmpty() }
@@ -940,14 +963,28 @@ private fun AiProviderEngine.compactAnthropicExtraMessages(messages: List<JsonOb
             val updatedArr = buildJsonArray {
                 for (el in contentArr) {
                     val bObj = el as? JsonObject
-                    if (bObj != null && bObj["type"]?.jsonPrimitive?.contentOrNull == "tool_result") {
-                        val raw = bObj["content"]?.jsonPrimitive?.contentOrNull.orEmpty()
-                        val compacted = WorkspaceHarness.compactStaleToolOutputText(idx, total, "tool", raw)
-                        add(buildJsonObject {
-                            for ((k, v) in bObj) {
-                                if (k == "content") put("content", compacted) else put(k, v)
-                            }
-                        })
+                    if (bObj != null && (bObj["type"] as? JsonPrimitive)?.contentOrNull == "tool_result") {
+                        val contentEl = bObj["content"]
+                        val compactedEl: JsonElement? = when (contentEl) {
+                            is JsonPrimitive -> JsonPrimitive(WorkspaceHarness.compactStaleToolOutputText(idx, total, "tool", contentEl.content))
+                            is JsonArray -> JsonArray(contentEl.map { inner ->
+                                val innerObj = inner as? JsonObject
+                                val innerTxt = (innerObj?.get("text") as? JsonPrimitive)?.contentOrNull
+                                if (innerObj != null && (innerObj["type"] as? JsonPrimitive)?.contentOrNull == "text" && innerTxt != null) {
+                                    JsonObject(innerObj + ("text" to JsonPrimitive(WorkspaceHarness.compactStaleToolOutputText(idx, total, "tool", innerTxt))))
+                                } else inner
+                            })
+                            else -> null
+                        }
+                        if (compactedEl != null) {
+                            add(buildJsonObject {
+                                for ((k, v) in bObj) {
+                                    if (k == "content") put("content", compactedEl) else put(k, v)
+                                }
+                            })
+                        } else {
+                            add(el)
+                        }
                     } else {
                         add(el)
                     }

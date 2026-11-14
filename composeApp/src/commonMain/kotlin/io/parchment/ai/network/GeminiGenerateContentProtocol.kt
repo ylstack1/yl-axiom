@@ -87,6 +87,7 @@ internal suspend fun AiProviderEngine.executeGeminiGenerateContentLoop(
     val hasBuiltInTools = profile.enableWebSearch || profile.enableCodeExecution || profile.enableUrlContext
     var stripSamplingOnRetry = false
     var upgradeMinimalToLowOnRetry = false
+    var downgradeXhighToHighOnRetry = false
     var useBudgetDialectOnRetry = false
     var simplifyThinkingOnRetry = false
     var disableMixedToolsOnRetry = AgentPermissionResolver.resolve(session, profile = profile).approvalMode != ToolApprovalMode.NEVER
@@ -195,7 +196,8 @@ internal suspend fun AiProviderEngine.executeGeminiGenerateContentLoop(
                                 "none", "off", "minimal" -> if (upgradeMinimalToLowOnRetry) "LOW" else "MINIMAL"
                                 "low" -> "LOW"
                                 "medium", "default", "auto", "" -> "MEDIUM"
-                                "high", "xhigh", "max" -> "HIGH"
+                                "high" -> "HIGH"
+                                "xhigh", "max" -> if (downgradeXhighToHighOnRetry) "HIGH" else "XHIGH"
                                 else -> rawEffort.uppercase()
                             }
                             putJsonObject("thinkingConfig") {
@@ -331,6 +333,41 @@ internal suspend fun AiProviderEngine.executeGeminiGenerateContentLoop(
                     }
 
                     var streamFinished = false
+                    suspend fun processResponseChunkObject(obj: JsonObject, forceFinalUsage: Boolean) {
+                        val errObj = obj["error"] as? JsonObject
+                        if (errObj != null) {
+                            val msg = (errObj["message"] as? JsonPrimitive)?.contentOrNull ?: obj.toString()
+                            error("Gemini Stream Error: $msg")
+                        }
+
+                        val candidates = obj["candidates"] as? JsonArray
+                        val firstCand = candidates?.firstOrNull() as? JsonObject
+                        val parts = (firstCand?.get("content") as? JsonObject)?.get("parts") as? JsonArray
+                        if (parts != null) {
+                            processCandidateParts(parts)
+                        }
+                        extractCitationsFromGeminiCandidate(firstCand, onCitation)
+
+                        val finishReason = (firstCand?.get("finishReason") as? JsonPrimitive)?.contentOrNull
+                        if (!finishReason.isNullOrBlank()) streamFinished = true
+                        if (finishReason == "MAX_TOKENS") onOutputLimit()
+                        val blockReason = ((obj["promptFeedback"] as? JsonObject)?.get("blockReason") as? JsonPrimitive)?.contentOrNull
+                        if (!blockReason.isNullOrBlank() && parts.isNullOrEmpty() && roundModelParts.isEmpty() && roundToolCalls.isEmpty()) {
+                            error("Gemini GenerateContent blocked: $blockReason")
+                        }
+
+                        val usage = obj["usageMetadata"] as? JsonObject
+                        val respId = (obj["responseId"] as? JsonPrimitive)?.contentOrNull.orEmpty()
+                        if (firstCand?.get("groundingMetadata") is JsonObject) {
+                            onUsage(usageRequestId, "", UsageDialect.GEMINI_CONTENT,
+                                parseProviderUsage(UsageDialect.GEMINI_CONTENT, null, response = obj))
+                        }
+                        if (usage != null) {
+                            onUsage(usageRequestId, respId, UsageDialect.GEMINI_CONTENT,
+                                parseProviderUsage(UsageDialect.GEMINI_CONTENT, usage, isFinal = forceFinalUsage || !finishReason.isNullOrBlank(), response = obj))
+                        }
+                    }
+
                     readSseOrJsonFallback(
                         streamFinished = { streamFinished },
                         channel = response.bodyAsChannel(),
@@ -338,47 +375,21 @@ internal suspend fun AiProviderEngine.executeGeminiGenerateContentLoop(
                             if (dataLine == "[DONE]") return@readSseOrJsonFallback
                             onRawWire(reqStr, dataLine)
                             val obj = runCatching { json.parseToJsonElement(dataLine).jsonObject }.getOrNull() ?: return@readSseOrJsonFallback
-
-                            // Check for in-band error object
-                            val errObj = obj["error"] as? JsonObject
-                            if (errObj != null) {
-                                val msg = errObj["message"]?.jsonPrimitive?.contentOrNull ?: dataLine
-                                error("Gemini Stream Error: $msg")
-                            }
-
-                            val candidates = obj["candidates"] as? JsonArray
-                            val firstCand = candidates?.firstOrNull() as? JsonObject
-                            val parts = (firstCand?.get("content") as? JsonObject)?.get("parts") as? JsonArray
-                            if (parts != null) {
-                                processCandidateParts(parts)
-                            }
-                            extractCitationsFromGeminiCandidate(firstCand, onCitation)
-
-                            val finishReason = (firstCand?.get("finishReason") as? JsonPrimitive)?.contentOrNull
-                            if (finishReason != null) streamFinished = true
-                            if (finishReason == "MAX_TOKENS") onOutputLimit()
-                            val usage = obj["usageMetadata"] as? JsonObject
-                            if (firstCand?.get("groundingMetadata") is JsonObject) {
-                                onUsage(usageRequestId, "", UsageDialect.GEMINI_CONTENT,
-                                    parseProviderUsage(UsageDialect.GEMINI_CONTENT, null, response = obj))
-                            }
-                            if (usage != null) {
-                                onUsage(usageRequestId, obj["responseId"]?.jsonPrimitive?.contentOrNull.orEmpty(), UsageDialect.GEMINI_CONTENT,
-                                    parseProviderUsage(UsageDialect.GEMINI_CONTENT, usage, isFinal = firstCand?.get("finishReason") != null, response = obj))
-                            }
+                            processResponseChunkObject(obj, forceFinalUsage = false)
                         },
                         onPlainJsonFallback = { body ->
                             onRawWire(reqStr, body)
-                            val obj = runCatching { json.parseToJsonElement(body).jsonObject }.getOrNull() ?: return@readSseOrJsonFallback
-                            onUsage(usageRequestId, obj["responseId"]?.jsonPrimitive?.contentOrNull.orEmpty(), UsageDialect.GEMINI_CONTENT,
-                                parseProviderUsage(UsageDialect.GEMINI_CONTENT, obj["usageMetadata"] as? JsonObject, isFinal = true, response = obj))
-                            val candidates = obj["candidates"] as? JsonArray
-                            val firstCand = candidates?.firstOrNull() as? JsonObject
-                            val parts = (firstCand?.get("content") as? JsonObject)?.get("parts") as? JsonArray
-                            if (parts != null) {
-                                processCandidateParts(parts)
+                            val rootEl = runCatching { json.parseToJsonElement(body) }.getOrNull() ?: return@readSseOrJsonFallback
+                            when (rootEl) {
+                                is JsonObject -> processResponseChunkObject(rootEl, forceFinalUsage = true)
+                                is JsonArray -> {
+                                    val chunkObjs = rootEl.mapNotNull { it as? JsonObject }
+                                    chunkObjs.forEachIndexed { idx, chunkObj ->
+                                        processResponseChunkObject(chunkObj, forceFinalUsage = idx == chunkObjs.lastIndex)
+                                    }
+                                }
+                                else -> Unit
                             }
-                            extractCitationsFromGeminiCandidate(firstCand, onCitation)
                         }
                     )
                 }
@@ -422,6 +433,14 @@ internal suspend fun AiProviderEngine.executeGeminiGenerateContentLoop(
                     ) {
                         upgradeMinimalToLowOnRetry = true
                         onStatus(Strings.modelRejectedMinimalThinkinglevelSteppingUp)
+                        continue
+                    }
+                    if (!downgradeXhighToHighOnRetry && !useBudgetDialectOnRetry &&
+                        (profile.thinkingEffort.equals("xhigh", ignoreCase = true) || profile.thinkingEffort.equals("max", ignoreCase = true)) &&
+                        (errMsg.contains("xhigh") || errMsg.contains("thinkinglevel") || errMsg.contains("thinking_level"))
+                    ) {
+                        downgradeXhighToHighOnRetry = true
+                        onStatus(Strings.endpointRejectedXhighThinkingRetryingWith)
                         continue
                     }
                     if (!useBudgetDialectOnRetry && (errMsg.contains("thinkinglevel") || errMsg.contains("thinking_level"))) {

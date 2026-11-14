@@ -257,16 +257,21 @@ internal fun ManuscriptViewport(
     val ownedUtilityRecords = remember(activeSession.id, activeSession.utilityUsageRecords) {
         activeSession.utilityUsageRecords.filter { it.ownerSessionId.isBlank() || it.ownerSessionId == activeSession.id }
     }
-    val sessionSpend = remember(activeSession.id, activeSession.messages.size, activeSession.messages.sumOf { it.variants.size },
-        throttledBreakdownTrigger, isStreaming, activeProfile, ownedUtilityRecords) {
+    val sessionSpend = remember(activeSession.takeUnless { isStreaming }, activeSession.id, activeSession.messages.size,
+        activeSession.messages.sumOf { it.variants.size }, throttledBreakdownTrigger, isStreaming, activeProfile, ownedUtilityRecords) {
         sessionSpendSummary(activeSession, activeProfile)
     }
     val sessionTotalCostUsd = sessionSpend.estimateUsd
     val baseContextBreakdown = remember(
+        activeSession.takeUnless { isStreaming },
         activeSession.id,
+        activeSession.modelOverride,
         activeSession.storySummary,
         activeSession.systemPrompt,
         activeSession.authorsNote,
+        activeSession.authorsNoteDepth,
+        activeSession.fragments,
+        activeSession.activeCard,
         activeSession.workspaceMode,
         activeSession.workspacePath,
         activeAssistant,

@@ -777,6 +777,7 @@ internal fun GlobalSettingsSearchResultsSubpage(
                     if (hitLongDecode) {
                         SepiaToggleRow(
                             title = Strings.backgroundPollStreamRecovery,
+                            subtitle = if (activeProfile.keepsProviderState) Strings.recoversADroppedStreamNeeds else Strings.backgroundPollInactiveNeedsProviderStorage,
                             checked = activeProfile.useBackgroundLongDecode,
                             onCheckedChange = { v -> onUpdateProfile { it.copy(useBackgroundLongDecode = v) } }
                         )

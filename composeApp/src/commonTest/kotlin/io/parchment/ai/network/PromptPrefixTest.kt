@@ -28,4 +28,20 @@ class PromptPrefixTest {
         val quiet = chat("hello")
         assertFalse("Dragons breathe frost." in AiProviderEngine.injectAuthorsNoteIntoHistory(quiet.messages, quiet).last().second)
     }
+
+    @Test fun macrosExpandInKeywordFragmentsAuthorsNoteAndPostHistory() {
+        val card = CharacterOrScenarioCard(name = "Mira", postHistoryInstructions = "Keep {{char}} focused on {{user}}.")
+        val base = chat("a dragon appears").copy(
+            userName = "Arthur",
+            activeCard = card,
+            authorsNote = "{{user}} trusts {{char}}.",
+            fragments = listOf(ContextFragment("1", "Lore", "{{char}} remembers {{user}} near the dragon.", keywords = listOf("dragon"), mode = FragmentActivationMode.KEYWORD))
+        )
+        val joined = AiProviderEngine.injectAuthorsNoteIntoHistory(base.messages, base).joinToString("\n") { it.second }
+        assertTrue("Mira remembers Arthur near the dragon." in joined)
+        assertTrue("Keep Mira focused on Arthur." in joined)
+        assertTrue("Arthur trusts Mira." in joined)
+        assertFalse("{{char}}" in joined)
+        assertFalse("{{user}}" in joined)
+    }
 }

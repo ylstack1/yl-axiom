@@ -4,10 +4,12 @@ import io.ktor.client.request.header
 import io.ktor.client.request.preparePost
 import io.ktor.client.request.setBody
 import io.ktor.client.statement.bodyAsChannel
+import io.ktor.client.statement.bodyAsText
 import io.ktor.http.ContentType
 import io.ktor.http.Url
 import io.ktor.http.contentType
 import io.parchment.ai.platform.McpProcess
+import kotlin.concurrent.Volatile
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
@@ -26,8 +28,10 @@ import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.booleanOrNull
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.contentOrNull
+import kotlinx.serialization.json.intOrNull
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.put
 
@@ -47,8 +51,8 @@ internal interface McpTransport {
 
 /** Streamable HTTP: one POST per message, answered with JSON or an event stream. */
 internal class HttpMcpTransport(private val url: String, private val bearerToken: String) : McpTransport {
-    override var protocolVersion = MCP_HANDSHAKE_VERSION
-    private var sessionId = ""
+    @Volatile override var protocolVersion = MCP_HANDSHAKE_VERSION
+    @Volatile private var sessionId = ""
 
     init {
         val target = Url(url)
@@ -76,6 +80,7 @@ internal class HttpMcpTransport(private val url: String, private val bearerToken
         }.execute { response ->
             response.headers["Mcp-Session-Id"]?.takeIf { it.isNotBlank() }?.let { sessionId = it }
             val status = response.status.value
+            if (status == 404 && sessionId.isNotEmpty()) sessionId = ""
             if (onResponse == null) {
                 if (status !in 200..299) throw McpException("The server rejected a notification (HTTP $status).")
                 return@execute
@@ -88,6 +93,21 @@ internal class HttpMcpTransport(private val url: String, private val bearerToken
                     finished = true
                     onResponse(parsed)
                 }
+            }
+            val respType = response.headers["Content-Type"].orEmpty()
+            if (status !in 200..299 && !respType.contains("text/event-stream", ignoreCase = true)) {
+                val errBody = response.bodyAsText().trim()
+                val errJson = runCatching { AiProviderEngine.json.parseToJsonElement(errBody) as? JsonObject }.getOrNull()
+                    ?.takeIf { "jsonrpc" in it && ("result" in it || "error" in it) }
+                if (errJson != null && errJson["id"] == message["id"]) {
+                    answered = true
+                    finished = true
+                    onResponse(errJson)
+                } else {
+                    val detail = errBody.take(240).takeIf { it.isNotEmpty() }?.let { ": $it" }.orEmpty()
+                    throw McpException("The server returned HTTP $status$detail.")
+                }
+                return@execute
             }
             AiProviderEngine.readSseOrJsonFallback(response.bodyAsChannel(), { finished }, { _, data -> deliver(data) }, { deliver(it) })
             if (!answered) throw McpException("The server returned no answer (HTTP $status).")
@@ -224,10 +244,16 @@ internal class McpClient(private val transport: McpTransport) {
         })
         val result = response["result"] as? JsonObject
         if (result == null) {
-            // A 2026 server has no handshake, so listing tools is what proves it is usable.
-            stateless = true
-            transport.protocolVersion = MCP_STATELESS_VERSION
-            return
+            val errObj = response["error"] as? JsonObject
+            val errCode = (errObj?.get("code") as? JsonPrimitive)?.intOrNull
+            if (errObj == null || errCode == -32601) {
+                // A 2026 server has no handshake, so listing tools is what proves it is usable.
+                stateless = true
+                transport.protocolVersion = MCP_STATELESS_VERSION
+                return
+            }
+            val msg = (errObj["message"] as? JsonPrimitive)?.contentOrNull?.takeIf { it.isNotBlank() } ?: errObj.toString()
+            throw McpException(msg)
         }
         val version = (result["protocolVersion"] as? JsonPrimitive)?.contentOrNull.orEmpty()
         if (version !in MCP_HANDSHAKE_VERSIONS) throw McpException("This server uses an unsupported protocol version ($version).")
@@ -238,6 +264,7 @@ internal class McpClient(private val transport: McpTransport) {
     suspend fun listTools(): List<McpToolInfo> {
         val tools = mutableListOf<McpToolInfo>()
         var cursor: String? = null
+        val seenCursors = hashSetOf<String>()
         repeat(MCP_MAX_PAGES) {
             val page = call("tools/list", buildJsonObject { cursor?.let { put("cursor", it) } })
             (page["tools"] as? JsonArray).orEmpty().forEach { element ->
@@ -247,15 +274,19 @@ internal class McpClient(private val transport: McpTransport) {
                 tools += McpToolInfo(name, (tool["description"] as? JsonPrimitive)?.contentOrNull.orEmpty(),
                     if ("type" in schema) schema else JsonObject(schema + ("type" to JsonPrimitive("object"))))
             }
-            cursor = (page["nextCursor"] as? JsonPrimitive)?.contentOrNull?.takeIf { it.isNotBlank() }
-            if (cursor == null || tools.size >= MCP_MAX_TOOLS) return tools.take(MCP_MAX_TOOLS)
+            val next = (page["nextCursor"] as? JsonPrimitive)?.contentOrNull?.takeIf { it.isNotBlank() }
+            if (next == null || !seenCursors.add(next) || tools.size >= MCP_MAX_TOOLS) return tools.take(MCP_MAX_TOOLS)
+            cursor = next
         }
         return tools.take(MCP_MAX_TOOLS)
     }
 
     suspend fun callTool(name: String, arguments: JsonObject): McpToolResult {
         val result = call("tools/call", buildJsonObject { put("name", name); put("arguments", arguments) })
-        return McpToolResult(renderToolContent(result).take(MCP_MAX_RESULT_CHARS), (result["isError"] as? JsonPrimitive)?.contentOrNull == "true")
+        val isErr = (result["isError"] as? JsonPrimitive)?.let {
+            it.booleanOrNull == true || it.contentOrNull?.equals("true", ignoreCase = true) == true
+        } ?: false
+        return McpToolResult(renderToolContent(result).take(MCP_MAX_RESULT_CHARS), isErr)
     }
 
     val isAlive: Boolean get() = transport.isAlive

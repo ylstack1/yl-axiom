@@ -287,4 +287,37 @@ for line in sys.stdin:
         } finally { root.toFile().deleteRecursively() }
         assertNotNull(PlatformWorkspace.startMcpProcess("exit 0")?.also { it.close() })
     }
+
+    @Test fun handshakeRejectsAuthJsonRpcErrorAndSurfacesHttpErrorBody() = runBlocking<Unit> {
+        val authErrServer = HttpServer.create(InetSocketAddress("127.0.0.1", 0), 0).apply {
+            createContext("/err-rpc") { ex ->
+                ex.requestBody.use { it.readBytes() }
+                val bytes = """{"jsonrpc":"2.0","id":1,"error":{"code":-32001,"message":"Invalid credentials"}}""".toByteArray()
+                ex.responseHeaders.set("Content-Type", "application/json")
+                ex.sendResponseHeaders(200, bytes.size.toLong())
+                ex.responseBody.use { it.write(bytes) }
+            }
+            createContext("/err-http") { ex ->
+                ex.requestBody.use { it.readBytes() }
+                val bytes = "Gateway token rejected".toByteArray()
+                ex.responseHeaders.set("Content-Type", "text/plain")
+                ex.sendResponseHeaders(401, bytes.size.toLong())
+                ex.responseBody.use { it.write(bytes) }
+            }
+            start()
+        }
+        try {
+            val base = "http://127.0.0.1:${authErrServer.address.port}"
+            val rpcFail = assertFailsWith<McpException> {
+                McpClient(HttpMcpTransport("$base/err-rpc", "")).connect()
+            }
+            assertTrue("Invalid credentials" in rpcFail.message.orEmpty(), rpcFail.message)
+            val httpFail = assertFailsWith<McpException> {
+                McpClient(HttpMcpTransport("$base/err-http", "")).connect()
+            }
+            assertTrue("401" in httpFail.message.orEmpty() && "Gateway token rejected" in httpFail.message.orEmpty(), httpFail.message)
+        } finally {
+            authErrServer.stop(0)
+        }
+    }
 }

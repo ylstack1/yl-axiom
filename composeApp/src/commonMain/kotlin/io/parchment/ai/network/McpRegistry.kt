@@ -47,7 +47,10 @@ object McpRegistry {
     private fun qualifiedName(server: McpServerConfig, tool: String, taken: Set<String>): String {
         val base = "$PREFIX${slug(server.name.ifBlank { server.id }).take(20)}__${slug(tool)}".take(MAX_NAME_CHARS)
         if (base !in taken) return base
-        return generateSequence(2) { it + 1 }.map { "${base.take(MAX_NAME_CHARS - 4)}_$it" }.first { it !in taken }
+        return generateSequence(2) { it + 1 }.map { n ->
+            val suffix = "_$n"
+            "${base.take((MAX_NAME_CHARS - suffix.length).coerceAtLeast(1))}$suffix"
+        }.first { it !in taken }
     }
 
     private fun setStatus(id: String, status: McpServerStatus?) {

@@ -1009,7 +1009,7 @@ internal fun ProviderProtocolSubpage(
                     checked = profile.autoFetchModels,
                     onCheckedChange = { af -> onUpdateProfile { it.copy(autoFetchModels = af) } }
                 )
-                if (profile.protocol == ProviderProtocol.GEMINI_INTERACTIONS) {
+                if (profile.protocol == ProviderProtocol.GEMINI_INTERACTIONS || profile.protocol == ProviderProtocol.OPENAI_RESPONSES) {
                     SepiaToggleRow(
                         title = PROVIDER_STORAGE_TITLE,
                         subtitle = PROVIDER_STORAGE_SUBTITLE,
@@ -1022,9 +1022,11 @@ internal fun ProviderProtocolSubpage(
                         checked = profile.useStatefulChaining,
                         onCheckedChange = { sc -> onUpdateProfile { it.copy(useStatefulChaining = sc) } }
                     )
+                }
+                if (profile.protocol == ProviderProtocol.GEMINI_INTERACTIONS) {
                     SepiaToggleRow(
                         title = Strings.backgroundPollStreamRecovery,
-                        subtitle = Strings.recoversADroppedStreamNeeds,
+                        subtitle = if (profile.keepsProviderState) Strings.recoversADroppedStreamNeeds else Strings.backgroundPollInactiveNeedsProviderStorage,
                         checked = profile.useBackgroundLongDecode,
                         onCheckedChange = { bg -> onUpdateProfile { it.copy(useBackgroundLongDecode = bg) } }
                     )

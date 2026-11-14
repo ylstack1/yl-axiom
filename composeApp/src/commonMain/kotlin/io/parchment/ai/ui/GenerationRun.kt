@@ -164,9 +164,11 @@ internal fun GenerationHost.beginGeneration(
         val accumulatedMedia = initialMedia.toMutableList()
         var accumulatedWebSources = initialWebSources
         var localInteractionId = existingTargetVariant?.providerInteractionId.orEmpty()
+        var resumePendingBgId = existingTargetVariant?.pendingBackgroundInteractionId.orEmpty()
         var rawReq = ""
         var rawResp = ""
         var networkDone = false
+        val runFlags = object { @kotlin.concurrent.Volatile var aborted = false }
         val turnRequestStartMs = activity.elapsedMs
         var activeThinkingPhaseStartMs = -1L
         var accumulatedThinkingMs = initialDurationMs
@@ -444,6 +446,7 @@ internal fun GenerationHost.beginGeneration(
                         cachedSigLen = signatureSb.length
                     }
                     patchVariantMemory { v ->
+                        if (runFlags.aborted) return@patchVariantMemory v
                         v.copy(
                             content = cachedVisibleCont,
                             thinkingSummary = cachedVisibleThink,
@@ -458,7 +461,7 @@ internal fun GenerationHost.beginGeneration(
                     }
                 }
                 // Save a checkpoint every 3.5 seconds: switching apps never loses progress, and the disk isn't written on every token.
-                if (now - lastDiskCheckpointMs >= 3500L) {
+                if (!runFlags.aborted && now - lastDiskCheckpointMs >= 3500L) {
                     lastDiskCheckpointMs = now
                     flushCheckpointToDisk(isFinal = false)
                 }
@@ -555,6 +558,7 @@ internal fun GenerationHost.beginGeneration(
                 currentStepThinkingTarget.clear()
                 displayedStepThinkingLen = 0
                 localInteractionId = ""
+                resumePendingBgId = ""
 
                 val compactedHistoryById = plan.compactedHistoryNodes.associateBy { it.id }
                 val toolsSnap = accumulatedTools.toList()
@@ -644,7 +648,7 @@ internal fun GenerationHost.beginGeneration(
                         continueFromAssistantPrefix = AiProviderEngine.stripInlineErrorNotices(networkContentTarget.toString()),
                         initialThinking = networkThinkingTarget.toString(),
                         initialSignature = signatureSb.toString(),
-                        resumeMediaTask = existingTargetVariant?.pendingBackgroundInteractionId.orEmpty(),
+                        resumeMediaTask = resumePendingBgId,
                         spendLimitUsd = appState.preferences.chatSpendLimitUsd,
                         spendBeforeRunUsd = if (appState.preferences.chatSpendLimitUsd > 0.0) sessionSpendSummary(finalSessionForCall, effectiveProfileForApi).towardLimitUsd else 0.0,
                         initialToolCalls = accumulatedTools.toList(),
@@ -854,6 +858,7 @@ internal fun GenerationHost.beginGeneration(
                                 }
                             }
                             is StreamUpdate.Error -> {
+                                runFlags.aborted = true
                                 networkDone = true
                                 pacerJob.cancel()
                                 val partialProse = networkContentTarget.toString()
@@ -876,7 +881,7 @@ internal fun GenerationHost.beginGeneration(
                                         trailingThinking = if (accumulatedTools.isNotEmpty()) currentStepThinkingTarget.toString().trim() else "",
                                         thinkingSignature = signatureSb.toString(),
                                         thinkingDurationMs = thinkingDurationMs,
-                                        toolCalls = accumulatedTools.toList(),
+                                        toolCalls = v.toolCalls,
                                         goalTracker = latestGoalTracker ?: v.goalTracker,
                                         mediaItems = accumulatedMedia.toList(),
                                         webSources = accumulatedWebSources,
@@ -904,12 +909,14 @@ internal fun GenerationHost.beginGeneration(
             }
         } catch (c: kotlinx.coroutines.CancellationException) {
             terminalPhase = if (activeStreamsBySession[sessionId]?.phase == AgentRunPhase.STOPPED) AgentRunPhase.STOPPED else AgentRunPhase.INTERRUPTED
+            runFlags.aborted = true
             networkDone = true
             pacerJob.cancel()
             flushCheckpointToDisk(isFinal = true)
             throw c
         } catch (t: Throwable) {
             terminalPhase = AgentRunPhase.INTERRUPTED
+            runFlags.aborted = true
             networkDone = true
             pacerJob.cancel()
             val partialProse = networkContentTarget.toString()
@@ -927,7 +934,7 @@ internal fun GenerationHost.beginGeneration(
                     trailingThinking = if (accumulatedTools.isNotEmpty()) currentStepThinkingTarget.toString().trim() else "",
                     thinkingSignature = signatureSb.toString(),
                     thinkingDurationMs = thinkingDurationMs,
-                    toolCalls = accumulatedTools.toList(),
+                    toolCalls = v.toolCalls,
                     goalTracker = latestGoalTracker ?: v.goalTracker,
                     mediaItems = accumulatedMedia.toList(),
                     webSources = accumulatedWebSources,

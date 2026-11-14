@@ -233,15 +233,18 @@ internal fun AiProviderEngine.buildFoldedToolHistoryText(
 // Shared helpers: the system prompt builder, the cache-friendly author's note placement,
 // Auth Header Builder, SSE Stream Reader, and Raw JSON Merger.
 // ============================================================================================
+private fun ChatSession.expandMacros(text: String): String {
+    val charName = activeCard?.name?.ifBlank { "Character" } ?: "Character"
+    return text.replace("{{char}}", charName, ignoreCase = true)
+        .replace("{{user}}", userName, ignoreCase = true)
+}
+
 internal fun AiProviderEngine.buildCompiledSystemPrompt(
     session: ChatSession,
     activeGoalState: GoalTrackerState? = null
 ): String {
     val sb = StringBuilder()
-    val charName = session.activeCard?.name?.ifBlank { "Character" } ?: "Character"
-    fun expandMacros(text: String): String =
-        text.replace("{{char}}", charName, ignoreCase = true)
-            .replace("{{user}}", session.userName, ignoreCase = true)
+    fun expandMacros(text: String): String = session.expandMacros(text)
 
     if (session.systemPrompt.isNotBlank()) {
         sb.appendLine(expandMacros(session.systemPrompt.trim()))
@@ -330,13 +333,14 @@ internal fun AiProviderEngine.injectAuthorsNoteIntoHistory(
     }.toMutableList()
     val combinedNote = buildString {
         val cardPost = session.activeCard?.postHistoryInstructions?.trim().orEmpty()
-        if (cardPost.isNotEmpty()) appendLine(cardPost)
-        if (session.authorsNote.isNotBlank()) appendLine(session.authorsNote.trim())
+        if (cardPost.isNotEmpty()) appendLine(session.expandMacros(cardPost))
+        if (session.authorsNote.isNotBlank()) appendLine(session.expandMacros(session.authorsNote.trim()))
     }.trim()
 
     // Matches what is being sent: after a rewind or regenerate the saved chat holds later messages too.
     val recentlySent = baseList.takeLast(8).joinToString("\n") { it.second }
-    val triggeredKnowledge = session.triggeredKeywordFragments(recentlySent).joinToString("\n\n") { "#### ${it.title}\n${it.content.trim()}" }
+    val triggeredKnowledge = session.triggeredKeywordFragments(recentlySent)
+        .joinToString("\n\n") { "#### ${it.title}\n${session.expandMacros(it.content.trim())}" }
     if ((combinedNote.isBlank() && triggeredKnowledge.isBlank()) || baseList.isEmpty()) return baseList
 
     val depth = session.authorsNoteDepth.coerceIn(0, baseList.size)

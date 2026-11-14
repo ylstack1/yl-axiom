@@ -37,6 +37,7 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.booleanOrNull
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonPrimitive
@@ -1018,9 +1019,9 @@ internal fun recoverAppStateFromPartialJson(raw: String): AppStateSnapshot {
     }
 
     val profiles = decodeListItems("profiles", ProviderProfile.serializer()).ifEmpty { fallback.profiles }
-    val activeProfileId = root["activeProfileId"]?.jsonPrimitive?.contentOrNull ?: profiles.first().id
+    val activeProfileId = (root["activeProfileId"] as? JsonPrimitive)?.contentOrNull ?: profiles.first().id
     val assistants = decodeListItems("assistants", AssistantAgent.serializer()).ifEmpty { fallback.assistants }
-    val activeAssistantId = root["activeAssistantId"]?.jsonPrimitive?.contentOrNull ?: assistants.firstOrNull()?.id.orEmpty()
+    val activeAssistantId = (root["activeAssistantId"] as? JsonPrimitive)?.contentOrNull ?: assistants.firstOrNull()?.id.orEmpty()
     val defaultModels = root["defaultModels"]?.let {
         runCatching { compactStateJson.decodeFromJsonElement(DefaultModelConfig.serializer(), it) }.getOrNull()
     } ?: fallback.defaultModels
@@ -1031,16 +1032,16 @@ internal fun recoverAppStateFromPartialJson(raw: String): AppStateSnapshot {
         runCatching { compactStateJson.decodeFromJsonElement(DesktopWindowConfig.serializer(), it) }.getOrNull()
     } ?: fallback.desktopWindow
     val sessions = decodeListItems("sessions", ChatSession.serializer())
-    val activeSessionId = root["activeSessionId"]?.jsonPrimitive?.contentOrNull ?: sessions.firstOrNull()?.id.orEmpty()
-    val openTabs = (root["openTabSessionIds"] as? JsonArray)?.mapNotNull { it.jsonPrimitive.contentOrNull }.orEmpty()
+    val activeSessionId = (root["activeSessionId"] as? JsonPrimitive)?.contentOrNull ?: sessions.firstOrNull()?.id.orEmpty()
+    val openTabs = (root["openTabSessionIds"] as? JsonArray)?.mapNotNull { (it as? JsonPrimitive)?.contentOrNull }.orEmpty()
     val presets = decodeListItems("systemPromptPresets", SystemPromptPreset.serializer())
     val savedCards = decodeListItems("savedCards", CharacterOrScenarioCard.serializer())
     val globalWorldBook = decodeListItems("globalWorldBook", ContextFragment.serializer())
     val theme = root["theme"]?.let {
         runCatching { compactStateJson.decodeFromJsonElement(ThemeConfig.serializer(), it) }.getOrNull()
     }?.let { migrateThemeTypefaceDefaults(it) } ?: fallback.theme
-    val otaRepo = root["otaGithubRepo"]?.jsonPrimitive?.contentOrNull ?: fallback.otaGithubRepo
-    val autoOta = root["autoCheckOtaOnStartup"]?.jsonPrimitive?.booleanOrNull ?: fallback.autoCheckOtaOnStartup
+    val otaRepo = (root["otaGithubRepo"] as? JsonPrimitive)?.contentOrNull ?: fallback.otaGithubRepo
+    val autoOta = (root["autoCheckOtaOnStartup"] as? JsonPrimitive)?.booleanOrNull ?: fallback.autoCheckOtaOnStartup
 
     return AppStateSnapshot(
         profiles = profiles,

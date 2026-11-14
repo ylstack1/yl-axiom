@@ -1861,6 +1861,10 @@ class ParchmentProtocolAndHarnessTest {
         assertFalse(freshProfile.useStatefulChaining)
         assertFalse(freshProfile.storeServerSide)
         assertEquals("", freshProfile.customDialect)
+
+        assertTrue(io.parchment.ai.network.OtaUpdateEngine.compareVersions("2.0.10-rc.10", "2.0.10-rc.2") > 0)
+        assertTrue(io.parchment.ai.network.OtaUpdateEngine.compareVersions("2.0.10", "2.0.10-rc.10") > 0)
+        assertEquals(0, io.parchment.ai.network.OtaUpdateEngine.compareVersions("2.0.10+build5", "2.0.10"))
     }
 
 }
