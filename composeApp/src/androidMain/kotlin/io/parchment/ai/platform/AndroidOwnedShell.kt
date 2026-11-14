@@ -97,7 +97,11 @@ internal object AndroidOwnedShell {
                 check(cancelled?.invoke() != true) { "Shell command stopped or its permission was revoked." }
                 failure.get()?.let { throw it }
                 check(System.nanoTime() < deadline) { "Command timed out after $timeoutSeconds seconds." }
-                if (process.waitFor(100, TimeUnit.MILLISECONDS) && exitCode.get() < 0) error("Owned Shell supervisor exited before reporting an outcome.")
+                if (process.waitFor(100, TimeUnit.MILLISECONDS)) {
+                    controlReader.join(1_000L)
+                    failure.get()?.let { throw it }
+                    if (exitCode.get() < 0) error("Owned Shell supervisor exited before reporting an outcome.")
+                }
             }
             terminateOwnedSession()
             cleanupFailure.get()?.let { throw IllegalStateException("Command finished (exit code ${exitCode.get()}) but the OS could not terminate the owned Shell session.", it) }

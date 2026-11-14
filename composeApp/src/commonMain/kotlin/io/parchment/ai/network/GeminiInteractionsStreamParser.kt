@@ -52,6 +52,7 @@ internal class GeminiInteractionsRoundParser(
     private val pendingFnArgsByIndex = mutableMapOf<Int, Pair<String, Pair<String, StringBuilder>>>()
     private val stepTypeByIndex = mutableMapOf<Int, String>()
     private var fallbackStreamStepType = ""
+    private var streamedImagesCount = 0
 
     fun reset() {
         turnToolCalls.clear()
@@ -66,6 +67,7 @@ internal class GeminiInteractionsRoundParser(
         pendingFnArgsByIndex.clear()
         stepTypeByIndex.clear()
         fallbackStreamStepType = ""
+        streamedImagesCount = 0
     }
 
     fun flushPendingFunctionCalls() {
@@ -86,7 +88,7 @@ internal class GeminiInteractionsRoundParser(
         val idCandidate = interactionSub?.get("id")?.jsonPrimitive?.contentOrNull
             ?: evObj["interaction_id"]?.jsonPrimitive?.contentOrNull
             ?: evObj["id"]?.jsonPrimitive?.contentOrNull
-        if (profile.keepsProviderState && !idCandidate.isNullOrBlank()) {
+        if (!idCandidate.isNullOrBlank()) {
             onInteractionIdObserved(idCandidate)
         }
 
@@ -103,15 +105,16 @@ internal class GeminiInteractionsRoundParser(
 
         when (type) {
             "interaction.start", "interaction.created", "interaction.status_update" -> {
+                val persistedId = if (profile.keepsProviderState) idCandidate.orEmpty() else ""
                 onUsage(
                     usageRequestIdProvider(),
-                    idCandidate.orEmpty(),
+                    persistedId,
                     UsageDialect.GEMINI_INTERACTIONS,
                     parseProviderUsage(UsageDialect.GEMINI_INTERACTIONS, interactionSub?.get("usage") as? JsonObject)
                 )
                 val st = interactionSub?.get("status")?.jsonPrimitive?.contentOrNull
                     ?: evObj["status"]?.jsonPrimitive?.contentOrNull ?: "streaming"
-                onStatus(Strings.interaction(st), currentInteractionId())
+                onStatus(Strings.interaction(st), if (profile.keepsProviderState) currentInteractionId() else "")
             }
             "content.start", "step.start" -> handleContentStart(evObj)
             "content.delta", "step.delta" -> handleContentDelta(evObj)
@@ -124,13 +127,30 @@ internal class GeminiInteractionsRoundParser(
                 error("Gemini Interactions Stream Error: $msg")
             }
             else -> {
-                if (evObj.containsKey("outputs") || evObj.containsKey("steps")) {
+                val unknownStatus = (evObj["status"] as? JsonPrimitive)?.contentOrNull.orEmpty()
+                if (evObj.containsKey("outputs") || evObj.containsKey("steps") ||
+                    unknownStatus in setOf("completed", "requires_action", "requires_continuation", "incomplete", "failed", "cancelled", "expired")
+                ) {
                     streamFinished = true
-                    roundStatus = evObj["status"]?.jsonPrimitive?.contentOrNull.orEmpty()
-                    roundContinuationToken = evObj["continuation_token"]?.jsonPrimitive?.contentOrNull.orEmpty()
+                    roundStatus = unknownStatus
+                    roundContinuationToken = (evObj["continuation_token"] as? JsonPrimitive)?.contentOrNull.orEmpty()
+                    throwIfInteractionFailed(roundStatus, evObj, dataLine)
+                    if (roundStatus == "incomplete") onOutputLimit()
                     applyCompletedInteractionObject(evObj)
                 }
             }
+        }
+    }
+
+    private fun throwIfInteractionFailed(status: String, obj: JsonObject, fallbackDetail: String = "") {
+        if (status == "failed" || status == "cancelled" || status == "expired") {
+            val errObj = obj["error"] as? JsonObject
+            val msg = (errObj?.get("message") as? JsonPrimitive)?.contentOrNull
+                ?: fallbackDetail.ifBlank { "status=$status" }
+            if (status == "cancelled" || status == "expired") {
+                throw AiProviderEngine.NoRetryException("Gemini Interactions $status: $msg")
+            }
+            error("Gemini Interactions $status: $msg")
         }
     }
 
@@ -156,11 +176,13 @@ internal class GeminiInteractionsRoundParser(
                 error("Gemini Interactions Poll HTTP ${pollResp.status.value}: $pollText")
             }
             interactionObj = engine.json.parseToJsonElement(pollText).jsonObject
-            status = interactionObj["status"]?.jsonPrimitive?.contentOrNull ?: "completed"
+            status = (interactionObj["status"] as? JsonPrimitive)?.contentOrNull ?: "completed"
         }
-        if (!receivedAnyStreamContent && interactionObj.isNotEmpty()) {
+        throwIfInteractionFailed(status, interactionObj)
+        if (interactionObj.isNotEmpty()) {
             roundStatus = status
-            roundContinuationToken = interactionObj["continuation_token"]?.jsonPrimitive?.contentOrNull.orEmpty()
+            roundContinuationToken = (interactionObj["continuation_token"] as? JsonPrimitive)?.contentOrNull.orEmpty()
+            if (roundStatus == "incomplete") onOutputLimit()
             applyCompletedInteractionObject(interactionObj)
         }
     }
@@ -172,18 +194,35 @@ internal class GeminiInteractionsRoundParser(
     ) {
         onRawWire(requestJsonStr, fullBody)
         val rootObj = engine.json.parseToJsonElement(fullBody).jsonObject
-        val id = rootObj["id"]?.jsonPrimitive?.contentOrNull ?: ""
-        if (profile.keepsProviderState && id.isNotBlank()) {
+        val errObj = rootObj["error"] as? JsonObject
+        if (errObj != null) {
+            val msg = (errObj["message"] as? JsonPrimitive)?.contentOrNull ?: fullBody
+            error("Gemini Interactions Error: $msg")
+        }
+        val id = (rootObj["id"] as? JsonPrimitive)?.contentOrNull ?: ""
+        if (id.isNotBlank()) {
             onInteractionIdObserved(id)
         }
-        val st = rootObj["status"]?.jsonPrimitive?.contentOrNull ?: "completed"
+        val st = (rootObj["status"] as? JsonPrimitive)?.contentOrNull ?: "completed"
         roundStatus = st
-        roundContinuationToken = rootObj["continuation_token"]?.jsonPrimitive?.contentOrNull.orEmpty()
-        val trackedId = currentInteractionId()
-        if ((st == "in_progress" || st == "queued" || st == "processing") && trackedId.isNotBlank()) {
+        roundContinuationToken = (rootObj["continuation_token"] as? JsonPrimitive)?.contentOrNull.orEmpty()
+        throwIfInteractionFailed(st, rootObj, fullBody)
+        val trackedId = id.ifBlank { currentInteractionId() }
+        if (profile.keepsProviderState && (st == "in_progress" || st == "queued" || st == "processing") && trackedId.isNotBlank()) {
             pollUntilComplete(trackedId, pollBasePath, requestJsonStr)
         } else {
+            if (st == "incomplete") onOutputLimit()
             applyCompletedInteractionObject(rootObj)
+        }
+    }
+
+    fun appendContinuationOutputSteps(extraLoopSteps: MutableList<JsonObject>) {
+        val cleanSig = sanitizeGeminiThoughtSignature(roundThoughtSig.toString(), forFunctionCall = false)
+        if (cleanSig.isNotEmpty()) {
+            extraLoopSteps.add(geminiThoughtStep(signature = cleanSig, summary = roundThoughtText.toString()))
+        }
+        if (roundModelText.isNotEmpty()) {
+            extraLoopSteps.add(geminiModelOutputStep(roundModelText.toString()))
         }
     }
 
@@ -397,10 +436,11 @@ internal class GeminiInteractionsRoundParser(
     private suspend fun handleInteractionCompleted(evObj: JsonObject, interactionSub: JsonObject?) {
         streamFinished = true
         val completedObj = interactionSub ?: evObj
-        roundStatus = completedObj["status"]?.jsonPrimitive?.contentOrNull
-            ?: evObj["status"]?.jsonPrimitive?.contentOrNull.orEmpty()
-        roundContinuationToken = completedObj["continuation_token"]?.jsonPrimitive?.contentOrNull
-            ?: evObj["continuation_token"]?.jsonPrimitive?.contentOrNull.orEmpty()
+        roundStatus = (completedObj["status"] as? JsonPrimitive)?.contentOrNull
+            ?: (evObj["status"] as? JsonPrimitive)?.contentOrNull.orEmpty()
+        roundContinuationToken = (completedObj["continuation_token"] as? JsonPrimitive)?.contentOrNull
+            ?: (evObj["continuation_token"] as? JsonPrimitive)?.contentOrNull.orEmpty()
+        throwIfInteractionFailed(roundStatus, completedObj)
         if (roundStatus == "incomplete") onOutputLimit()
         flushPendingFunctionCalls()
         val itemsArray = (completedObj["steps"] as? JsonArray) ?: (completedObj["outputs"] as? JsonArray)
@@ -433,31 +473,66 @@ internal class GeminiInteractionsRoundParser(
             emitContentDelta(finalText.substring(streamed.length))
         }
         val usageObj = completedObj["usage"] as? JsonObject
+        val persistedId = if (profile.keepsProviderState) {
+            (completedObj["id"] as? JsonPrimitive)?.contentOrNull ?: currentInteractionId()
+        } else ""
         onUsage(
             usageRequestIdProvider(),
-            completedObj["id"]?.jsonPrimitive?.contentOrNull ?: currentInteractionId(),
+            persistedId,
             UsageDialect.GEMINI_INTERACTIONS,
             parseProviderUsage(UsageDialect.GEMINI_INTERACTIONS, usageObj, isFinal = true, response = completedObj)
         )
     }
 
     private suspend fun applyCompletedInteractionObject(interactionObj: JsonObject) {
+        val streamedText = roundModelText.toString()
+        val streamedThought = roundThoughtText.toString()
+        val polledText = StringBuilder()
+        val polledThought = StringBuilder()
+        var polledImageCount = 0
         engine.parseCompletedGeminiInteractionObject(
             interactionObj = interactionObj,
             onFirstToken = onFirstToken,
             onThinking = { th, sig ->
-                if (th.isNotEmpty()) roundThoughtText.append(th)
+                val thoughtDelta = if (th.isNotEmpty()) {
+                    val prevLen = polledThought.length
+                    polledThought.append(th)
+                    val combined = polledThought.toString()
+                    when {
+                        streamedThought.isEmpty() -> th
+                        combined.length <= streamedThought.length && streamedThought.startsWith(combined) -> ""
+                        combined.startsWith(streamedThought) -> combined.substring(maxOf(prevLen, streamedThought.length))
+                        else -> if (prevLen >= streamedThought.length) th else ""
+                    }
+                } else ""
+                if (thoughtDelta.isNotEmpty()) roundThoughtText.append(thoughtDelta)
                 val uniqueSig = emitUniqueRoundSig(sig)
-                if (th.isNotEmpty() || uniqueSig.isNotEmpty()) {
-                    onThinking(th, uniqueSig)
+                if (thoughtDelta.isNotEmpty() || uniqueSig.isNotEmpty()) {
+                    onThinking(thoughtDelta, uniqueSig)
                 }
             },
             onContent = { txt ->
-                receivedAnyStreamContent = true
-                roundModelText.append(txt)
-                onContent(txt)
+                val prevLen = polledText.length
+                polledText.append(txt)
+                val combined = polledText.toString()
+                val deltaToEmit = when {
+                    streamedText.isEmpty() -> txt
+                    combined.length <= streamedText.length && streamedText.startsWith(combined) -> ""
+                    combined.startsWith(streamedText) -> combined.substring(maxOf(prevLen, streamedText.length))
+                    else -> if (prevLen >= streamedText.length) txt else ""
+                }
+                if (deltaToEmit.isNotEmpty()) {
+                    receivedAnyStreamContent = true
+                    roundModelText.append(deltaToEmit)
+                    onContent(deltaToEmit)
+                }
             },
-            onMedia = onMedia,
+            onMedia = { item ->
+                if (polledImageCount++ >= streamedImagesCount) {
+                    streamedImagesCount++
+                    onMedia(item)
+                }
+            },
             onFunctionCall = ::addUniqueToolCall,
             onUsage = { id, usage ->
                 if (profile.keepsProviderState && id.isNotBlank()) onInteractionIdObserved(id)
@@ -492,9 +567,10 @@ internal class GeminiInteractionsRoundParser(
     }
 
     private suspend fun emitImageFromObject(obj: JsonObject) {
-        val b64 = obj["data"]?.jsonPrimitive?.contentOrNull ?: ""
-        val uri = obj["uri"]?.jsonPrimitive?.contentOrNull ?: obj["url"]?.jsonPrimitive?.contentOrNull ?: ""
-        val mime = obj["mime_type"]?.jsonPrimitive?.contentOrNull ?: "image/png"
+        val b64 = (obj["data"] as? JsonPrimitive)?.contentOrNull ?: ""
+        val uri = (obj["uri"] as? JsonPrimitive)?.contentOrNull ?: (obj["url"] as? JsonPrimitive)?.contentOrNull ?: ""
+        val mime = (obj["mime_type"] as? JsonPrimitive)?.contentOrNull ?: "image/png"
+        if (b64.isNotBlank() || uri.isNotBlank()) streamedImagesCount++
         engine.saveAndEmitImage(b64, uri, mime, profile.mediaAspectRatio, "", onMedia)
     }
 
@@ -574,7 +650,7 @@ internal suspend fun AiProviderEngine.parseCompletedGeminiInteractionObject(
                     when (s) {
                         is JsonPrimitive -> s.content
                         is JsonArray -> s.joinToString("\n") {
-                            (it as? JsonObject)?.get("text")?.jsonPrimitive?.contentOrNull ?: it.toString()
+                            ((it as? JsonObject)?.get("text") as? JsonPrimitive)?.contentOrNull ?: it.toString()
                         }
                         else -> s.toString()
                     }

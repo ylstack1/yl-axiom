@@ -147,6 +147,21 @@ internal fun HttpRequestBuilder.applyProviderAuthAndCustomHeaders(profile: Provi
     }
 }
 
+internal fun ProviderProfile.hasCustomHeader(headerName: String): Boolean {
+    if (customHeadersRaw.isBlank()) return false
+    return customHeadersRaw.lines().any { line ->
+        val trimmed = line.trim()
+        trimmed.isNotEmpty() && !trimmed.startsWith("#") && trimmed.contains(":") &&
+            trimmed.substringBefore(":").trim().equals(headerName, ignoreCase = true)
+    }
+}
+
+internal fun HttpRequestBuilder.applyAnthropicVersionHeader(profile: ProviderProfile) {
+    if (!profile.hasCustomHeader("anthropic-version")) {
+        header("anthropic-version", "2023-06-01")
+    }
+}
+
 private fun HttpRequestBuilder.applyNativeAuthHeaders(profile: ProviderProfile, key: String) {
     when (profile.protocol) {
         ProviderProtocol.GEMINI_INTERACTIONS -> {
@@ -169,10 +184,7 @@ private fun HttpRequestBuilder.applyNativeAuthHeaders(profile: ProviderProfile, 
                     header("x-goog-api-key", key)
                     if (key.startsWith("sk-")) header("Authorization", "Bearer $key")
                 }
-                CUSTOM_DIALECT_ANTHROPIC -> {
-                    header("x-api-key", key)
-                    header("anthropic-version", "2023-06-01")
-                }
+                CUSTOM_DIALECT_ANTHROPIC -> header("x-api-key", key)
                 else -> header("Authorization", "Bearer $key")
             }
         }

@@ -91,6 +91,7 @@ class ChatArchiveImportTest {
         assertRejected(zip("chat-1/media/ok.png" to byteArrayOf(1), "../../evil/media/x.png" to byteArrayOf(2), "chat.json" to chatJson), "unsafe")
         assertFalse(media("ok.png").exists())
         assertRejected(zip("chat.json" to chatJson, "chat-1/media/NUL.txt" to byteArrayOf(1)), "unsafe")
+        assertRejected(zip("chat.json" to chatJson, "chat-1/media/COM0.png" to byteArrayOf(1)), "unsafe")
         assertRejected(zip("chat.json" to chatJson, "chat-1/media/evil.exe." to byteArrayOf(1)), "unsafe")
     }
 

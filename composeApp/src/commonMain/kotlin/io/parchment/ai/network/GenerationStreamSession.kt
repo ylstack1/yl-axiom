@@ -8,6 +8,7 @@ import io.parchment.ai.model.ChatSession
 import io.parchment.ai.model.GeneratedMediaItem
 import io.parchment.ai.model.GoalTrackerState
 import io.parchment.ai.model.MessageNode
+import io.parchment.ai.model.MessageRole
 import io.parchment.ai.model.ProviderProfile
 import io.parchment.ai.model.ProviderProtocol
 import io.parchment.ai.model.TokenMetrics
@@ -107,10 +108,17 @@ internal class GenerationStreamSession(
         circuitBreaker.goalState?.let { state.emitGoalProgress(it) }
 
         try {
+            val wireProtocol = engine.resolveWireProtocol(profile)
+            val sanitizedHistory = engine.sanitizeContextNodes(historyNodes)
+            val lastAssistant = sanitizedHistory.lastOrNull { it.role == MessageRole.ASSISTANT }
+            val willReusePriorChain = profile.useStatefulChaining &&
+                currentContinuePrefix.isBlank() &&
+                lastAssistant != null &&
+                engine.reusableProviderChainId(lastAssistant.activeVariant, wireProtocol, model).isNotBlank()
             activeBaseHistoryNodes = engine.applyCrossProviderReasoningHandoff(
                 nodes = historyNodes,
-                currentProtocol = engine.resolveWireProtocol(profile),
-                chainingActive = profile.useStatefulChaining
+                currentProtocol = wireProtocol,
+                chainingActive = willReusePriorChain
             )
 
             while (true) {
@@ -387,7 +395,7 @@ internal class GenerationStreamSession(
                             onStatus = { st -> state.emitStatus(st) },
                             onGoalProgress = state::emitGoalProgress,
                             onFirstToken = state::recordTokenActivity,
-                            onThinking = state::handleSimpleThinking,
+                            onThinking = state::handleSignedThinking,
                             onContent = state::handleContentDelta,
                             onMedia = state::recordGeneratedMedia,
                             onOutputLimit = state::markOutputLimitReached,
@@ -459,8 +467,12 @@ internal class GenerationStreamSession(
         announceRouting: Boolean
     ): Boolean {
         val hint = engine.detectMediaEndpointRedirectFromError(error)
+        val allowBlindImageFallback = fallbackInterleavedImage &&
+            state.hasNoMediaOrTextYet &&
+            !engine.isHardAuthOrQuotaError(error) &&
+            !engine.isTransientOrProxyTimeoutError(error)
         return when {
-            hint == "image" || fallbackInterleavedImage -> {
+            hint == "image" || allowBlindImageFallback -> {
                 engine.recordDiscoveredModality(model, listOf("image"))
                 if (announceRouting) state.emitStatus("Model requires Image Generation endpoint — routing automatically…")
                 runUniversalMediaGeneration(forceVideo = false)

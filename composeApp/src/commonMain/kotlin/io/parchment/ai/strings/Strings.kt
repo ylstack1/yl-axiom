@@ -911,4 +911,12 @@ internal object Strings {
     val usageReportedCostSuffix = " • reported cost"
     val usageEstimateSuffix = " • estimate"
     val estimatedCost = "Estimated cost"
+    val endpointRejectedBackgroundFlagRetryingWithout = "Endpoint rejected background execution flag — retrying in standard streaming mode…"
+    val endpointRejectedXhighThinkingRetryingWith = "Model rejected xhigh thinking level — stepping down to high…"
+    val endpointRejectedReasoningSummaryRetryingWithout = "Endpoint rejected reasoning summary — retrying without summary…"
+    val endpointRejectedReasoningContentRetryingWithout = "Endpoint rejected reasoning_content in history — retrying without reasoning_content…"
+    val backgroundPollInactiveNeedsProviderStorage = "Recovers a dropped stream and enables server-side background execution (inactive until provider storage above is turned on)."
+    val collapseCode = "Collapse code"
+    val expandCode = "Expand code"
+    val copyTable = "Copy table"
 }

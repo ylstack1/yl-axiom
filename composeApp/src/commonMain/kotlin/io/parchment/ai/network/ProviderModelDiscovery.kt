@@ -1,7 +1,6 @@
 package io.parchment.ai.network
 
 import io.ktor.client.request.get
-import io.ktor.client.request.header
 import io.ktor.client.statement.bodyAsText
 import io.ktor.http.isSuccess
 import io.ktor.serialization.kotlinx.json.json
@@ -11,7 +10,6 @@ import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.contentOrNull
-import kotlinx.serialization.json.jsonPrimitive
 
 // Model listing and discovered input/output capabilities.
 
@@ -21,6 +19,7 @@ import kotlinx.serialization.json.jsonPrimitive
  */
 suspend fun AiProviderEngine.fetchAvailableModels(profile: ProviderProfile): Result<List<String>> = runCatching {
     val base = profile.baseUrl.trim().trimEnd('#').trimEnd('/')
+    val wireProtocol = resolveWireProtocol(profile)
     val hasVersionSuffix = Regex("/(?:api/)?(?:paas/)?v\\d+(?:beta\\d*|alpha\\d*)?$", RegexOption.IGNORE_CASE)
         .containsMatchIn(base)
     val candidateUrls = when {
@@ -29,12 +28,12 @@ suspend fun AiProviderEngine.fetchAvailableModels(profile: ProviderProfile): Res
             "$base/models",
             "${base.replace(Regex("/(?:api/)?(?:paas/)?v\\d+(?:beta\\d*|alpha\\d*)?$", RegexOption.IGNORE_CASE), "")}/v1/models"
         ).distinct()
-        profile.protocol == ProviderProtocol.GEMINI_INTERACTIONS -> listOf(
+        wireProtocol == ProviderProtocol.GEMINI_INTERACTIONS -> listOf(
             "$base/v1beta/models?pageSize=200",
             "$base/v1/models",
             "$base/models"
         )
-        profile.protocol == ProviderProtocol.ANTHROPIC_MESSAGES -> listOf(
+        wireProtocol == ProviderProtocol.ANTHROPIC_MESSAGES -> listOf(
             "$base/v1/models?limit=100",
             "$base/v1/models",
             "$base/models"
@@ -52,8 +51,8 @@ suspend fun AiProviderEngine.fetchAvailableModels(profile: ProviderProfile): Res
         val respResult = runCatching {
             httpClient.get(url) {
                 applyAuthAndCustomHeaders(profile)
-                if (profile.protocol == ProviderProtocol.ANTHROPIC_MESSAGES) {
-                    header("anthropic-version", "2023-06-01")
+                if (wireProtocol == ProviderProtocol.ANTHROPIC_MESSAGES) {
+                    applyAnthropicVersionHeader(profile)
                 }
             }
         }
@@ -226,27 +225,27 @@ internal fun AiProviderEngine.parseModelsListJson(bodyText: String): List<String
     fun extractModalitiesFromModelObject(item: JsonObject): List<String> {
         val outList = mutableListOf<String>()
         (item["output_modalities"] as? JsonArray)?.forEach {
-            it.jsonPrimitive.contentOrNull?.trim()?.lowercase()?.takeIf { s -> s.isNotEmpty() }?.let(outList::add)
+            (it as? JsonPrimitive)?.contentOrNull?.trim()?.lowercase()?.takeIf { s -> s.isNotEmpty() }?.let(outList::add)
         }
         val modObj = item["modalities"] as? JsonObject
         (modObj?.get("output") as? JsonArray)?.forEach {
-            it.jsonPrimitive.contentOrNull?.trim()?.lowercase()?.takeIf { s -> s.isNotEmpty() }?.let(outList::add)
+            (it as? JsonPrimitive)?.contentOrNull?.trim()?.lowercase()?.takeIf { s -> s.isNotEmpty() }?.let(outList::add)
         }
         val archObj = item["architecture"] as? JsonObject
         (archObj?.get("output_modalities") as? JsonArray)?.forEach {
-            it.jsonPrimitive.contentOrNull?.trim()?.lowercase()?.takeIf { s -> s.isNotEmpty() }?.let(outList::add)
+            (it as? JsonPrimitive)?.contentOrNull?.trim()?.lowercase()?.takeIf { s -> s.isNotEmpty() }?.let(outList::add)
         }
-        val archMod = archObj?.get("modality")?.jsonPrimitive?.contentOrNull?.lowercase().orEmpty()
+        val archMod = (archObj?.get("modality") as? JsonPrimitive)?.contentOrNull?.lowercase().orEmpty()
         if (archMod.contains("->")) {
             val rhs = archMod.substringAfter("->")
             rhs.split("+", ",", "/").map { it.trim() }.filter { it.isNotEmpty() }.forEach(outList::add)
         }
-        val modelType = (item["type"]?.jsonPrimitive?.contentOrNull
-            ?: item["mode"]?.jsonPrimitive?.contentOrNull
-            ?: item["task_type"]?.jsonPrimitive?.contentOrNull
-            ?: item["task"]?.jsonPrimitive?.contentOrNull)?.trim()?.lowercase().orEmpty()
+        val modelType = ((item["type"] as? JsonPrimitive)?.contentOrNull
+            ?: (item["mode"] as? JsonPrimitive)?.contentOrNull
+            ?: (item["task_type"] as? JsonPrimitive)?.contentOrNull
+            ?: (item["task"] as? JsonPrimitive)?.contentOrNull)?.trim()?.lowercase().orEmpty()
         val tags = (item["tags"] as? JsonArray)
-            ?.mapNotNull { it.jsonPrimitive.contentOrNull?.trim()?.lowercase() }.orEmpty()
+            ?.mapNotNull { (it as? JsonPrimitive)?.contentOrNull?.trim()?.lowercase() }.orEmpty()
         when {
             modelType.contains("video") || tags.any { it.contains("video") } -> outList.add("video")
             modelType.contains("image") || tags.any { it.contains("image") } -> outList.add("image")
@@ -257,7 +256,7 @@ internal fun AiProviderEngine.parseModelsListJson(bodyText: String): List<String
         }
         val genMethods = ((item["supportedGenerationMethods"] as? JsonArray)
             ?: (item["supported_generation_methods"] as? JsonArray))
-            ?.mapNotNull { it.jsonPrimitive.contentOrNull?.lowercase() }.orEmpty()
+            ?.mapNotNull { (it as? JsonPrimitive)?.contentOrNull?.lowercase() }.orEmpty()
         if (genMethods.any { it.contains("bidi") }) {
             outList.add("text")
             outList.add("audio")
@@ -280,9 +279,9 @@ internal fun AiProviderEngine.parseModelsListJson(bodyText: String): List<String
                     if (s.isNotEmpty()) results.add(s.removePrefix("models/"))
                 }
                 is JsonObject -> {
-                    val idCandidate = item["id"]?.jsonPrimitive?.contentOrNull
-                        ?: item["name"]?.jsonPrimitive?.contentOrNull
-                        ?: item["model"]?.jsonPrimitive?.contentOrNull
+                    val idCandidate = (item["id"] as? JsonPrimitive)?.contentOrNull
+                        ?: (item["name"] as? JsonPrimitive)?.contentOrNull
+                        ?: (item["model"] as? JsonPrimitive)?.contentOrNull
                     if (!idCandidate.isNullOrBlank()) {
                         val cleanId = idCandidate.trim().removePrefix("models/")
                         results.add(cleanId)
@@ -291,10 +290,10 @@ internal fun AiProviderEngine.parseModelsListJson(bodyText: String): List<String
                             recordDiscoveredModality(cleanId, discovered)
                         }
                         val infoObj = item["info"] as? JsonObject
-                        val vendor = item["owned_by"]?.jsonPrimitive?.contentOrNull
-                            ?: item["provider"]?.jsonPrimitive?.contentOrNull
-                            ?: item["developer"]?.jsonPrimitive?.contentOrNull
-                            ?: infoObj?.get("developer")?.jsonPrimitive?.contentOrNull
+                        val vendor = (item["owned_by"] as? JsonPrimitive)?.contentOrNull
+                            ?: (item["provider"] as? JsonPrimitive)?.contentOrNull
+                            ?: (item["developer"] as? JsonPrimitive)?.contentOrNull
+                            ?: (infoObj?.get("developer") as? JsonPrimitive)?.contentOrNull
                         if (!vendor.isNullOrBlank()) {
                             recordDiscoveredVendor(cleanId, vendor)
                         }

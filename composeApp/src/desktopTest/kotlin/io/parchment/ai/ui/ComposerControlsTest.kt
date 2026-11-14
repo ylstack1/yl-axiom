@@ -98,5 +98,37 @@ class ComposerControlsTest {
         assertEquals(5, sliderIndexAt(500f, 100f, 10f, 6))
         assertEquals(2, sliderIndexAt(42f, 100f, 10f, 6))
         assertEquals(0, sliderIndexAt(50f, 0f, 0f, 1))
+        assertEquals(0, sliderIndexAt(40f, 100f, 10f, 0))
+    }
+
+    @Test fun speechSpeedCustomFieldToleratesClampedInputAndClearsOnSlider() {
+        var speed by mutableStateOf(1.0)
+        scene { SpeechSpeedControl(speed) { speed = it } }.use { scene ->
+            settle(scene, 1_000_000_000L)
+            open(scene, "1.0x")
+            var frameNs = 2_200_000_000L
+            fun setCustom(raw: String) {
+                val field = nodes(scene).single { it.config.contains(SemanticsActions.SetText) }
+                assertTrue(requireNotNull(field.config.getOrNull(SemanticsActions.SetText)?.action)
+                    .invoke(androidx.compose.ui.text.AnnotatedString(raw)))
+                frameNs += 200_000_000L
+                settle(scene, frameNs)
+            }
+            fun customText(): String = nodes(scene).single { it.config.contains(SemanticsActions.SetText) }
+                .config.getOrNull(SemanticsProperties.EditableText)?.text.orEmpty()
+
+            setCustom("0")
+            assertEquals(0.25, speed)
+            assertEquals("0", customText())
+
+            setCustom("1.37")
+            assertEquals(1.37, speed)
+            assertEquals("1.37", customText())
+
+            setSlider(scene, 0f)
+            settle(scene, 3_500_000_000L)
+            assertEquals(0.5, speed)
+            assertEquals("", customText())
+        }
     }
 }

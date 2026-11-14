@@ -141,4 +141,23 @@ class HistoryReplayContractTest {
         assertEquals("", AiProviderEngine.reusableProviderChainId(previous, ProviderProtocol.OPENAI_RESPONSES, "model-b"))
         assertEquals("", AiProviderEngine.reusableProviderChainId(previous, ProviderProtocol.GEMINI_INTERACTIONS, "model-a"))
     }
+
+    @Test fun interactionsReplayKeepsCallAndResultToolNamesAlignedWhenBlank() {
+        val turn = MessageVariant(id = "v", content = "done", toolCalls = listOf(ToolCallRecord(id = "c1", name = "", argumentsJson = "{}", resultText = "ok")))
+        val built = AiProviderEngine.buildGeminiInteractionsTurnsArray(history(turn), session, "").map { it.jsonObject }
+        val callName = built.first { it.field("type") == "function_call" }.field("name")
+        val resultName = built.first { it.field("type") == "function_result" }.field("name")
+        assertEquals("tool", callName)
+        assertEquals(callName, resultName)
+    }
+
+    @Test fun modelRegistrySurvivesUnexpectedNonPrimitiveTags() {
+        val catalog = mutableMapOf<String, ModelPricingSpec>()
+        ModelsDevClient.parseAimlApiModelsIntoCatalog(
+            """{"data":[{"id":"acme/video-gen","type":"video","tags":[{"nested":1},"video"]},{"id":"acme/good-chat","type":"chat","tags":["chat"]}]}""",
+            catalog
+        )
+        assertNotNull(catalog["good-chat"])
+        assertEquals(listOf("video"), catalog["video-gen"]?.outputModalities)
+    }
 }

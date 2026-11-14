@@ -142,4 +142,41 @@ class CardInteropTest {
         val card = CharacterOrScenarioCard(name = "A", sourceData = "{not json", sourceFormat = "chara_card_v3")
         assertEquals("A", data(exported(card)).getValue("name").jsonPrimitive.content)
     }
+
+    @Test fun jsonNullFieldsAndNonPrimitiveBooleansDoNotCorruptImport() {
+        val raw = """{"spec":"chara_card_v3","data":{"name":"Null Safe","personality":null,"scenario":null,"tags":[null,"noir",42],"character_book":{"entries":[{"name":null,"content":"lore","keys":["moon"],"enabled":{"bad":1},"constant":null}]}}}"""
+        val card = CardAndPromptCodec.parseCardJson(raw)
+        assertEquals("Null Safe", card.name)
+        assertEquals("", card.personality)
+        assertEquals("", card.scenario)
+        assertEquals(listOf("noir", "42"), card.tags)
+        assertEquals(1, card.embeddedFragments.size)
+        assertEquals(io.parchment.ai.model.FragmentActivationMode.KEYWORD, card.embeddedFragments.single().mode)
+
+        val promptRaw = """{"name":null,"description":null,"systemPrompt":"Keep it brief.","temperature":{"bad":1},"top_p":null}"""
+        val prompt = CardAndPromptCodec.parseSystemPromptJson(promptRaw)
+        assertEquals("", prompt.description)
+        assertEquals("Keep it brief.", prompt.systemPrompt)
+        assertEquals(0.85, prompt.suggestedTemperature)
+        assertEquals(0.95, prompt.suggestedTopP)
+    }
+
+    @Test fun wrappedAndUrlSafeBase64PngChunksDecodeCleanly() {
+        val json = """{"spec":"chara_card_v2","data":{"name":"UrlSafe","personality":"????>>>??","first_mes":"Hi"}}"""
+        val wrappedUrlSafe = Base64.encode(json.encodeToByteArray())
+            .replace('+', '-')
+            .replace('/', '_')
+            .trimEnd('=')
+            .chunked(24)
+            .joinToString("\n")
+        val png = CardAndPromptCodec.injectTextChunksIntoPng(
+            CardAndPromptCodec.generateMinimalSepiaPng(),
+            mapOf("chara" to wrappedUrlSafe)
+        )
+        val imported = assertIs<CardAndPromptCodec.ImportResult.CardImported>(
+            CardAndPromptCodec.importFromBytes("card.png", png).getOrThrow()
+        )
+        assertEquals("UrlSafe", imported.card.name)
+        assertEquals("????>>>??", imported.card.personality)
+    }
 }

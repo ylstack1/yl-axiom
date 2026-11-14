@@ -1337,7 +1337,7 @@ fun ParchmentApp(
                                         onTranslateNode = { nodeIndex ->
                                             triggerTranslateNode(nodeIndex)
                                         },
-                                        onContinueAssistantNode = ::continueAssistantNodeAt,
+                                        onContinueAssistantNode = { idx -> continueAssistantNodeAt(idx, activeSession.id) },
                                         jumpToNodeId = pendingPinJump?.takeIf { it.sessionId == activeSession.id }?.nodeId.orEmpty(),
                                         onJumpHandled = { pendingPinJump = null },
                                         onTogglePinnedReply = { nodeId -> togglePinnedReply(activeSession.id, nodeId) }

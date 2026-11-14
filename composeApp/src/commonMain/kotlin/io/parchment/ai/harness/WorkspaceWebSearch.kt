@@ -53,7 +53,7 @@ internal object WorkspaceWebSearch {
                 val rawUrl = match.groupValues[2].trim()
                 val url = HtmlTextConverter.unwrapDuckDuckGoRedirectUrl(rawUrl)
                 val lowerUrl = url.lowercase()
-                if (!url.startsWith("http") ||
+                if (!HtmlTextConverter.isHttpWebUrl(url) ||
                     lowerUrl.contains("duckduckgo.com") ||
                     lowerUrl.contains("bing.com/aclick") ||
                     title.length < 3 ||
@@ -91,7 +91,7 @@ internal object WorkspaceWebSearch {
                 .replace("&quot;", "\"")
                 .replace("&amp;", "&")
                 .trim()
-            val wikiSlug = title.replace(' ', '_')
+            val wikiSlug = HtmlTextConverter.encodeWikiTitle(title)
             val url = "https://en.wikipedia.org/wiki/$wikiSlug"
             results.add(SearchResultItem(title = "$title — Wikipedia", url = url, snippet = rawSnippet))
             if (results.size >= maxResults) break

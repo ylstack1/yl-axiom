@@ -78,6 +78,7 @@ internal suspend fun AiProviderEngine.executeOpenAiChatCompletionsLoop(
     var maxTokensDialectOverride = "auto" // "auto" | "max_completion_tokens" | "max_tokens" | "omit"
     var omitStreamOptionsOnRetry = false
     var omitModalitiesOnRetry = false
+    var stripHistoricalReasoningContentOnRetry = false
     var foldHistoricalToolsOnRetry = false
     val hasReplayableHistory = activeNodes.any {
         it.role == MessageRole.ASSISTANT && (it.activeVariant.toolCalls.isNotEmpty() || it.activeVariant.thinkingSummary.isNotBlank())
@@ -101,6 +102,17 @@ internal suspend fun AiProviderEngine.executeOpenAiChatCompletionsLoop(
             roundToolCalls.clear()
             stepEmittedOutput = false
 
+            val effort = profile.thinkingEffort.trim()
+            val lowerEffort = effort.lowercase()
+            val sentReasoningEffort = !omitReasoningEffortOnRetry &&
+                effort.isNotEmpty() &&
+                lowerEffort != "none" &&
+                lowerEffort != "off" &&
+                lowerEffort != "default"
+            val sentSampling = !stripSamplingOnRetry && (profile.temperature != null || profile.topP != null)
+            val maxOut = profile.maxOutputTokens
+            val sentMaxTokens = maxOut != null && maxOut > 0 && maxTokensDialectOverride != "omit"
+
             val payloadObj = buildJsonObject {
                 put("model", model)
                 put("stream", true)
@@ -109,23 +121,15 @@ internal suspend fun AiProviderEngine.executeOpenAiChatCompletionsLoop(
                         put("include_usage", true)
                     }
                 }
-                if (!stripSamplingOnRetry) {
+                if (sentSampling) {
                     profile.temperature?.let { put("temperature", it) }
                     profile.topP?.let { put("top_p", it) }
                 }
-                val effort = profile.thinkingEffort.trim()
-                val lowerEffort = effort.lowercase()
-                val isReasoningRequested = !omitReasoningEffortOnRetry &&
-                    effort.isNotEmpty() &&
-                    lowerEffort != "none" &&
-                    lowerEffort != "off" &&
-                    lowerEffort != "default"
-                val maxOut = profile.maxOutputTokens
-                if (maxOut != null && maxOut > 0 && maxTokensDialectOverride != "omit") {
+                if (sentMaxTokens && maxOut != null) {
                     val useCompletionTokensKey = when (maxTokensDialectOverride) {
                         "max_completion_tokens" -> true
                         "max_tokens" -> false
-                        else -> isReasoningRequested
+                        else -> sentReasoningEffort
                     }
                     if (useCompletionTokensKey) {
                         put("max_completion_tokens", maxOut)
@@ -133,7 +137,7 @@ internal suspend fun AiProviderEngine.executeOpenAiChatCompletionsLoop(
                         put("max_tokens", maxOut)
                     }
                 }
-                if (isReasoningRequested) {
+                if (sentReasoningEffort) {
                     val normalizedEffort = when (lowerEffort) {
                         "max" -> "high"
                         else -> lowerEffort
@@ -146,6 +150,11 @@ internal suspend fun AiProviderEngine.executeOpenAiChatCompletionsLoop(
                         add(JsonPrimitive("image"))
                     }
                 }
+                val wireExtraToolMessages = if (stripHistoricalReasoningContentOnRetry) {
+                    compactedToolMessages.map { msg ->
+                        if (msg.containsKey("reasoning_content")) JsonObject(msg.filterKeys { it != "reasoning_content" }) else msg
+                    }
+                } else compactedToolMessages
                 put(
                     "messages",
                     buildOpenAiChatCompletionsMessages(
@@ -153,8 +162,9 @@ internal suspend fun AiProviderEngine.executeOpenAiChatCompletionsLoop(
                         session = session,
                         systemInstruction = systemInstruction,
                         continuePrefix = continuePrefix,
-                        extraToolMessages = compactedToolMessages,
-                        foldHistoricalToolsToText = foldHistoricalToolsOnRetry
+                        extraToolMessages = wireExtraToolMessages,
+                        foldHistoricalToolsToText = foldHistoricalToolsOnRetry,
+                        stripReasoningContent = stripHistoricalReasoningContentOnRetry
                     )
                 )
                 val wsTools = WorkspaceHarness.buildOpenAiChatCompletionsTools(
@@ -198,6 +208,34 @@ internal suspend fun AiProviderEngine.executeOpenAiChatCompletionsLoop(
                     }
 
 
+                    suspend fun emitChatImagesFromArray(imagesArr: JsonArray?) {
+                        if (imagesArr == null) return
+                        for (imgEl in imagesArr) {
+                            val imgObj = imgEl as? JsonObject ?: continue
+                            val urlVal = ((imgObj["image_url"] as? JsonObject)?.get("url") as? JsonPrimitive)?.contentOrNull
+                                ?: (imgObj["url"] as? JsonPrimitive)?.contentOrNull
+                                ?: (imgObj["b64_json"] as? JsonPrimitive)?.contentOrNull ?: ""
+                            if (urlVal.startsWith("data:image/")) {
+                                val mime = urlVal.substringAfter("data:").substringBefore(";").ifBlank { "image/png" }
+                                val b64 = urlVal.substringAfter("base64,")
+                                stepEmittedOutput = true
+                                saveAndEmitImage(b64, "", mime, profile.mediaAspectRatio, "", onMedia, sessionId = session.id)
+                            } else if (urlVal.startsWith("http")) {
+                                stepEmittedOutput = true
+                                saveAndEmitImage("", urlVal, "image/png", profile.mediaAspectRatio, "", onMedia, sessionId = session.id)
+                            }
+                        }
+                    }
+
+                    fun extractMessageText(contentEl: kotlinx.serialization.json.JsonElement?): String = when (contentEl) {
+                        is JsonPrimitive -> contentEl.contentOrNull ?: ""
+                        is JsonArray -> contentEl.joinToString("") { partEl ->
+                            val partObj = partEl as? JsonObject
+                            (partObj?.get("text") as? JsonPrimitive)?.contentOrNull ?: ""
+                        }
+                        else -> ""
+                    }
+
                     var streamFinished = false
                     readSseOrJsonFallback(
                         streamFinished = { streamFinished },
@@ -208,25 +246,25 @@ internal suspend fun AiProviderEngine.executeOpenAiChatCompletionsLoop(
                             val obj = runCatching { json.parseToJsonElement(dataLine).jsonObject }.getOrNull() ?: return@readSseOrJsonFallback
                             val errObj = obj["error"] as? JsonObject
                             if (errObj != null && errObj.isNotEmpty()) {
-                                val msg = errObj["message"]?.jsonPrimitive?.contentOrNull ?: dataLine
+                                val msg = (errObj["message"] as? JsonPrimitive)?.contentOrNull ?: dataLine
                                 error("Chat Completions Stream Error: $msg")
                             }
                             val choices = obj["choices"] as? JsonArray
                             val firstChoice = choices?.firstOrNull() as? JsonObject
                             val finishReason = (firstChoice?.get("finish_reason") as? JsonPrimitive)?.contentOrNull
-                            if (finishReason != null) streamFinished = true
+                            if (!finishReason.isNullOrBlank()) streamFinished = true
                             if (finishReason == "length") onOutputLimit()
                             val delta = (firstChoice?.get("delta") as? JsonObject)
                                 ?: (firstChoice?.get("message") as? JsonObject)
                             if (delta != null) {
-                                val reasoning = delta["reasoning_content"]?.jsonPrimitive?.contentOrNull
-                                    ?: delta["reasoning"]?.jsonPrimitive?.contentOrNull ?: ""
+                                val reasoning = (delta["reasoning_content"] as? JsonPrimitive)?.contentOrNull
+                                    ?: (delta["reasoning"] as? JsonPrimitive)?.contentOrNull ?: ""
                                 if (reasoning.isNotEmpty()) {
                                     onFirstToken()
                                     roundReasoningBuilder.append(reasoning)
                                     onThinking(reasoning)
                                 }
-                                val content = delta["content"]?.jsonPrimitive?.contentOrNull ?: ""
+                                val content = extractMessageText(delta["content"])
                                 if (content.isNotEmpty()) {
                                     onFirstToken()
                                     stepEmittedOutput = true
@@ -237,13 +275,13 @@ internal suspend fun AiProviderEngine.executeOpenAiChatCompletionsLoop(
                                 val tcArray = delta["tool_calls"] as? JsonArray
                                 tcArray?.forEach { tcEl ->
                                     val tcObj = tcEl as? JsonObject ?: return@forEach
-                                    val idPart = tcObj["id"]?.jsonPrimitive?.contentOrNull ?: ""
+                                    val idPart = (tcObj["id"] as? JsonPrimitive)?.contentOrNull ?: ""
                                     val fnObj = tcObj["function"] as? JsonObject
-                                    val namePart = fnObj?.get("name")?.jsonPrimitive?.contentOrNull ?: ""
-                                    val argsPart = fnObj?.get("arguments")?.jsonPrimitive?.contentOrNull ?: ""
+                                    val namePart = (fnObj?.get("name") as? JsonPrimitive)?.contentOrNull ?: ""
+                                    val argsPart = (fnObj?.get("arguments") as? JsonPrimitive)?.contentOrNull ?: ""
                                     // Some endpoints omit `index`, so separate calls must not share a slot.
                                     val nextSlot = (roundToolCalls.keys.maxOrNull() ?: -1) + 1
-                                    val idx = tcObj["index"]?.jsonPrimitive?.intOrNull ?: when {
+                                    val idx = (tcObj["index"] as? JsonPrimitive)?.intOrNull ?: when {
                                         idPart.isNotBlank() -> roundToolCalls.entries.firstOrNull { it.value.first == idPart }?.key ?: nextSlot
                                         namePart.isNotBlank() -> nextSlot
                                         else -> (nextSlot - 1).coerceAtLeast(0)
@@ -255,47 +293,39 @@ internal suspend fun AiProviderEngine.executeOpenAiChatCompletionsLoop(
                                     sb.append(argsPart)
                                     roundToolCalls[idx] = Triple(mergedId, mergedName, sb)
                                 }
-                                val imagesArr = delta["images"] as? JsonArray
-                                if (imagesArr != null) {
-                                    for (imgEl in imagesArr) {
-                                        val imgObj = imgEl as? JsonObject ?: continue
-                                        val urlVal = (imgObj["image_url"] as? JsonObject)?.get("url")?.jsonPrimitive?.contentOrNull
-                                            ?: imgObj["url"]?.jsonPrimitive?.contentOrNull
-                                            ?: imgObj["b64_json"]?.jsonPrimitive?.contentOrNull ?: ""
-                                        if (urlVal.startsWith("data:image/")) {
-                                            val mime = urlVal.substringAfter("data:").substringBefore(";").ifBlank { "image/png" }
-                                            val b64 = urlVal.substringAfter("base64,")
-                                            stepEmittedOutput = true
-                                            saveAndEmitImage(b64, "", mime, profile.mediaAspectRatio, "", onMedia, sessionId = session.id)
-                                        } else if (urlVal.startsWith("http")) {
-                                            stepEmittedOutput = true
-                                            saveAndEmitImage("", urlVal, "image/png", profile.mediaAspectRatio, "", onMedia, sessionId = session.id)
-                                        }
-                                    }
-                                }
+                                emitChatImagesFromArray(delta["images"] as? JsonArray)
                                 extractCitationsFromChatCompletionsObject(delta, onCitation)
                             }
                             extractCitationsFromChatCompletionsObject(obj, onCitation)
                             val usage = obj["usage"] as? JsonObject
                             if (usage != null) {
-                                onUsage(usageRequestId, obj["id"]?.jsonPrimitive?.contentOrNull.orEmpty(), UsageDialect.OPENAI_CHAT,
-                                    parseProviderUsage(UsageDialect.OPENAI_CHAT, usage, isFinal = firstChoice?.get("finish_reason") != null || choices?.isEmpty() == true))
+                                val hasRealFinish = !finishReason.isNullOrBlank()
+                                onUsage(usageRequestId, (obj["id"] as? JsonPrimitive)?.contentOrNull.orEmpty(), UsageDialect.OPENAI_CHAT,
+                                    parseProviderUsage(UsageDialect.OPENAI_CHAT, usage, isFinal = hasRealFinish || choices?.isEmpty() == true))
                             }
                         },
                         onPlainJsonFallback = { body ->
                             onRawWire(reqStr, body)
                             val root = runCatching { json.parseToJsonElement(body).jsonObject }.getOrNull() ?: return@readSseOrJsonFallback
-                            onUsage(usageRequestId, root["id"]?.jsonPrimitive?.contentOrNull.orEmpty(), UsageDialect.OPENAI_CHAT,
+                            val errObj = root["error"] as? JsonObject
+                            if (errObj != null && errObj.isNotEmpty()) {
+                                val msg = (errObj["message"] as? JsonPrimitive)?.contentOrNull ?: body
+                                error("Chat Completions Error: $msg")
+                            }
+                            onUsage(usageRequestId, (root["id"] as? JsonPrimitive)?.contentOrNull.orEmpty(), UsageDialect.OPENAI_CHAT,
                                 parseProviderUsage(UsageDialect.OPENAI_CHAT, root["usage"] as? JsonObject, isFinal = true))
-                            val firstMsg = ((root["choices"] as? JsonArray)?.firstOrNull() as? JsonObject)?.get("message") as? JsonObject
-                            val reasoning = firstMsg?.get("reasoning_content")?.jsonPrimitive?.contentOrNull
-                                ?: firstMsg?.get("reasoning")?.jsonPrimitive?.contentOrNull ?: ""
+                            val firstChoice = (root["choices"] as? JsonArray)?.firstOrNull() as? JsonObject
+                            val finishReason = (firstChoice?.get("finish_reason") as? JsonPrimitive)?.contentOrNull
+                            if (finishReason == "length") onOutputLimit()
+                            val firstMsg = firstChoice?.get("message") as? JsonObject
+                            val reasoning = (firstMsg?.get("reasoning_content") as? JsonPrimitive)?.contentOrNull
+                                ?: (firstMsg?.get("reasoning") as? JsonPrimitive)?.contentOrNull ?: ""
                             if (reasoning.isNotEmpty()) {
                                 onFirstToken()
                                 roundReasoningBuilder.append(reasoning)
                                 onThinking(reasoning)
                             }
-                            val txt = firstMsg?.get("content")?.jsonPrimitive?.contentOrNull ?: ""
+                            val txt = extractMessageText(firstMsg?.get("content"))
                             if (txt.isNotEmpty()) {
                                 onFirstToken()
                                 stepEmittedOutput = true
@@ -306,15 +336,16 @@ internal suspend fun AiProviderEngine.executeOpenAiChatCompletionsLoop(
                             val tcArray = firstMsg?.get("tool_calls") as? JsonArray
                             tcArray?.forEachIndexed { fallbackIdx, tcEl ->
                                 val tcObj = tcEl as? JsonObject ?: return@forEachIndexed
-                                val idx = tcObj["index"]?.jsonPrimitive?.intOrNull ?: fallbackIdx
-                                val idPart = tcObj["id"]?.jsonPrimitive?.contentOrNull ?: "call_$idx"
+                                val idx = (tcObj["index"] as? JsonPrimitive)?.intOrNull ?: fallbackIdx
+                                val idPart = (tcObj["id"] as? JsonPrimitive)?.contentOrNull ?: "call_$idx"
                                 val fnObj = tcObj["function"] as? JsonObject
-                                val namePart = fnObj?.get("name")?.jsonPrimitive?.contentOrNull ?: ""
-                                val argsPart = fnObj?.get("arguments")?.jsonPrimitive?.contentOrNull ?: "{}"
+                                val namePart = (fnObj?.get("name") as? JsonPrimitive)?.contentOrNull ?: ""
+                                val argsPart = (fnObj?.get("arguments") as? JsonPrimitive)?.contentOrNull ?: "{}"
                                 if (namePart.isNotBlank()) {
                                     roundToolCalls[idx] = Triple(idPart, namePart, StringBuilder(argsPart))
                                 }
                             }
+                            emitChatImagesFromArray(firstMsg?.get("images") as? JsonArray)
                             if (firstMsg != null) extractCitationsFromChatCompletionsObject(firstMsg, onCitation)
                             extractCitationsFromChatCompletionsObject(root, onCitation)
                         }
@@ -326,12 +357,11 @@ internal suspend fun AiProviderEngine.executeOpenAiChatCompletionsLoop(
             } catch (e: Throwable) {
                 val errMsg = (e.message ?: e.toString()).lowercase()
                 if (!stepEmittedOutput && roundToolCalls.isEmpty() && errMsg.contains("http 400")) {
-                    if (maxTokensDialectOverride != "omit" && (errMsg.contains("max_tokens") || errMsg.contains("max_completion_tokens"))) {
+                    if (sentMaxTokens && (errMsg.contains("max_tokens") || errMsg.contains("max_completion_tokens"))) {
                         val wasUsingCompletionKey = when (maxTokensDialectOverride) {
                             "max_completion_tokens" -> true
                             "max_tokens" -> false
-                            else -> !omitReasoningEffortOnRetry &&
-                                profile.thinkingEffort.trim().lowercase() !in setOf("", "none", "off", "default")
+                            else -> sentReasoningEffort
                         }
                         if (maxTokensDialectOverride == "auto") {
                             maxTokensDialectOverride = if (wasUsingCompletionKey) "max_tokens" else "max_completion_tokens"
@@ -342,12 +372,14 @@ internal suspend fun AiProviderEngine.executeOpenAiChatCompletionsLoop(
                         }
                         continue
                     }
-                    if (!omitReasoningEffortOnRetry && (errMsg.contains("reasoning_effort") || errMsg.contains("reasoning"))) {
+                    if (!omitReasoningEffortOnRetry && sentReasoningEffort &&
+                        (errMsg.contains("reasoning_effort") || (errMsg.contains("reasoning") && !errMsg.contains("reasoning_content")))
+                    ) {
                         omitReasoningEffortOnRetry = true
                         onStatus(Strings.endpointRejectedReasoningEffortRetryingWithout)
                         continue
                     }
-                    if (!stripSamplingOnRetry && (errMsg.contains("temperature") || errMsg.contains("top_p") || errMsg.contains("sampling"))) {
+                    if (!stripSamplingOnRetry && sentSampling && (errMsg.contains("temperature") || errMsg.contains("top_p") || errMsg.contains("sampling"))) {
                         stripSamplingOnRetry = true
                         onStatus(Strings.endpointRejectedSamplingParametersRetryingWith)
                         continue
@@ -360,6 +392,13 @@ internal suspend fun AiProviderEngine.executeOpenAiChatCompletionsLoop(
                     if (!omitModalitiesOnRetry && modelOutputsImages && errMsg.contains("modalities")) {
                         omitModalitiesOnRetry = true
                         onStatus(Strings.endpointRejectedModalitiesArrayRetryingWithout)
+                        continue
+                    }
+                    if (!stripHistoricalReasoningContentOnRetry && (hasReplayableHistory || extraToolMessages.isNotEmpty()) &&
+                        (errMsg.contains("reasoning_content") || errMsg.contains("unknown field") || errMsg.contains("unrecognized field") || errMsg.contains("extra_forbidden"))
+                    ) {
+                        stripHistoricalReasoningContentOnRetry = true
+                        onStatus(Strings.endpointRejectedReasoningContentRetryingWithout)
                         continue
                     }
                     if (!foldHistoricalToolsOnRetry && hasReplayableHistory &&
@@ -477,7 +516,8 @@ internal fun AiProviderEngine.buildOpenAiChatCompletionsMessages(
     systemInstruction: String,
     continuePrefix: String,
     extraToolMessages: List<JsonObject> = emptyList(),
-    foldHistoricalToolsToText: Boolean = false
+    foldHistoricalToolsToText: Boolean = false,
+    stripReasoningContent: Boolean = false
 ): JsonArray {
     val turns = injectAuthorsNoteIntoHistory(activeNodes, session)
     val messages = mutableListOf<JsonObject>()
@@ -554,7 +594,7 @@ internal fun AiProviderEngine.buildOpenAiChatCompletionsMessages(
             val turnText = turnTextLayout(text, toolCalls)
             val finalText = stripInlineErrorNotices(turnText.finalText)
             val isOlderAssistantTurn = idx < lastAssistantIdx
-            val replayReasoning = !foldHistoricalToolsToText && nodeVar?.providerProtocol !in REASONING_FOREIGN_TO_CHAT
+            val replayReasoning = !foldHistoricalToolsToText && !stripReasoningContent && nodeVar?.providerProtocol !in REASONING_FOREIGN_TO_CHAT
             if (foldHistoricalToolsToText && toolCalls.isNotEmpty()) {
                 val foldedText = buildFoldedToolHistoryText(toolCalls, thinkSummary, cleanText)
                 messages.add(buildJsonObject {

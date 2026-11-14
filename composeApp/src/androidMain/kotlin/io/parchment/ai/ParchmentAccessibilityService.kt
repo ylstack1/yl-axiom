@@ -29,6 +29,7 @@ class ParchmentAccessibilityService : AccessibilityService() {
     }
     override fun onDestroy() {
         instance = null
+        runCatching { executor.shutdownNow() }
         super.onDestroy()
     }
 
@@ -39,9 +40,12 @@ class ParchmentAccessibilityService : AccessibilityService() {
         takeScreenshot(Display.DEFAULT_DISPLAY, executor, object : TakeScreenshotCallback {
             override fun onSuccess(result: ScreenshotResult) {
                 val buffer = result.hardwareBuffer
-                image.set(Bitmap.wrapHardwareBuffer(buffer, result.colorSpace)?.copy(Bitmap.Config.ARGB_8888, false))
-                buffer.close()
-                done.countDown()
+                try {
+                    image.set(Bitmap.wrapHardwareBuffer(buffer, result.colorSpace)?.copy(Bitmap.Config.ARGB_8888, false))
+                } finally {
+                    buffer.close()
+                    done.countDown()
+                }
             }
             override fun onFailure(errorCode: Int) = done.countDown()
         })

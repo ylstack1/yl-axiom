@@ -143,7 +143,8 @@ object OtaUpdateEngine {
 
         val assetName = matchingAsset["name"]?.jsonPrimitive?.contentOrNull ?: "Parchment$expectedSuffix"
         val downloadUrl = matchingAsset["browser_download_url"]?.jsonPrimitive?.contentOrNull
-            ?: error("Missing browser_download_url on asset '$assetName'.")
+            ?.takeIf { it.startsWith("https://", ignoreCase = true) }
+            ?: error("Missing HTTPS browser_download_url on asset '$assetName'.")
         val sizeBytes = matchingAsset["size"]?.jsonPrimitive?.longOrNull ?: 0L
 
         val isNewer = compareVersions(cleanRemoteVersion, currentAppVersion) > 0
@@ -236,10 +237,12 @@ object OtaUpdateEngine {
     }.flowOn(Dispatchers.Default)
 
     fun compareVersions(remote: String, local: String): Int {
-        val rMain = remote.substringBefore('-').trim()
-        val lMain = local.substringBefore('-').trim()
-        val rPre = remote.substringAfter('-', "").trim()
-        val lPre = local.substringAfter('-', "").trim()
+        val rClean = remote.substringBefore('+').trim()
+        val lClean = local.substringBefore('+').trim()
+        val rMain = rClean.substringBefore('-').trim()
+        val lMain = lClean.substringBefore('-').trim()
+        val rPre = rClean.substringAfter('-', "").trim()
+        val lPre = lClean.substringAfter('-', "").trim()
 
         val rParts = rMain.split('.').mapNotNull { it.toIntOrNull() }
         val lParts = lMain.split('.').mapNotNull { it.toIntOrNull() }
@@ -252,6 +255,21 @@ object OtaUpdateEngine {
         // In SemVer, a stable release (no pre-release suffix) is newer than a pre-release of the same version
         if (rPre.isEmpty() && lPre.isNotEmpty()) return 1
         if (rPre.isNotEmpty() && lPre.isEmpty()) return -1
-        return rPre.compareTo(lPre)
+        val rIds = rPre.split('.').filter { it.isNotEmpty() }
+        val lIds = lPre.split('.').filter { it.isNotEmpty() }
+        for (i in 0 until maxOf(rIds.size, lIds.size)) {
+            val rId = rIds.getOrNull(i) ?: return -1
+            val lId = lIds.getOrNull(i) ?: return 1
+            val rNum = rId.toIntOrNull()
+            val lNum = lId.toIntOrNull()
+            val cmp = when {
+                rNum != null && lNum != null -> rNum.compareTo(lNum)
+                rNum != null -> -1 // SemVer: numeric identifiers have lower precedence than non-numeric
+                lNum != null -> 1
+                else -> rId.compareTo(lId)
+            }
+            if (cmp != 0) return cmp
+        }
+        return 0
     }
 }

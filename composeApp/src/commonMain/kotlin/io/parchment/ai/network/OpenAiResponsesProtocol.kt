@@ -60,7 +60,7 @@ internal suspend fun AiProviderEngine.executeOpenAiResponsesLoop(
     onStatus: suspend (String) -> Unit,
     onGoalProgress: suspend (GoalTrackerState) -> Unit,
     onFirstToken: () -> Unit,
-    onThinking: suspend (String) -> Unit,
+    onThinking: suspend (String, String) -> Unit,
     onContent: suspend (String) -> Unit,
     onMedia: suspend (GeneratedMediaItem) -> Unit,
     onToolCall: suspend (ToolCallRecord) -> Unit,
@@ -85,6 +85,7 @@ internal suspend fun AiProviderEngine.executeOpenAiResponsesLoop(
     var pendingStopHookPrompt: String = ""
     val extraResponsesLoopItems = mutableListOf<JsonObject>()
     var stripSamplingOnRetry = false
+    var omitReasoningSummaryOnRetry = false
     var omitReasoningOnRetry = false
     var useLegacyWebSearchPreviewOnRetry = false
     var omitOpenAiNativeWebSearchOnRetry = AgentPermissionResolver.resolve(session, profile = profile).approvalMode != ToolApprovalMode.NEVER
@@ -111,6 +112,7 @@ internal suspend fun AiProviderEngine.executeOpenAiResponsesLoop(
         }
         val roundReasoningBuilder = StringBuilder()
         var roundEncryptedReasoning = ""
+        var currentRoundResponseId = ""
         var stepEmittedOutput = false
         var stepRetryAttempt = 0
 
@@ -133,6 +135,7 @@ internal suspend fun AiProviderEngine.executeOpenAiResponsesLoop(
             roundTextBuilder.clear()
             roundReasoningBuilder.clear()
             roundEncryptedReasoning = ""
+            currentRoundResponseId = ""
             stepEmittedOutput = false
             val useChainedId = profile.useStatefulChaining && currentPrevResponseId.isNotBlank()
             val baseInputItems = if (useChainedId && previousAssistantIdx >= 0 && previousAssistantIdx < activeNodes.size - 1) {
@@ -202,7 +205,7 @@ internal suspend fun AiProviderEngine.executeOpenAiResponsesLoop(
                     }
                     putJsonObject("reasoning") {
                         put("effort", normalizedEffort)
-                        put("summary", "auto")
+                        if (!omitReasoningSummaryOnRetry) put("summary", "auto")
                     }
                     if (!useChainedId && !omitEncryptedContentIncludeOnRetry) {
                         putJsonArray("include") {
@@ -284,13 +287,13 @@ internal suspend fun AiProviderEngine.executeOpenAiResponsesLoop(
                             when (type) {
                                 "response.created", "response.in_progress" -> {
                                     val respSub = evObj["response"] as? JsonObject
-                                    val id = respSub?.get("id")?.jsonPrimitive?.contentOrNull ?: ""
-                                    if (profile.useStatefulChaining && id.isNotBlank()) currentPrevResponseId = id
+                                    val id = (respSub?.get("id") as? JsonPrimitive)?.contentOrNull ?: ""
+                                    if (id.isNotBlank()) currentRoundResponseId = id
                                     onUsage(usageRequestId, id, UsageDialect.OPENAI_RESPONSES,
                                         parseProviderUsage(UsageDialect.OPENAI_RESPONSES, respSub?.get("usage") as? JsonObject))
                                 }
                                 "response.output_text.delta" -> {
-                                    val delta = evObj["delta"]?.jsonPrimitive?.contentOrNull ?: ""
+                                    val delta = (evObj["delta"] as? JsonPrimitive)?.contentOrNull ?: ""
                                     if (delta.isNotEmpty()) {
                                         onFirstToken()
                                         stepEmittedOutput = true
@@ -299,11 +302,11 @@ internal suspend fun AiProviderEngine.executeOpenAiResponsesLoop(
                                     }
                                 }
                                 "response.reasoning_summary_text.delta", "response.reasoning_text.delta" -> {
-                                    val delta = evObj["delta"]?.jsonPrimitive?.contentOrNull ?: ""
+                                    val delta = (evObj["delta"] as? JsonPrimitive)?.contentOrNull ?: ""
                                     if (delta.isNotEmpty()) {
                                         onFirstToken()
                                         roundReasoningBuilder.append(delta)
-                                        onThinking(delta)
+                                        onThinking(delta, "")
                                     }
                                 }
                                 "response.output_text.annotation.added" -> {
@@ -367,8 +370,11 @@ internal suspend fun AiProviderEngine.executeOpenAiResponsesLoop(
                                             saveAndEmitImage(b64, "", "image/png", profile.mediaAspectRatio, revised, onMedia, sessionId = session.id)
                                         }
                                     } else if (itemType == "reasoning") {
-                                        val enc = item["encrypted_content"]?.jsonPrimitive?.contentOrNull.orEmpty()
-                                        if (enc.isNotBlank()) roundEncryptedReasoning = enc
+                                        val enc = (item["encrypted_content"] as? JsonPrimitive)?.contentOrNull.orEmpty()
+                                        if (enc.isNotBlank() && enc != roundEncryptedReasoning) {
+                                            roundEncryptedReasoning = enc
+                                            onThinking("", enc)
+                                        }
                                     }
                                     if (item != null) {
                                         extractCitationsFromOpenAiResponsesItem(item, onCitation)
@@ -376,39 +382,42 @@ internal suspend fun AiProviderEngine.executeOpenAiResponsesLoop(
                                 }
                                 "response.failed" -> {
                                     val failure = ((evObj["response"] as? JsonObject)?.get("error") as? JsonObject)
-                                    error("OpenAI Responses Error: ${failure?.get("message")?.jsonPrimitive?.contentOrNull ?: dataLine}")
+                                    error("OpenAI Responses Error: ${(failure?.get("message") as? JsonPrimitive)?.contentOrNull ?: dataLine}")
                                 }
                                 "response.completed", "response.incomplete" -> {
                                     streamFinished = true
                                     val incomplete = ((evObj["response"] as? JsonObject)?.get("incomplete_details") as? JsonObject)
-                                    if (incomplete?.get("reason")?.jsonPrimitive?.contentOrNull == "max_output_tokens") onOutputLimit()
+                                    if ((incomplete?.get("reason") as? JsonPrimitive)?.contentOrNull == "max_output_tokens") onOutputLimit()
                                     val respSub = evObj["response"] as? JsonObject
-                                    val id = respSub?.get("id")?.jsonPrimitive?.contentOrNull ?: currentPrevResponseId
-                                    if (profile.useStatefulChaining && id.isNotBlank()) currentPrevResponseId = id
+                                    val id = (respSub?.get("id") as? JsonPrimitive)?.contentOrNull ?: ""
+                                    if (id.isNotBlank()) currentRoundResponseId = id
                                     val outputArr = respSub?.get("output") as? JsonArray
                                     outputArr?.forEach { itemEl ->
                                         val item = itemEl as? JsonObject ?: return@forEach
-                                        if (item["type"]?.jsonPrimitive?.contentOrNull == "function_call") {
-                                            val callId = item["call_id"]?.jsonPrimitive?.contentOrNull
-                                                ?: item["id"]?.jsonPrimitive?.contentOrNull ?: ""
-                                            val name = item["name"]?.jsonPrimitive?.contentOrNull ?: ""
-                                            val args = item["arguments"]?.jsonPrimitive?.contentOrNull ?: "{}"
+                                        val outType = (item["type"] as? JsonPrimitive)?.contentOrNull
+                                        if (outType == "function_call") {
+                                            val callId = (item["call_id"] as? JsonPrimitive)?.contentOrNull
+                                                ?: (item["id"] as? JsonPrimitive)?.contentOrNull ?: ""
+                                            val name = (item["name"] as? JsonPrimitive)?.contentOrNull ?: ""
+                                            val args = (item["arguments"] as? JsonPrimitive)?.contentOrNull ?: "{}"
                                             addUniqueToolCall(callId, name, args)
-                                        }
-                                        if (item["type"]?.jsonPrimitive?.contentOrNull == "reasoning") {
-                                            val enc = item["encrypted_content"]?.jsonPrimitive?.contentOrNull.orEmpty()
-                                            if (enc.isNotBlank()) roundEncryptedReasoning = enc
+                                        } else if (outType == "reasoning") {
+                                            val enc = (item["encrypted_content"] as? JsonPrimitive)?.contentOrNull.orEmpty()
+                                            if (enc.isNotBlank() && enc != roundEncryptedReasoning) {
+                                                roundEncryptedReasoning = enc
+                                                onThinking("", enc)
+                                            }
                                         }
                                         extractCitationsFromOpenAiResponsesItem(item, onCitation)
                                     }
                                     val usage = respSub?.get("usage") as? JsonObject
                                     if (usage != null) {
-                                        onUsage(usageRequestId, respSub.get("id")?.jsonPrimitive?.contentOrNull ?: currentPrevResponseId, UsageDialect.OPENAI_RESPONSES,
+                                        onUsage(usageRequestId, id.ifBlank { currentRoundResponseId.ifBlank { currentPrevResponseId } }, UsageDialect.OPENAI_RESPONSES,
                                             parseProviderUsage(UsageDialect.OPENAI_RESPONSES, usage, isFinal = true, response = respSub))
                                     }
                                 }
                                 "error" -> {
-                                    val msg = (evObj["error"] as? JsonObject)?.get("message")?.jsonPrimitive?.contentOrNull ?: dataLine
+                                    val msg = ((evObj["error"] as? JsonObject)?.get("message") as? JsonPrimitive)?.contentOrNull ?: dataLine
                                     error("OpenAI Responses Error: $msg")
                                 }
                             }
@@ -416,20 +425,47 @@ internal suspend fun AiProviderEngine.executeOpenAiResponsesLoop(
                         onPlainJsonFallback = { fullBody ->
                             onRawWire(reqStr, fullBody)
                             val root = json.parseToJsonElement(fullBody).jsonObject
-                            val id = root["id"]?.jsonPrimitive?.contentOrNull ?: ""
-                            if (profile.useStatefulChaining && id.isNotBlank()) currentPrevResponseId = id
+                            val errObj = root["error"] as? JsonObject
+                            if (errObj != null) {
+                                val msg = (errObj["message"] as? JsonPrimitive)?.contentOrNull ?: fullBody
+                                error("OpenAI Responses Error: $msg")
+                            }
+                            if ((root["status"] as? JsonPrimitive)?.contentOrNull == "failed") {
+                                error("OpenAI Responses Error: status=failed")
+                            }
+                            val incomplete = root["incomplete_details"] as? JsonObject
+                            if ((incomplete?.get("reason") as? JsonPrimitive)?.contentOrNull == "max_output_tokens") {
+                                onOutputLimit()
+                            }
+                            val id = (root["id"] as? JsonPrimitive)?.contentOrNull ?: ""
+                            if (id.isNotBlank()) currentRoundResponseId = id
                             onUsage(usageRequestId, id, UsageDialect.OPENAI_RESPONSES,
                                 parseProviderUsage(UsageDialect.OPENAI_RESPONSES, root["usage"] as? JsonObject, isFinal = true, response = root))
                             val outputArr = root["output"] as? JsonArray
                             outputArr?.forEach { itemEl ->
                                 val item = itemEl as? JsonObject ?: return@forEach
-                                when (item["type"]?.jsonPrimitive?.contentOrNull) {
+                                when ((item["type"] as? JsonPrimitive)?.contentOrNull) {
+                                    "reasoning" -> {
+                                        val summaryParts = (item["summary"] as? JsonArray)?.mapNotNull { sEl ->
+                                            ((sEl as? JsonObject)?.get("text") as? JsonPrimitive)?.contentOrNull
+                                        }.orEmpty()
+                                        val summaryTxt = summaryParts.joinToString("\n").ifBlank {
+                                            (item["text"] as? JsonPrimitive)?.contentOrNull ?: ""
+                                        }
+                                        val enc = (item["encrypted_content"] as? JsonPrimitive)?.contentOrNull.orEmpty()
+                                        if (summaryTxt.isNotEmpty() || enc.isNotEmpty()) {
+                                            onFirstToken()
+                                            if (summaryTxt.isNotEmpty()) roundReasoningBuilder.append(summaryTxt)
+                                            if (enc.isNotBlank()) roundEncryptedReasoning = enc
+                                            onThinking(summaryTxt, enc)
+                                        }
+                                    }
                                     "message" -> {
                                         noteMessagePhase(item)
                                         val contentArr = item["content"] as? JsonArray
                                         contentArr?.forEach { cEl ->
                                             val cObj = cEl as? JsonObject ?: return@forEach
-                                            val txt = cObj["text"]?.jsonPrimitive?.contentOrNull ?: ""
+                                            val txt = (cObj["text"] as? JsonPrimitive)?.contentOrNull ?: ""
                                             if (txt.isNotEmpty()) {
                                                 onFirstToken()
                                                 stepEmittedOutput = true
@@ -439,15 +475,15 @@ internal suspend fun AiProviderEngine.executeOpenAiResponsesLoop(
                                         }
                                     }
                                     "function_call" -> {
-                                        val callId = item["call_id"]?.jsonPrimitive?.contentOrNull
-                                            ?: item["id"]?.jsonPrimitive?.contentOrNull ?: ""
-                                        val name = item["name"]?.jsonPrimitive?.contentOrNull ?: ""
-                                        val args = item["arguments"]?.jsonPrimitive?.contentOrNull ?: "{}"
+                                        val callId = (item["call_id"] as? JsonPrimitive)?.contentOrNull
+                                            ?: (item["id"] as? JsonPrimitive)?.contentOrNull ?: ""
+                                        val name = (item["name"] as? JsonPrimitive)?.contentOrNull ?: ""
+                                        val args = (item["arguments"] as? JsonPrimitive)?.contentOrNull ?: "{}"
                                         addUniqueToolCall(callId, name, args)
                                     }
                                     "image_generation_call" -> {
-                                        val b64 = item["result"]?.jsonPrimitive?.contentOrNull ?: ""
-                                        val revised = item["revised_prompt"]?.jsonPrimitive?.contentOrNull ?: ""
+                                        val b64 = (item["result"] as? JsonPrimitive)?.contentOrNull ?: ""
+                                        val revised = (item["revised_prompt"] as? JsonPrimitive)?.contentOrNull ?: ""
                                         if (b64.isNotBlank()) {
                                             stepEmittedOutput = true
                                             saveAndEmitImage(b64, "", "image/png", profile.mediaAspectRatio, revised, onMedia, sessionId = session.id)
@@ -496,6 +532,16 @@ internal suspend fun AiProviderEngine.executeOpenAiResponsesLoop(
                     if (!omitImageGenToolOnRetry && modelOutputsImages && errMsg.contains("image_generation")) {
                         omitImageGenToolOnRetry = true
                         onStatus(Strings.endpointRejectedImageGenerationToolRetrying)
+                        continue
+                    }
+                    val lowerEffortRetry = profile.thinkingEffort.trim().lowercase()
+                    val reasoningWasSent = !omitReasoningOnRetry && lowerEffortRetry.isNotEmpty() &&
+                        lowerEffortRetry !in setOf("none", "off", "default")
+                    if (!omitReasoningSummaryOnRetry && reasoningWasSent &&
+                        (errMsg.contains("summary") || errMsg.contains("verified") || errMsg.contains("organization"))
+                    ) {
+                        omitReasoningSummaryOnRetry = true
+                        onStatus(Strings.endpointRejectedReasoningSummaryRetryingWithout)
                         continue
                     }
                     if (!omitReasoningOnRetry && (errMsg.contains("reasoning") || errMsg.contains("effort") || errMsg.contains("summary"))) {
@@ -551,6 +597,10 @@ internal suspend fun AiProviderEngine.executeOpenAiResponsesLoop(
                 }
                 throw e
             }
+        }
+
+        if (profile.useStatefulChaining && currentRoundResponseId.isNotBlank()) {
+            currentPrevResponseId = currentRoundResponseId
         }
 
         if (turnToolCalls.isEmpty()) {

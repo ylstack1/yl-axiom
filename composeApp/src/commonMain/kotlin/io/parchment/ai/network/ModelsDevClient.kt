@@ -20,6 +20,7 @@ import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.booleanOrNull
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.doubleOrNull
@@ -674,7 +675,7 @@ object ModelsDevClient {
 
     private fun parseStringList(element: JsonElement?): List<String> {
         val arr = element as? JsonArray ?: return emptyList()
-        return arr.mapNotNull { it.jsonPrimitive.contentOrNull?.trim()?.lowercase() }
+        return arr.mapNotNull { (it as? JsonPrimitive)?.contentOrNull?.trim()?.lowercase() }
             .filter { it.isNotEmpty() }
             .distinct()
     }

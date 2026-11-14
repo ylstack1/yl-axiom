@@ -625,7 +625,7 @@ internal suspend fun AiProviderEngine.executeByteDanceArkGeneration(
 
         if (lastStatus !in 200..299) {
             val lowerBody = bodyText.lowercase()
-            if (!forceVideoMode && (lowerBody.contains("video") || lowerBody.contains("tasks") || lowerBody.contains("content"))) {
+            if (!forceVideoMode && (lowerBody.contains("video") || lowerBody.contains("tasks") || lowerBody.contains("contents/generations/tasks"))) {
                 recordDiscoveredModality(model, listOf("video"))
                 executeByteDanceArkGeneration(
                     profile = profile,

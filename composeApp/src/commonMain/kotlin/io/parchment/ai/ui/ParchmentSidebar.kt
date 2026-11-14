@@ -232,23 +232,34 @@ internal fun ParchmentSidebar(
                 }
             }
         } else {
-            val storedChatIds = remember(appState.sessions.size, activeSession.id, activeAssistant.id, searchQuery.isBlank()) {
+            val storedChatIds = remember(
+                appState.sessions.takeUnless { searchQuery.isBlank() },
+                appState.assistants,
+                activeAssistant.id,
+                searchQuery.isBlank()
+            ) {
                 if (searchQuery.isBlank()) emptyList() else appState.sessions
                     .filter { it.isCompactStub && (it.assistantId == activeAssistant.id || appState.assistants.none { a -> a.id == it.assistantId }) }
                     .map { it.id }
             }
             val historySearch = rememberHistorySearch(storedChatIds, searchQuery)
+            val sessionListSignature = remember(appState.sessions) {
+                appState.sessions.joinToString("|") { s ->
+                    "${s.id}:${s.assistantId}:${s.title}:${s.isPinned}:${s.messages.size}:${s.updatedAt}:${s.isCompactStub}"
+                }
+            }
+            val assistantIdsSignature = remember(appState.assistants) {
+                appState.assistants.joinToString(",") { it.id }
+            }
             val topicsStructuralKey = remember(
-                appState.sessions.size,
+                sessionListSignature,
                 activeSession.id,
-                activeSession.title,
-                activeSession.isPinned,
-                activeSession.messages.size,
                 activeAssistant.id,
+                assistantIdsSignature,
                 searchQuery,
                 historySearch.matchingIds
             ) {
-                "${appState.sessions.size}:${activeSession.id}:${activeSession.title}:${activeSession.isPinned}:${activeSession.messages.size}:${activeAssistant.id}:$searchQuery:${historySearch.matchingIds.size}"
+                "$sessionListSignature#${activeSession.id}:${activeAssistant.id}:$assistantIdsSignature:$searchQuery:${historySearch.matchingIds.joinToString(",")}"
             }
             val assistantTopics = remember(topicsStructuralKey) {
                 val q = searchQuery.trim()

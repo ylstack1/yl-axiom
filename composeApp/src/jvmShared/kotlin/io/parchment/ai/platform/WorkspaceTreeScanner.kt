@@ -88,10 +88,12 @@ internal class WorkspaceTreeScanner(
         } else {
             walkEntries(rootFile, rootPath)
         }
+        val hasWildcard = '*' in cleanPat || '?' in cleanPat
         val matches = entries
             .mapNotNull { entry ->
                 val matchTarget = if (!hasSlash) entry.name else entry.relPath
-                val plainMatch = (config.allowEmptyPlainGlobFallback || plainSub.isNotEmpty()) &&
+                val plainMatch = !hasWildcard &&
+                    (config.allowEmptyPlainGlobFallback || plainSub.isNotEmpty()) &&
                     entry.relPath.contains(plainSub, ignoreCase = true)
                 if (globRegex.matches(matchTarget) || plainMatch) entry.formatListing() else null
             }
@@ -107,7 +109,7 @@ internal class WorkspaceTreeScanner(
         require(query.isNotBlank()) { "Search query must not be blank." }
 
         val regex = runCatching { Regex(query, RegexOption.IGNORE_CASE) }.getOrNull()
-        val cleanFilter = fileGlob.removePrefix("*").trim()
+        val cleanFilter = fileGlob.trim().trimStart('*', '/')
         val sourceEntries = if (config.useTreeCache) {
             getOrBuildRootTree(rootFile)
         } else {

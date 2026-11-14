@@ -118,12 +118,13 @@ internal fun StorySummaryHost.triggerAutoSummarizeStory(autoMuteOlderTurns: Bool
                 bannerNotification = Strings.couldnTShortenTheConversation(e.message)
             }
         } finally {
+            if (activeStreamsBySession[targetSessId]?.job === coroutineContext[kotlinx.coroutines.Job]) {
+                updateSessionStreamState(targetSessId) { null }
+            }
             if (coroutineContext[kotlinx.coroutines.Job]?.isActive == true && shouldResumeTurnIndex >= 0) {
                 appProcessScope.launch {
-                    continueAssistantNodeAt(shouldResumeTurnIndex)
+                    continueAssistantNodeAt(shouldResumeTurnIndex, targetSessId)
                 }
-            } else if (activeStreamsBySession[targetSessId]?.job === coroutineContext[kotlinx.coroutines.Job]) {
-                updateSessionStreamState(targetSessId) { null }
             }
         }
     }

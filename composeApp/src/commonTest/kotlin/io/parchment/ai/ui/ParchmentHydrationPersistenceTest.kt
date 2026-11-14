@@ -246,4 +246,18 @@ class ParchmentHydrationPersistenceTest {
             PlatformStorage.deleteChatSessionFile(id)
         }
     }
+
+    @Test
+    fun recoverAppStateFromPartialJsonIgnoresNonPrimitiveOpenTabEntries() {
+        val raw = """
+            {
+              "sessions": [],
+              "activeSessionId": {"corrupt": 1},
+              "openTabSessionIds": ["tab-alpha", {"nested": true}, ["bad"], null, 42]
+            }
+        """.trimIndent()
+        val recovered = recoverAppStateFromPartialJson(raw)
+        assertEquals("", recovered.activeSessionId)
+        assertEquals(listOf("tab-alpha", "42"), recovered.openTabSessionIds)
+    }
 }

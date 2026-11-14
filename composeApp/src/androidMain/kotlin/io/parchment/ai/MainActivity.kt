@@ -243,6 +243,7 @@ class MainActivity : ComponentActivity() {
         runCatching {
             openDocumentLauncher.launch(mimeTypes)
         }.onFailure {
+            pendingImportDeferred = null
             deferred.complete(null)
         }
         val uri = deferred.await() ?: return null
@@ -272,12 +273,15 @@ class MainActivity : ComponentActivity() {
         runCatching {
             createDocumentLauncher.launch(defaultFileName)
         }.onFailure {
+            pendingExportDeferred = null
             deferred.complete(null)
         }
         val uri = deferred.await() ?: return null
         return withContext(Dispatchers.IO) {
             try {
-                checkNotNull(contentResolver.openOutputStream(uri, "wt")) { "Unable to open the export destination." }.use { output ->
+                val stream = runCatching { contentResolver.openOutputStream(uri, "wt") }.getOrNull()
+                    ?: contentResolver.openOutputStream(uri, "w")
+                checkNotNull(stream) { "Unable to open the export destination." }.use { output ->
                     write(output)
                     output.flush()
                 }
@@ -330,6 +334,23 @@ class MainActivity : ComponentActivity() {
         AppForeground.markResumed()
         super.onResume()
         LongDecodeForegroundService.refreshNotificationNotice(applicationContext)
+    }
+
+    override fun onDestroy() {
+        pendingImportDeferred?.complete(null)
+        pendingImportDeferred = null
+        pendingImportUrisDeferred?.complete(emptyList())
+        pendingImportUrisDeferred = null
+        pendingExportDeferred?.complete(null)
+        pendingExportDeferred = null
+        pendingWorkspaceDirDeferred?.complete(null)
+        pendingWorkspaceDirDeferred = null
+        pendingWorkspaceInitialUri = null
+        pendingVoiceCallback = null
+        pendingVoiceErrorCallback = null
+        runCatching { activeSpeechRecognizer?.destroy() }
+        activeSpeechRecognizer = null
+        super.onDestroy()
     }
 
     fun requestNotificationPermission() {

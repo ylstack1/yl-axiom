@@ -14,26 +14,58 @@ internal object HtmlTextConverter {
     private val HTML_ANY_TAG_REGEX = Regex("(?is)<[^>]+>")
     private val TRIPLE_NEWLINE_REGEX = Regex("\n{3,}")
 
+    internal fun isHttpWebUrl(url: String): Boolean =
+        url.startsWith("http://", ignoreCase = true) || url.startsWith("https://", ignoreCase = true)
+
+    internal fun encodeWikiTitle(title: String): String {
+        val bytes = title.trim().replace(' ', '_').encodeToByteArray()
+        val out = StringBuilder(bytes.size)
+        for (raw in bytes) {
+            val u = raw.toInt() and 0xFF
+            val ch = u.toChar()
+            val safe = ch in 'A'..'Z' || ch in 'a'..'z' || ch in '0'..'9' ||
+                ch == '-' || ch == '_' || ch == '.' || ch == '~' ||
+                ch == ':' || ch == '/' || ch == '(' || ch == ')' || ch == '\''
+            if (safe) {
+                out.append(ch)
+            } else {
+                out.append('%')
+                out.append(u.toString(16).uppercase().padStart(2, '0'))
+            }
+        }
+        return out.toString()
+    }
+
     internal fun urlDecodeComponent(encoded: String): String {
         val clean = encoded.replace('+', ' ')
-        val out = ByteArray(clean.length)
+        var out = ByteArray(clean.length.coerceAtLeast(16))
         var outIdx = 0
+        fun appendBytes(bytes: ByteArray) {
+            if (outIdx + bytes.size > out.size) {
+                out = out.copyOf(maxOf(out.size * 2, outIdx + bytes.size))
+            }
+            bytes.copyInto(out, outIdx)
+            outIdx += bytes.size
+        }
         var i = 0
         while (i < clean.length) {
             val ch = clean[i]
             if (ch == '%' && i + 2 < clean.length) {
                 val hex = clean.substring(i + 1, i + 3).toIntOrNull(16)
                 if (hex != null) {
+                    if (outIdx >= out.size) out = out.copyOf(out.size * 2)
                     out[outIdx++] = hex.toByte()
                     i += 3
                     continue
                 }
             }
-            val bytes = ch.toString().encodeToByteArray()
-            for (b in bytes) {
-                if (outIdx < out.size) out[outIdx++] = b
+            if (ch.isHighSurrogate() && i + 1 < clean.length && clean[i + 1].isLowSurrogate()) {
+                appendBytes(clean.substring(i, i + 2).encodeToByteArray())
+                i += 2
+            } else {
+                appendBytes(ch.toString().encodeToByteArray())
+                i++
             }
-            i++
         }
         return out.decodeToString(0, outIdx)
     }
@@ -45,7 +77,7 @@ internal object HtmlTextConverter {
         if (trimmed.contains("uddg=")) {
             val uddgParam = trimmed.substringAfter("uddg=").substringBefore("&")
             val decoded = urlDecodeComponent(uddgParam).trim()
-            if (decoded.startsWith("http://") || decoded.startsWith("https://")) {
+            if (isHttpWebUrl(decoded)) {
                 return decoded
             }
         }
@@ -75,7 +107,7 @@ internal object HtmlTextConverter {
                 val rawHref = m.groupValues[1].trim()
                 val cleanHref = unwrapDuckDuckGoRedirectUrl(rawHref)
                 val label = m.groupValues[2].replace(HTML_ANY_TAG_REGEX, "").trim()
-                if (label.isNotEmpty() && cleanHref.startsWith("http")) "[$label]($cleanHref)" else label
+                if (label.isNotEmpty() && isHttpWebUrl(cleanHref)) "[$label]($cleanHref)" else label
             }
             .replace(HTML_BR_HR_REGEX, "\n")
             .replace(HTML_BLOCK_CLOSE_REGEX, "\n")

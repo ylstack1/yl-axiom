@@ -272,7 +272,7 @@ fun LiteraryProseRenderer(
     SelectionContainer {
         Column(modifier = modifier.fillMaxWidth()) {
             blocks.forEachIndexed { index, block ->
-                key(index, block) {
+                key(index) {
                 when (block) {
                     is ProseBlock.SceneBreak -> {
                         Row(
@@ -433,6 +433,7 @@ fun LiteraryProseRenderer(
                                             text = if (showSvgPreview) "‹/›" else "👁",
                                             compact = true,
                                             style = if (showSvgPreview) SepiaButtonStyle.SECONDARY else SepiaButtonStyle.GHOST,
+                                            contentDescription = if (showSvgPreview) Strings.showSource else Strings.showPreview,
                                             onClick = {
                                                 showSvgPreview = !showSvgPreview
                                                 isCollapsed = false
@@ -443,12 +444,14 @@ fun LiteraryProseRenderer(
                                         text = if (isCollapsed) "▸" else "▾",
                                         compact = true,
                                         style = SepiaButtonStyle.GHOST,
+                                        contentDescription = if (isCollapsed) Strings.expandCode else Strings.collapseCode,
                                         onClick = { isCollapsed = !isCollapsed }
                                     )
                                     SepiaButton(
                                         text = if (savedCode) "✓" else "📥",
                                         compact = true,
                                         style = SepiaButtonStyle.GHOST,
+                                        contentDescription = Strings.saveFile,
                                         onClick = {
                                             scope.launch {
                                                 val ext = inferCodeFenceExtension(block.language, isSvgArtifact)
@@ -464,6 +467,7 @@ fun LiteraryProseRenderer(
                                         text = if (copiedCode) "✓" else "📋",
                                         compact = true,
                                         style = SepiaButtonStyle.GHOST,
+                                        contentDescription = if (copiedCode) Strings.copied else Strings.copy,
                                         onClick = {
                                             clipboard.setText(AnnotatedString(block.code))
                                             copiedCode = true
@@ -553,6 +557,7 @@ fun LiteraryProseRenderer(
                                     text = if (copiedTable) "✓" else "📋",
                                     compact = true,
                                     style = SepiaButtonStyle.GHOST,
+                                    contentDescription = if (copiedTable) Strings.copied else Strings.copyTable,
                                     onClick = {
                                         val tsv = buildString {
                                             if (block.headers.isNotEmpty()) {
@@ -588,8 +593,11 @@ fun LiteraryProseRenderer(
                                             Box(
                                                 modifier = if (needsHorizontalScroll) Modifier.width(145.dp) else Modifier.weight(1f)
                                             ) {
+                                                val styledHeader = remember(h, p, enableMath, enableInlineDollarMath) {
+                                                    styleLiteraryParagraph(h, p, 0, enableMath, enableInlineDollarMath)
+                                                }
                                                 BasicText(
-                                                    text = styleLiteraryParagraph(h, p, 0, enableMath, enableInlineDollarMath),
+                                                    text = styledHeader,
                                                     style = p.uiBodyStyle.copy(fontWeight = FontWeight.SemiBold)
                                                 )
                                             }
@@ -610,8 +618,11 @@ fun LiteraryProseRenderer(
                                             Box(
                                                 modifier = if (needsHorizontalScroll) Modifier.width(145.dp) else Modifier.weight(1f)
                                             ) {
+                                                val styledCell = remember(cellText, p, enableMath, enableInlineDollarMath) {
+                                                    styleLiteraryParagraph(cellText, p, 0, enableMath, enableInlineDollarMath)
+                                                }
                                                 BasicText(
-                                                    text = styleLiteraryParagraph(cellText, p, 0, enableMath, enableInlineDollarMath),
+                                                    text = styledCell,
                                                     style = p.uiBodyStyle
                                                 )
                                             }

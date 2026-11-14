@@ -114,7 +114,7 @@ internal suspend fun AiProviderEngine.extractCitationsFromGeminiCandidate(
         val indices = (supObj["groundingChunkIndices"] as? JsonArray)
             ?: (supObj["grounding_chunk_indices"] as? JsonArray)
         indices?.forEach { idxEl ->
-            val cIdx = idxEl.jsonPrimitive.intOrNull ?: return@forEach
+            val cIdx = (idxEl as? JsonPrimitive)?.intOrNull ?: return@forEach
             val pair = chunkList.getOrNull(cIdx) ?: return@forEach
             if (pair.first.isNotBlank()) {
                 onCitation(

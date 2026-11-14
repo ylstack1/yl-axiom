@@ -13,9 +13,9 @@ import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.booleanOrNull
 import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.doubleOrNull
 import kotlinx.serialization.json.jsonObject
-import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.put
 import kotlin.io.encoding.Base64
 import kotlin.io.encoding.ExperimentalEncodingApi
@@ -110,15 +110,13 @@ object CardAndPromptCodec {
 
     fun parseCardJson(jsonText: String): CharacterOrScenarioCard {
         val root = prettyJson.parseToJsonElement(jsonText).jsonObject
-        val spec = root["spec"]?.jsonPrimitive?.content ?: "parchment-v1"
+        val spec = (root["spec"] as? JsonPrimitive)?.contentOrNull ?: "parchment-v1"
         val dataObj = root["data"]?.let { it as? JsonObject } ?: root
 
         fun JsonObject.str(vararg keys: String): String {
             for (k in keys) {
-                val el = this[k]
-                if (el is JsonPrimitive && el.content.isNotBlank()) {
-                    return el.content
-                }
+                val text = (this[k] as? JsonPrimitive)?.contentOrNull
+                if (!text.isNullOrBlank()) return text
             }
             return ""
         }
@@ -127,7 +125,7 @@ object CardAndPromptCodec {
             for (k in keys) {
                 val el = this[k]
                 if (el is JsonArray) {
-                    return el.mapNotNull { (it as? JsonPrimitive)?.content }.filter { it.isNotBlank() }
+                    return el.mapNotNull { (it as? JsonPrimitive)?.contentOrNull }.filter { it.isNotBlank() }
                 }
             }
             return emptyList()
@@ -145,8 +143,8 @@ object CardAndPromptCodec {
                 val title = entry.str("name", "comment", "title").ifBlank {
                     keys.firstOrNull() ?: "Lore Fragment #${idx + 1}"
                 }
-                val enabled = entry["enabled"]?.jsonPrimitive?.booleanOrNull ?: true
-                val constant = entry["constant"]?.jsonPrimitive?.booleanOrNull ?: false
+                val enabled = (entry["enabled"] as? JsonPrimitive)?.booleanOrNull ?: true
+                val constant = (entry["constant"] as? JsonPrimitive)?.booleanOrNull ?: false
                 val mode = when {
                     !enabled -> FragmentActivationMode.MUTED
                     constant || keys.isEmpty() -> FragmentActivationMode.PINNED
@@ -186,8 +184,8 @@ object CardAndPromptCodec {
         val root = prettyJson.parseToJsonElement(jsonText).jsonObject
         fun JsonObject.str(vararg keys: String): String {
             for (k in keys) {
-                val el = this[k]
-                if (el is JsonPrimitive && el.content.isNotBlank()) return el.content
+                val text = (this[k] as? JsonPrimitive)?.contentOrNull
+                if (!text.isNullOrBlank()) return text
             }
             return ""
         }
@@ -197,10 +195,10 @@ object CardAndPromptCodec {
             description = root.str("description", "notes"),
             systemPrompt = root.str("systemPrompt", "system_prompt", "prompt", "content", "instructions"),
             authorsNoteDefault = root.str("authorsNoteDefault", "authors_note", "post_history_instructions"),
-            suggestedTemperature = root["suggestedTemperature"]?.jsonPrimitive?.doubleOrNull
-                ?: root["temperature"]?.jsonPrimitive?.doubleOrNull ?: 0.85,
-            suggestedTopP = root["suggestedTopP"]?.jsonPrimitive?.doubleOrNull
-                ?: root["top_p"]?.jsonPrimitive?.doubleOrNull ?: 0.95,
+            suggestedTemperature = (root["suggestedTemperature"] as? JsonPrimitive)?.doubleOrNull
+                ?: (root["temperature"] as? JsonPrimitive)?.doubleOrNull ?: 0.85,
+            suggestedTopP = (root["suggestedTopP"] as? JsonPrimitive)?.doubleOrNull
+                ?: (root["top_p"] as? JsonPrimitive)?.doubleOrNull ?: 0.95,
             suggestedThinkingEffort = root.str("suggestedThinkingEffort", "thinking_effort").ifBlank { "high" }
         )
     }
@@ -214,7 +212,7 @@ object CardAndPromptCodec {
     /** Lays Parchment's edits over the imported entry, so ordering, regex and vendor fields survive. */
     private fun loreEntry(fragment: ContextFragment, order: Int, raw: JsonObject?): JsonObject {
         val entry = LinkedHashMap<String, JsonElement>(raw ?: emptyMap())
-        val hasOwnName = (raw?.get("name") as? JsonPrimitive)?.content?.isNotBlank() == true
+        val hasOwnName = (raw?.get("name") as? JsonPrimitive)?.contentOrNull?.isNotBlank() == true
         entry.getOrPut("id") { JsonPrimitive(order) }
         entry["name"] = JsonPrimitive(fragment.title)
         if (!hasOwnName || "comment" !in entry) entry["comment"] = JsonPrimitive(fragment.title)
@@ -239,7 +237,7 @@ object CardAndPromptCodec {
         // Entries with no text never reach the editor, so they can only be kept, not deleted.
         val hidden = rawEntries.filter { element ->
             val entry = element as? JsonObject ?: return@filter false
-            listOf("content", "entry").all { (entry[it] as? JsonPrimitive)?.content.isNullOrBlank() }
+            listOf("content", "entry").all { (entry[it] as? JsonPrimitive)?.contentOrNull.isNullOrBlank() }
         }
         if (written.isEmpty() && hidden.isEmpty()) return null
         val book = LinkedHashMap<String, JsonElement>(preserved ?: emptyMap())
@@ -319,11 +317,13 @@ object CardAndPromptCodec {
     private fun decodeBase64OrRawJson(payload: String): String {
         val trimmed = payload.trim()
         if (trimmed.startsWith("{")) return trimmed
+        val normalized = trimmed.filterNot { it.isWhitespace() }
         return runCatching {
-            Base64.decode(trimmed).decodeToString()
+            Base64.decode(normalized).decodeToString()
         }.getOrElse {
-            // Try URL-safe or padded Base64
-            val padded = trimmed + "=".repeat((4 - trimmed.length % 4) % 4)
+            // Normalize URL-safe alphabet and restore missing Base64 padding
+            val standard = normalized.replace('-', '+').replace('_', '/')
+            val padded = if ('=' in standard) standard else standard + "=".repeat((4 - standard.length % 4) % 4)
             Base64.decode(padded).decodeToString()
         }
     }

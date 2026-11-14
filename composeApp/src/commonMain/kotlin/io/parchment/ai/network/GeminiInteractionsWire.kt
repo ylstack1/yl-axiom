@@ -261,7 +261,7 @@ private fun AiProviderEngine.appendAssistantInteractionSteps(
             for ((tc, callId) in batch.calls.zip(callIds)) {
                 val parsedArgs = runCatching { json.parseToJsonElement(tc.argumentsJson.ifBlank { "{}" }).jsonObject }
                     .getOrElse { JsonObject(emptyMap()) }
-                stepsList.add(geminiFunctionCallStep(callId = callId, name = tc.name, arguments = parsedArgs))
+                stepsList.add(geminiFunctionCallStep(callId = callId, name = tc.name.ifBlank { "tool" }, arguments = parsedArgs))
             }
             for ((tc, callId) in batch.calls.zip(callIds)) {
                 val wireResult = compactHistoricalToolResultForWire(

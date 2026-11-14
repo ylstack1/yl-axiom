@@ -61,7 +61,10 @@ internal object DesktopOwnedShell {
     private fun buildProcess(rootDir: File, command: String): ProcessBuilder {
         val isWin = System.getProperty("os.name")?.lowercase()?.contains("win") == true
         val builder = if (isWin) {
-            val psCommandWithNoProgress = "\$ProgressPreference = 'SilentlyContinue'; $command"
+            val psCommandWithNoProgress =
+                "[Console]::OutputEncoding = [System.Text.Encoding]::UTF8; " +
+                "\$OutputEncoding = [System.Text.Encoding]::UTF8; " +
+                "\$ProgressPreference = 'SilentlyContinue'; $command"
             val encodedCommand = Base64.getEncoder().encodeToString(psCommandWithNoProgress.toByteArray(Charsets.UTF_16LE))
             ProcessBuilder("powershell.exe", "-NoProfile", "-NonInteractive", "-EncodedCommand", encodedCommand)
         } else {

@@ -43,9 +43,12 @@ suspend fun AiProviderEngine.cancelBackgroundInteraction(profile: ProviderProfil
     if (!profile.keepsProviderState || resolveWireProtocol(profile) != ProviderProtocol.GEMINI_INTERACTIONS) {
         return@runCatching "Nothing stored to cancel."
     }
-    val base = profile.baseUrl.trimEnd('/')
-    val path = profile.endpointPathOverride.ifBlank { "/v1beta/interactions" }.trimEnd('/')
-    val url = buildUrlWithAuthQuery(profile, "$base$path/$interactionId/cancel")
+    val rawUrl = resolveSmartEndpointUrl(
+        profile = profile,
+        defaultPathWithV1 = "/v1beta/interactions",
+        defaultPathWithoutVersion = "/interactions"
+    )
+    val url = buildUrlWithAuthQuery(profile, "${rawUrl.substringBefore("?").trimEnd('/')}/$interactionId/cancel")
     val response = httpClient.post(url) {
         applyAuthAndCustomHeaders(profile)
         contentType(ContentType.Application.Json)
@@ -136,10 +139,15 @@ private class GeminiInteractionsSession(
         // Chaining omits local history, so a chain from another model would leave the new one with nothing.
         engine.reusableProviderChainId(activeNodes[previousAssistantIdx].activeVariant, ProviderProtocol.GEMINI_INTERACTIONS, model)
     } else ""
+    // ID minted during the active round; only promoted after a round settles so retries never poll a prior turn.
+    private var currentRoundInteractionId = ""
     private var currentContinuationToken = ""
+    private var pendingContinuationHop = false
 
+    private var omitBackgroundOnRetry = false
     private var stripSamplingOnRetry = false
     private var upgradeMinimalToLowOnRetry = false
+    private var downgradeXhighToHighOnRetry = false
     private var simplifyThinkingOnRetry = false
     private var omitResponseFormatOnRetry = false
     private var forceImageResponseFormatOnRetry = false
@@ -168,8 +176,8 @@ private class GeminiInteractionsSession(
         onRawWire = onRawWire,
         onUsage = onUsage,
         onCitation = onCitation,
-        onInteractionIdObserved = { id -> currentPrevInteractionId = id },
-        currentInteractionId = { currentPrevInteractionId }
+        onInteractionIdObserved = { id -> currentRoundInteractionId = id },
+        currentInteractionId = { currentRoundInteractionId.ifBlank { currentPrevInteractionId } }
     )
 
     suspend fun run() {
@@ -179,20 +187,20 @@ private class GeminiInteractionsSession(
 
             while (true) {
                 round.reset()
+                currentRoundInteractionId = ""
 
-                val useChainedId = profile.useStatefulChaining && currentPrevInteractionId.isNotBlank()
-                val isContinuationHop = useChainedId && currentContinuationToken.isNotBlank()
+                val isContinuationHop = pendingContinuationHop &&
+                    currentPrevInteractionId.isNotBlank() &&
+                    currentContinuationToken.isNotBlank()
+                val useChainedId = isContinuationHop || (profile.useStatefulChaining && currentPrevInteractionId.isNotBlank())
                 val requestJsonStr = buildRequestJson(useChainedId, isContinuationHop)
 
-                val base = profile.baseUrl.trim().trimEnd('#').trimEnd('/')
-                val defaultPath = if (base.endsWith("/v1beta") || base.endsWith("/v1")) "/interactions" else "/v1beta/interactions"
-                val path = profile.endpointPathOverride.ifBlank { defaultPath }
-                val pollBasePath = "$base${path.substringBefore("?")}"
                 val rawUrl = engine.resolveSmartEndpointUrl(
                     profile = profile,
                     defaultPathWithV1 = "/v1beta/interactions",
                     defaultPathWithoutVersion = "/interactions"
                 )
+                val pollBasePath = rawUrl.substringBefore("?").trimEnd('#').trimEnd('/')
                 val finalUrl = engine.buildUrlWithAuthQuery(profile, rawUrl)
 
                 onRawWire(requestJsonStr, "Dispatching to $finalUrl ...")
@@ -215,15 +223,29 @@ private class GeminiInteractionsSession(
                 }
             }
 
-            // Official Long-Decode Foreground Continuation Hop (`status == "requires_continuation"`)
-            if (round.roundStatus == "requires_continuation" && round.roundContinuationToken.isNotBlank() && currentPrevInteractionId.isNotBlank()) {
-                currentContinuationToken = round.roundContinuationToken
-                pendingToolResults = emptyList()
-                pendingStopHookPrompt = ""
-                onStatus(Strings.longDecodeHopCompletedContinuingVia, currentPrevInteractionId)
-                continue
+            // Official Long-Decode Continuation Hop (`status == "requires_continuation"`)
+            if (round.roundStatus == "requires_continuation" && round.roundContinuationToken.isNotBlank()) {
+                val hopAnchor = currentRoundInteractionId.ifBlank { currentPrevInteractionId }
+                if (hopAnchor.isNotBlank()) {
+                    if (!profile.useStatefulChaining) {
+                        round.appendContinuationOutputSteps(extraLoopSteps)
+                    }
+                    currentPrevInteractionId = hopAnchor
+                    currentContinuationToken = round.roundContinuationToken
+                    pendingContinuationHop = true
+                    pendingToolResults = emptyList()
+                    pendingStopHookPrompt = ""
+                    onStatus(Strings.longDecodeHopCompletedContinuingVia, hopAnchor)
+                    continue
+                }
             }
             currentContinuationToken = ""
+            pendingContinuationHop = false
+            if (profile.useStatefulChaining && currentRoundInteractionId.isNotBlank()) {
+                currentPrevInteractionId = currentRoundInteractionId
+            } else if (!profile.useStatefulChaining) {
+                currentPrevInteractionId = ""
+            }
 
             if (round.turnToolCalls.isEmpty()) {
                 val stopHookPrompt = circuitBreaker.evaluateStopHookPrompt()
@@ -231,7 +253,7 @@ private class GeminiInteractionsSession(
                     pendingToolResults = emptyList()
                     pendingStopHookPrompt = stopHookPrompt
                     round.appendStopHookSteps(extraLoopSteps, stopHookPrompt)
-                    onStatus(Strings.goalWorkCheckContinuingIncompleteChecklist, currentPrevInteractionId)
+                    onStatus(Strings.goalWorkCheckContinuingIncompleteChecklist, currentRoundInteractionId.ifBlank { currentPrevInteractionId })
                     continue
                 }
                 break
@@ -254,7 +276,7 @@ private class GeminiInteractionsSession(
                     firstThoughtSignature = stepSigString,
                     firstPrecedingThinking = stepThoughtTxt,
                     circuitBreaker = circuitBreaker,
-                    onStatus = { st -> onStatus(st, currentPrevInteractionId) },
+                    onStatus = { st -> onStatus(st, currentRoundInteractionId.ifBlank { currentPrevInteractionId }) },
                     onToolCall = onToolCall,
                     onGoalProgress = onGoalProgress
                 )
@@ -263,7 +285,7 @@ private class GeminiInteractionsSession(
             pendingToolResults = results
             val trippedReason = circuitBreaker.checkTripped()
             if (trippedReason != null) {
-                onStatus(trippedReason, currentPrevInteractionId)
+                onStatus(trippedReason, currentRoundInteractionId.ifBlank { currentPrevInteractionId })
                 break
             }
         }
@@ -291,8 +313,10 @@ private class GeminiInteractionsSession(
             }
             if (!profile.keepsProviderState) {
                 put("store", false)
+            } else if (profile.useBackgroundLongDecode && !omitBackgroundOnRetry) {
+                put("background", true)
             }
-            // Always stream. With `useBackgroundLongDecode`, a dropped stream falls back to polling `/interactions/{id}`.
+            // Always stream. With `background = true`, a dropped stream falls back to polling `/interactions/{id}`.
             put("stream", true)
             if (useChainedId) {
                 put("previous_interaction_id", currentPrevInteractionId)
@@ -355,7 +379,8 @@ private class GeminiInteractionsSession(
                             "minimal" -> if (upgradeMinimalToLowOnRetry) "low" else "minimal"
                             "low" -> "low"
                             "medium" -> "medium"
-                            "high", "xhigh", "max" -> "high"
+                            "high" -> "high"
+                            "xhigh", "max" -> if (downgradeXhighToHighOnRetry) "high" else "xhigh"
                             else -> lowerEffort
                         }
                         put("thinking_level", mappedLevel)
@@ -428,15 +453,16 @@ private class GeminiInteractionsSession(
         }
         if (useChainedId && !round.receivedAnyStreamContent &&
             (errMsg.contains("http 404") || errMsg.contains("previous_interaction_id") ||
-                errMsg.contains("function response turn") || errMsg.contains("function_result"))
+                errMsg.contains("continuation_token") || errMsg.contains("function response turn") || errMsg.contains("function_result"))
         ) {
             currentPrevInteractionId = ""
             currentContinuationToken = ""
+            pendingContinuationHop = false
             onStatus(Strings.statefulInteractionChainRejectedRetryingStep, "")
             return AttemptRecoveryAction.RETRY_ATTEMPT
         }
-        if (profile.useBackgroundLongDecode && currentPrevInteractionId.isNotBlank() && engine.isTransientOrProxyTimeoutError(error)) {
-            round.pollUntilComplete(currentPrevInteractionId, pollBasePath, requestJsonStr)
+        if (profile.keepsProviderState && profile.useBackgroundLongDecode && currentRoundInteractionId.isNotBlank() && engine.isTransientOrProxyTimeoutError(error)) {
+            round.pollUntilComplete(currentRoundInteractionId, pollBasePath, requestJsonStr)
             return AttemptRecoveryAction.BREAK_AFTER_POLL
         }
         if (!round.receivedAnyStreamContent && round.turnToolCalls.isEmpty() && engine.isTransientOrProxyTimeoutError(error)) {
@@ -457,7 +483,7 @@ private class GeminiInteractionsSession(
                     maxAttempts = maxPrimaryRetries,
                     waitSeconds = waitSec,
                     reasonSummary = error.message ?: "Transient API error in step $loopStep",
-                    onStatus = { msg -> onStatus(msg, currentPrevInteractionId) }
+                    onStatus = { msg -> onStatus(msg, currentRoundInteractionId) }
                 )
                 return AttemptRecoveryAction.RETRY_ATTEMPT
             } else {
@@ -471,24 +497,40 @@ private class GeminiInteractionsSession(
         if (useChainedId) {
             currentPrevInteractionId = ""
             currentContinuationToken = ""
+            pendingContinuationHop = false
             onStatus(Strings.statefulInteractionChainRejectedRetryingStep, "")
+            return true
+        }
+        if (!omitBackgroundOnRetry && profile.keepsProviderState && profile.useBackgroundLongDecode &&
+            errMsg.contains("background")
+        ) {
+            omitBackgroundOnRetry = true
+            onStatus(Strings.endpointRejectedBackgroundFlagRetryingWithout, "")
             return true
         }
         if (!stripSamplingOnRetry && (errMsg.contains("temperature") || errMsg.contains("top_p") || errMsg.contains("sampling"))) {
             stripSamplingOnRetry = true
-            onStatus(Strings.endpointRejectedSamplingParametersRetryingWith, currentPrevInteractionId)
+            onStatus(Strings.endpointRejectedSamplingParametersRetryingWith, "")
             return true
         }
         if (!upgradeMinimalToLowOnRetry && profile.thinkingEffort.equals("minimal", ignoreCase = true) &&
             (errMsg.contains("minimal") || errMsg.contains("thinking_level") || errMsg.contains("thinking"))
         ) {
             upgradeMinimalToLowOnRetry = true
-            onStatus(Strings.modelDoesNotSupportMinimalThinking, currentPrevInteractionId)
+            onStatus(Strings.modelDoesNotSupportMinimalThinking, "")
+            return true
+        }
+        val lowerEffort = profile.thinkingEffort.trim().lowercase()
+        if (!downgradeXhighToHighOnRetry && (lowerEffort == "xhigh" || lowerEffort == "max") &&
+            (errMsg.contains("xhigh") || errMsg.contains("thinking_level") || errMsg.contains("thinking"))
+        ) {
+            downgradeXhighToHighOnRetry = true
+            onStatus(Strings.endpointRejectedXhighThinkingRetryingWith, "")
             return true
         }
         if (!simplifyThinkingOnRetry && (errMsg.contains("thinking") || errMsg.contains("thinking_level"))) {
             simplifyThinkingOnRetry = true
-            onStatus(Strings.endpointRejectedThinkingLevelRetryingWith, currentPrevInteractionId)
+            onStatus(Strings.endpointRejectedThinkingLevelRetryingWith, "")
             return true
         }
         if (!forceImageResponseFormatOnRetry && !omitResponseFormatOnRetry &&
@@ -496,19 +538,19 @@ private class GeminiInteractionsSession(
         ) {
             forceImageResponseFormatOnRetry = true
             engine.recordDiscoveredModality(model, listOf("text", "image"))
-            onStatus(Strings.modelOutputsImagesEnablingImageResponse, currentPrevInteractionId)
+            onStatus(Strings.modelOutputsImagesEnablingImageResponse, "")
             return true
         }
         if (!omitResponseFormatOnRetry && (errMsg.contains("response_format") || errMsg.contains("image_size") || errMsg.contains("aspect_ratio"))) {
             omitResponseFormatOnRetry = true
-            onStatus(Strings.endpointRejectedResponseFormatRetryingWithout, currentPrevInteractionId)
+            onStatus(Strings.endpointRejectedResponseFormatRetryingWithout, "")
             return true
         }
         if (!omitBuiltInToolsOnRetry && (errMsg.contains("google_search") || errMsg.contains("url_context") ||
                 errMsg.contains("built-in") || errMsg.contains("multiple tools"))
         ) {
             omitBuiltInToolsOnRetry = true
-            onStatus(Strings.endpointRejectedMixedBuiltInFunction, currentPrevInteractionId)
+            onStatus(Strings.endpointRejectedMixedBuiltInFunction, "")
             return true
         }
         if (!foldHistoricalToolsOnRetry && hasHistoricalToolsOrSigs &&
@@ -516,7 +558,7 @@ private class GeminiInteractionsSession(
                 errMsg.contains("signature") || errMsg.contains("function_call") || errMsg.contains("tool type"))
         ) {
             foldHistoricalToolsOnRetry = true
-            onStatus(Strings.endpointRejectedHistoricalToolSignatureContext, currentPrevInteractionId)
+            onStatus(Strings.endpointRejectedHistoricalToolSignatureContext, "")
             return true
         }
         return false
