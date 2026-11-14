@@ -6,6 +6,8 @@ import io.ktor.http.isSuccess
 import io.ktor.serialization.kotlinx.json.json
 import io.parchment.ai.model.ProviderProfile
 import io.parchment.ai.model.ProviderProtocol
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
@@ -13,88 +15,95 @@ import kotlinx.serialization.json.contentOrNull
 
 // Model listing and discovered input/output capabilities.
 
+private val API_VERSION_SUFFIX_REGEX =
+    Regex("/(?:api/)?(?:paas/)?v\\d+(?:beta\\d*|alpha\\d*)?$", RegexOption.IGNORE_CASE)
+
 /**
  * Dynamically fetches the available model IDs from the active provider or custom proxy endpoint.
  * Supports Google `/v1beta/models`, OpenAI `/v1/models`, `/api/v3/models`, and Anthropic `/v1/models` formats.
  */
-suspend fun AiProviderEngine.fetchAvailableModels(profile: ProviderProfile): Result<List<String>> = runCatching {
-    val base = profile.baseUrl.trim().trimEnd('#').trimEnd('/')
-    val wireProtocol = resolveWireProtocol(profile)
-    val hasVersionSuffix = Regex("/(?:api/)?(?:paas/)?v\\d+(?:beta\\d*|alpha\\d*)?$", RegexOption.IGNORE_CASE)
-        .containsMatchIn(base)
-    val candidateUrls = when {
-        base.endsWith("/models", ignoreCase = true) -> listOf(base)
-        hasVersionSuffix -> listOf(
-            "$base/models",
-            "${base.replace(Regex("/(?:api/)?(?:paas/)?v\\d+(?:beta\\d*|alpha\\d*)?$", RegexOption.IGNORE_CASE), "")}/v1/models"
-        ).distinct()
-        wireProtocol == ProviderProtocol.GEMINI_INTERACTIONS -> listOf(
-            "$base/v1beta/models?pageSize=200",
-            "$base/v1/models",
-            "$base/models"
-        )
-        wireProtocol == ProviderProtocol.ANTHROPIC_MESSAGES -> listOf(
-            "$base/v1/models?limit=100",
-            "$base/v1/models",
-            "$base/models"
-        )
-        else -> listOf(
-            "$base/v1/models",
-            "$base/api/v3/models",
-            "$base/models"
-        )
-    }
+suspend fun AiProviderEngine.fetchAvailableModels(profile: ProviderProfile): Result<List<String>> =
+    withContext(Dispatchers.IO) {
+        runCatching {
+            val base = profile.baseUrl.trim().trimEnd('#').trimEnd('/')
+            val wireProtocol = resolveWireProtocol(profile)
+            val hasVersionSuffix = API_VERSION_SUFFIX_REGEX.containsMatchIn(base)
+            val candidateUrls = when {
+                base.endsWith("/models", ignoreCase = true) -> listOf(base)
+                hasVersionSuffix -> listOf(
+                    "$base/models",
+                    "${base.replace(API_VERSION_SUFFIX_REGEX, "")}/v1/models"
+                ).distinct()
+                wireProtocol == ProviderProtocol.GEMINI_INTERACTIONS -> listOf(
+                    "$base/v1beta/models?pageSize=200",
+                    "$base/v1/models",
+                    "$base/models"
+                )
+                wireProtocol == ProviderProtocol.ANTHROPIC_MESSAGES -> listOf(
+                    "$base/v1/models?limit=100",
+                    "$base/v1/models",
+                    "$base/models"
+                )
+                else -> listOf(
+                    "$base/v1/models",
+                    "$base/api/v3/models",
+                    "$base/models"
+                )
+            }
 
-    var lastError = ""
-    for (rawUrl in candidateUrls) {
-        val url = buildUrlWithAuthQuery(profile, rawUrl)
-        val respResult = runCatching {
-            httpClient.get(url) {
-                applyAuthAndCustomHeaders(profile)
-                if (wireProtocol == ProviderProtocol.ANTHROPIC_MESSAGES) {
-                    applyAnthropicVersionHeader(profile)
+            var lastError = ""
+            for (rawUrl in candidateUrls) {
+                val url = buildUrlWithAuthQuery(profile, rawUrl)
+                val respResult = runCatching {
+                    httpClient.get(url) {
+                        applyAuthAndCustomHeaders(profile)
+                        if (wireProtocol == ProviderProtocol.ANTHROPIC_MESSAGES) {
+                            applyAnthropicVersionHeader(profile)
+                        }
+                    }
+                }
+                val resp = respResult.getOrNull()
+                if (resp == null) {
+                    val err = respResult.exceptionOrNull()
+                    lastError = err?.message ?: err?.let { it::class.simpleName } ?: "Connection failed"
+                    continue
+                }
+
+                val bodyText = resp.bodyAsText()
+                if (!resp.status.isSuccess()) {
+                    lastError = "HTTP ${resp.status.value}: ${bodyText.take(240)}"
+                    continue
+                }
+
+                val parsed = parseModelsListJson(bodyText)
+                if (parsed.isNotEmpty()) {
+                    return@runCatching parsed
                 }
             }
-        }
-        val resp = respResult.getOrNull()
-        if (resp == null) {
-            val err = respResult.exceptionOrNull()
-            lastError = err?.message ?: err?.let { it::class.simpleName } ?: "Connection failed"
-            continue
-        }
 
-        val bodyText = resp.bodyAsText()
-        if (!resp.status.isSuccess()) {
-            lastError = "HTTP ${resp.status.value}: ${bodyText.take(240)}"
-            continue
-        }
-
-        val parsed = parseModelsListJson(bodyText)
-        if (parsed.isNotEmpty()) {
-            return@runCatching parsed
+            if (lastError.isNotBlank()) {
+                error(lastError)
+            } else {
+                error("Endpoint returned an empty model list.")
+            }
         }
     }
-
-    if (lastError.isNotBlank()) {
-        error(lastError)
-    } else {
-        error("Endpoint returned an empty model list.")
-    }
-}
 
 internal fun AiProviderEngine.recordDiscoveredModality(modelId: String, modalities: List<String>) {
     val clean = modelId.trim().removePrefix("models/").lowercase()
     if (clean.isEmpty() || modalities.isEmpty()) return
     val normalized = modalities.map { it.trim().lowercase() }.filter { it.isNotEmpty() }.distinct()
     if (normalized.isNotEmpty()) {
-        discoveredModelModalities[clean] = normalized
-        val shortKey = clean.substringAfterLast("/")
-        if (shortKey.isNotEmpty()) {
-            discoveredModelModalities[shortKey] = normalized
-        }
-        val canonical = ModelsDevClient.normalizeCanonicalModelSlug(clean)
-        if (canonical.isNotEmpty()) {
-            discoveredModelModalities[canonical] = normalized
+        synchronized(discoveredModelModalities) {
+            discoveredModelModalities[clean] = normalized
+            val shortKey = clean.substringAfterLast("/")
+            if (shortKey.isNotEmpty()) {
+                discoveredModelModalities[shortKey] = normalized
+            }
+            val canonical = ModelsDevClient.normalizeCanonicalModelSlug(clean)
+            if (canonical.isNotEmpty()) {
+                discoveredModelModalities[canonical] = normalized
+            }
         }
     }
 }
@@ -106,19 +115,22 @@ internal fun AiProviderEngine.recordDiscoveredVendor(modelId: String, vendor: St
     val clean = modelId.trim().removePrefix("models/").lowercase()
     val cleanVendor = vendor.trim()
     if (clean.isEmpty() || cleanVendor.isEmpty()) return
-    discoveredModelVendors[clean] = cleanVendor
-    val shortKey = clean.substringAfterLast("/")
-    if (shortKey.isNotEmpty()) {
-        discoveredModelVendors[shortKey] = cleanVendor
+    synchronized(discoveredModelVendors) {
+        discoveredModelVendors[clean] = cleanVendor
+        val shortKey = clean.substringAfterLast("/")
+        if (shortKey.isNotEmpty()) {
+            discoveredModelVendors[shortKey] = cleanVendor
+        }
     }
 }
 
 fun AiProviderEngine.getDiscoveredVendorForModel(modelId: String): String? {
     val clean = modelId.trim().removePrefix("models/").lowercase()
     if (clean.isEmpty()) return null
-    return discoveredModelVendors[clean]
-        ?: discoveredModelVendors[clean.substringAfterLast("/")]
-        ?: ModelsDevClient.getCachedVendorSlug(modelId)
+    val discovered = synchronized(discoveredModelVendors) {
+        discoveredModelVendors[clean] ?: discoveredModelVendors[clean.substringAfterLast("/")]
+    }
+    return discovered ?: ModelsDevClient.getCachedVendorSlug(modelId)
 }
 
 /** An explicit endpoint path states what the profile generates; a model's name never does. */
@@ -141,9 +153,11 @@ internal fun AiProviderEngine.resolveKnownOutputModalities(profile: ProviderProf
         profile.customModelSpecs[modelId.trim()]?.outputModalities?.takeIf { it.isNotEmpty() }?.let { return it }
         profile.customModelSpecs[clean]?.outputModalities?.takeIf { it.isNotEmpty() }?.let { return it }
     }
-    discoveredModelModalities[clean]?.takeIf { it.isNotEmpty() }?.let { return it }
-    discoveredModelModalities[shortKey]?.takeIf { it.isNotEmpty() }?.let { return it }
-    discoveredModelModalities[canonical]?.takeIf { it.isNotEmpty() }?.let { return it }
+    synchronized(discoveredModelModalities) {
+        discoveredModelModalities[clean]?.takeIf { it.isNotEmpty() }?.let { return it }
+        discoveredModelModalities[shortKey]?.takeIf { it.isNotEmpty() }?.let { return it }
+        discoveredModelModalities[canonical]?.takeIf { it.isNotEmpty() }?.let { return it }
+    }
 
     return ModelsDevClient.getCachedOutputModalities(modelId)
         .ifEmpty { modalitiesFromEndpointOverride(profile?.endpointPathOverride.orEmpty()) }

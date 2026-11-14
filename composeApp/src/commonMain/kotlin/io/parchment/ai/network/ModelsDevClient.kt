@@ -9,9 +9,8 @@ import io.parchment.ai.model.ContextPricingTier
 import io.parchment.ai.model.ChargePricing
 import io.parchment.ai.model.legacyTokenPricing
 import io.parchment.ai.platform.PlatformRuntime
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.async
-import kotlinx.coroutines.supervisorScope
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
@@ -69,6 +68,7 @@ object ModelsDevClient {
         "-(?:20\\d{6}|\\d{6}|20\\d{2}-\\d{2}-\\d{2}|00\\d|latest|preview)$"
     )
     private val VERSION_DOT_BETWEEN_DIGITS_REGEX = Regex("(?<=\\d)\\.(?=\\d)")
+    private val VERSION_DASH_BETWEEN_DIGITS_REGEX = Regex("(?<=\\d)-(?=\\d)")
     private val VERSION_V_PREFIX_REGEX = Regex("(?<=-)v(?=\\d)")
     private val WRAPPER_PREFIX_REGEX = Regex("^(?:doubao-|dola-|dreamina-)")
 
@@ -193,7 +193,7 @@ object ModelsDevClient {
         if (cleanId.isEmpty()) return
         val shortKey = cleanId.substringAfterLast('/')
         val canonicalKey = normalizeCanonicalModelSlug(cleanId)
-        val dotVariantKey = canonicalKey.replace(Regex("(?<=\\d)-(?=\\d)"), ".")
+        val dotVariantKey = canonicalKey.replace(VERSION_DASH_BETWEEN_DIGITS_REGEX, ".")
 
         val keys = buildList {
             add(cleanId)
@@ -226,7 +226,7 @@ object ModelsDevClient {
         if (cleanTarget.isEmpty()) return null
         val withoutSlash = cleanTarget.substringAfterLast('/')
         val canonical = normalizeCanonicalModelSlug(cleanTarget)
-        val dotCanonical = canonical.replace(Regex("(?<=\\d)-(?=\\d)"), ".")
+        val dotCanonical = canonical.replace(VERSION_DASH_BETWEEN_DIGITS_REGEX, ".")
 
         catalog[cleanTarget]?.let { return it }
         catalog[withoutSlash]?.let { return it }
@@ -235,14 +235,31 @@ object ModelsDevClient {
 
         // A shortened identifier may resolve only to one model at a delimiter boundary.
         // Never let an unknown longer name inherit metadata from a shorter catalog key.
-        val candidates = catalog.entries.filter { (key, _) ->
-            listOf(withoutSlash, canonical).any { target ->
-                target.length >= 6 && key.startsWith(target) &&
-                    key.getOrNull(target.length) in listOf('-', '_', '.')
+        val checkWithoutSlash = withoutSlash.length >= 6
+        val checkCanonical = canonical.length >= 6 && canonical != withoutSlash
+        if (!checkWithoutSlash && !checkCanonical) return null
+
+        var matched: ModelPricingSpec? = null
+        var matchedSlug: String? = null
+        for ((key, spec) in catalog) {
+            val matchesWithout = checkWithoutSlash && key.startsWith(withoutSlash) &&
+                isDelimiterChar(key.getOrNull(withoutSlash.length))
+            val matchesCanonical = !matchesWithout && checkCanonical && key.startsWith(canonical) &&
+                isDelimiterChar(key.getOrNull(canonical.length))
+            if (!matchesWithout && !matchesCanonical) continue
+
+            val specSlug = normalizeCanonicalModelSlug(spec.modelId)
+            if (matched == null) {
+                matched = spec
+                matchedSlug = specSlug
+            } else if (specSlug != matchedSlug) {
+                return null
             }
-        }.map { it.value }.distinctBy { normalizeCanonicalModelSlug(it.modelId) }
-        return candidates.singleOrNull()
+        }
+        return matched
     }
+
+    private fun isDelimiterChar(ch: Char?): Boolean = ch == '-' || ch == '_' || ch == '.'
 
     /**
      * Returns the cached `outputModalities` (`text`, `image`, `video`, `audio`) for [modelId]
@@ -280,13 +297,13 @@ object ModelsDevClient {
         }.orEmpty()
     }
 
-    suspend fun fetchModelSpec(modelId: String): Result<ModelPricingSpec> = withContext(Dispatchers.Default) {
-        runCatching {
+    suspend fun fetchModelSpec(modelId: String): Result<ModelPricingSpec> = withContext(Dispatchers.IO) {
+        try {
             val cleanTarget = modelId.trim().lowercase().removePrefix("models/")
             require(cleanTarget.isNotBlank()) { "Model ID is empty." }
 
             val now = PlatformRuntime.currentTimeMillis()
-            val catalog = if (cachedCatalog.isNotEmpty() && (now - lastFetchEpochMs) < CACHE_TTL_MS) {
+            val catalog = if (cachedCatalog.isNotEmpty() && (now - lastFetchEpochMs) in 0L until CACHE_TTL_MS) {
                 cachedCatalog
             } else {
                 fetchEntireCatalog()
@@ -295,96 +312,61 @@ object ModelsDevClient {
             val matched = lookupSpecInCatalog(catalog, cleanTarget)
                 ?: error("Model '$modelId' was not found in the unified model registry.")
 
-            matched.copy(modelId = modelId.trim())
+            Result.success(matched.copy(modelId = modelId.trim()))
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (t: Throwable) {
+            Result.failure(t)
         }
     }
 
     private suspend fun fetchEntireCatalog(): Map<String, ModelPricingSpec> = fetchMutex.withLock {
-        val now = PlatformRuntime.currentTimeMillis()
-        if (cachedCatalog.isNotEmpty() && (now - lastFetchEpochMs) < CACHE_TTL_MS) {
-            return@withLock cachedCatalog
-        }
-
-        val httpClient = AiProviderEngine.httpClient
-        val catalog = mutableMapOf<String, ModelPricingSpec>()
-
-        supervisorScope {
-            val orAllDeferred = async {
-                withTimeoutOrNull(15_000L) {
-                    runCatching {
-                        val resp = httpClient.get(OPENROUTER_MODELS_URL)
-                        if (resp.status.isSuccess()) resp.bodyAsText() else null
-                    }.getOrNull()
-                }
-            }
-            val orVideosDeferred = async {
-                withTimeoutOrNull(12_000L) {
-                    runCatching {
-                        val resp = httpClient.get(OPENROUTER_VIDEOS_URL)
-                        if (resp.status.isSuccess()) resp.bodyAsText() else null
-                    }.getOrNull()
-                }
-            }
-            val vercelDeferred = async {
-                withTimeoutOrNull(12_000L) {
-                    runCatching {
-                        val resp = httpClient.get(VERCEL_MODELS_URL)
-                        if (resp.status.isSuccess()) resp.bodyAsText() else null
-                    }.getOrNull()
-                }
-            }
-            val aimlDeferred = async {
-                withTimeoutOrNull(15_000L) {
-                    runCatching {
-                        val resp = httpClient.get(AIMLAPI_MODELS_URL)
-                        if (resp.status.isSuccess()) resp.bodyAsText() else null
-                    }.getOrNull()
-                }
-            }
-            val liteLlmDeferred = async {
-                withTimeoutOrNull(18_000L) {
-                    runCatching {
-                        val resp = httpClient.get(LITELLM_PRICES_URL)
-                        if (resp.status.isSuccess()) resp.bodyAsText() else null
-                    }.getOrNull()
-                }
+        withContext(Dispatchers.IO) {
+            val now = PlatformRuntime.currentTimeMillis()
+            if (cachedCatalog.isNotEmpty() && (now - lastFetchEpochMs) in 0L until CACHE_TTL_MS) {
+                return@withContext cachedCatalog
             }
 
-            // Parse in order of schema richness & multimodal accuracy
-            orAllDeferred.await()?.let { raw ->
+            val httpClient = AiProviderEngine.httpClient
+            val catalog = mutableMapOf<String, ModelPricingSpec>()
+
+            suspend fun fetchSourceText(url: String, timeoutMs: Long): String? = withTimeoutOrNull(timeoutMs) {
+                runCatching {
+                    val resp = httpClient.get(url)
+                    if (resp.status.isSuccess()) resp.bodyAsText() else null
+                }.getOrNull()
+            }
+
+            // Fetch and parse each registry sequentially so each raw JSON buffer can be reclaimed before the next download.
+            fetchSourceText(OPENROUTER_MODELS_URL, 15_000L)?.let { raw ->
                 runCatching { parseOpenRouterModelsIntoCatalog(raw, catalog, forceVideoOutput = false) }
             }
-            orVideosDeferred.await()?.let { raw ->
+            fetchSourceText(OPENROUTER_VIDEOS_URL, 12_000L)?.let { raw ->
                 runCatching { parseOpenRouterModelsIntoCatalog(raw, catalog, forceVideoOutput = true) }
             }
-            vercelDeferred.await()?.let { raw ->
+            fetchSourceText(VERCEL_MODELS_URL, 12_000L)?.let { raw ->
                 runCatching { parseVercelModelsIntoCatalog(raw, catalog) }
             }
-            aimlDeferred.await()?.let { raw ->
+            fetchSourceText(AIMLAPI_MODELS_URL, 15_000L)?.let { raw ->
                 runCatching { parseAimlApiModelsIntoCatalog(raw, catalog) }
             }
-            liteLlmDeferred.await()?.let { raw ->
+            fetchSourceText(LITELLM_PRICES_URL, 18_000L)?.let { raw ->
                 runCatching { parseLiteLlmModelsIntoCatalog(raw, catalog) }
             }
 
             // Fallback to models.dev if primary sources failed or to fill niche gaps
             if (catalog.isEmpty()) {
-                withTimeoutOrNull(15_000L) {
-                    runCatching {
-                        val resp = httpClient.get(MODELS_DEV_API_URL)
-                        if (resp.status.isSuccess()) {
-                            parseModelsDevIntoCatalog(resp.bodyAsText(), catalog)
-                        }
-                    }
+                fetchSourceText(MODELS_DEV_API_URL, 15_000L)?.let { raw ->
+                    runCatching { parseModelsDevIntoCatalog(raw, catalog) }
                 }
             }
-        }
 
-        if (catalog.isNotEmpty()) {
-            cachedCatalog = catalog
-            lastFetchEpochMs = PlatformRuntime.currentTimeMillis()
+            if (catalog.isNotEmpty()) {
+                cachedCatalog = catalog
+                lastFetchEpochMs = PlatformRuntime.currentTimeMillis()
+            }
+            catalog
         }
-        catalog
     }
 
     internal fun parseOpenRouterModelsIntoCatalog(
@@ -451,6 +433,7 @@ object ModelsDevClient {
                     readRate(pricingObj?.get("audio_output"))?.let { put("output_audio", it) }
                     readRate(pricingObj?.get("input_audio_cache"))?.let { put("cached_input_audio", it) }
                     readRate(pricingObj?.get("image"))?.let { put("input_image_count", it) }
+                    readRate(pricingObj?.get("image_output"))?.let { put("output_image_count", it) }
                 }),
                 contextWindowTokens = contextLen,
                 maxOutputTokens = maxCompletion,
@@ -693,7 +676,9 @@ object ModelsDevClient {
         readRate(source?.get(input), multiplier), readRate(source?.get(output), multiplier),
         readRate(source?.get(cached), multiplier), readRate(source?.get(write), multiplier),
         readRate(source?.get(reasoning), multiplier),
-        readRate(source?.get("cache_creation_input_token_cost_above_12hr") ?: source?.get("cache_creation_input_token_cost_above_1hr"), multiplier)
+        readRate(source?.get("cache_creation_input_token_cost_above_12hr")
+            ?: source?.get("cache_creation_input_token_cost_above_1hr")
+            ?: source?.get("input_cache_write_1h"), multiplier)
     ).takeIf { it.hasAnyRate }
 
     private fun contextTiers(cost: JsonObject?): List<ContextPricingTier> = cost?.mapNotNull { (key, value) ->

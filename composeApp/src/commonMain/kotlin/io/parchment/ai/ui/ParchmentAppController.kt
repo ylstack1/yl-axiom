@@ -72,14 +72,29 @@ internal class ParchmentAppController(
     var streamingInteractionId: String = ""
     lateinit var queuedPrompts: List<QueuedPromptItem>
     lateinit var openTabIds: List<String>
+    @kotlin.concurrent.Volatile
+    private var pendingDraftSessionId: String = ""
+    @kotlin.concurrent.Volatile
+    private var pendingDraftPrompt: String = ""
+    @kotlin.concurrent.Volatile
+    private var pendingDraftPrefill: String = ""
+
     lateinit var userPromptInputState: MutableState<String>
     var userPromptInput: String
         get() = userPromptInputState.value
-        set(value) { userPromptInputState.value = value }
+        set(value) {
+            userPromptInputState.value = value
+            if (::activeSession.isInitialized) pendingDraftSessionId = activeSession.id
+            pendingDraftPrompt = value
+        }
     lateinit var assistantPrefillInputState: MutableState<String>
     var assistantPrefillInput: String
         get() = assistantPrefillInputState.value
-        set(value) { assistantPrefillInputState.value = value }
+        set(value) {
+            assistantPrefillInputState.value = value
+            if (::activeSession.isInitialized) pendingDraftSessionId = activeSession.id
+            pendingDraftPrefill = value
+        }
     lateinit var pendingAttachments: List<PromptAttachment>
     var currentEffectiveModel: String = ""
     lateinit var generationHost: GenerationHost
@@ -395,6 +410,47 @@ internal class ParchmentAppController(
 
     fun updateSessionById(sessionId: String, immediate: Boolean = false, transform: (ChatSession) -> ChatSession) =
         updateSession(sessionId, immediate, touch = true, transform = transform)
+
+    fun syncPendingDraftTracking(sessionId: String, draftInput: String, draftPrefill: String) {
+        if (pendingDraftSessionId != sessionId) {
+            pendingDraftSessionId = sessionId
+            pendingDraftPrompt = draftInput
+            pendingDraftPrefill = draftPrefill
+        }
+    }
+
+    fun persistDraftForSession(sessionId: String, draftInput: String, draftPrefill: String) {
+        if (sessionId.isBlank()) return
+        val target = appState.sessions.find { it.id == sessionId } ?: return
+        if (target.draftInput == draftInput && target.draftPrefill == draftPrefill) return
+        updateSession(sessionId, immediate = false, touch = false) {
+            it.copy(draftInput = draftInput, draftPrefill = draftPrefill)
+        }
+    }
+
+    fun flushPendingDraftForActiveSession() {
+        if (::activeSession.isInitialized && ::userPromptInputState.isInitialized && ::assistantPrefillInputState.isInitialized) {
+            persistDraftForSession(activeSession.id, userPromptInputState.value, assistantPrefillInputState.value)
+        }
+    }
+
+    fun flushPendingDraftToDiskWriter() {
+        val sessId = pendingDraftSessionId
+        if (sessId.isBlank()) return
+        val prompt = pendingDraftPrompt
+        val prefill = pendingDraftPrefill
+        val latest = appDiskWriter.pendingFullSession(sessId)
+            ?: androidx.compose.runtime.snapshots.Snapshot.withoutReadObservation {
+                appState.sessions.find { it.id == sessId }
+            }
+        if (latest != null && !latest.isCompactStub && (latest.draftInput != prompt || latest.draftPrefill != prefill)) {
+            appDiskWriter.enqueue(
+                sessions = listOf(latest.copy(draftInput = prompt, draftPrefill = prefill)),
+                urgent = true,
+                notify = false
+            )
+        }
+    }
 
     // Pinning is bookkeeping, not new content, so the chat keeps its place in the list.
     fun togglePinnedReply(sessionId: String, nodeId: String) =
@@ -1204,6 +1260,7 @@ internal class ParchmentAppController(
     }
 
     fun createNewTopicForAssistant(assistant: AssistantAgent, openInNewTab: Boolean = true) {
+        flushPendingDraftForActiveSession()
         // Reuse an open, untouched "New Chat" tab for this assistant instead of adding another blank one.
         val existingEmptyOpenTab = appState.sessions.find { s ->
             s.id in openTabIds &&
@@ -1248,6 +1305,7 @@ internal class ParchmentAppController(
     }
 
     fun switchToTab(sessionId: String) {
+        flushPendingDraftForActiveSession()
         val target = appState.sessions.find { it.id == sessionId } ?: return
         // Derive from persisted state (not the remembered snapshot) so rapid tab clicks never
         // operate on a stale list, and cap the strip with MRU eviction.
@@ -1266,6 +1324,7 @@ internal class ParchmentAppController(
     }
 
     fun closeChatTab(sessionId: String) {
+        flushPendingDraftForActiveSession()
         val remainingTabs = openTabIds.filterNot { it == sessionId }
         if (remainingTabs.isEmpty()) {
             createNewTopicForAssistant(activeAssistant, openInNewTab = false)
@@ -1290,6 +1349,7 @@ internal class ParchmentAppController(
     }
 
     fun closeEmptyNewChatTabs() {
+        flushPendingDraftForActiveSession()
         val emptyTabIds = openTabIds.filter { tabId ->
             val s = appState.sessions.find { it.id == tabId }
             s != null && s.messages.isEmpty() && s.title == "New Chat" && s.draftInput.isBlank() && !activeStreamsBySession.containsKey(tabId)

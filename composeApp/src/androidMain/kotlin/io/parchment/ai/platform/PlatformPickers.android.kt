@@ -201,12 +201,14 @@ actual object PlatformPickers {
     }.getOrDefault(false)
 
     actual fun loadBundledFontFamily(bundleName: String): FontFamily? {
-        val key = "bundled:$bundleName"
+        val canonical = AppStorageInventory.canonicalBundledFontKey(bundleName)
+        if (canonical.isEmpty()) return null
+        val key = "bundled:$canonical"
         fontCache[key]?.let { return it }
         val assets = AndroidPlatformHost.appContext?.assets ?: return null
 
         return runCatching {
-            val family = when (bundleName.lowercase()) {
+            val family = when (canonical) {
                 "inter" -> {
                     FontFamily(
                         Font(assetManager = assets, path = "fonts/Inter-Regular.ttf", weight = FontWeight.Normal, style = FontStyle.Normal),
@@ -217,7 +219,7 @@ actual object PlatformPickers {
                         Font(assetManager = assets, path = "fonts/Inter-Italic.ttf", weight = FontWeight.Bold, style = FontStyle.Italic)
                     )
                 }
-                "jetbrains mono", "jetbrainsmono nerd", "jetbrainsmono", "nerd" -> {
+                "jetbrains_mono" -> {
                     FontFamily(
                         Font(assetManager = assets, path = "fonts/JetBrainsMono-Regular.ttf", weight = FontWeight.Normal, style = FontStyle.Normal),
                         Font(assetManager = assets, path = "fonts/JetBrainsMono-Regular.ttf", weight = FontWeight.Medium, style = FontStyle.Normal),
@@ -226,7 +228,7 @@ actual object PlatformPickers {
                         Font(assetManager = assets, path = "fonts/JetBrainsMono-Italic.ttf", weight = FontWeight.Normal, style = FontStyle.Italic)
                     )
                 }
-                "latex", "katex", "math" -> {
+                "latex" -> {
                     FontFamily(
                         Font(assetManager = assets, path = "fonts/KaTeX_Main-Regular.ttf", weight = FontWeight.Normal, style = FontStyle.Normal),
                         Font(assetManager = assets, path = "fonts/KaTeX_Main-Bold.ttf", weight = FontWeight.Bold, style = FontStyle.Normal),

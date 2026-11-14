@@ -28,10 +28,10 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ImageBitmap
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.layout
 import androidx.compose.ui.text.font.FontWeight
@@ -104,7 +104,7 @@ internal fun MessageTurnItem(
     val isAssistant = node.role == MessageRole.ASSISTANT
 
     var isEditing by remember(node.id, node.activeVariantIndex) { mutableStateOf(false) }
-    var editBuffer by remember(node.id, node.activeVariantIndex, activeVar.content) { mutableStateOf(activeVar.content) }
+    var editBuffer by remember(node.id, node.activeVariantIndex) { mutableStateOf("") }
     var manualThinkingToggle by remember(node.id, node.activeVariantIndex) { mutableStateOf<Boolean?>(null) }
     var showRawWireDrawer by remember(node.id) { mutableStateOf(false) }
     var showMoreActions by remember(node.id) { mutableStateOf(false) }
@@ -141,7 +141,7 @@ internal fun MessageTurnItem(
     val turnHovered by turnHoverSource.collectIsHoveredAsState()
     var footerHasFocus by remember { mutableStateOf(false) }
     val footerVisible = win.isCompact || turnHovered || footerHasFocus || showMoreActions || openUsageDetailsId != null || activeVar.isStreaming
-    val footerAlpha by animateFloatAsState(if (footerVisible) 1f else 0f, motionTween(Motion.QUICK))
+    val footerAlphaState = animateFloatAsState(if (footerVisible) 1f else 0f, motionTween(Motion.QUICK))
     val showBubbles = viewMode == ViewMode.EDITORIAL_TURNS
     val isSentBubble = showBubbles && !isAssistant
 
@@ -163,7 +163,7 @@ internal fun MessageTurnItem(
         Modifier
             .fillMaxWidth()
             .hoverable(turnHoverSource)
-            .then(if (!node.includedInContext) Modifier.alpha(0.62f) else Modifier)
+            .then(if (!node.includedInContext) Modifier.graphicsLayer { alpha = 0.62f } else Modifier)
             .then(
                 if (!activeVar.isStreaming) Modifier.animateContentSize(animationSpec = motionSpring())
                 else Modifier
@@ -247,11 +247,12 @@ internal fun MessageTurnItem(
                 editBuffer = editBuffer,
                 onEditBufferChange = { editBuffer = it },
                 onCancelEdit = {
-                    editBuffer = activeVar.content
+                    editBuffer = ""
                     isEditing = false
                 },
                 onSaveEditedText = { text, asBranch, regenerate ->
                     onSaveEditedText(text, asBranch, regenerate)
+                    editBuffer = ""
                     isEditing = false
                 },
                 preferences = preferences,
@@ -283,7 +284,7 @@ internal fun MessageTurnItem(
             isLatestTurn = isLatestTurn,
             isSentBubble = isSentBubble,
             preferences = preferences,
-            footerAlpha = footerAlpha,
+            footerAlpha = { footerAlphaState.value },
             copiedBadge = copiedBadge,
             onCopiedBadgeChange = { copiedBadge = it },
             showMoreActions = showMoreActions,
@@ -297,7 +298,7 @@ internal fun MessageTurnItem(
             onOpenUsageDetailsIdChange = { openUsageDetailsId = it },
             onFooterFocusChange = { footerHasFocus = it },
             onToggleEditing = {
-                editBuffer = activeVar.content
+                editBuffer = if (!isEditing) activeVar.content else ""
                 isEditing = !isEditing
             },
             onToggleContextMute = onToggleContextMute,
@@ -318,7 +319,7 @@ internal fun MessageTurnItem(
                 showTokenAndContextStats = preferences.showTokenAndContextStats,
                 isSentBubble = isSentBubble,
                 inputPricePerM = inputPricePerM,
-                footerAlpha = footerAlpha
+                footerAlpha = { footerAlphaState.value }
             )
         }
 

@@ -143,6 +143,7 @@ class UsageChargesTest {
         assertEquals(0.0, fees.perUnitUsd["cached_input_audio"])
         assertEquals(0.01, fees.perUnitUsd["web_search"])
         assertNull(fees.perUnitUsd["output_image"])
+        assertEquals(0.04, fees.perUnitUsd["output_image_count"])
         assertEquals(0.00126, metricsFor(record(fees = fees.perUnitUsd)).estimatedCostUsd, 1e-12)
         val merged = ModelsDevClient.mergeModelSpecs(ModelPricingSpec("model", chargePricing = ChargePricing(mapOf("web_search" to 0.0))),
             ModelPricingSpec("model", chargePricing = fees))

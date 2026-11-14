@@ -159,7 +159,7 @@ internal data class SvgRenderItem(
 @Composable
 internal fun InlineSvgArtifactPreview(rawSvg: String) {
     val p = LocalParchmentPalette.current
-    val scene = remember(rawSvg) {
+    val scene = remember(rawSvg, p.primaryInk) {
         runCatching { parseSvgSceneDocument(rawSvg, p.primaryInk) }.getOrNull()
     }
 

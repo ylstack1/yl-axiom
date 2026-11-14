@@ -174,4 +174,64 @@ class ProviderUsageTest {
             parseProviderUsage(UsageDialect.ANTHROPIC, null, isFinal = true))
         assertTrue(ledger.metrics().usageIsComplete)
     }
+
+    @Test
+    fun omittedZeroCacheAndProto3ScalarsResolveWithoutClobberingAnthropicDeltas() {
+        val openAiNoWrite = parse(UsageDialect.OPENAI_RESPONSES,
+            """{"input_tokens":300,"input_tokens_details":{"cached_tokens":40},"output_tokens":50,"output_tokens_details":{"reasoning_tokens":10}}""")
+        assertEquals(0L, openAiNoWrite.cacheCreationInputTokens)
+        assertTrue(openAiNoWrite.isComplete)
+        val openAiNoDetails = parse(UsageDialect.OPENAI_RESPONSES, """{"input_tokens":300,"output_tokens":50}""")
+        assertNull(openAiNoDetails.cachedInputTokens)
+
+        val openAiHalfTtl = parse(UsageDialect.OPENAI_RESPONSES,
+            """{"input_tokens":500,"input_tokens_details":{"cached_tokens":0,"cache_write_tokens":200,"cache_write_tokens_details":{"ttl_12h_tokens":200}},"output_tokens":10}""")
+        assertEquals(0L, openAiHalfTtl.shortCacheCreationInputTokens)
+        assertEquals(200L, openAiHalfTtl.longCacheCreationInputTokens)
+        assertFalse(openAiHalfTtl.invalidCounts)
+
+        val gptImageDetails = parse(UsageDialect.OPENAI_RESPONSES,
+            """{"input_tokens":50,"input_tokens_details":{"text_tokens":10,"image_tokens":40},"output_tokens":20}""")
+        assertEquals(0L, gptImageDetails.cachedInputTokens)
+        assertEquals(0L, gptImageDetails.cacheCreationInputTokens)
+
+        val anthropicStart = parse(UsageDialect.ANTHROPIC,
+            """{"input_tokens":50,"cache_read_input_tokens":100,"cache_creation_input_tokens":40,"cache_creation":{"ephemeral_1h_input_tokens":40},"output_tokens":3}""", final = false)
+        assertEquals(0L, anthropicStart.shortCacheCreationInputTokens)
+        assertEquals(40L, anthropicStart.longCacheCreationInputTokens)
+        val anthropicDelta = parse(UsageDialect.ANTHROPIC, """{"output_tokens":12}""", final = false)
+        assertNull(anthropicDelta.cachedInputTokens)
+        assertNull(anthropicDelta.cacheCreationInputTokens)
+        val mergedAnthropic = anthropicStart.updatedBy(anthropicDelta)
+        assertEquals(100L, mergedAnthropic.cachedInputTokens)
+        assertEquals(40L, mergedAnthropic.cacheCreationInputTokens)
+
+        val geminiFinalOmittedZero = parse(UsageDialect.GEMINI_CONTENT, """{"promptTokenCount":120}""", final = true)
+        assertEquals(0L, geminiFinalOmittedZero.cachedInputTokens)
+        assertEquals(0L, geminiFinalOmittedZero.outputTokens)
+        assertTrue(geminiFinalOmittedZero.isComplete)
+        val geminiNonFinalOmittedOutput = parse(UsageDialect.GEMINI_CONTENT, """{"promptTokenCount":120}""", final = false)
+        assertNull(geminiNonFinalOmittedOutput.outputTokens)
+        val interactionsFinalOmittedZero = parse(UsageDialect.GEMINI_INTERACTIONS, """{"total_input_tokens":120}""", final = true)
+        assertEquals(geminiFinalOmittedZero, interactionsFinalOmittedZero)
+
+        val interactionsLegacyReasoning = parse(
+            UsageDialect.GEMINI_INTERACTIONS,
+            """{"total_input_tokens":11,"total_output_tokens":160,"total_reasoning_tokens":382}""",
+            final = true
+        )
+        assertEquals(382L, interactionsLegacyReasoning.reasoningTokens)
+        assertTrue(interactionsLegacyReasoning.isComplete)
+
+        val videoUsage = parse(UsageDialect.VIDEO_GENERATION, """{"completion_tokens":108900,"total_tokens":108900}""", final = true)
+        assertEquals(0L, videoUsage.inputTokens)
+        assertEquals(108900L, videoUsage.outputTokens)
+        assertTrue(videoUsage.isComplete)
+        assertTrue(
+            usesPromptCompletionUsageFields(
+                UsageDialect.VIDEO_GENERATION,
+                Json.parseToJsonElement("""{"completion_tokens":1}""").jsonObject
+            )
+        )
+    }
 }

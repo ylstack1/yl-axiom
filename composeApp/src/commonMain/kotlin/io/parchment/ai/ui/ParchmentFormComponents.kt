@@ -71,6 +71,7 @@ import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.TextFieldValue
+import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
@@ -175,7 +176,8 @@ fun SepiaTextField(
     maxHeight: Dp = 260.dp,
     maxLines: Int = if (singleLine) 1 else Int.MAX_VALUE,
     onEnterKeySend: ((isCtrlOrMetaPressed: Boolean, isShiftPressed: Boolean) -> Boolean)? = null,
-    onClipboardPaste: (() -> Boolean)? = null
+    onClipboardPaste: (() -> Boolean)? = null,
+    visualTransformation: VisualTransformation = VisualTransformation.None
 ) {
     val p = LocalParchmentPalette.current
     val shape = RoundedCornerShape(Radius.r8)
@@ -228,6 +230,7 @@ fun SepiaTextField(
             maxLines = maxLines,
             textStyle = textStyle,
             interactionSource = interactionSource,
+            visualTransformation = visualTransformation,
             cursorBrush = SolidColor(p.accent),
             modifier = Modifier
                 .fillMaxWidth()

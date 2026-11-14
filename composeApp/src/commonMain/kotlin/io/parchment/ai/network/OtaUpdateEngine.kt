@@ -16,6 +16,8 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.flowOn
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeout
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
@@ -55,8 +57,9 @@ sealed class OtaUpdateState {
 
 private val GITHUB_REPO_NAME = Regex("[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+")
 private val SHA256_HEX = Regex("[0-9a-f]{64}")
+private const val GITHUB_API_BASE_URL = "https://api.github.com"
+private const val GITHUB_API_TIMEOUT_MS = 20_000L
 
-/** Reads GitHub's nullable `sha256:<hex>` asset digest; anything else counts as not published. */
 /** An update closes the app, so it must wait until no chat is running and no prompt is queued. */
 internal fun updateBlockedReason(runningChats: Int, queuedPrompts: Int): String? = when {
     runningChats > 0 -> "Finish or stop $runningChats running chat(s) before updating, so no work is interrupted."
@@ -67,6 +70,7 @@ internal fun updateBlockedReason(runningChats: Int, queuedPrompts: Int): String?
 internal const val DEV_BUILD_UPDATE_MESSAGE =
     "This is a development build, so it doesn't install updates. Update the installed Parchment instead."
 
+/** Reads GitHub's nullable `sha256:<hex>` asset digest; anything else counts as not published. */
 internal fun sha256FromAssetDigest(rawDigest: String?): String =
     rawDigest.orEmpty().trim().removePrefix("sha256:").lowercase().takeIf(SHA256_HEX::matches).orEmpty()
 
@@ -83,84 +87,103 @@ object OtaUpdateEngine {
     val currentAppVersion: String
         get() = ParchmentBuildConfig.APP_VERSION
 
+    private suspend fun fetchGitHubReleaseResponse(url: String) = withTimeout(GITHUB_API_TIMEOUT_MS) {
+        httpClient.get(url) {
+            header("Accept", "application/vnd.github+json")
+            header("User-Agent", "Parchment-OTA-Updater/${ParchmentBuildConfig.APP_VERSION}")
+        }
+    }
+
     /**
      * Queries GitHub Releases for the latest `.apk` (on Android) or `.exe` installer (on Windows)
      * without opening a browser.
      */
     suspend fun checkForUpdates(
         githubRepo: String = ParchmentBuildConfig.DEFAULT_GITHUB_REPO
-    ): Result<OtaReleaseInfo> = runCatching {
-        val cleanRepo = githubRepo.trim()
-            .removePrefix("https://github.com/")
-            .removePrefix("http://github.com/")
-            .trim('/')
-            .ifBlank { ParchmentBuildConfig.DEFAULT_GITHUB_REPO }
-        check(GITHUB_REPO_NAME.matches(cleanRepo)) { "The update repository must be in owner/name form." }
+    ): Result<OtaReleaseInfo> = checkForUpdatesFromBase(githubRepo, GITHUB_API_BASE_URL)
 
-        // Try /releases/latest first, then fallback to /releases?per_page=5
-        val latestUrl = "https://api.github.com/repos/$cleanRepo/releases/latest"
-        val listUrl = "https://api.github.com/repos/$cleanRepo/releases?per_page=5"
+    internal suspend fun checkForUpdatesFromBase(
+        githubRepo: String = ParchmentBuildConfig.DEFAULT_GITHUB_REPO,
+        apiBaseUrl: String = GITHUB_API_BASE_URL
+    ): Result<OtaReleaseInfo> = withContext(Dispatchers.IO) {
+        try {
+            val cleanRepo = githubRepo.trim()
+                .removePrefix("https://github.com/")
+                .removePrefix("http://github.com/")
+                .trim('/')
+                .ifBlank { ParchmentBuildConfig.DEFAULT_GITHUB_REPO }
+            check(GITHUB_REPO_NAME.matches(cleanRepo)) { "The update repository must be in owner/name form." }
 
-        var releaseObj: JsonObject? = null
+            val cleanBase = apiBaseUrl.trimEnd('/')
+            // Try /releases/latest first, then fallback to /releases?per_page=5
+            val latestUrl = "$cleanBase/repos/$cleanRepo/releases/latest"
+            val listUrl = "$cleanBase/repos/$cleanRepo/releases?per_page=5"
 
-        val latestResp = runCatching {
-            httpClient.get(latestUrl) {
-                header("Accept", "application/vnd.github+json")
-                header("User-Agent", "Parchment-OTA-Updater/${ParchmentBuildConfig.APP_VERSION}")
+            var releaseObj: JsonObject? = null
+
+            val latestResp = try {
+                fetchGitHubReleaseResponse(latestUrl)
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (_: Throwable) {
+                null
             }
-        }.getOrNull()
 
-        if (latestResp != null && latestResp.status.isSuccess()) {
-            releaseObj = runCatching { json.parseToJsonElement(latestResp.bodyAsText()).jsonObject }.getOrNull()
+            if (latestResp != null && latestResp.status.isSuccess()) {
+                releaseObj = runCatching { json.parseToJsonElement(latestResp.bodyAsText()).jsonObject }.getOrNull()
+            }
+
+            if (releaseObj == null) {
+                val listResp = fetchGitHubReleaseResponse(listUrl)
+                if (!listResp.status.isSuccess()) {
+                    error("GitHub Releases HTTP ${listResp.status.value}: ${listResp.bodyAsText().take(200)}")
+                }
+                val arr = json.parseToJsonElement(listResp.bodyAsText()) as? JsonArray
+                releaseObj = arr?.firstOrNull() as? JsonObject
+                    ?: error("No releases published yet in $cleanRepo.")
+            }
+
+            val tagName = releaseObj["tag_name"]?.jsonPrimitive?.contentOrNull ?: "v1.0.0"
+            val cleanRemoteVersion = tagName.removePrefix("v").removePrefix("V").trim()
+            val title = releaseObj["name"]?.jsonPrimitive?.contentOrNull?.ifBlank { tagName } ?: tagName
+            val body = releaseObj["body"]?.jsonPrimitive?.contentOrNull ?: ""
+            val publishedAt = releaseObj["published_at"]?.jsonPrimitive?.contentOrNull ?: ""
+
+            val assets = releaseObj["assets"]?.jsonArray ?: JsonArray(emptyList())
+            val expectedSuffix = if (PlatformRuntime.isAndroid) ".apk" else ".exe"
+
+            val matchingAsset = assets.mapNotNull { it as? JsonObject }.firstOrNull { assetObj ->
+                val name = assetObj["name"]?.jsonPrimitive?.contentOrNull.orEmpty()
+                name.endsWith(expectedSuffix, ignoreCase = true)
+            } ?: error("Release '$tagName' does not contain a $expectedSuffix installer asset yet (build may still be in progress).")
+
+            val assetName = matchingAsset["name"]?.jsonPrimitive?.contentOrNull ?: "Parchment$expectedSuffix"
+            val downloadUrl = matchingAsset["browser_download_url"]?.jsonPrimitive?.contentOrNull
+                ?.takeIf { it.startsWith("https://", ignoreCase = true) }
+                ?: error("Missing HTTPS browser_download_url on asset '$assetName'.")
+            val sizeBytes = matchingAsset["size"]?.jsonPrimitive?.longOrNull ?: 0L
+
+            val isNewer = compareVersions(cleanRemoteVersion, currentAppVersion) > 0
+
+            Result.success(
+                OtaReleaseInfo(
+                    tagName = tagName,
+                    versionString = cleanRemoteVersion,
+                    releaseTitle = title,
+                    releaseNotes = body,
+                    publishedAt = publishedAt,
+                    assetName = assetName,
+                    assetDownloadUrl = downloadUrl,
+                    assetSizeBytes = sizeBytes,
+                    isNewerThanCurrent = isNewer,
+                    assetSha256 = sha256FromAssetDigest(matchingAsset["digest"]?.jsonPrimitive?.contentOrNull)
+                )
+            )
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (t: Throwable) {
+            Result.failure(t)
         }
-
-        if (releaseObj == null) {
-            val listResp = httpClient.get(listUrl) {
-                header("Accept", "application/vnd.github+json")
-                header("User-Agent", "Parchment-OTA-Updater/${ParchmentBuildConfig.APP_VERSION}")
-            }
-            if (!listResp.status.isSuccess()) {
-                error("GitHub Releases HTTP ${listResp.status.value}: ${listResp.bodyAsText().take(200)}")
-            }
-            val arr = json.parseToJsonElement(listResp.bodyAsText()) as? JsonArray
-            releaseObj = arr?.firstOrNull() as? JsonObject
-                ?: error("No releases published yet in $cleanRepo.")
-        }
-
-        val tagName = releaseObj["tag_name"]?.jsonPrimitive?.contentOrNull ?: "v1.0.0"
-        val cleanRemoteVersion = tagName.removePrefix("v").removePrefix("V").trim()
-        val title = releaseObj["name"]?.jsonPrimitive?.contentOrNull?.ifBlank { tagName } ?: tagName
-        val body = releaseObj["body"]?.jsonPrimitive?.contentOrNull ?: ""
-        val publishedAt = releaseObj["published_at"]?.jsonPrimitive?.contentOrNull ?: ""
-
-        val assets = releaseObj["assets"]?.jsonArray ?: JsonArray(emptyList())
-        val expectedSuffix = if (PlatformRuntime.isAndroid) ".apk" else ".exe"
-
-        val matchingAsset = assets.mapNotNull { it as? JsonObject }.firstOrNull { assetObj ->
-            val name = assetObj["name"]?.jsonPrimitive?.contentOrNull.orEmpty()
-            name.endsWith(expectedSuffix, ignoreCase = true)
-        } ?: error("Release '$tagName' does not contain a $expectedSuffix installer asset yet (build may still be in progress).")
-
-        val assetName = matchingAsset["name"]?.jsonPrimitive?.contentOrNull ?: "Parchment$expectedSuffix"
-        val downloadUrl = matchingAsset["browser_download_url"]?.jsonPrimitive?.contentOrNull
-            ?.takeIf { it.startsWith("https://", ignoreCase = true) }
-            ?: error("Missing HTTPS browser_download_url on asset '$assetName'.")
-        val sizeBytes = matchingAsset["size"]?.jsonPrimitive?.longOrNull ?: 0L
-
-        val isNewer = compareVersions(cleanRemoteVersion, currentAppVersion) > 0
-
-        OtaReleaseInfo(
-            tagName = tagName,
-            versionString = cleanRemoteVersion,
-            releaseTitle = title,
-            releaseNotes = body,
-            publishedAt = publishedAt,
-            assetName = assetName,
-            assetDownloadUrl = downloadUrl,
-            assetSizeBytes = sizeBytes,
-            isNewerThanCurrent = isNewer,
-            assetSha256 = sha256FromAssetDigest(matchingAsset["digest"]?.jsonPrimitive?.contentOrNull)
-        )
     }
 
     /**
@@ -234,7 +257,7 @@ object OtaUpdateEngine {
         } finally {
             staged?.discard()
         }
-    }.flowOn(Dispatchers.Default)
+    }.flowOn(Dispatchers.IO)
 
     fun compareVersions(remote: String, local: String): Int {
         val rClean = remote.substringBefore('+').trim()

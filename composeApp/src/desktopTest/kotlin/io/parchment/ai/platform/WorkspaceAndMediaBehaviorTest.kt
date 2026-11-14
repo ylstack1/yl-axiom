@@ -113,4 +113,22 @@ class WorkspaceAndMediaBehaviorTest {
         assertEquals("missing.png", PlatformStorage.relocateLegacyMediaToChatFolder("missing.png", "chat"))
         assertEquals("x.png", PlatformStorage.relocateLegacyMediaToChatFolder("x.png", ""))
     }
+
+    @Test fun editAndMultiEditInvalidateCachedWorkspaceTreeListing() {
+        file("notes.txt").writeText("short")
+        val initialListing = PlatformWorkspace.workspaceList(workspace, "", recursive = true).getOrThrow()
+        assertTrue(initialListing.contains("notes.txt (5 bytes)"), initialListing)
+
+        PlatformWorkspace.workspaceEdit(workspace, "notes.txt", "short", "much longer updated content", false).getOrThrow()
+        val afterEditListing = PlatformWorkspace.workspaceList(workspace, "", recursive = true).getOrThrow()
+        assertTrue(afterEditListing.contains("notes.txt (27 bytes)"), afterEditListing)
+
+        PlatformWorkspace.workspaceMultiEdit(
+            workspace,
+            "notes.txt",
+            listOf(Triple("updated", "mutated", false), Triple("content", "payload!!", false))
+        ).getOrThrow()
+        val afterMultiEditListing = PlatformWorkspace.workspaceList(workspace, "", recursive = true).getOrThrow()
+        assertTrue(afterMultiEditListing.contains("notes.txt (29 bytes)"), afterMultiEditListing)
+    }
 }

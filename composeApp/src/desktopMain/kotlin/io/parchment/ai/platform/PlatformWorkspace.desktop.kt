@@ -45,7 +45,7 @@ actual object PlatformWorkspace {
         newText: String,
         replaceAll: Boolean
     ): Result<String> = runCatching {
-        WorkspaceFileEditor.edit(workspaceRoot, relativePath, oldText, newText, replaceAll)
+        WorkspaceFileEditor.edit(workspaceRoot, relativePath, oldText, newText, replaceAll).also { workspaceScanner.invalidate() }
     }
 
     actual fun workspaceMultiEdit(
@@ -53,7 +53,7 @@ actual object PlatformWorkspace {
         relativePath: String,
         edits: List<Triple<String, String, Boolean>>
     ): Result<String> = runCatching {
-        WorkspaceFileEditor.multiEdit(workspaceRoot, relativePath, edits)
+        WorkspaceFileEditor.multiEdit(workspaceRoot, relativePath, edits).also { workspaceScanner.invalidate() }
     }
 
     actual fun workspaceMove(workspaceRoot: String, sourceRelativePath: String, destRelativePath: String): Result<String> = runCatching {

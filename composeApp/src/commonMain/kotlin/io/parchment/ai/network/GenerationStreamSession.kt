@@ -559,7 +559,9 @@ internal class GenerationStreamSession(
                 onMedia = state::recordGeneratedMedia,
                 onContent = state::handleMediaContentDelta,
                 onRawWire = state::recordRawWireBounded,
-                onRequestStarted = { state.beginMediaUsage("openai_audio_speech", "output_audio") }
+                onRequestStarted = {
+                    state.beginMediaUsage("openai_audio_speech", "output_audio")
+                }
             )
         }
     }

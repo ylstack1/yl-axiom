@@ -71,11 +71,15 @@ actual object PlatformRuntime {
         }
     }
 
+    @Volatile
+    private var foregroundKeepAliveRequested = false
+
     actual fun synchronizeBackgroundExecution(owners: Int, runnable: Int, status: String) {
         val ctx = AndroidPlatformHost.appContext ?: return
         if (owners == 0) {
+            foregroundKeepAliveRequested = false
             lastReportedDecodeSec = -1
-            ctx.stopService(Intent(ctx, LongDecodeForegroundService::class.java))
+            runCatching { ctx.stopService(Intent(ctx, LongDecodeForegroundService::class.java)) }
             return
         }
         ensureNotificationPermission(ctx)
@@ -91,20 +95,26 @@ actual object PlatformRuntime {
             } else {
                 ctx.startService(intent)
             }
-        }.onFailure { LongDecodeForegroundService.reportFailure(it) }
+            foregroundKeepAliveRequested = true
+        }.onFailure {
+            foregroundKeepAliveRequested = false
+            LongDecodeForegroundService.reportFailure(it)
+        }
     }
 
     actual fun notifyLongDecodeProgress(modelName: String, outputTokens: Int, elapsedSeconds: Int) {
-        if (elapsedSeconds == lastReportedDecodeSec) return
+        if (!foregroundKeepAliveRequested || elapsedSeconds < 0 || elapsedSeconds == lastReportedDecodeSec) return
         lastReportedDecodeSec = elapsedSeconds
         val ctx = AndroidPlatformHost.appContext ?: return
+        // Best-effort notification refresh only; background restrictions on progress ticks
+        // must not trigger spurious failure banners while syncKeepAwake owns service lifecycle errors.
         runCatching {
             val intent = Intent(ctx, LongDecodeForegroundService::class.java).apply {
                 putExtra(LongDecodeForegroundService.EXTRA_ACTION, LongDecodeForegroundService.ACTION_UPDATE)
                 putExtra(LongDecodeForegroundService.EXTRA_STATUS, "$modelName • +$outputTokens tok • ${elapsedSeconds}s")
             }
             ctx.startService(intent)
-        }.onFailure { LongDecodeForegroundService.reportFailure(it) }
+        }
     }
 
     private fun ensureNotificationPermission(ctx: Context) {

@@ -55,9 +55,37 @@ internal class HttpMcpTransport(private val url: String, private val bearerToken
     @Volatile private var sessionId = ""
 
     init {
-        val target = Url(url)
+        val cleanUrl = url.trim()
+        val hasHttpScheme = cleanUrl.startsWith("http://", ignoreCase = true) ||
+            cleanUrl.startsWith("https://", ignoreCase = true)
+        if (!hasHttpScheme) {
+            throw McpException("MCP server URL must use http or https.")
+        }
+        val authority = cleanUrl.substringAfter("://")
+            .substringBefore('/')
+            .substringBefore('?')
+            .substringBefore('#')
+        val hostPort = authority.substringAfterLast('@')
+        val explicitHost = if (hostPort.startsWith("[")) {
+            hostPort.substringAfter('[').substringBefore(']', "")
+        } else {
+            hostPort.substringBefore(':')
+        }
+        if (explicitHost.isBlank()) {
+            throw McpException("MCP server URL must include a host.")
+        }
+        val target = runCatching { Url(cleanUrl) }.getOrElse {
+            throw McpException("Invalid MCP server URL.")
+        }
+        val scheme = target.protocol.name.lowercase()
+        if (scheme != "http" && scheme != "https") {
+            throw McpException("MCP server URL must use http or https.")
+        }
+        if (target.host.isBlank()) {
+            throw McpException("MCP server URL must include a host.")
+        }
         val loopback = target.host == "localhost" || target.host == "127.0.0.1" || target.host == "[::1]" || target.host == "::1"
-        if (target.protocol.name != "https" && !loopback && bearerToken.isNotBlank()) {
+        if (scheme != "https" && !loopback && bearerToken.isNotBlank()) {
             throw McpException("A token can be sent only over https or to this device.")
         }
     }

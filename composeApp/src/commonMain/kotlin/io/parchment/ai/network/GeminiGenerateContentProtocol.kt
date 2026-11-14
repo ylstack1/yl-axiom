@@ -127,7 +127,9 @@ internal suspend fun AiProviderEngine.executeGeminiGenerateContentLoop(
                     }
                 }
 
-                val baseContents = buildGeminiGenerateContentContents(activeNodes, session, continuePrefix, foldHistoricalToolsOnRetry)
+                val baseContents = withBinaryAttachmentIo(activeNodes) {
+                    buildGeminiGenerateContentContents(activeNodes, session, continuePrefix, foldHistoricalToolsOnRetry)
+                }
                 put("contents", JsonArray(baseContents + extraLoopContentTurns))
 
                 // Tools and toolConfig: try built-in and function tools together, and fall back to AUTO if the API rejects it (400).

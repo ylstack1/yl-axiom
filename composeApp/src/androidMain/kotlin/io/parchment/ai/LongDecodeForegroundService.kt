@@ -43,10 +43,8 @@ class LongDecodeForegroundService : Service() {
         // hours of pointless battery drain. Shut down instead; the persisted resume marker lets the
         // user continue the interrupted turn.
         if (intent == null) {
-            if (activeDecodeCount == 0) {
-                stopSelf()
-                return START_NOT_STICKY
-            }
+            shutdownForTimeout()
+            return START_NOT_STICKY
         }
 
         val action = intent?.getStringExtra(EXTRA_ACTION)

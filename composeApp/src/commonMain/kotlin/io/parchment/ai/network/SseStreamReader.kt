@@ -38,6 +38,7 @@ internal suspend fun readProviderSseOrJsonFallback(
             val dataLines = mutableListOf<String>()
             val rawFallbackBuffer = StringBuilder()
             var sawSseLine = false
+            var sawSseComment = false
             var sawEvent = false
             var sawDone = false
             suspend fun deliver(eventType: String, data: String) {
@@ -58,6 +59,12 @@ internal suspend fun readProviderSseOrJsonFallback(
                     error("SSE stream timed out waiting for next event after ${perLineTimeoutMs / 1000}s (connection stalled).")
                 }
                 when {
+                    line.startsWith(":") -> {
+                        sawSseComment = true
+                    }
+                    line.startsWith("id:") || line.startsWith("retry:") -> {
+                        sawSseLine = true
+                    }
                     line.startsWith("event:") -> {
                         sawSseLine = true
                         sawAnyData = true
@@ -110,7 +117,7 @@ internal suspend fun readProviderSseOrJsonFallback(
                 onPlainJsonFallback(rawFallbackBuffer.toString().trim())
             }
             // A clean close is not a finished answer: proxies can cut a stream without a socket error.
-            if (sawEvent && !sawDone && !streamFinished()) {
+            if ((sawEvent || sawSseComment) && !sawDone && !streamFinished()) {
                 error("Stream ended before the provider finished its response.")
             }
         } finally {

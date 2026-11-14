@@ -22,7 +22,7 @@ internal fun rememberFileImage(path: String): FileImage {
     }
     LaunchedEffect(path) {
         if (state.isLoading) {
-            state = FileImage(withContext(Dispatchers.Default) { PlatformStorage.loadImageBitmapFromFile(path) }, isLoading = false)
+            state = FileImage(withContext(Dispatchers.IO) { PlatformStorage.loadImageBitmapFromFile(path) }, isLoading = false)
         }
     }
     return state

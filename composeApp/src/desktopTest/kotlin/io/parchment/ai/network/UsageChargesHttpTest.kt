@@ -80,4 +80,45 @@ class UsageChargesHttpTest {
             }
         }
     }
+
+    @Test fun directImageGenerationCapturesUsageAndRetriesWithoutOrphanRecords() = runBlocking {
+        var calls = 0
+        val server = HttpServer.create(InetSocketAddress("127.0.0.1", 0), 0)
+        val executor = Executors.newCachedThreadPool()
+        server.executor = executor
+        server.createContext("/") { exchange ->
+            exchange.requestBody.use { it.readBytes() }
+            val call = calls++
+            val status = if (call == 0) 400 else 200
+            val body = if (call == 0) """{"error":{"message":"unsupported size"}}""" else """{"data":[{"b64_json":"iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII="}],"usage":{"input_tokens":50,"input_tokens_details":{"text_tokens":10,"image_tokens":40},"output_tokens":481,"output_tokens_details":{"text_tokens":209,"image_tokens":272}}}"""
+            val bytes = body.toByteArray()
+            exchange.responseHeaders.set("Content-Type", "application/json")
+            exchange.sendResponseHeaders(status, bytes.size.toLong())
+            exchange.responseBody.use { it.write(bytes) }
+        }
+        server.start()
+        try {
+            val profile = ProviderProfile("img-usage", "Images", ProviderProtocol.OPENAI_RESPONSES,
+                baseUrl = "http://127.0.0.1:${server.address.port}", defaultModel = "gpt-image-fixture",
+                customModelSpecs = mapOf("gpt-image-fixture" to ModelPricingSpec("gpt-image-fixture",
+                    knownPricing = TokenPricing(inputPerM = 5.0, outputPerM = 10.0),
+                    chargePricing = ChargePricing(mapOf("output_image" to 0.00004)),
+                    outputModalities = listOf("image"))))
+            val session = ChatSession("img-usage-chat", "Img", 1, 1, profile.id)
+            val user = MessageNode("user", MessageRole.USER, listOf(MessageVariant("v", "Draw a dot")))
+            val completed = withTimeout(15_000) { AiProviderEngine.streamGeneration(profile, session, listOf(user)).toList() }
+                .filterIsInstance<StreamUpdate.Completed>().single()
+            assertEquals(2, calls)
+            assertEquals(1, completed.apiUsageRecords.size)
+            assertEquals(50L, completed.metrics.inputTokens)
+            assertEquals(481L, completed.metrics.outputTokens)
+            assertEquals(272L, completed.apiUsageRecords.single().usage.charges.units["output_image"])
+            assertTrue(completed.metrics.usageIsComplete)
+            assertTrue(completed.metrics.costIsAvailable)
+            assertEquals(0.01322, completed.metrics.estimatedCostUsd, 1e-12)
+        } finally {
+            server.stop(0)
+            executor.shutdownNow()
+        }
+    }
 }

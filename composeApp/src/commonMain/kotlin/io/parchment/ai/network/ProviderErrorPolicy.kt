@@ -112,6 +112,13 @@ internal fun AiProviderEngine.isTransientOrProxyTimeoutError(err: Throwable): Bo
             return false
         }
     }
+    // Fail fast on non-retryable payload size, unsupported media type, unprocessable entity, and legal blocks.
+    if (msg.contains("http 413") || msg.contains("http 414") || msg.contains("http 415") ||
+        msg.contains("http 422") || msg.contains("http 451") ||
+        msg.contains("request_too_large") || msg.contains("payload too large") || msg.contains("entity too large")
+    ) {
+        return false
+    }
     // Treat all other network, socket, EOF, stream, rate-limit (429),
     // gateway (502/503/504/520-529), and upstream proxy interruptions as retryable.
     return true

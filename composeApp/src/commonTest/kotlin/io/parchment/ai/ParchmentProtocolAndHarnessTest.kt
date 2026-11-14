@@ -31,9 +31,12 @@ import io.parchment.ai.network.compactHistoryNodesOnOverflow
 import io.parchment.ai.network.detectMediaEndpointRedirectFromError
 import io.parchment.ai.network.extractCitationsFromToolCall
 import io.parchment.ai.network.extractCleanApiErrorSummary
+import io.parchment.ai.network.getDiscoveredVendorForModel
 import io.parchment.ai.network.isContextLengthExceededError
 import io.parchment.ai.network.isTransientOrProxyTimeoutError
 import io.parchment.ai.network.parseModelsListJson
+import io.parchment.ai.network.recordDiscoveredModality
+import io.parchment.ai.network.recordDiscoveredVendor
 import io.parchment.ai.network.resolveKnownOutputModalities
 import io.parchment.ai.network.resolveModelModalityProfile
 import io.parchment.ai.network.sanitizeContextNodes
@@ -69,6 +72,7 @@ import io.parchment.ai.ui.extractSessionVaultItems
 import io.parchment.ai.ui.parseKissLabelIcons
 import io.parchment.ai.ui.resolveToolKissIcon
 import io.parchment.ai.ui.saveSingleChatSessionToDisk
+import kotlinx.coroutines.launch
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
@@ -77,6 +81,7 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertNotNull
+import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 class ParchmentProtocolAndHarnessTest {
@@ -1865,6 +1870,185 @@ class ParchmentProtocolAndHarnessTest {
         assertTrue(io.parchment.ai.network.OtaUpdateEngine.compareVersions("2.0.10-rc.10", "2.0.10-rc.2") > 0)
         assertTrue(io.parchment.ai.network.OtaUpdateEngine.compareVersions("2.0.10", "2.0.10-rc.10") > 0)
         assertEquals(0, io.parchment.ai.network.OtaUpdateEngine.compareVersions("2.0.10+build5", "2.0.10"))
+    }
+
+    @Test
+    fun testBatch173HotPathTokenizerThrottleAndSidebarFingerprint() {
+        val dummyProf = ProviderProfile(
+            id = "p-hot",
+            name = "Test",
+            protocol = ProviderProtocol.OPENAI_RESPONSES,
+            contextWindowTokens = 128_000
+        )
+        val asst = AssistantAgent(id = "a1", name = "Scholar", systemPrompt = "Helpful")
+        val sess = ChatSession(
+            id = "s-hot",
+            title = "Hot Path",
+            createdAt = 100L,
+            updatedAt = 200L,
+            profileId = dummyProf.id,
+            assistantId = asst.id,
+            messages = listOf(
+                MessageNode("m1", MessageRole.USER, listOf(MessageVariant("v1", "Hello there"))),
+                MessageNode("m2", MessageRole.ASSISTANT, listOf(MessageVariant("v2", "Streaming reply")))
+            )
+        )
+        val att = listOf(
+            PromptAttachment(id = "att1", fileName = "note.txt", mimeType = "text/plain", textContent = "abc def ghi")
+        )
+        val prompt = "Draft question about performance"
+        val prefill = "Sure,"
+        val exactFull = O200kTokenizer.computeContextWindowBreakdown(
+            session = sess,
+            assistant = asst,
+            profile = dummyProf,
+            draftPrompt = prompt,
+            draftPrefill = prefill,
+            pendingAttachments = att,
+            goalModeActive = false
+        )
+        val baseOnly = O200kTokenizer.computeContextWindowBreakdown(
+            session = sess,
+            assistant = asst,
+            profile = dummyProf,
+            draftPrompt = "",
+            draftPrefill = "",
+            pendingAttachments = emptyList(),
+            goalModeActive = false
+        )
+        val attTokens = O200kTokenizer.countAttachmentsTokens(att)
+        assertTrue(attTokens > 0)
+        val exactSplit = O200kTokenizer.applyComposerDraftToBreakdown(
+            baseBreakdown = baseOnly,
+            draftPrompt = prompt,
+            draftPrefill = prefill,
+            pendingAttachments = att,
+            estimateDraft = false,
+            precomputedAttachmentsTokens = attTokens
+        )
+        assertEquals(exactFull, exactSplit)
+
+        val estimatedSplit = O200kTokenizer.applyComposerDraftToBreakdown(
+            baseBreakdown = baseOnly,
+            draftPrompt = prompt,
+            draftPrefill = prefill,
+            pendingAttachments = att,
+            estimateDraft = true,
+            precomputedAttachmentsTokens = attTokens
+        )
+        assertEquals(
+            O200kTokenizer.estimateTokensFast(prompt) + O200kTokenizer.estimateTokensFast(prefill) + attTokens,
+            estimatedSplit.composerDraftTokens
+        )
+        assertEquals(att.size, estimatedSplit.uploadedFilesCount)
+
+        // StreamStatusThrottle coalesces rapid same-phase deltas while preserving phase flips & tool boundaries.
+        val throttle = io.parchment.ai.ui.StreamStatusThrottle(minIntervalMs = 100L)
+        assertEquals("t1", throttle.onPhaseStatus(0L, isThinkingPhase = true) { "t1" })
+        kotlin.test.assertNull(throttle.onPhaseStatus(40L, isThinkingPhase = true) { "t2" })
+        kotlin.test.assertNull(throttle.onPhaseStatus(99L, isThinkingPhase = true) { "t3" })
+        assertEquals("t4", throttle.onPhaseStatus(100L, isThinkingPhase = true) { "t4" })
+        kotlin.test.assertNull(throttle.onPhaseStatus(250L, isThinkingPhase = true) { "t4" })
+        assertEquals("w1", throttle.onPhaseStatus(255L, isThinkingPhase = false) { "w1" })
+        throttle.onExplicitStatus("Executed read_file")
+        assertEquals("w2", throttle.onPhaseStatus(260L, isThinkingPhase = false) { "w2" })
+
+        // sidebarFingerprint ignores streaming text/drafts, changes on structural metadata.
+        val baseSnap = io.parchment.ai.model.AppStateSnapshot(
+            assistants = listOf(asst),
+            sessions = listOf(sess),
+            activeSessionId = sess.id
+        )
+        val streamedTextSnap = baseSnap.copy(
+            sessions = listOf(
+                sess.copy(
+                    draftInput = "typing fast",
+                    messages = listOf(
+                        sess.messages[0],
+                        sess.messages[1].copy(variants = listOf(MessageVariant("v2", "Much longer streamed reply content")))
+                    )
+                )
+            )
+        )
+        assertEquals(io.parchment.ai.ui.sidebarFingerprint(baseSnap), io.parchment.ai.ui.sidebarFingerprint(streamedTextSnap))
+        kotlin.test.assertNotEquals(
+            io.parchment.ai.ui.sidebarFingerprint(baseSnap),
+            io.parchment.ai.ui.sidebarFingerprint(baseSnap.copy(sessions = listOf(sess.copy(title = "Renamed"))))
+        )
+        kotlin.test.assertNotEquals(
+            io.parchment.ai.ui.sidebarFingerprint(baseSnap),
+            io.parchment.ai.ui.sidebarFingerprint(baseSnap.copy(sessions = listOf(sess.copy(updatedAt = 999L))))
+        )
+        val pinnedMsgSnap = baseSnap.copy(
+            sessions = listOf(sess.copy(messages = listOf(sess.messages[0].copy(pinned = true), sess.messages[1])))
+        )
+        kotlin.test.assertNotEquals(io.parchment.ai.ui.sidebarFingerprint(baseSnap), io.parchment.ai.ui.sidebarFingerprint(pinnedMsgSnap))
+    }
+
+    @Test
+    fun testBatch174ModelsDevLookupConcurrencyAndBinaryIoPredicates() = kotlinx.coroutines.runBlocking {
+        val modelAlpha = io.parchment.ai.model.ModelPricingSpec(modelId = "vendor/custom-alpha-2026")
+        val modelSharedA = io.parchment.ai.model.ModelPricingSpec(modelId = "vendor/shared-root-a")
+        val modelSharedB = io.parchment.ai.model.ModelPricingSpec(modelId = "vendor/shared-root-b")
+        val modelDot = io.parchment.ai.model.ModelPricingSpec(modelId = "vendor/gpt-5.1")
+        val catalog = mapOf(
+            "vendor/custom-alpha-2026" to modelAlpha,
+            "custom-alpha-2026" to modelAlpha,
+            "vendor/shared-root-a" to modelSharedA,
+            "shared-root-a" to modelSharedA,
+            "vendor/shared-root-b" to modelSharedB,
+            "shared-root-b" to modelSharedB,
+            "vendor/gpt-5.1" to modelDot,
+            "gpt-5.1" to modelDot,
+            "gpt-5-1" to modelDot
+        )
+
+        // Unique prefix at delimiter boundary matches; ambiguous or mid-token prefix does not
+        assertEquals(modelAlpha, io.parchment.ai.network.ModelsDevClient.lookupSpecInCatalog(catalog, "custom-alpha"))
+        assertNull(io.parchment.ai.network.ModelsDevClient.lookupSpecInCatalog(catalog, "custom-alph"))
+        assertNull(io.parchment.ai.network.ModelsDevClient.lookupSpecInCatalog(catalog, "shared-root"))
+        assertEquals(modelDot, io.parchment.ai.network.ModelsDevClient.lookupSpecInCatalog(catalog, "gpt-5-1"))
+
+        // Thread-safe modality/vendor discovery maps under concurrent read/write
+        val workers = (1..8).map { worker ->
+            launch(kotlinx.coroutines.Dispatchers.Default) {
+                repeat(40) { iter ->
+                    val name = "concurrent-model-${worker}-${iter}"
+                    AiProviderEngine.recordDiscoveredModality(name, listOf("text", "image"))
+                    AiProviderEngine.recordDiscoveredVendor(name, "vendor-$worker")
+                    val resolved = AiProviderEngine.resolveKnownOutputModalities(null, name)
+                    assertTrue("image" in resolved)
+                    assertEquals("vendor-$worker", AiProviderEngine.getDiscoveredVendorForModel(name))
+                }
+            }
+        }
+        workers.forEach { it.join() }
+
+        // Binary attachment I/O dispatch predicate
+        val alreadyInlined = MessageNode(
+            id = "u1",
+            role = MessageRole.USER,
+            variants = listOf(
+                MessageVariant(
+                    id = "v1",
+                    content = "hi",
+                    attachments = listOf(PromptAttachment(id = "att1", fileName = "a.png", mimeType = "image/png", base64Data = "AQID", localFilePath = "/tmp/a.png"))
+                )
+            )
+        )
+        val uninlined = MessageNode(
+            id = "u2",
+            role = MessageRole.USER,
+            variants = listOf(
+                MessageVariant(
+                    id = "v2",
+                    content = "hi",
+                    attachments = listOf(PromptAttachment(id = "att2", fileName = "b.png", mimeType = "image/png", base64Data = "", localFilePath = "/tmp/b.png"))
+                )
+            )
+        )
+        assertFalse(io.parchment.ai.network.hasUninlinedBinaryAttachments(listOf(alreadyInlined)))
+        assertTrue(io.parchment.ai.network.hasUninlinedBinaryAttachments(listOf(alreadyInlined, uninlined)))
     }
 
 }

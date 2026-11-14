@@ -601,4 +601,49 @@ class StreamRecoveryHttpTest {
             assertTrue(server.requestPaths.isNotEmpty() && server.requestPaths.all { it == "/v1/images/generations" }, server.requestPaths.toString())
         }
     }
+
+    @Test fun payloadTooLargeHttp413FailsFastWithoutRetryDelay() {
+        Server(listOf(Reply("""{"error":{"message":"Request too large"}}""", status = 413, contentType = "application/json"))).use { server ->
+            val outcome = runUntilTerminalOrRetry(profile(server, CUSTOM_DIALECT_OPENAI_CHAT))
+            assertIs<StreamUpdate.Error>(outcome)
+            assertEquals(1, server.requests.size)
+        }
+    }
+
+    @Test fun sseKeepaliveCommentsDoNotBreakJsonFallbackOrMaskPrematureEof() = runBlocking {
+        var jsonFallback = ""
+        AiProviderEngine.readSseOrJsonFallback(
+            channel = ByteReadChannel(": OPENROUTER PROCESSING\n\n{\"ok\":true}".toByteArray()),
+            streamFinished = { true },
+            onSseEvent = { _, _ -> fail("Comment plus plain JSON must route to plain fallback") },
+            onPlainJsonFallback = { jsonFallback = it }
+        )
+        assertEquals("{\"ok\":true}", jsonFallback)
+
+        val eofError = runCatching {
+            AiProviderEngine.readSseOrJsonFallback(
+                channel = ByteReadChannel(": ping\n\n".toByteArray()),
+                streamFinished = { false },
+                onSseEvent = { _, _ -> },
+                onPlainJsonFallback = { fail("SSE comment alone must not invoke plain JSON fallback") }
+            )
+        }.exceptionOrNull()
+        assertNotNull(eofError)
+        assertTrue("Stream ended before" in eofError.message.orEmpty())
+    }
+
+    @Test fun geminiInteractionsStatusUpdateHandlesIncompleteAndFailedStates() {
+        val incompleteStream = sse("""{"event_type":"interaction.status_update","interaction":{"id":"i-inc","status":"incomplete","usage":{"total_input_tokens":10,"total_output_tokens":5},"outputs":[{"type":"text","text":"Cut off"}]}}""")
+        Server(listOf(Reply(incompleteStream))).use { server ->
+            val completed = assertIs<StreamUpdate.Completed>(runUntilTerminalOrRetry(geminiProfile(server)))
+            assertEquals("Cut off${AiProviderEngine.OUTPUT_LIMIT_NOTICE}", completed.fullContent)
+            assertTrue(completed.metrics.usageIsComplete)
+        }
+
+        val failedStream = sse("""{"event_type":"interaction.failed","interaction":{"id":"i-fail","status":"failed","error":{"message":"upstream failure"}}}""")
+        Server(listOf(Reply(failedStream))).use { server ->
+            val update = runUntilTerminalOrRetry(geminiProfile(server))
+            assertTrue(update is StreamUpdate.Status && "upstream failure" in update.message, "Unexpected update: $update")
+        }
+    }
 }

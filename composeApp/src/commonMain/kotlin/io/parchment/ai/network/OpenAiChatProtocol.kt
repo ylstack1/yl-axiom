@@ -112,6 +112,22 @@ internal suspend fun AiProviderEngine.executeOpenAiChatCompletionsLoop(
             val sentSampling = !stripSamplingOnRetry && (profile.temperature != null || profile.topP != null)
             val maxOut = profile.maxOutputTokens
             val sentMaxTokens = maxOut != null && maxOut > 0 && maxTokensDialectOverride != "omit"
+            val wireExtraToolMessages = if (stripHistoricalReasoningContentOnRetry) {
+                compactedToolMessages.map { msg ->
+                    if (msg.containsKey("reasoning_content")) JsonObject(msg.filterKeys { it != "reasoning_content" }) else msg
+                }
+            } else compactedToolMessages
+            val chatWireMessages = withBinaryAttachmentIo(activeNodes) {
+                buildOpenAiChatCompletionsMessages(
+                    activeNodes = activeNodes,
+                    session = session,
+                    systemInstruction = systemInstruction,
+                    continuePrefix = continuePrefix,
+                    extraToolMessages = wireExtraToolMessages,
+                    foldHistoricalToolsToText = foldHistoricalToolsOnRetry,
+                    stripReasoningContent = stripHistoricalReasoningContentOnRetry
+                )
+            }
 
             val payloadObj = buildJsonObject {
                 put("model", model)
@@ -150,23 +166,7 @@ internal suspend fun AiProviderEngine.executeOpenAiChatCompletionsLoop(
                         add(JsonPrimitive("image"))
                     }
                 }
-                val wireExtraToolMessages = if (stripHistoricalReasoningContentOnRetry) {
-                    compactedToolMessages.map { msg ->
-                        if (msg.containsKey("reasoning_content")) JsonObject(msg.filterKeys { it != "reasoning_content" }) else msg
-                    }
-                } else compactedToolMessages
-                put(
-                    "messages",
-                    buildOpenAiChatCompletionsMessages(
-                        activeNodes = activeNodes,
-                        session = session,
-                        systemInstruction = systemInstruction,
-                        continuePrefix = continuePrefix,
-                        extraToolMessages = wireExtraToolMessages,
-                        foldHistoricalToolsToText = foldHistoricalToolsOnRetry,
-                        stripReasoningContent = stripHistoricalReasoningContentOnRetry
-                    )
-                )
+                put("messages", chatWireMessages)
                 val wsTools = WorkspaceHarness.buildOpenAiChatCompletionsTools(
                     session.workspaceMode,
                     session.workspacePath,

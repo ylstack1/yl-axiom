@@ -357,6 +357,14 @@ object O200kTokenizer {
         )
     }
 
+    fun countAttachmentsTokens(pendingAttachments: List<PromptAttachment>): Int {
+        var total = 0
+        for (staged in pendingAttachments) {
+            total += countAttachmentTokens(staged)
+        }
+        return total
+    }
+
     /**
      * Combines a pre-computed `baseBreakdown` with the live Composer draft & staged attachments in $O(1)$.
      */
@@ -364,15 +372,19 @@ object O200kTokenizer {
         baseBreakdown: ContextWindowBreakdown,
         draftPrompt: String,
         draftPrefill: String,
-        pendingAttachments: List<PromptAttachment>
+        pendingAttachments: List<PromptAttachment>,
+        estimateDraft: Boolean = false,
+        precomputedAttachmentsTokens: Int? = null
     ): ContextWindowBreakdown {
-        var composerDraftTokens = countTokens(draftPrompt) + countTokens(draftPrefill)
-        for (staged in pendingAttachments) {
-            composerDraftTokens += countAttachmentTokens(staged)
+        val draftTextTokens = if (estimateDraft) {
+            estimateTokensFast(draftPrompt) + estimateTokensFast(draftPrefill)
+        } else {
+            countTokens(draftPrompt) + countTokens(draftPrefill)
         }
+        val attachmentTokens = precomputedAttachmentsTokens ?: countAttachmentsTokens(pendingAttachments)
         return baseBreakdown.copy(
             uploadedFilesCount = baseBreakdown.uploadedFilesCount + pendingAttachments.size,
-            composerDraftTokens = composerDraftTokens
+            composerDraftTokens = draftTextTokens + attachmentTokens
         )
     }
 

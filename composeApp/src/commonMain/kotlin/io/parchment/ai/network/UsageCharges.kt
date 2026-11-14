@@ -14,7 +14,8 @@ internal fun parseProviderCharges(dialect: UsageDialect, usage: JsonObject?, res
         val value = (raw as? JsonPrimitive)?.takeUnless { it.isString }?.longOrNull
         if (value == null || value < 0) invalid = true else units[key] = value
     }
-    val rawCost = if (dialect == UsageDialect.OPENAI_CHAT || dialect == UsageDialect.OPENAI_RESPONSES)
+    val rawCost = if (dialect == UsageDialect.OPENAI_CHAT || dialect == UsageDialect.OPENAI_RESPONSES ||
+        dialect == UsageDialect.IMAGE_GENERATION || dialect == UsageDialect.VIDEO_GENERATION)
         usage?.get("cost")?.takeUnless { it is JsonNull } else null
     val cost = (rawCost as? JsonPrimitive)?.takeUnless { it.isString }?.doubleOrNull
         ?.takeIf { it.isFinite() && it >= 0 }
@@ -28,9 +29,12 @@ internal fun parseProviderCharges(dialect: UsageDialect, usage: JsonObject?, res
     server?.forEach { (key, value) ->
         if (key != "web_search_requests" && value != JsonPrimitive(0) && value !is JsonNull) observed += "other server tools"
     }
-    if (dialect == UsageDialect.OPENAI_CHAT || dialect == UsageDialect.OPENAI_RESPONSES) {
-        val input = usage?.get(if (dialect == UsageDialect.OPENAI_CHAT) "prompt_tokens_details" else "input_tokens_details") as? JsonObject
-        val output = usage?.get(if (dialect == UsageDialect.OPENAI_CHAT) "completion_tokens_details" else "output_tokens_details") as? JsonObject
+    if (dialect == UsageDialect.OPENAI_CHAT || dialect == UsageDialect.OPENAI_RESPONSES ||
+        dialect == UsageDialect.IMAGE_GENERATION || dialect == UsageDialect.VIDEO_GENERATION
+    ) {
+        val usesPromptCompletion = usesPromptCompletionUsageFields(dialect, usage)
+        val input = usage?.get(if (usesPromptCompletion) "prompt_tokens_details" else "input_tokens_details") as? JsonObject
+        val output = usage?.get(if (usesPromptCompletion) "completion_tokens_details" else "output_tokens_details") as? JsonObject
         count(input, "audio_tokens", "input_audio")
         count(input, "video_tokens", "input_video")
         count(output, "audio_tokens", "output_audio")
@@ -75,6 +79,16 @@ internal fun parseProviderCharges(dialect: UsageDialect, usage: JsonObject?, res
         if ((grounding?.get("webSearchQueries") as? JsonArray)?.isNotEmpty() == true ||
             (grounding?.get("groundingChunks") as? JsonArray)?.isNotEmpty() == true) observed += "web_search"
     }
+    if (dialect == UsageDialect.IMAGE_GENERATION && "output_image" !in units) {
+        val generatedImages = (response?.get("data") as? JsonArray)?.size
+            ?: (response?.get("images") as? JsonArray)?.size
+            ?: if (response != null && (response["url"] != null || response["b64_json"] != null)) 1 else 0
+        val outTokens = (usage?.get("output_tokens") as? JsonPrimitive)?.takeUnless { it.isString }?.longOrNull
+            ?: (usage?.get("completion_tokens") as? JsonPrimitive)?.takeUnless { it.isString }?.longOrNull
+        if (generatedImages > 0 && outTokens == 0L) {
+            units["output_image_count"] = generatedImages.toLong()
+        }
+    }
     return ProviderChargeUsage(cost, units, observed, invalid)
 }
 
@@ -100,7 +114,7 @@ internal fun estimateRequestCost(record: ApiUsageRecord): RequestCostEstimate {
         "input_image_count" -> "image input"
         "cached_input_audio" -> "cached audio input"
         "output_audio" -> "audio output"
-        "output_image" -> "image output"
+        "output_image", "output_image_count" -> "image output"
         "web_search" -> "native web search"
         else -> key.replace('_', ' ')
     }
@@ -114,7 +128,9 @@ internal fun estimateRequestCost(record: ApiUsageRecord): RequestCostEstimate {
     }
     val unsupportedInput = charges.units.any { (key, count) -> count > 0 &&
         (key.startsWith("input_") && key != "input_audio" || key.startsWith("cached_input_") && key != "cached_input_audio") }
-    val unsupportedOutput = charges.units.any { (key, count) -> count > 0 && key.startsWith("output_") && key !in setOf("output_audio", "output_image") }
+    val unsupportedOutput = charges.units.any { (key, count) ->
+        count > 0 && key.startsWith("output_") && key !in setOf("output_audio", "output_image", "output_image_count")
+    }
     val missingInputSplit = charges.observedComponents.any { it in setOf("input_audio", "input_video") && charges.units[it] == null }
     if (unsupportedInput || missingInputSplit) {
         missing += "input media usage/prices"
@@ -160,6 +176,10 @@ internal fun estimateRequestCost(record: ApiUsageRecord): RequestCostEstimate {
         if (cost == null) missing += label(key) else total += cost
     }
     for (key in charges.observedComponents) {
+        val coveredByPerImage = key == "output_image" && charges.units["output_image"] == null &&
+            charges.units["output_image_count"] != null && part.outputTokens == 0L &&
+            record.chargePricing.perUnitUsd["output_image_count"] != null
+        if (coveredByPerImage) continue
         if (charges.units[key] == null || key == "output_image" && record.chargePricing.perUnitUsd[key] == null) missing += label(key)
     }
     if (!total.isFinite()) return RequestCostEstimate(0.0, missing + "cost overflow")

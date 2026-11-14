@@ -54,4 +54,10 @@ class PublicWebTransportTest {
         assertTrue(cancelled.isFailure)
         assertContains(cancelled.exceptionOrNull()?.message.orEmpty(), "owning run")
     }
+
+    @Test fun readBoundedEnforcesZeroAndNegativeLimitsSafely() {
+        assertContentEquals(ByteArray(0), PublicWebTransport.readBounded(ByteArray(0).inputStream(), 0, null))
+        assertFails { PublicWebTransport.readBounded(byteArrayOf(1).inputStream(), 0, null) }
+        assertFails { PublicWebTransport.readBounded(ByteArray(0).inputStream(), -1, null) }
+    }
 }

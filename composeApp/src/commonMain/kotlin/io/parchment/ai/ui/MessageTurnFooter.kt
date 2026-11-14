@@ -24,10 +24,10 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.stateDescription
@@ -56,7 +56,7 @@ internal fun MessageTurnActionFooter(
     isLatestTurn: Boolean,
     isSentBubble: Boolean,
     preferences: PreferencesConfig,
-    footerAlpha: Float,
+    footerAlpha: () -> Float = { 1f },
     copiedBadge: String,
     onCopiedBadgeChange: (String) -> Unit,
     showMoreActions: Boolean,
@@ -84,7 +84,7 @@ internal fun MessageTurnActionFooter(
     val clipboard = LocalClipboardManager.current
 
     Column(
-        modifier = Modifier.fillMaxWidth().alpha(footerAlpha).onFocusChanged { onFooterFocusChange(it.hasFocus) },
+        modifier = Modifier.fillMaxWidth().graphicsLayer { alpha = footerAlpha() }.onFocusChanged { onFooterFocusChange(it.hasFocus) },
         verticalArrangement = Arrangement.spacedBy(Space.s4)
     ) {
         @OptIn(ExperimentalLayoutApi::class)
@@ -513,7 +513,7 @@ internal fun UserTurnUsageStats(
     showTokenAndContextStats: Boolean,
     isSentBubble: Boolean,
     inputPricePerM: Double,
-    footerAlpha: Float
+    footerAlpha: () -> Float = { 1f }
 ) {
     val p = LocalParchmentPalette.current
     val win = LocalParchmentWindowSize.current
@@ -524,7 +524,7 @@ internal fun UserTurnUsageStats(
     val userCost = (userTok / 1_000_000.0) * inputPricePerM
     @OptIn(ExperimentalLayoutApi::class)
     FlowRow(
-        modifier = Modifier.fillMaxWidth().padding(top = Space.s4).alpha(footerAlpha),
+        modifier = Modifier.fillMaxWidth().padding(top = Space.s4).graphicsLayer { alpha = footerAlpha() },
         horizontalArrangement = if (isSentBubble) Arrangement.spacedBy(5.dp, Alignment.End) else Arrangement.spacedBy(5.dp),
         verticalArrangement = Arrangement.spacedBy(Space.s4)
     ) {

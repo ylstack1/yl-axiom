@@ -1,0 +1,471 @@
+package io.parchment.ai.ui
+
+import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ColumnScope
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshots.Snapshot
+import androidx.compose.ui.ExperimentalComposeUiApi
+import androidx.compose.ui.ImageComposeScene
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.semantics.SemanticsActions
+import androidx.compose.ui.semantics.SemanticsNode
+import androidx.compose.ui.semantics.SemanticsProperties
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.getOrNull
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.unit.Density
+import androidx.compose.ui.unit.dp
+import com.sun.net.httpserver.HttpServer
+import io.parchment.ai.model.AppStateSnapshot
+import io.parchment.ai.model.AssistantAgent
+import io.parchment.ai.model.ChatSession
+import io.parchment.ai.model.ProviderProfile
+import io.parchment.ai.model.ProviderProtocol
+import io.parchment.ai.strings.Strings
+import java.net.InetSocketAddress
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.Executors
+import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicInteger
+import kotlin.test.Test
+import kotlin.test.assertEquals
+import kotlin.test.assertFalse
+import kotlin.test.assertNotNull
+import kotlin.test.assertNull
+import kotlin.test.assertTrue
+import kotlinx.coroutines.Dispatchers
+
+@OptIn(ExperimentalComposeUiApi::class)
+class UiBehaviorRegressionTest {
+    private fun nodes(scene: ImageComposeScene): List<SemanticsNode> {
+        fun flatten(node: SemanticsNode): List<SemanticsNode> = listOf(node) + node.children.flatMap(::flatten)
+        return scene.semanticsOwners.flatMap { flatten(it.rootSemanticsNode) }
+    }
+
+    private fun text(node: SemanticsNode): String =
+        node.config.getOrNull(SemanticsProperties.Text).orEmpty().joinToString(" ") { it.text }
+
+    private fun description(node: SemanticsNode): String =
+        node.config.getOrNull(SemanticsProperties.ContentDescription).orEmpty().joinToString(" ")
+
+    private fun click(node: SemanticsNode) {
+        val action = requireNotNull(node.config.getOrNull(SemanticsActions.OnClick)?.action) {
+            "Expected OnClick semantics action on node text='${text(node)}' desc='${description(node)}'"
+        }
+        assertTrue(action.invoke())
+    }
+
+    private fun setText(node: SemanticsNode, value: String) {
+        val action = requireNotNull(node.config.getOrNull(SemanticsActions.SetText)?.action) {
+            "Expected SetText semantics action on node"
+        }
+        assertTrue(action.invoke(AnnotatedString(value)))
+    }
+
+    private fun settle(scene: ImageComposeScene, frameNanos: Long) {
+        Snapshot.sendApplyNotifications()
+        scene.render(frameNanos).close()
+    }
+
+    private fun withUiScene(
+        width: Int = 1040,
+        height: Int = 780,
+        content: @androidx.compose.runtime.Composable ColumnScope.() -> Unit,
+        check: (ImageComposeScene) -> Unit
+    ) {
+        val scene = ImageComposeScene(width, height, density = Density(1f), coroutineContext = Dispatchers.Unconfined)
+        try {
+            scene.setContent {
+                CompositionLocalProvider(LocalParchmentWindowSize provides ParchmentWindowSize(width.dp, height.dp)) {
+                    Column(Modifier.fillMaxSize().background(LocalParchmentPalette.current.canvasBg)) {
+                        content()
+                    }
+                }
+            }
+            settle(scene, 0L)
+            check(scene)
+        } finally {
+            scene.close()
+        }
+    }
+
+    @Test
+    fun testConnectionButtonDisablesInFlightAndResetsOnSuccess() {
+        val gate = CountDownLatch(1)
+        val firstRequestStarted = CountDownLatch(1)
+        val requestCount = AtomicInteger(0)
+        val server = HttpServer.create(InetSocketAddress("127.0.0.1", 0), 0)
+        server.executor = Executors.newCachedThreadPool()
+        server.createContext("/v1/models") { ex ->
+            val callNum = requestCount.incrementAndGet()
+            if (callNum == 1) {
+                firstRequestStarted.countDown()
+                gate.await(5, TimeUnit.SECONDS)
+            }
+            val body = """{"data":[{"id":"gpt-4o"},{"id":"gpt-4o-mini"}]}""".toByteArray()
+            ex.responseHeaders.add("Content-Type", "application/json")
+            ex.sendResponseHeaders(200, body.size.toLong())
+            ex.responseBody.use { it.write(body) }
+        }
+        server.start()
+
+        try {
+            val baseUrl = "http://127.0.0.1:${server.address.port}/v1"
+            val initialProfile = ProviderProfile(
+                id = "p-test",
+                name = "LocalOpenAI",
+                protocol = ProviderProtocol.OPENAI_RESPONSES,
+                apiKey = "sk-test-key",
+                baseUrl = baseUrl,
+                defaultModel = "gpt-4o",
+                savedModels = listOf("gpt-4o")
+            )
+            var state by mutableStateOf(
+                AppStateSnapshot(
+                    profiles = listOf(initialProfile),
+                    activeProfileId = initialProfile.id,
+                    assistants = listOf(AssistantAgent(id = "a1", name = "Writer")),
+                    activeAssistantId = "a1"
+                )
+            )
+            var session by mutableStateOf(
+                ChatSession(id = "s1", title = "Chat", createdAt = 1L, updatedAt = 1L, profileId = initialProfile.id)
+            )
+            val notices = mutableListOf<String>()
+
+            withUiScene(
+                content = {
+                    val activeProf = state.profiles.first()
+                    ProvidersSubpage(
+                        appState = state,
+                        activeProfile = activeProf,
+                        activeSession = session,
+                        onSelectProfile = {},
+                        onUpdateProfile = { tr -> state = state.copy(profiles = listOf(tr(state.profiles.first()))) },
+                        onUpdateProfileById = { _, tr -> state = state.copy(profiles = listOf(tr(state.profiles.first()))) },
+                        onAddProfile = {},
+                        onDeleteProfile = {},
+                        onUpdateSession = { tr -> session = tr(session) },
+                        onNotify = { notices += it }
+                    )
+                }
+            ) { scene ->
+                val testLabel = parseKissLabelIcons(Strings.test).cleanText
+                val testingLabel = parseKissLabelIcons(Strings.testing).cleanText
+                var frameNanos = 16_000_000L
+
+                val initialTestBtn = nodes(scene).single { text(it) == testLabel }
+                assertFalse(initialTestBtn.config.contains(SemanticsProperties.Disabled))
+
+                click(initialTestBtn)
+                assertTrue(firstRequestStarted.await(3, TimeUnit.SECONDS))
+                frameNanos += 16_000_000L
+                settle(scene, frameNanos)
+
+                val inFlightBtn = nodes(scene).single { text(it) == testingLabel }
+                assertTrue(inFlightBtn.config.contains(SemanticsProperties.Disabled), "Button must disable while testing")
+
+                gate.countDown()
+                var finished = false
+                repeat(120) {
+                    frameNanos += 25_000_000L
+                    settle(scene, frameNanos)
+                    if (notices.isNotEmpty() && nodes(scene).any { text(it) == testLabel }) {
+                        finished = true
+                        return@repeat
+                    }
+                    Thread.sleep(15)
+                }
+                assertTrue(finished, "Test button must return to enabled '$testLabel' after onSuccess; notices=$notices")
+                val restoredBtn = nodes(scene).single { text(it) == testLabel }
+                assertFalse(restoredBtn.config.contains(SemanticsProperties.Disabled))
+
+                // Must remain usable for subsequent connection checks.
+                click(restoredBtn)
+                repeat(120) {
+                    frameNanos += 25_000_000L
+                    settle(scene, frameNanos)
+                    if (notices.size >= 2 && requestCount.get() >= 2) return@repeat
+                    Thread.sleep(15)
+                }
+                assertEquals(2, requestCount.get(), "Second Test click should trigger another request")
+            }
+        } finally {
+            gate.countDown()
+            server.stop(0)
+        }
+    }
+
+    @Test
+    fun apiKeyFieldAllowsEditingWhileMaskedWithoutBulletCorruption() {
+        val initialProfile = ProviderProfile(
+            id = "p-key",
+            name = "KeyProvider",
+            protocol = ProviderProtocol.OPENAI_RESPONSES,
+            apiKey = "sk-initial-secret",
+            defaultModel = "gpt-4o",
+            savedModels = listOf("gpt-4o")
+        )
+        var state by mutableStateOf(
+            AppStateSnapshot(
+                profiles = listOf(initialProfile),
+                activeProfileId = initialProfile.id,
+                assistants = listOf(AssistantAgent(id = "a1", name = "Writer")),
+                activeAssistantId = "a1"
+            )
+        )
+        var session by mutableStateOf(
+            ChatSession(id = "s1", title = "Chat", createdAt = 1L, updatedAt = 1L, profileId = initialProfile.id)
+        )
+
+        withUiScene(
+            content = {
+                ProvidersSubpage(
+                    appState = state,
+                    activeProfile = state.profiles.first(),
+                    activeSession = session,
+                    onSelectProfile = {},
+                    onUpdateProfile = { tr -> state = state.copy(profiles = listOf(tr(state.profiles.first()))) },
+                    onUpdateProfileById = { _, tr -> state = state.copy(profiles = listOf(tr(state.profiles.first()))) },
+                    onAddProfile = {},
+                    onDeleteProfile = {},
+                    onUpdateSession = { tr -> session = tr(session) },
+                    onNotify = {}
+                )
+            }
+        ) { scene ->
+            val maskedInput = nodes(scene).single {
+                it.config.contains(SemanticsActions.SetText) && it.config.contains(SemanticsProperties.Password)
+            }
+            assertEquals("•".repeat("sk-initial-secret".length), maskedInput.config[SemanticsProperties.EditableText].text)
+
+            // Edit directly while masked; PasswordVisualTransformation preserves real underlying state.
+            setText(maskedInput, "  sk-updated-masked-key  ")
+            settle(scene, 16_000_000L)
+
+            assertEquals("sk-updated-masked-key", state.profiles.first().apiKey)
+            assertFalse(state.profiles.first().apiKey.contains('•'))
+            val stillMasked = nodes(scene).single {
+                it.config.contains(SemanticsActions.SetText) && it.config.contains(SemanticsProperties.Password)
+            }
+            assertEquals("•".repeat("sk-updated-masked-key".length), stillMasked.config[SemanticsProperties.EditableText].text)
+
+            val showBtn = nodes(scene).single { description(it) == Strings.showApiKey }
+            click(showBtn)
+            settle(scene, 32_000_000L)
+
+            val revealedInput = nodes(scene).firstOrNull {
+                it.config.contains(SemanticsActions.SetText) &&
+                    it.config.getOrNull(SemanticsProperties.EditableText)?.text == "sk-updated-masked-key"
+            }
+            assertNotNull(revealedInput, "Toggling Show API key must reveal the stored plaintext key")
+            setText(revealedInput, "sk-final-visible")
+            settle(scene, 48_000_000L)
+            assertEquals("sk-final-visible", state.profiles.first().apiKey)
+        }
+    }
+
+    @Test
+    fun savedModelsListVirtualizesLargeCatalogInLazyColumn() {
+        val manyModels = (0 until 220).map { idx -> "vendor/model-${idx.toString().padStart(3, '0')}" }
+        val profile = ProviderProfile(
+            id = "p-many",
+            name = "LargeCatalog",
+            protocol = ProviderProtocol.OPENAI_RESPONSES,
+            apiKey = "sk-test",
+            defaultModel = manyModels.first(),
+            savedModels = manyModels
+        )
+        var state by mutableStateOf(
+            AppStateSnapshot(
+                profiles = listOf(profile),
+                activeProfileId = profile.id,
+                assistants = listOf(AssistantAgent(id = "a1", name = "Writer")),
+                activeAssistantId = "a1"
+            )
+        )
+        var session by mutableStateOf(
+            ChatSession(id = "s1", title = "Chat", createdAt = 1L, updatedAt = 1L, profileId = profile.id)
+        )
+
+        withUiScene(
+            content = {
+                ProvidersSubpage(
+                    appState = state,
+                    activeProfile = state.profiles.first(),
+                    activeSession = session,
+                    onSelectProfile = {},
+                    onUpdateProfile = { tr -> state = state.copy(profiles = listOf(tr(state.profiles.first()))) },
+                    onUpdateProfileById = { _, tr -> state = state.copy(profiles = listOf(tr(state.profiles.first()))) },
+                    onAddProfile = {},
+                    onDeleteProfile = {},
+                    onUpdateSession = { tr -> session = tr(session) },
+                    onNotify = {}
+                )
+            }
+        ) { scene ->
+            val renderedTexts = nodes(scene).map(::text)
+            assertTrue(renderedTexts.any { it.contains("vendor/model-000") }, "First visible row must compose")
+            assertFalse(
+                renderedTexts.any { it.contains("vendor/model-210") },
+                "Far-offscreen row should not be composed upfront when virtualized with LazyColumn"
+            )
+        }
+    }
+
+    @Test
+    fun desktopBrowserTabBarUpdatesTabTitleWithoutSessionCountChange() {
+        val prof = ProviderProfile(id = "p1", name = "OpenAI", protocol = ProviderProtocol.OPENAI_RESPONSES, defaultModel = "gpt-4o")
+        val asst = AssistantAgent(id = "a1", name = "Writer")
+        var state by mutableStateOf(
+            AppStateSnapshot(
+                profiles = listOf(prof),
+                activeProfileId = prof.id,
+                assistants = listOf(asst),
+                activeAssistantId = asst.id,
+                sessions = listOf(
+                    ChatSession(id = "s1", title = "Draft Alpha", createdAt = 1L, updatedAt = 1L, profileId = prof.id, assistantId = asst.id),
+                    ChatSession(id = "s2", title = "Draft Beta", createdAt = 2L, updatedAt = 2L, profileId = prof.id, assistantId = asst.id)
+                ),
+                activeSessionId = "s1",
+                openTabSessionIds = listOf("s1", "s2")
+            )
+        )
+
+        withUiScene(
+            content = {
+                DesktopBrowserTabBar(
+                    appState = state,
+                    openTabIds = state.openTabSessionIds,
+                    activeSessionId = state.activeSessionId,
+                    activeStreamsBySession = emptyMap(),
+                    onSelectTab = {},
+                    onCloseTab = {},
+                    onNewTab = {},
+                    onOpenTabOverview = {}
+                )
+            }
+        ) { scene ->
+            assertTrue(nodes(scene).any { text(it) == "Draft Alpha" })
+
+            // Rename s1 in place (session count remains 2, activeSessionId & openTabIds unchanged).
+            state = state.copy(
+                sessions = state.sessions.map { if (it.id == "s1") it.copy(title = "Renamed Alpha") else it }
+            )
+            settle(scene, 16_000_000L)
+
+            assertTrue(nodes(scene).any { text(it) == "Renamed Alpha" })
+            assertNull(nodes(scene).firstOrNull { text(it) == "Draft Alpha" })
+        }
+    }
+
+    @Test
+    fun topEditorialBarKeepsTitleBufferAndFloatsQuickModelPickerWithoutViewportShift() {
+        val prof = ProviderProfile(
+            id = "p1",
+            name = "OpenAI",
+            protocol = ProviderProtocol.OPENAI_RESPONSES,
+            defaultModel = "gpt-4o",
+            savedModels = listOf("gpt-4o", "gpt-4.1", "o3")
+        )
+        val asst = AssistantAgent(id = "a1", name = "Writer")
+        var session by mutableStateOf(
+            ChatSession(id = "s1", title = "Initial Title", createdAt = 1L, updatedAt = 1L, profileId = prof.id, assistantId = asst.id)
+        )
+        var showQuickPopover by mutableStateOf(false)
+        var frameNanos = 16_000_000L
+
+        withUiScene(
+            width = 960,
+            height = 720,
+            content = {
+                val snap = AppStateSnapshot(
+                    profiles = listOf(prof),
+                    activeProfileId = prof.id,
+                    assistants = listOf(asst),
+                    activeAssistantId = asst.id,
+                    sessions = listOf(session),
+                    activeSessionId = session.id
+                )
+                TopEditorialBar(
+                    appState = snap,
+                    activeSession = session,
+                    activeAssistant = asst,
+                    activeProfile = prof,
+                    isCompactScreen = false,
+                    showSidebar = false,
+                    showSessionInspector = false,
+                    showQuickModelPopover = showQuickPopover,
+                    openTabCount = 1,
+                    backgroundStreamingCount = 0,
+                    onOpenMobileTabSwitcher = {},
+                    onNewChatTab = {},
+                    onToggleSidebar = {},
+                    onToggleSessionInspector = {},
+                    onToggleQuickModelPopover = { showQuickPopover = !showQuickPopover },
+                    onDismissQuickModelPopover = { showQuickPopover = false },
+                    onSelectModelQuick = { _, mod ->
+                        session = session.copy(modelOverride = mod)
+                        showQuickPopover = false
+                    },
+                    onRenameTopicInline = { newTitle -> session = session.copy(title = newTitle) },
+                    onRegenerateTitleAi = {},
+                    onOpenSettings = {}
+                )
+                Box(
+                    Modifier
+                        .weight(1f)
+                        .fillMaxWidth()
+                        .semantics { contentDescription = "ViewportAnchor" }
+                )
+            }
+        ) { scene ->
+            // 1. Editing title preserves typed buffer if activeSession.title updates externally.
+            val titleTrigger = nodes(scene).single { description(it) == Strings.editTitle("Initial Title") }
+            click(titleTrigger)
+            frameNanos += 16_000_000L
+            settle(scene, frameNanos)
+
+            val titleInput = nodes(scene).single { it.config.contains(SemanticsActions.SetText) }
+            setText(titleInput, "My Unsaved Draft")
+            frameNanos += 16_000_000L
+            settle(scene, frameNanos)
+
+            session = session.copy(title = "Background AI Renamed")
+            frameNanos += 16_000_000L
+            settle(scene, frameNanos)
+
+            val preservedInput = nodes(scene).single { it.config.contains(SemanticsActions.SetText) }
+            assertEquals("My Unsaved Draft", preservedInput.config[SemanticsProperties.EditableText].text)
+
+            // Save title cleanly and close editor.
+            val saveBtn = nodes(scene).single { text(it) == parseKissLabelIcons(Strings.save).cleanText }
+            click(saveBtn)
+            frameNanos += 16_000_000L
+            settle(scene, frameNanos)
+            assertEquals("My Unsaved Draft", session.title)
+
+            // 2. Quick model picker floats in Popup without vertically shifting ViewportAnchor.
+            val anchorTopBefore = nodes(scene).single { description(it) == "ViewportAnchor" }.boundsInRoot.top
+            val modelCapsule = nodes(scene).single { text(it).contains("gpt-4o on OpenAI") }
+            click(modelCapsule)
+            frameNanos += 16_000_000L
+            settle(scene, frameNanos)
+
+            assertTrue(showQuickPopover)
+            assertTrue(scene.semanticsOwners.size >= 2, "Quick model picker should render inside a floating Popup")
+            assertTrue(nodes(scene).any { text(it) == Strings.chooseAModel })
+
+            val anchorTopAfter = nodes(scene).single { description(it) == "ViewportAnchor" }.boundsInRoot.top
+            assertEquals(anchorTopBefore, anchorTopAfter, "Viewport must not shift vertically when quick model picker opens")
+        }
+    }
+}

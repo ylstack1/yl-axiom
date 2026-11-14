@@ -320,4 +320,17 @@ for line in sys.stdin:
             authErrServer.stop(0)
         }
     }
+
+    @Test
+    fun unsupportedAndMalformedMcpUrlsFailFast() {
+        listOf("", "not-a-url", "ftp://example.com/mcp", "ws://127.0.0.1:8080/mcp").forEach { bad ->
+            val err = assertFailsWith<McpException> { HttpMcpTransport(bad, "") }
+            assertTrue("http or https" in err.message.orEmpty(), err.message)
+        }
+        assertFailsWith<McpException> { HttpMcpTransport("https:///mcp", "") }
+        assertFailsWith<McpException> { HttpMcpTransport("https://:8080/mcp", "") }
+        assertFailsWith<McpException> { HttpMcpTransport("https://[]/mcp", "") }
+        assertFailsWith<McpException> { HttpMcpTransport("http://example.com/mcp", "secret-token") }
+        HttpMcpTransport("http://[::1]:8080/mcp", "local-token")
+    }
 }

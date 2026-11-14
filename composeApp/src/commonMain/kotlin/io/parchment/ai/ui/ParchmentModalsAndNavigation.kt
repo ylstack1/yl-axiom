@@ -1,8 +1,6 @@
 package io.parchment.ai.ui
 
-import androidx.compose.animation.AnimatedVisibility
 import io.parchment.ai.strings.Strings
-import androidx.compose.animation.animateContentSize
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -34,6 +32,7 @@ import androidx.compose.foundation.text.BasicText
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -52,8 +51,15 @@ import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.IntOffset
+import androidx.compose.ui.unit.IntRect
+import androidx.compose.ui.unit.IntSize
+import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.window.Popup
+import androidx.compose.ui.window.PopupPositionProvider
+import androidx.compose.ui.window.PopupProperties
 import io.parchment.ai.model.AppStateSnapshot
 import io.parchment.ai.model.AssistantAgent
 import io.parchment.ai.model.ChatSession
@@ -76,7 +82,7 @@ internal fun DesktopBrowserTabBar(
     onOpenTabOverview: () -> Unit
 ) {
     val p = LocalParchmentPalette.current
-    val sessionsById = remember(appState.sessions.size, activeSessionId, openTabIds) {
+    val sessionsById = remember(appState.sessions) {
         appState.sessions.associateBy { it.id }
     }
     val assistantsById = remember(appState.assistants) {
@@ -431,6 +437,24 @@ internal fun MobileTabSwitcherModal(
 }
 
 // Top bar: rename the chat, write a new title, and pick the model.
+private object QuickModelPopoverPosition : PopupPositionProvider {
+    private const val GAP = 8
+    private const val MARGIN = 10
+    override fun calculatePosition(
+        anchorBounds: IntRect,
+        windowSize: IntSize,
+        layoutDirection: LayoutDirection,
+        popupContentSize: IntSize
+    ): IntOffset {
+        val maxX = (windowSize.width - popupContentSize.width - MARGIN).coerceAtLeast(MARGIN)
+        val x = anchorBounds.left.coerceIn(MARGIN, maxX)
+        val belowY = anchorBounds.bottom + GAP
+        val maxY = (windowSize.height - popupContentSize.height - MARGIN).coerceAtLeast(MARGIN)
+        val y = belowY.coerceAtMost(maxY)
+        return IntOffset(x, y)
+    }
+}
+
 @Composable
 internal fun TopEditorialBar(
     appState: AppStateSnapshot,
@@ -454,19 +478,25 @@ internal fun TopEditorialBar(
     onSelectModelQuick: (String, String) -> Unit,
     onRenameTopicInline: (String) -> Unit,
     onRegenerateTitleAi: () -> Unit,
-    onOpenSettings: (SettingsCategory?) -> Unit
+    onOpenSettings: (SettingsCategory?) -> Unit,
+    onDismissQuickModelPopover: () -> Unit = onToggleQuickModelPopover
 ) {
     val p = LocalParchmentPalette.current
+    val win = LocalParchmentWindowSize.current
     val activeModel = activeSession.modelOverride.ifBlank { activeProfile.defaultModel }
     val modelLabel = activeModel.ifBlank { Strings.selectModel }
     var isEditingTitle by remember(activeSession.id) { mutableStateOf(false) }
-    var titleBuffer by remember(activeSession.id, activeSession.title) { mutableStateOf(activeSession.title) }
+    var titleBuffer by remember(activeSession.id) { mutableStateOf(activeSession.title) }
+    LaunchedEffect(activeSession.id, activeSession.title, isEditingTitle) {
+        if (!isEditingTitle) {
+            titleBuffer = activeSession.title
+        }
+    }
 
     Column(
         modifier = Modifier
             .fillMaxWidth()
             .background(p.canvasBg)
-            .animateContentSize(animationSpec = motionSpring())
             .padding(horizontal = Space.s12, vertical = Space.s8),
         verticalArrangement = Arrangement.spacedBy(Space.s6)
     ) {
@@ -507,6 +537,11 @@ internal fun TopEditorialBar(
                                 value = titleBuffer,
                                 onValueChange = { titleBuffer = it },
                                 minHeight = 30.dp,
+                                onEnterKeySend = { _, _ ->
+                                    onRenameTopicInline(titleBuffer.trim())
+                                    isEditingTitle = false
+                                    true
+                                },
                                 modifier = Modifier.weight(1f)
                             )
                             SepiaButton(
@@ -529,7 +564,10 @@ internal fun TopEditorialBar(
                                 maxLines = 1,
                                 overflow = TextOverflow.Ellipsis,
                                 style = p.uiHeaderStyle.copy(fontSize = 15.sp),
-                                modifier = Modifier.weight(1f, fill = false).kissClickable(hoverScale = 1.01f) { isEditingTitle = true }.accessibilityLabel(Strings.editTitle(activeSession.title))
+                                modifier = Modifier.weight(1f, fill = false).kissClickable(hoverScale = 1.01f) {
+                                    titleBuffer = activeSession.title
+                                    isEditingTitle = true
+                                }.accessibilityLabel(Strings.editTitle(activeSession.title))
                             )
                             if (!isCompactScreen && activeSession.messages.isNotEmpty()) {
                                 SepiaButton(
@@ -554,23 +592,106 @@ internal fun TopEditorialBar(
                     } else {
                         shortModelLabel
                     }
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(Space.s4),
-                        modifier = Modifier.kissClickable(hoverScale = 1.01f) { onToggleQuickModelPopover() }
-                    ) {
-                        BasicText(
-                            text = capsuleText,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                            style = p.uiLabelStyle.copy(fontSize = 12.sp),
-                            modifier = Modifier.weight(1f, fill = false)
-                        )
-                        KissVectorIcon(
-                            icon = if (showQuickModelPopover) KissIcon.CHEVRON_UP else KissIcon.CHEVRON_DOWN,
-                            tint = p.mutedInk,
-                            size = 11.dp
-                        )
+                    val popoverWidth = (win.widthDp - Space.s24).coerceIn(220.dp, 520.dp)
+                    Box {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(Space.s4),
+                            modifier = Modifier.kissClickable(hoverScale = 1.01f) { onToggleQuickModelPopover() }
+                        ) {
+                            BasicText(
+                                text = capsuleText,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                                style = p.uiLabelStyle.copy(fontSize = 12.sp),
+                                modifier = Modifier.weight(1f, fill = false)
+                            )
+                            KissVectorIcon(
+                                icon = if (showQuickModelPopover) KissIcon.CHEVRON_UP else KissIcon.CHEVRON_DOWN,
+                                tint = p.mutedInk,
+                                size = 11.dp
+                            )
+                        }
+
+                        // Quick inline searchable vertical model switcher rendered in a floating Popup
+                        // so opening or closing it never shifts the chat viewport.
+                        if (showQuickModelPopover) {
+                            val totalModelsCount = remember(appState.profiles) {
+                                appState.profiles.sumOf { prof ->
+                                    if (prof.savedModels.isNotEmpty()) prof.savedModels.size
+                                    else if (prof.defaultModel.isNotBlank()) 1
+                                    else 0
+                                }
+                            }
+                            Popup(
+                                popupPositionProvider = QuickModelPopoverPosition,
+                                onDismissRequest = onDismissQuickModelPopover,
+                                properties = PopupProperties(focusable = true)
+                            ) {
+                                Column(
+                                    modifier = Modifier
+                                        .width(popoverWidth)
+                                        .clip(RoundedCornerShape(Radius.r10))
+                                        .background(p.cardBg)
+                                        .border(1.dp, p.border, RoundedCornerShape(Radius.r10))
+                                        .padding(11.dp),
+                                    verticalArrangement = Arrangement.spacedBy(Space.s8)
+                                ) {
+                                    @OptIn(ExperimentalLayoutApi::class)
+                                    FlowRow(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        horizontalArrangement = Arrangement.SpaceBetween,
+                                        verticalArrangement = Arrangement.spacedBy(Space.s6)
+                                    ) {
+                                        Row(
+                                            verticalAlignment = Alignment.CenterVertically,
+                                            horizontalArrangement = Arrangement.spacedBy(Space.s6),
+                                            modifier = Modifier.padding(top = Space.s4)
+                                        ) {
+                                            KissVectorIcon(icon = KissIcon.CPU, tint = p.accent, size = 14.dp)
+                                            BasicText(
+                                                text = Strings.chooseAModel,
+                                                style = p.uiLabelStyle.copy(color = p.primaryInk, fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                                            )
+                                            BasicText(
+                                                text = "($totalModelsCount)",
+                                                style = p.monoStyle.copy(color = p.mutedInk, fontSize = 11.sp)
+                                            )
+                                        }
+                                        Row(
+                                            verticalAlignment = Alignment.CenterVertically,
+                                            horizontalArrangement = Arrangement.spacedBy(Space.s4)
+                                        ) {
+                                            SepiaButton(
+                                                text = if (isCompactScreen) Strings.providers else Strings.manageProviders,
+                                                compact = true,
+                                                style = SepiaButtonStyle.GHOST,
+                                                onClick = {
+                                                    onDismissQuickModelPopover()
+                                                    onOpenSettings(SettingsCategory.PROVIDERS)
+                                                }
+                                            )
+                                            SepiaButton(
+                                                text = "×",
+                                                contentDescription = Strings.closeModelPicker,
+                                                compact = true,
+                                                style = SepiaButtonStyle.GHOST,
+                                                onClick = onDismissQuickModelPopover
+                                            )
+                                        }
+                                    }
+                                    SepiaSearchableModelPicker(
+                                        profiles = appState.profiles,
+                                        selectedProfileId = activeProfile.id,
+                                        selectedModelId = activeModel,
+                                        onSelectModel = { profId, modelId ->
+                                            onSelectModelQuick(profId, modelId)
+                                        },
+                                        maxListHeight = 280.dp
+                                    )
+                                }
+                            }
+                        }
                     }
                 }
             }
@@ -581,7 +702,6 @@ internal fun TopEditorialBar(
                 horizontalArrangement = Arrangement.spacedBy(Space.s6),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                val win = LocalParchmentWindowSize.current
                 val hasChatNotes = activeSession.systemPrompt.isNotBlank() ||
                     activeSession.authorsNote.isNotBlank() ||
                     activeSession.storySummary.isNotBlank()
@@ -646,79 +766,6 @@ internal fun TopEditorialBar(
                         onClick = { onOpenSettings(null) }
                     )
                 }
-            }
-        }
-
-        // Quick Inline Searchable Vertical Model Switcher Popover
-        AnimatedVisibility(visible = showQuickModelPopover) {
-            val totalModelsCount = remember(appState.profiles) {
-                appState.profiles.sumOf { prof ->
-                    if (prof.savedModels.isNotEmpty()) prof.savedModels.size
-                    else if (prof.defaultModel.isNotBlank()) 1
-                    else 0
-                }
-            }
-            Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clip(RoundedCornerShape(Radius.r10))
-                    .background(p.cardBg)
-                    .border(LineWidth.hairline, p.border, RoundedCornerShape(Radius.r10))
-                    .padding(11.dp),
-                verticalArrangement = Arrangement.spacedBy(Space.s8)
-            ) {
-                @OptIn(ExperimentalLayoutApi::class)
-                FlowRow(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalArrangement = Arrangement.spacedBy(Space.s6)
-                ) {
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(Space.s6),
-                        modifier = Modifier.padding(top = Space.s4)
-                    ) {
-                        KissVectorIcon(icon = KissIcon.CPU, tint = p.accent, size = 14.dp)
-                        BasicText(
-                            text = Strings.chooseAModel,
-                            style = p.uiLabelStyle.copy(color = p.primaryInk, fontWeight = FontWeight.Bold, fontSize = 13.sp)
-                        )
-                        BasicText(
-                            text = "($totalModelsCount)",
-                            style = p.monoStyle.copy(color = p.mutedInk, fontSize = 11.sp)
-                        )
-                    }
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(Space.s4)
-                    ) {
-                        SepiaButton(
-                            text = if (isCompactScreen) Strings.providers else Strings.manageProviders,
-                            compact = true,
-                            style = SepiaButtonStyle.GHOST,
-                            onClick = {
-                                onToggleQuickModelPopover()
-                                onOpenSettings(SettingsCategory.PROVIDERS)
-                            }
-                        )
-                        SepiaButton(
-                            text = "×",
-                            contentDescription = Strings.closeModelPicker,
-                            compact = true,
-                            style = SepiaButtonStyle.GHOST,
-                            onClick = onToggleQuickModelPopover
-                        )
-                    }
-                }
-                SepiaSearchableModelPicker(
-                    profiles = appState.profiles,
-                    selectedProfileId = activeProfile.id,
-                    selectedModelId = activeModel,
-                    onSelectModel = { profId, modelId ->
-                        onSelectModelQuick(profId, modelId)
-                    },
-                    maxListHeight = 280.dp
-                )
             }
         }
     }

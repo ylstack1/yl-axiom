@@ -2,6 +2,7 @@ package io.parchment.ai.platform
 
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.text.font.FontFamily
+import io.parchment.ai.harness.WorkspaceContextCache
 import io.parchment.ai.model.StorageFileCategory
 import java.io.File
 import java.nio.file.Files
@@ -323,5 +324,154 @@ class PlatformSharedHelpersTest {
         )
         assertFalse("httpx://bad" in md, md)
         assertTrue("[Good](https://ok.test)" in md, md)
+    }
+
+    @Test
+    fun boundedImageCacheUsesTrueLruAndNormalizesAliases() {
+        val tempRoot = Files.createTempDirectory("parchment-img-lru-").toFile()
+        try {
+            val file1 = File(tempRoot, "one.png").apply { writeText("1") }
+            val file2 = File(tempRoot, "two.png").apply { writeText("2") }
+            val file3 = File(tempRoot, "three.png").apply { writeText("3") }
+            val unnormalizedOne = File(tempRoot, "sub/../one.png").absolutePath
+            val resolver = { key: String ->
+                when (key) {
+                    file1.absolutePath, unnormalizedOne, "portable://one.png" -> file1
+                    file2.absolutePath, "portable://two.png" -> file2
+                    file3.absolutePath -> file3
+                    else -> null
+                }
+            }
+            var decodeCalls = 0
+            // Each 1024x512 RGBA image = 2 MiB; limit = 2 images / 4 MiB
+            val cache = BoundedImageCache { 2 to (4L * 1024L * 1024L) }
+
+            val bmp1 = cache.getOrLoad(file1.absolutePath, resolver) { decodeCalls++; ImageBitmap(1024, 512) }
+            val bmp2 = cache.getOrLoad(file2.absolutePath, resolver) { decodeCalls++; ImageBitmap(1024, 512) }
+            assertNotNull(bmp1)
+            assertNotNull(bmp2)
+            assertEquals(2, decodeCalls)
+
+            // Access file1 through both an unnormalized path and a portable alias without re-decoding
+            assertSame(bmp1, cache.get(unnormalizedOne))
+            assertSame(bmp1, cache.getOrLoad("portable://one.png", resolver) { decodeCalls++; ImageBitmap(16, 16) })
+            assertEquals(2, decodeCalls)
+
+            // Loading file3 must evict file2 (LRU) while keeping file1 (MRU)
+            val bmp3 = cache.getOrLoad(file3.absolutePath, resolver) { decodeCalls++; ImageBitmap(1024, 512) }
+            assertNotNull(bmp3)
+            assertSame(bmp1, cache.get(file1.absolutePath))
+            assertSame(bmp1, cache.get("portable://one.png"))
+            assertNull(cache.get(file2.absolutePath))
+
+            // Removing via alias evicts canonical entry and frees bytes for reloading
+            cache.remove("portable://one.png")
+            assertNull(cache.get(file1.absolutePath))
+            assertNull(cache.get("portable://one.png"))
+            assertNotNull(cache.get(file3.absolutePath))
+        } finally {
+            tempRoot.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun bundledFontKeysCanonicalizeAndLazyPaletteMathResolves() {
+        assertEquals("latex", AppStorageInventory.canonicalBundledFontKey("LaTeX"))
+        assertEquals("latex", AppStorageInventory.canonicalBundledFontKey("  katex "))
+        assertEquals("latex", AppStorageInventory.canonicalBundledFontKey("math"))
+        assertEquals("jetbrains_mono", AppStorageInventory.canonicalBundledFontKey("JetBrainsMono Nerd"))
+        assertEquals("inter", AppStorageInventory.canonicalBundledFontKey("Inter"))
+        assertEquals("", AppStorageInventory.canonicalBundledFontKey("Unknown Font"))
+
+        val f1 = PlatformPickers.loadBundledFontFamily("LaTeX")
+        val f2 = PlatformPickers.loadBundledFontFamily("katex")
+        if (f1 != null) {
+            assertSame(f1, f2)
+        }
+
+        val palette = io.parchment.ai.ui.buildPaletteFromConfig(io.parchment.ai.model.ThemeConfig())
+        assertEquals(palette.mathFontFamily, palette.mathStyle.fontFamily)
+    }
+
+    @Test
+    fun snapshotStorageFastHeaderCheckRejectsNonTopLevelSettingsKeysAndPreservesSaveChat() {
+        val tempRoot = Files.createTempDirectory("parchment-snap-fast-").toFile()
+        try {
+            val storage = SnapshotFileStorage(directory = { tempRoot })
+            listOf(
+                "{}",
+                """{"nested":{"profiles":[]}}""",
+                """[{"profiles":[]}]""",
+                """{"note":"profiles","other":"sessions"}"""
+            ).forEach { invalid ->
+                val result = kotlin.runCatching { storage.saveSettings(invalid) }
+                assertTrue(result.isFailure, "Expected rejection for $invalid")
+            }
+
+            // Minimal valid snapshot with legacy dialect migration passes and round-trips
+            val validMinimal = """{"profiles":[{"id":"p1","name":"Custom","protocol":"BYTEDANCE_ARK","defaultModel":"m1"}]}"""
+            storage.saveSettings(validMinimal)
+            val loaded = storage.loadSettings()
+            assertNotNull(loaded)
+            assertTrue("p1" in loaded)
+
+            // saveChat single existing decode preserves chat, prevents id collision, and backs up corrupt chat JSON
+            val chatOne = """{"id":"c1","title":"Hello","createdAt":1,"updatedAt":1,"profileId":"p1","messages":[]}"""
+            storage.saveChat("c1", chatOne)
+            val chatOneUpdated = """{"id":"c1","title":"Updated","createdAt":1,"updatedAt":2,"profileId":"p1","messages":[]}"""
+            storage.saveChat("c1", chatOneUpdated)
+            assertTrue("Updated" in storage.loadChat("c1").orEmpty())
+            assertTrue(File(tempRoot, "chats/c1/chat.prev.json").isFile)
+
+            val wrongId = """{"id":"c2","title":"Other","createdAt":1,"updatedAt":1,"profileId":"p1","messages":[]}"""
+            assertTrue(kotlin.runCatching { storage.saveChat("c1", wrongId) }.isFailure)
+
+            // Corrupt existing chat.json is backed up before overwriting with valid chatOneUpdated
+            val chatFile = File(tempRoot, "chats/c1/chat.json")
+            chatFile.writeText("{corrupt")
+            storage.saveChat("c1", chatOneUpdated)
+            assertTrue(File(tempRoot, "chats/c1/chat.corrupt.json").isFile)
+            assertTrue("Updated" in storage.loadChat("c1").orEmpty())
+        } finally {
+            tempRoot.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun workspaceScannerCapsHitsEarlyAndContextCacheEvictsLeastRecentlyUsedWorkspace() {
+        val scanRoot = Files.createTempDirectory("parchment-scan-cap-").toFile()
+        val roots = (1..9).map { Files.createTempDirectory("parchment-ctx-lru-$it-").toFile() }
+        try {
+            val manyLines = (1..100).joinToString("\n") { "line $it contains needle" }
+            File(scanRoot, "big.txt").writeText(manyLines)
+            val scanner = WorkspaceTreeScanner(desktopConfig().copy(maxSearchHits = 2))
+            val searchResult = scanner.search(scanRoot.absolutePath, "needle", "").getOrThrow()
+            assertEquals(2, searchResult.lines().size, "Expected hit cap to stop at 2 lines: $searchResult")
+            val globLines = scanner.glob(scanRoot.absolutePath, "*.txt", 10).getOrThrow().lines()
+            assertEquals(1, globLines.size)
+            assertTrue(globLines.single().startsWith("big.txt ("), globLines.single())
+
+            WorkspaceContextCache.invalidate()
+            roots.forEachIndexed { idx, dir -> File(dir, "AGENTS.md").writeText("workspace-v1-${idx + 1}") }
+            val firstRoot = roots.first()
+            assertTrue("workspace-v1-1" in WorkspaceContextCache.discoverContextFiles(firstRoot.absolutePath))
+
+            // Edit firstRoot on disk while still cached: still returns v1 before eviction
+            File(firstRoot, "AGENTS.md").writeText("workspace-v2-1")
+            assertTrue("workspace-v1-1" in WorkspaceContextCache.discoverContextFiles(firstRoot.absolutePath))
+
+            // Populate 8 more distinct workspaces so firstRoot is evicted from the 8-entry LRU cache
+            roots.drop(1).forEach { dir ->
+                WorkspaceContextCache.discoverContextFiles(dir.absolutePath)
+            }
+            assertTrue(
+                "workspace-v2-1" in WorkspaceContextCache.discoverContextFiles(firstRoot.absolutePath),
+                "Expected evicted first workspace to reload updated AGENTS.md without manual invalidation"
+            )
+        } finally {
+            WorkspaceContextCache.invalidate()
+            scanRoot.deleteRecursively()
+            roots.forEach { it.deleteRecursively() }
+        }
     }
 }

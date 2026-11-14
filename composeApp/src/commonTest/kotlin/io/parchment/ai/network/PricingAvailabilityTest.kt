@@ -108,4 +108,15 @@ class PricingAvailabilityTest {
         assertNull(spec.knownPricing?.cacheReadPerM)
         assertNull(spec.knownPricing?.cacheWritePerM)
     }
+
+    @Test fun openRouterLongCacheWrite1hRateIsCaptured() {
+        val catalog = linkedMapOf<String, ModelPricingSpec>()
+        ModelsDevClient.parseOpenRouterModelsIntoCatalog(
+            """{"data":[{"id":"anthropic/claude-fixture","pricing":{"prompt":"0.000003","completion":"0.000015","input_cache_read":"0.0000003","input_cache_write":"0.00000375","input_cache_write_1h":"0.000006"}}]}""",
+            catalog
+        )
+        val spec = ModelsDevClient.lookupSpecInCatalog(catalog, "anthropic/claude-fixture")!!
+        assertEquals(3.75, spec.knownPricing?.cacheWritePerM)
+        assertEquals(6.0, spec.knownPricing?.longCacheWritePerM)
+    }
 }

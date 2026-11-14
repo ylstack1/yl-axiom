@@ -1,6 +1,5 @@
 package io.parchment.ai.ui
 
-import androidx.compose.ui.draw.alpha
 import io.parchment.ai.strings.Strings
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.Crossfade
@@ -180,9 +179,25 @@ fun ParchmentApp(
         }
 
         // Composer text and staged attachments per chat, so switching tabs never moves or loses files.
-        userPromptInputState = remember(activeSession.id) { mutableStateOf(activeSession.draftInput) }
-        assistantPrefillInputState = remember(activeSession.id) { mutableStateOf(activeSession.draftPrefill) }
-        pendingAttachments = pendingAttachmentsBySession[activeSession.id].orEmpty()
+        val draftSessionId = activeSession.id
+        userPromptInputState = remember(draftSessionId) { mutableStateOf(activeSession.draftInput) }
+        assistantPrefillInputState = remember(draftSessionId) { mutableStateOf(activeSession.draftPrefill) }
+        syncPendingDraftTracking(draftSessionId, userPromptInputState.value, assistantPrefillInputState.value)
+        LaunchedEffect(draftSessionId, userPromptInput, assistantPrefillInput) {
+            if (userPromptInput == activeSession.draftInput && assistantPrefillInput == activeSession.draftPrefill) {
+                return@LaunchedEffect
+            }
+            delay(300L)
+            persistDraftForSession(draftSessionId, userPromptInput, assistantPrefillInput)
+        }
+        DisposableEffect(draftSessionId) {
+            val capturedPromptState = userPromptInputState
+            val capturedPrefillState = assistantPrefillInputState
+            onDispose {
+                persistDraftForSession(draftSessionId, capturedPromptState.value, capturedPrefillState.value)
+            }
+        }
+        pendingAttachments = pendingAttachmentsBySession[draftSessionId].orEmpty()
         LaunchedEffect(Unit) {
             PlatformPickers.registerFileDropCallbacks(
                 onDragHover = { hovering -> isDraggingFilesOverWindow = hovering },
@@ -199,7 +214,10 @@ fun ParchmentApp(
 
         // One process-wide writer retains all dirty sessions across debounce and UI lifecycle changes.
         LaunchedEffect(Unit) {
-            PlatformRuntime.registerStateFlushCallback { appDiskWriter.flushBlocking() }
+            PlatformRuntime.registerStateFlushCallback {
+                flushPendingDraftToDiskWriter()
+                appDiskWriter.flushBlocking()
+            }
         }
         LaunchedEffect(Unit) {
             var previousSaveNotice = ""
@@ -505,21 +523,29 @@ fun ParchmentApp(
                         // 1. Top bar, hidden while Settings is open so there is only one way back to the chat.
                         if (!isSettingsOpen) {
                             val bgStreamingCount = activeStreamsBySession.keys.count { it != activeSession.id }
+                            val tailVariant = activeSession.messages.lastOrNull()?.activeVariant
                             val vaultCountKey = remember(
                                 activeSession.id,
                                 activeSession.messages.size,
                                 pendingAttachments.size,
-                                activeSession.messages.lastOrNull()?.activeVariant?.let { v ->
-                                    "${v.toolCalls.size}:${v.mediaItems.size}:${v.webSources.size}:${v.isStreaming}:${v.content.length / 256}"
-                                }
+                                tailVariant?.toolCalls?.size,
+                                tailVariant?.mediaItems?.size,
+                                tailVariant?.webSources?.size,
+                                tailVariant?.isStreaming,
+                                tailVariant?.let { if (it.isStreaming) it.content.length / 2048 else it.content.length }
                             ) {
-                                "${activeSession.id}:${activeSession.messages.size}:${pendingAttachments.size}:" +
-                                    activeSession.messages.sumOf {
-                                        val v = it.activeVariant
-                                        v.toolCalls.size * 17 + v.mediaItems.size * 31 + v.webSources.size * 13 + v.attachments.size * 7 + (v.content.length / 256)
-                                    }
+                                var hash = activeSession.id.hashCode().toLong() * 31L + activeSession.messages.size
+                                hash = hash * 31L + pendingAttachments.size
+                                for (idx in activeSession.messages.indices) {
+                                    val v = activeSession.messages[idx].activeVariant
+                                    val lenBucket = if (v.isStreaming) v.content.length / 2048 else v.content.length
+                                    hash = hash * 31L + v.toolCalls.size * 17L + v.mediaItems.size * 31L +
+                                        v.webSources.size * 13L + v.attachments.size * 7L + lenBucket +
+                                        if (v.isStreaming) 1L else 0L
+                                }
+                                hash
                             }
-                            val chatVaultCount = remember(vaultCountKey, pendingAttachments) {
+                            val chatVaultCount = remember(vaultCountKey, activeSession.id, pendingAttachments) {
                                 countSessionVaultItemsFast(activeSession, pendingAttachments)
                             }
                             TopEditorialBar(
@@ -544,6 +570,7 @@ fun ParchmentApp(
                                 onToggleSessionInspector = { showSessionInspector = !showSessionInspector },
                                 onToggleRightFilesSidebar = { showRightFilesSidebar = !showRightFilesSidebar },
                                 onToggleQuickModelPopover = { showQuickModelPopover = !showQuickModelPopover },
+                                onDismissQuickModelPopover = { showQuickModelPopover = false },
                                 onSelectModelQuick = { profId, modId ->
                                     updateProfileById(profId) { it.copy(defaultModel = modId) }
                                     updateActiveSession(immediate = true) { it.copy(profileId = profId, modelOverride = modId) }
@@ -1080,15 +1107,9 @@ fun ParchmentApp(
                                             }
                                         },
                                         userPromptInput = userPromptInput,
-                                        onUserPromptChange = { text ->
-                                            userPromptInput = text
-                                            updateActiveSession { it.copy(draftInput = text) }
-                                        },
+                                        onUserPromptChange = { text -> userPromptInput = text },
                                         assistantPrefillInput = assistantPrefillInput,
-                                        onAssistantPrefillChange = { pf ->
-                                            assistantPrefillInput = pf
-                                            updateActiveSession { it.copy(draftPrefill = pf) }
-                                        },
+                                        onAssistantPrefillChange = { pf -> assistantPrefillInput = pf },
                                         showPrefillBox = showPrefillBox,
                                         onTogglePrefillBox = { showPrefillBox = !showPrefillBox },
                                         showComposerToolsDrawer = showComposerToolsDrawer,
@@ -1571,19 +1592,81 @@ fun ParchmentApp(
 
 /**
  * Changes only when something the sidebar displays changes, so a streaming reply doesn't redraw it. Per chat:
- * what the sidebar shows, leaving out reply text on purpose (it changes every frame).
+ * what the sidebar shows, leaving out reply text on purpose (it changes every frame). Allocation-free key.
  */
-private fun sidebarFingerprint(state: AppStateSnapshot): List<Any> = listOf(
-    state.sessions.map { s ->
-        listOf(
-            s.id, s.title, s.isPinned, s.updatedAt, s.assistantId, s.messages.size, s.isCompactStub,
-            s.messages.mapNotNull { node -> node.id.takeIf { node.pinned } }
-        )
-    },
-    state.assistants,
-    state.preferences,
-    state.activeSessionId
-)
+internal fun sidebarFingerprint(state: AppStateSnapshot): Any {
+    var h1 = 0x123456789ABCDEF0L
+    var h2 = -0x5432109876543210L
+    val sessions = state.sessions
+    for (i in sessions.indices) {
+        val s = sessions[i]
+        val idHash = (s.id.hashCode().toLong() shl 32) or (s.id.length.toLong() and 0xffffffffL)
+        val titleHash = (s.title.hashCode().toLong() shl 32) or (s.title.length.toLong() and 0xffffffffL)
+        val asstHash = (s.assistantId.hashCode().toLong() shl 32) or (s.assistantId.length.toLong() and 0xffffffffL)
+        val flags = (if (s.isPinned) 1L else 0L) or (if (s.isCompactStub) 2L else 0L)
+        h1 = mixSidebar64(h1, idHash)
+        h1 = mixSidebar64(h1, titleHash)
+        h1 = mixSidebar64(h1, s.updatedAt)
+        h1 = mixSidebar64(h1, asstHash)
+        h1 = mixSidebar64(h1, (s.messages.size.toLong() shl 2) or flags)
+        h2 = mixSidebar64(h2, s.updatedAt xor idHash xor ((i + 1).toLong() shl 40))
+        h2 = mixSidebar64(h2, titleHash xor (asstHash.rotateLeft(13)))
+        h2 = mixSidebar64(h2, (flags shl 32) or s.messages.size.toLong())
+        val msgs = s.messages
+        for (j in msgs.indices) {
+            val node = msgs[j]
+            if (node.pinned) {
+                val nodeHash = (node.id.hashCode().toLong() shl 32) or ((j + 1).toLong() shl 16) or (node.id.length.toLong() and 0xffffL)
+                h1 = mixSidebar64(h1, nodeHash)
+                h2 = mixSidebar64(h2, nodeHash.rotateLeft(19))
+            }
+        }
+    }
+    return SidebarFingerprintKey(
+        sessionsHash1 = h1,
+        sessionsHash2 = h2,
+        sessionCount = sessions.size,
+        assistants = state.assistants,
+        preferences = state.preferences,
+        activeSessionId = state.activeSessionId
+    )
+}
+
+private inline fun mixSidebar64(h: Long, value: Long): Long {
+    var z = h xor (value + -0x61c8864680b583ebL + (h shl 6) + (h ushr 2))
+    z = (z xor (z ushr 30)) * -0x40a7b892e31b1a47L
+    return z xor (z ushr 27)
+}
+
+private class SidebarFingerprintKey(
+    private val sessionsHash1: Long,
+    private val sessionsHash2: Long,
+    private val sessionCount: Int,
+    private val assistants: List<AssistantAgent>,
+    private val preferences: io.parchment.ai.model.PreferencesConfig,
+    private val activeSessionId: String
+) {
+    override fun equals(other: Any?): Boolean {
+        if (this === other) return true
+        if (other !is SidebarFingerprintKey) return false
+        return sessionsHash1 == other.sessionsHash1 &&
+            sessionsHash2 == other.sessionsHash2 &&
+            sessionCount == other.sessionCount &&
+            activeSessionId == other.activeSessionId &&
+            assistants == other.assistants &&
+            preferences == other.preferences
+    }
+
+    override fun hashCode(): Int {
+        var result = (sessionsHash1 xor (sessionsHash1 ushr 32)).toInt()
+        result = 31 * result + (sessionsHash2 xor (sessionsHash2 ushr 32)).toInt()
+        result = 31 * result + sessionCount
+        result = 31 * result + activeSessionId.hashCode()
+        result = 31 * result + assistants.hashCode()
+        result = 31 * result + preferences.hashCode()
+        return result
+    }
+}
 
 /** Chats removed by the last delete, with their saved data, so Undo can put them back as they were. */
 internal class DeletedChats(

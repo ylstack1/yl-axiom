@@ -20,6 +20,7 @@ internal object WorkspaceContextCache {
 
     private val workspaceContextCache = mutableMapOf<String, CachedWorkspaceContext>()
     private const val WORKSPACE_CONTEXT_TTL_MS = 10_000L
+    private const val MAX_CACHED_WORKSPACES = 8
     private const val SKILL_MAX_DESCRIPTION_CHARS = 1_024
     private const val SKILL_MAX_COUNT = 64
     private val SKILL_FOLDERS = listOf(".parchment/skills", ".agents/skills", ".claude/skills")
@@ -77,8 +78,13 @@ internal object WorkspaceContextCache {
         val now = PlatformRuntime.currentTimeMillis()
         synchronized(workspaceContextCache) {
             val cached = workspaceContextCache[cleanRoot]
-            if (cached != null && now - cached.timestampMs <= WORKSPACE_CONTEXT_TTL_MS) {
-                return cached
+            if (cached != null) {
+                if ((now - cached.timestampMs) in 0L..WORKSPACE_CONTEXT_TTL_MS) {
+                    workspaceContextCache.remove(cleanRoot)
+                    workspaceContextCache[cleanRoot] = cached
+                    return cached
+                }
+                workspaceContextCache.remove(cleanRoot)
             }
         }
         val candidates = listOf("AGENTS.md", "CLAUDE.md", "PARCHMENT.md", "PARCHMENT_MEMORY.md")
@@ -107,7 +113,12 @@ internal object WorkspaceContextCache {
             combinedContent = sb.toString().trim()
         )
         synchronized(workspaceContextCache) {
+            workspaceContextCache.remove(cleanRoot)
             workspaceContextCache[cleanRoot] = fresh
+            while (workspaceContextCache.size > MAX_CACHED_WORKSPACES) {
+                val eldestKey = workspaceContextCache.keys.firstOrNull() ?: break
+                workspaceContextCache.remove(eldestKey)
+            }
         }
         return fresh
     }

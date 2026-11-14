@@ -7,7 +7,6 @@ import io.parchment.ai.model.PreferencesConfig
 import io.parchment.ai.model.ThemeConfig
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
-import kotlinx.serialization.json.JsonObject
 import java.io.File
 import java.io.IOException
 
@@ -24,11 +23,95 @@ internal class SnapshotFileStorage(
     private val unsafeSessionCharacters = Regex("[^a-zA-Z0-9._-]")
 
     private fun decodeSettings(raw: String): AppStateSnapshot? = runCatching {
-        val migrated = raw.replace("\"BYTEDANCE_ARK\"", "\"OPENAI_RESPONSES\"")
-        val root = json.parseToJsonElement(migrated) as? JsonObject ?: return@runCatching null
-        if (root.keys.none { it == "profiles" || it == "assistants" || it == "sessions" }) return@runCatching null
+        val migrated = if (raw.contains("\"BYTEDANCE_ARK\"")) {
+            raw.replace("\"BYTEDANCE_ARK\"", "\"OPENAI_RESPONSES\"")
+        } else raw
+        if (!hasTopLevelSettingsKey(migrated)) return@runCatching null
         json.decodeFromString<AppStateSnapshot>(migrated)
     }.getOrNull()
+
+    /** Scans only top-level object keys without allocating a DOM JsonElement tree. */
+    private fun hasTopLevelSettingsKey(jsonText: String): Boolean {
+        val len = jsonText.length
+        var i = 0
+        while (i < len && jsonText[i].isWhitespace()) i++
+        if (i >= len || jsonText[i] != '{') return false
+        i++
+
+        var braceDepth = 1
+        var bracketDepth = 0
+        var inString = false
+        var escaped = false
+        var expectingKey = true
+
+        while (i < len && braceDepth > 0) {
+            val ch = jsonText[i]
+            if (inString) {
+                if (escaped) {
+                    escaped = false
+                } else if (ch == '\\') {
+                    escaped = true
+                } else if (ch == '"') {
+                    inString = false
+                }
+                i++
+                continue
+            }
+
+            when (ch) {
+                '"' -> {
+                    if (braceDepth == 1 && bracketDepth == 0 && expectingKey) {
+                        val keyStart = i + 1
+                        var j = keyStart
+                        var keyEscaped = false
+                        var simpleKey = true
+                        while (j < len) {
+                            val kc = jsonText[j]
+                            if (keyEscaped) {
+                                keyEscaped = false
+                            } else if (kc == '\\') {
+                                keyEscaped = true
+                                simpleKey = false
+                            } else if (kc == '"') {
+                                break
+                            }
+                            j++
+                        }
+                        if (j >= len) return false
+                        var k = j + 1
+                        while (k < len && jsonText[k].isWhitespace()) k++
+                        if (k < len && jsonText[k] == ':') {
+                            if (simpleKey) {
+                                val keyLen = j - keyStart
+                                if ((keyLen == 8 && jsonText.regionMatches(keyStart, "profiles", 0, 8)) ||
+                                    (keyLen == 10 && jsonText.regionMatches(keyStart, "assistants", 0, 10)) ||
+                                    (keyLen == 8 && jsonText.regionMatches(keyStart, "sessions", 0, 8))
+                                ) {
+                                    return true
+                                }
+                            }
+                            expectingKey = false
+                        }
+                        i = j + 1
+                        continue
+                    } else {
+                        inString = true
+                    }
+                }
+                '{' -> braceDepth++
+                '}' -> {
+                    braceDepth--
+                    expectingKey = false
+                }
+                '[' -> bracketDepth++
+                ']' -> bracketDepth = (bracketDepth - 1).coerceAtLeast(0)
+                ',' -> if (braceDepth == 1 && bracketDepth == 0) expectingKey = true
+                ':' -> if (braceDepth == 1 && bracketDepth == 0) expectingKey = false
+            }
+            i++
+        }
+        return false
+    }
 
     private fun validChat(raw: String, sessionId: String): Boolean = runCatching {
         json.decodeFromString<ChatSession>(raw).id == sessionId
@@ -186,9 +269,11 @@ internal class SnapshotFileStorage(
         val target = File(folder, "chat.json")
         val existing = read(target)
         if (target.isFile && existing == null) throw IOException("Unable to read the existing chat snapshot.")
-        val existingId = existing?.let { runCatching { json.decodeFromString<ChatSession>(it).id }.getOrNull() }
-        if (existingId != null && existingId != sessionId) throw IOException("Chat identifier collides with an existing storage path.")
-        val validExisting = existing != null && validChat(existing, sessionId)
+        val existingSession = existing?.let { runCatching { json.decodeFromString<ChatSession>(it) }.getOrNull() }
+        if (existingSession != null && existingSession.id != sessionId) {
+            throw IOException("Chat identifier collides with an existing storage path.")
+        }
+        val validExisting = existingSession?.id == sessionId
         if (existing != null && !validExisting) {
             val corrupt = File(folder, "chat.corrupt.json")
             if (!corrupt.exists()) AtomicFileStorage.copy(target, corrupt)

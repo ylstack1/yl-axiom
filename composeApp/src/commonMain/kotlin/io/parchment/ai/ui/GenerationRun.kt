@@ -639,6 +639,7 @@ internal fun GenerationHost.beginGeneration(
             }
 
             // Layer 2: Real-Time Stream Loop with Mid-Stream >=85% Auto-Compaction & Instant Auto-Resume
+            val streamStatusThrottle = StreamStatusThrottle()
             while (true) {
                 try {
                     AiProviderEngine.streamGeneration(
@@ -665,6 +666,7 @@ internal fun GenerationHost.beginGeneration(
                                     localInteractionId = update.interactionId
                                     flushCheckpointToDisk(isFinal = false)
                                 }
+                                streamStatusThrottle.onExplicitStatus(update.message)
                                 updateOwnedStream { cur ->
                                     cur?.copy(statusText = update.message, interactionId = localInteractionId)
                                 }
@@ -677,13 +679,14 @@ internal fun GenerationHost.beginGeneration(
                                 networkThinkingTarget.append(update.delta)
                                 currentStepThinkingTarget.append(update.delta)
                                 AiProviderEngine.appendSignatureChunkSafe(signatureSb, update.signatureDelta)
-                                val thinkWords = thinkingWords.count(networkThinkingTarget)
-                                val toolSuffix = if (accumulatedTools.isNotEmpty()) " • ${accumulatedTools.size} tools" else ""
-                                updateOwnedStream { cur ->
-                                    cur?.copy(
-                                        isThinkingPhase = true,
-                                        statusText = Strings.thinkingWords(modelName, thinkWords, toolSuffix, formatDurationFromMs(thinkingDurationMs))
-                                    )
+                                streamStatusThrottle.onPhaseStatus(now, isThinkingPhase = true) {
+                                    val thinkWords = thinkingWords.count(networkThinkingTarget)
+                                    val toolSuffix = if (accumulatedTools.isNotEmpty()) " • ${accumulatedTools.size} tools" else ""
+                                    Strings.thinkingWords(modelName, thinkWords, toolSuffix, formatDurationFromMs(thinkingDurationMs))
+                                }?.let { statusText ->
+                                    updateOwnedStream { cur ->
+                                        cur?.copy(isThinkingPhase = true, statusText = statusText)
+                                    }
                                 }
                                 if (now - lastMidStreamCompactCheckMs >= 1500L) {
                                     lastMidStreamCompactCheckMs = now
@@ -695,12 +698,13 @@ internal fun GenerationHost.beginGeneration(
                                 if (firstLiveTokenMs < 0L) firstLiveTokenMs = now
                                 pauseActiveThinkingStopwatch()
                                 networkContentTarget.append(update.delta)
-                                val wordCount = contentWords.count(networkContentTarget)
-                                updateOwnedStream { cur ->
-                                    cur?.copy(
-                                        isThinkingPhase = false,
-                                        statusText = Strings.writingWords(modelName, wordCount)
-                                    )
+                                streamStatusThrottle.onPhaseStatus(now, isThinkingPhase = false) {
+                                    val wordCount = contentWords.count(networkContentTarget)
+                                    Strings.writingWords(modelName, wordCount)
+                                }?.let { statusText ->
+                                    updateOwnedStream { cur ->
+                                        cur?.copy(isThinkingPhase = false, statusText = statusText)
+                                    }
                                 }
                                 if (now - lastMidStreamCompactCheckMs >= 1500L) {
                                     lastMidStreamCompactCheckMs = now
@@ -752,10 +756,12 @@ internal fun GenerationHost.beginGeneration(
                                     )
                                 }
                                 if (!enrichedTool.isRunning) {
+                                    val toolStatus = Strings.executedTool(enrichedTool.name, formatDurationFromMs(thinkingDurationMs))
+                                    streamStatusThrottle.onExplicitStatus(toolStatus)
                                     updateOwnedStream { cur ->
                                         cur?.copy(
                                             isThinkingPhase = true,
-                                            statusText = Strings.executedTool(enrichedTool.name, formatDurationFromMs(thinkingDurationMs))
+                                            statusText = toolStatus
                                         )
                                     }
                                     flushCheckpointToDisk(isFinal = false)
@@ -777,6 +783,7 @@ internal fun GenerationHost.beginGeneration(
                                 } else {
                                     Strings.planningGoal(update.goalTracker.goalObjective.take(48))
                                 }
+                                streamStatusThrottle.onExplicitStatus(goalMsg)
                                 updateOwnedStream { cur -> cur?.copy(statusText = goalMsg) }
                                 patchVariantMemory { v -> v.copy(goalTracker = update.goalTracker) }
                                 flushCheckpointToDisk(isFinal = false)
@@ -788,8 +795,10 @@ internal fun GenerationHost.beginGeneration(
                                 accumulatedMedia.add(relocatedItem)
                                 val mediaSnap = accumulatedMedia.toList()
                                 patchVariantMemory { v -> v.copy(mediaItems = mediaSnap) }
+                                val mediaStatus = "Generated ${relocatedItem.kind.name.lowercase()} (${accumulatedMedia.size})"
+                                streamStatusThrottle.onExplicitStatus(mediaStatus)
                                 updateOwnedStream { cur ->
-                                    cur?.copy(statusText = "Generated ${relocatedItem.kind.name.lowercase()} (${accumulatedMedia.size})")
+                                    cur?.copy(statusText = mediaStatus)
                                 }
                             }
                             is StreamUpdate.WebSourcesUpdated -> {
@@ -981,4 +990,36 @@ internal fun GenerationHost.beginGeneration(
     )
     owningJob = newJob
     newJob.start()
+}
+
+/**
+ * Coalesces per-delta status updates during SSE streaming so rapid chunks never flood Compose state.
+ * Emits immediately on phase transitions or after explicit status/tool boundaries, then throttles by [minIntervalMs].
+ */
+internal class StreamStatusThrottle(private val minIntervalMs: Long = 100L) {
+    private var lastPublishMs: Long = Long.MIN_VALUE
+    private var lastThinkingPhase: Boolean? = null
+    private var lastStatusText: String = ""
+
+    fun onPhaseStatus(nowMs: Long, isThinkingPhase: Boolean, buildText: () -> String): String? {
+        val phaseChanged = lastThinkingPhase != isThinkingPhase
+        if (!phaseChanged && lastPublishMs != Long.MIN_VALUE && (nowMs - lastPublishMs) < minIntervalMs) {
+            return null
+        }
+        val text = buildText()
+        if (!phaseChanged && text == lastStatusText) {
+            lastPublishMs = nowMs
+            return null
+        }
+        lastThinkingPhase = isThinkingPhase
+        lastPublishMs = nowMs
+        lastStatusText = text
+        return text
+    }
+
+    fun onExplicitStatus(statusText: String) {
+        lastThinkingPhase = null
+        lastPublishMs = Long.MIN_VALUE
+        lastStatusText = statusText
+    }
 }

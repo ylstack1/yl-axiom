@@ -9,6 +9,7 @@ import io.parchment.ai.model.ContextPricingTier
 import io.parchment.ai.model.legacyTokenPricing
 import io.parchment.ai.model.saturatingTokenSum
 import io.parchment.ai.platform.PlatformRuntime
+import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.longOrNull
@@ -19,17 +20,34 @@ internal enum class UsageDialect(val wireName: String) {
     OPENAI_CHAT("openai_chat"),
     ANTHROPIC("anthropic_messages"),
     GEMINI_INTERACTIONS("gemini_interactions"),
-    GEMINI_CONTENT("gemini_generate_content")
+    GEMINI_CONTENT("gemini_generate_content"),
+    IMAGE_GENERATION("image_generation"),
+    VIDEO_GENERATION("video_generation")
 }
 
 internal typealias UsageReporter = suspend (String?, String, UsageDialect, ProviderTokenUsage) -> Unit
 internal typealias UsageRequestStarter = suspend (UsageDialect) -> String
 
+internal fun usesPromptCompletionUsageFields(dialect: UsageDialect, usage: JsonObject?): Boolean =
+    dialect == UsageDialect.OPENAI_CHAT || (
+        (dialect == UsageDialect.IMAGE_GENERATION || dialect == UsageDialect.VIDEO_GENERATION) &&
+            usage != null &&
+            "input_tokens" !in usage && "output_tokens" !in usage &&
+            "input_tokens_details" !in usage && "output_tokens_details" !in usage &&
+            ("prompt_tokens" in usage || "completion_tokens" in usage ||
+                "prompt_tokens_details" in usage || "completion_tokens_details" in usage)
+    )
+
 /** Only usage is normalized here; request payloads and opaque reasoning remain untouched. */
 internal fun parseProviderUsage(dialect: UsageDialect, obj: JsonObject?, isFinal: Boolean = false, response: JsonObject? = null): ProviderTokenUsage {
     var invalid = false
+    fun hasAbsentOrNull(source: JsonObject?, name: String): Boolean {
+        val raw = source?.get(name) ?: return true
+        return raw is JsonNull
+    }
     fun count(source: JsonObject?, name: String): Long? {
         val raw = source?.get(name) ?: return null
+        if (raw is JsonNull) return null
         val primitive = raw as? JsonPrimitive
         val value = primitive?.longOrNull
         if (value == null || value < 0L || primitive.isString) invalid = true
@@ -43,7 +61,7 @@ internal fun parseProviderUsage(dialect: UsageDialect, obj: JsonObject?, isFinal
         }
         return total
     }
-    val combined = dialect == UsageDialect.OPENAI_RESPONSES || dialect == UsageDialect.OPENAI_CHAT || dialect == UsageDialect.ANTHROPIC
+    var combined = dialect == UsageDialect.OPENAI_RESPONSES || dialect == UsageDialect.OPENAI_CHAT || dialect == UsageDialect.ANTHROPIC
     if (obj == null) return ProviderTokenUsage(outputIncludesReasoning = combined, isFinal = isFinal,
         charges = parseProviderCharges(dialect, null, response))
     val input: Long?
@@ -55,19 +73,40 @@ internal fun parseProviderUsage(dialect: UsageDialect, obj: JsonObject?, isFinal
     val thinking: Long?
     var uncachedInput: Long? = null
     when (dialect) {
-        UsageDialect.OPENAI_RESPONSES, UsageDialect.OPENAI_CHAT -> {
-            val responses = dialect == UsageDialect.OPENAI_RESPONSES
-            val inputDetails = obj[if (responses) "input_tokens_details" else "prompt_tokens_details"] as? JsonObject
-            val outputDetails = obj[if (responses) "output_tokens_details" else "completion_tokens_details"] as? JsonObject
-            input = count(obj, if (responses) "input_tokens" else "prompt_tokens")
-            cached = count(inputDetails, "cached_tokens")
+        UsageDialect.OPENAI_RESPONSES, UsageDialect.OPENAI_CHAT, UsageDialect.IMAGE_GENERATION, UsageDialect.VIDEO_GENERATION -> {
+            val isChat = dialect == UsageDialect.OPENAI_CHAT
+            val isMedia = dialect == UsageDialect.IMAGE_GENERATION || dialect == UsageDialect.VIDEO_GENERATION
+            val usesPromptCompletion = usesPromptCompletionUsageFields(dialect, obj)
+            val inputDetails = obj[if (usesPromptCompletion) "prompt_tokens_details" else "input_tokens_details"] as? JsonObject
+            val outputDetails = obj[if (usesPromptCompletion) "completion_tokens_details" else "output_tokens_details"] as? JsonObject
+            val rawInput = count(obj, if (usesPromptCompletion) "prompt_tokens" else "input_tokens")
+            output = count(obj, if (usesPromptCompletion) "completion_tokens" else "output_tokens")
+            val rawTotal = if (isMedia && rawInput == null) count(obj, "total_tokens") else null
+            input = rawInput ?: if (isMedia && output != null && !invalid &&
+                hasAbsentOrNull(obj, "input_tokens") && hasAbsentOrNull(obj, "prompt_tokens") &&
+                (rawTotal == null || rawTotal == output)
+            ) 0L else null
+            val rawCached = count(inputDetails, "cached_tokens")
+            val hasMediaInputDetails = inputDetails != null &&
+                ("text_tokens" in inputDetails || "image_tokens" in inputDetails || "audio_tokens" in inputDetails || "video_tokens" in inputDetails)
+            cached = rawCached ?: if (input != null && hasAbsentOrNull(inputDetails, "cached_tokens") && (isMedia || hasMediaInputDetails)) 0L else null
             thinking = count(outputDetails, "reasoning_tokens")
-            output = count(obj, if (responses) "output_tokens" else "completion_tokens")
-            if (responses) {
+            if (isMedia && thinking != null) combined = true
+            if (!isChat) {
                 created = count(inputDetails, "cache_write_tokens")
                 val ttl = inputDetails?.get("cache_write_tokens_details") as? JsonObject
                 short = count(ttl, "ttl_30m_tokens")
                 long = count(ttl, "ttl_12h_tokens")
+                if (ttl != null && (short != null || long != null || created == 0L)) {
+                    if (short == null && hasAbsentOrNull(ttl, "ttl_30m_tokens")) short = 0L
+                    if (long == null && hasAbsentOrNull(ttl, "ttl_12h_tokens")) long = 0L
+                }
+                if (ttl == null && created == null && input != null &&
+                    hasAbsentOrNull(inputDetails, "cache_write_tokens") &&
+                    hasAbsentOrNull(inputDetails, "cache_write_tokens_details")
+                ) {
+                    created = 0L
+                }
             } else {
                 // The documented Chat Completions contract has no cache-creation charge field.
                 created = 0L
@@ -81,6 +120,10 @@ internal fun parseProviderUsage(dialect: UsageDialect, obj: JsonObject?, isFinal
             val ttl = obj["cache_creation"] as? JsonObject
             short = count(ttl, "ephemeral_5m_input_tokens")
             long = count(ttl, "ephemeral_1h_input_tokens")
+            if (ttl != null && (short != null || long != null || created == 0L)) {
+                if (short == null && hasAbsentOrNull(ttl, "ephemeral_5m_input_tokens")) short = 0L
+                if (long == null && hasAbsentOrNull(ttl, "ephemeral_1h_input_tokens")) long = 0L
+            }
             if (created == null && short != null && long != null) created = sum(short, long)
             input = uncached?.let { sum(it, cached ?: 0L, created ?: 0L) }
             output = count(obj, "output_tokens")
@@ -88,16 +131,25 @@ internal fun parseProviderUsage(dialect: UsageDialect, obj: JsonObject?, isFinal
         }
         UsageDialect.GEMINI_INTERACTIONS -> {
             input = count(obj, "total_input_tokens")
-            cached = count(obj, "total_cached_tokens")
-            output = count(obj, "total_output_tokens")
+            val rawCached = count(obj, "total_cached_tokens")
+            cached = rawCached ?: if (input != null && hasAbsentOrNull(obj, "total_cached_tokens")) 0L else null
+            val rawOutput = count(obj, "total_output_tokens")
+            output = rawOutput ?: if (isFinal && input != null && hasAbsentOrNull(obj, "total_output_tokens")) 0L else null
             thinking = count(obj, "total_thought_tokens")
+                ?: count(obj, "total_reasoning_tokens")
+                ?: if ((isFinal || rawOutput != null) && input != null &&
+                    hasAbsentOrNull(obj, "total_thought_tokens") &&
+                    hasAbsentOrNull(obj, "total_reasoning_tokens")
+                ) 0L else null
             created = 0L // This driver does not issue explicit cached-content creation requests.
         }
         UsageDialect.GEMINI_CONTENT -> {
             input = count(obj, "promptTokenCount")
-            cached = count(obj, "cachedContentTokenCount")
-            output = count(obj, "candidatesTokenCount")
-            thinking = count(obj, "thoughtsTokenCount")
+            val rawCached = count(obj, "cachedContentTokenCount")
+            cached = rawCached ?: if (input != null && hasAbsentOrNull(obj, "cachedContentTokenCount")) 0L else null
+            val rawOutput = count(obj, "candidatesTokenCount")
+            output = rawOutput ?: if (isFinal && input != null && hasAbsentOrNull(obj, "candidatesTokenCount")) 0L else null
+            thinking = count(obj, "thoughtsTokenCount") ?: if ((isFinal || rawOutput != null) && input != null && hasAbsentOrNull(obj, "thoughtsTokenCount")) 0L else null
             created = 0L
         }
     }

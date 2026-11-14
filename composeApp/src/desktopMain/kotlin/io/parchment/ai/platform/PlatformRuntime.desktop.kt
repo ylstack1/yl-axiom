@@ -18,7 +18,9 @@ actual object PlatformRuntime {
     @Volatile
     private var backHandlerCallback: (() -> Boolean)? = null
 
-    private val windowsPowerLease by lazy { WindowsPowerLease() }
+    private val windowsPowerLeaseLazy = lazy { WindowsPowerLease() }
+    private val windowsPowerLease: WindowsPowerLease
+        get() = windowsPowerLeaseLazy.value
     private val isWindows: Boolean
         get() = System.getProperty("os.name").orEmpty().startsWith("Windows", ignoreCase = true)
 
@@ -31,7 +33,7 @@ actual object PlatformRuntime {
                 try {
                     flushPendingStateNow()
                 } finally {
-                    if (isWindows) windowsPowerLease.close()
+                    if (isWindows && windowsPowerLeaseLazy.isInitialized()) windowsPowerLease.close()
                 }
             })
         }
@@ -61,21 +63,22 @@ actual object PlatformRuntime {
     actual fun requestUnrestrictedBackgroundBattery() {}
 
     private fun reportDecodeWindowStatus(text: String) {
-        val unavailable = isWindows && windowsPowerLease.snapshot.status == WindowsPowerLeaseStatus.UNAVAILABLE
-        backgroundNoticeState.value = if (unavailable) "Keep-awake unavailable: ${windowsPowerLease.snapshot.error}" else ""
+        val leaseSnapshot = if (isWindows && windowsPowerLeaseLazy.isInitialized()) windowsPowerLease.snapshot else null
+        val unavailable = leaseSnapshot?.status == WindowsPowerLeaseStatus.UNAVAILABLE
+        backgroundNoticeState.value = if (unavailable) "Keep-awake unavailable: ${leaseSnapshot?.error.orEmpty()}" else ""
         windowStatusCallback?.invoke(text + if (unavailable) " — Keep-awake unavailable" else "")
     }
 
     actual fun synchronizeBackgroundExecution(owners: Int, runnable: Int, status: String) {
-        if (isWindows) windowsPowerLease.reconcile(runnable)
+        if (isWindows && (runnable > 0 || windowsPowerLeaseLazy.isInitialized())) windowsPowerLease.reconcile(runnable)
         if (owners == 0) lastReportedDecodeSec = -1
         reportDecodeWindowStatus(status)
     }
 
     actual fun notifyLongDecodeProgress(modelName: String, outputTokens: Int, elapsedSeconds: Int) {
-        if (elapsedSeconds == lastReportedDecodeSec) return
+        if (elapsedSeconds < 0 || elapsedSeconds == lastReportedDecodeSec) return
         lastReportedDecodeSec = elapsedSeconds
-        if (isWindows) windowsPowerLease.refresh()
+        if (isWindows && windowsPowerLeaseLazy.isInitialized()) windowsPowerLease.refresh()
         reportDecodeWindowStatus("Parchment — " + modelName + " (+" + outputTokens + " tok • " + elapsedSeconds + "s)")
     }
 

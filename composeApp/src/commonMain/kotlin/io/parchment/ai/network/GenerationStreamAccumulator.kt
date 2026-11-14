@@ -248,11 +248,12 @@ internal class GenerationStreamAccumulator(
         emit(StreamUpdate.UsageUpdated(record, latestUsageMetrics))
     }
 
-    suspend fun beginMediaUsage(wireDialect: String, component: String) {
+    suspend fun beginMediaUsage(wireDialect: String, component: String): String {
         stopIfOverSpendLimit()
         val record = usageLedger.beginMedia(wireDialect, component)
         latestUsageMetrics = usageLedger.metrics()
         emit(StreamUpdate.UsageUpdated(record, latestUsageMetrics))
+        return record.requestId
     }
 
     suspend fun handleSignedThinking(delta: String, sig: String) {

@@ -203,7 +203,9 @@ internal suspend fun AiProviderEngine.executeAnthropicMessagesLoop(
                 }
 
                 // Messages array with strict user-first / alternating role validation & cache_control breakpoint
-                val coalescedBaseMessages = buildAnthropicBaseMessages(activeNodes, session, continuePrefix, foldHistoricalToolsOnRetry)
+                val coalescedBaseMessages = withBinaryAttachmentIo(activeNodes) {
+                    buildAnthropicBaseMessages(activeNodes, session, continuePrefix, foldHistoricalToolsOnRetry)
+                }
                 putJsonArray("messages") {
                     val lastMsgIdx = coalescedBaseMessages.size - 1
                     for ((msgIdx, msgPair) in coalescedBaseMessages.withIndex()) {
@@ -427,9 +429,9 @@ internal suspend fun AiProviderEngine.executeAnthropicMessagesLoop(
                                     if (stopReason == "max_tokens") onOutputLimit()
                                     if (stopReason == "pause_turn") turnPaused = true
                                     val usage = evObj["usage"] as? JsonObject
-                                    if (usage != null) {
+                                    if (usage != null || !stopReason.isNullOrBlank()) {
                                         onUsage(usageRequestId, msgId, UsageDialect.ANTHROPIC,
-                                            parseProviderUsage(UsageDialect.ANTHROPIC, usage))
+                                            parseProviderUsage(UsageDialect.ANTHROPIC, usage, isFinal = !stopReason.isNullOrBlank()))
                                     }
                                 }
                                 "error" -> {

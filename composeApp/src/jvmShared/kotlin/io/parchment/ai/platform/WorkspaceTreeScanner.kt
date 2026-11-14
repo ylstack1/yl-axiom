@@ -82,13 +82,13 @@ internal class WorkspaceTreeScanner(
 
         val globRegex = compileGlobRegex(cleanPat)
         val hasSlash = cleanPat.contains('/')
-        val plainSub = cleanPat.replace("*", "")
+        val hasWildcard = '*' in cleanPat || '?' in cleanPat
+        val plainSub = if (!hasWildcard) cleanPat else ""
         val entries = if (config.useTreeCache) {
             getOrBuildRootTree(rootFile).asSequence()
         } else {
             walkEntries(rootFile, rootPath)
         }
-        val hasWildcard = '*' in cleanPat || '?' in cleanPat
         val matches = entries
             .mapNotNull { entry ->
                 val matchTarget = if (!hasSlash) entry.name else entry.relPath
@@ -156,31 +156,52 @@ internal class WorkspaceTreeScanner(
             require(WorkspacePathGuard.canTraverse(rootPath, entry.file.toPath())) {
                 "Workspace path changed during search."
             }
-            entry.file.useLines(Charsets.UTF_8) { seq ->
-                seq.forEachIndexed { idx, line ->
-                    if (hitCount.get() < config.maxSearchHits) {
-                        val hit = regex?.containsMatchIn(line) ?: line.contains(query, ignoreCase = true)
-                        if (hit && hitCount.incrementAndGet() <= config.maxSearchHits) {
+            entry.file.bufferedReader(Charsets.UTF_8).use { reader ->
+                var idx = 0
+                while (hitCount.get() < config.maxSearchHits) {
+                    val line = reader.readLine() ?: break
+                    val hit = regex?.containsMatchIn(line) ?: line.contains(query, ignoreCase = true)
+                    if (hit) {
+                        val claimed = hitCount.incrementAndGet()
+                        if (claimed <= config.maxSearchHits) {
                             fileHits.add("${entry.relPath}:${idx + 1}: ${line.trim().take(config.maxSearchLineChars)}")
+                        } else {
+                            break
                         }
                     }
+                    idx++
                 }
             }
         }
         return fileHits.ifEmpty { null }
     }
 
+    private val treeLock = Any()
+
     private fun getOrBuildRootTree(rootFile: File): List<CachedEntry> {
         val canonPath = rootFile.canonicalPath
         val now = System.currentTimeMillis()
         val existing = cachedTree
-        if (existing != null && existing.rootCanonicalPath == canonPath && now - existing.timestampMs <= TREE_CACHE_TTL_MS) {
+        if (existing != null &&
+            existing.rootCanonicalPath == canonPath &&
+            (now - existing.timestampMs) in 0L..TREE_CACHE_TTL_MS
+        ) {
             return existing.entries
         }
-        val rootPath = rootFile.toPath().normalize()
-        val built = walkEntries(rootFile, rootPath).toList()
-        cachedTree = CachedWorkspaceTree(canonPath, now, built)
-        return built
+        synchronized(treeLock) {
+            val freshNow = System.currentTimeMillis()
+            val inside = cachedTree
+            if (inside != null &&
+                inside.rootCanonicalPath == canonPath &&
+                (freshNow - inside.timestampMs) in 0L..TREE_CACHE_TTL_MS
+            ) {
+                return inside.entries
+            }
+            val rootPath = rootFile.toPath().normalize()
+            val built = walkEntries(rootFile, rootPath).toList()
+            cachedTree = CachedWorkspaceTree(canonPath, freshNow, built)
+            return built
+        }
     }
 
     private fun walkEntries(startDir: File, rootPath: Path): Sequence<CachedEntry> =

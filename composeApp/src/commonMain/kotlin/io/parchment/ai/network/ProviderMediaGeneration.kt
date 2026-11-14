@@ -189,7 +189,7 @@ internal suspend fun AiProviderEngine.executeByteDanceArkGeneration(
     onRawWire: suspend (String, String) -> Unit,
     onRequestStarted: UsageRequestStarter,
     onUsage: UsageReporter,
-    onMediaRequestStarted: suspend (String, String) -> Unit
+    onMediaRequestStarted: suspend (String, String) -> String
 ) {
     val latestUserPrompt = historyNodes.lastOrNull { it.role == MessageRole.USER }?.activeVariant?.content.orEmpty()
         .ifBlank { historyNodes.lastOrNull()?.activeVariant?.content.orEmpty() }
@@ -217,7 +217,7 @@ internal suspend fun AiProviderEngine.executeByteDanceArkGeneration(
         }
 
         val latestUserNode = historyNodes.lastOrNull { it.role == MessageRole.USER } ?: historyNodes.lastOrNull()
-        val refImages = resolveBinaryAttachments(latestUserNode?.activeVariant)
+        val refImages = resolveBinaryAttachmentsOnIo(latestUserNode?.activeVariant)
             .filter { it.mimeType.lowercase().startsWith("image/") }
 
         val arkPayloadObj = buildJsonObject {
@@ -318,6 +318,7 @@ internal suspend fun AiProviderEngine.executeByteDanceArkGeneration(
             createStatus = 200
         }
 
+        var videoUsageReqId = ""
         outerUrlLoop@ for (candUrl in if (resumed == null) candidateTaskUrls else emptyList()) {
             activeTaskUrl = candUrl
             val finalCreateUrl = buildUrlWithAuthQuery(profile, candUrl)
@@ -335,7 +336,9 @@ internal suspend fun AiProviderEngine.executeByteDanceArkGeneration(
                 onRawWire(reqStr, "Dispatching to $finalCreateUrl ...")
 
                 ensureAgentPolicyCurrent(session, profile)
-                onMediaRequestStarted("video_generation", "output_video")
+                if (videoUsageReqId.isEmpty()) {
+                    videoUsageReqId = onMediaRequestStarted("video_generation", "output_video")
+                }
                 val createResp = httpClient.post(finalCreateUrl) {
                     applyAuthAndCustomHeaders(profile)
                     contentType(ContentType.Application.Json)
@@ -481,6 +484,19 @@ internal suspend fun AiProviderEngine.executeByteDanceArkGeneration(
         val videoUrl = immediateVideoUrl ?: extractDirectVideoUrl(latestTaskObj)
             ?: throw AiProviderEngine.AcceptedJobException("Video task completed but no video URL was found in response: $latestTaskObj")
 
+        val videoUsageObj = (latestTaskObj["usage"] as? JsonObject) ?: (createObj["usage"] as? JsonObject)
+        if (videoUsageObj != null) {
+            if (videoUsageReqId.isEmpty()) {
+                videoUsageReqId = onMediaRequestStarted("video_generation", "output_video")
+            }
+            onUsage(
+                videoUsageReqId,
+                taskId,
+                UsageDialect.VIDEO_GENERATION,
+                parseProviderUsage(UsageDialect.VIDEO_GENERATION, videoUsageObj, isFinal = true, response = latestTaskObj)
+            )
+        }
+
         onFirstToken()
         onStatus(Strings.downloadingGeneratedMp4Video, taskRef)
         val videoBytes = runCatching {
@@ -504,7 +520,7 @@ internal suspend fun AiProviderEngine.executeByteDanceArkGeneration(
     } else {
         // Universal Image Generation Engine (`POST /v1/images/generations` & `/api/v3/images/generations`)
         val latestUserNode = historyNodes.lastOrNull { it.role == MessageRole.USER } ?: historyNodes.lastOrNull()
-        val refImages = resolveBinaryAttachments(latestUserNode?.activeVariant)
+        val refImages = resolveBinaryAttachmentsOnIo(latestUserNode?.activeVariant)
             .filter { it.mimeType.lowercase().startsWith("image/") }
 
         val isHighResSeedreamFamily = profile.mediaResolution in listOf("2K", "4K")
@@ -567,6 +583,7 @@ internal suspend fun AiProviderEngine.executeByteDanceArkGeneration(
         var bodyText = ""
         var lastStatus = 0
         var reqStr = ""
+        var imageUsageReqId = ""
         outerImgLoop@ for (candidateUrl in candidateImgUrls) {
             val finalUrl = buildUrlWithAuthQuery(profile, candidateUrl)
             for ((pIdx, candPayload) in candidatePayloads.withIndex()) {
@@ -576,7 +593,9 @@ internal suspend fun AiProviderEngine.executeByteDanceArkGeneration(
                 onRawWire(reqStr, "Dispatching to $finalUrl ...")
 
                 ensureAgentPolicyCurrent(session, profile)
-                onMediaRequestStarted("image_generation", "output_image")
+                if (imageUsageReqId.isEmpty()) {
+                    imageUsageReqId = onMediaRequestStarted("image_generation", "output_image")
+                }
                 val resp = httpClient.post(finalUrl) {
                     applyAuthAndCustomHeaders(profile)
                     contentType(ContentType.Application.Json)
@@ -654,6 +673,15 @@ internal suspend fun AiProviderEngine.executeByteDanceArkGeneration(
         val dataArr = root["data"] as? JsonArray
             ?: root["images"] as? JsonArray
             ?: JsonArray(emptyList())
+        (root["usage"] as? JsonObject)?.let { imgUsageObj ->
+            val respId = (root["id"] as? JsonPrimitive)?.contentOrNull.orEmpty()
+            onUsage(
+                imageUsageReqId.ifBlank { null },
+                respId,
+                UsageDialect.IMAGE_GENERATION,
+                parseProviderUsage(UsageDialect.IMAGE_GENERATION, imgUsageObj, isFinal = true, response = root)
+            )
+        }
         if (dataArr.isNotEmpty()) {
             for (itemEl in dataArr) {
                 val itemObj = itemEl as? JsonObject ?: continue
@@ -719,6 +747,32 @@ internal val ResolvedBinaryAttachment.isDocument: Boolean
 /** Stands in for a file this wire cannot accept, so one attachment cannot fail every later request. */
 internal fun ResolvedBinaryAttachment.unsupportedAttachmentNote(): String =
     "[Attachment not sent: ${fileName.ifBlank { "file" }} ($mimeType) is not supported by this API format.]"
+
+internal fun hasUninlinedBinaryAttachments(nodes: List<MessageNode>): Boolean =
+    nodes.any { node ->
+        node.activeVariant?.attachments?.any { att ->
+            att.base64Data.isBlank() && att.localFilePath.isNotBlank()
+        } == true
+    }
+
+/** Switches to [Dispatchers.IO] only when wire assembly needs to read local attachment files. */
+internal suspend fun <T> withBinaryAttachmentIo(
+    nodes: List<MessageNode>,
+    block: () -> T
+): T = if (hasUninlinedBinaryAttachments(nodes)) {
+    withContext(Dispatchers.IO) { block() }
+} else {
+    block()
+}
+
+internal suspend fun AiProviderEngine.resolveBinaryAttachmentsOnIo(
+    nodeVar: MessageVariant?
+): List<ResolvedBinaryAttachment> =
+    if (nodeVar?.attachments?.any { it.base64Data.isBlank() && it.localFilePath.isNotBlank() } == true) {
+        withContext(Dispatchers.IO) { resolveBinaryAttachments(nodeVar) }
+    } else {
+        resolveBinaryAttachments(nodeVar)
+    }
 
 internal fun AiProviderEngine.resolveBinaryAttachments(nodeVar: MessageVariant?): List<ResolvedBinaryAttachment> {
     if (nodeVar == null || nodeVar.attachments.isEmpty()) return emptyList()

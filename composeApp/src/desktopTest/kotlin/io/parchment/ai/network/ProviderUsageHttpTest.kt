@@ -74,6 +74,7 @@ class ProviderUsageHttpTest {
                 put("promptTokenCount", input); put("cachedContentTokenCount", cached)
                 put("candidatesTokenCount", output); put("thoughtsTokenCount", reasoning)
             }
+            UsageDialect.IMAGE_GENERATION, UsageDialect.VIDEO_GENERATION -> error("Unsupported fixture dialect: $dialect")
         }
     }
 
@@ -196,6 +197,7 @@ class ProviderUsageHttpTest {
                 })
                 return Reply(start + block + delta + delta + event("message_stop", buildJsonObject { put("type", "message_stop") }), true)
             }
+            UsageDialect.IMAGE_GENERATION, UsageDialect.VIDEO_GENERATION -> error("Unsupported fixture dialect: $dialect")
         }
     }
 

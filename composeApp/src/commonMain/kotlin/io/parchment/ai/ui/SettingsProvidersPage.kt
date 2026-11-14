@@ -14,6 +14,7 @@ import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
@@ -24,6 +25,8 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.selection.selectableGroup
 import androidx.compose.foundation.shape.CircleShape
@@ -31,6 +34,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicText
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -44,6 +48,8 @@ import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -88,8 +94,33 @@ internal fun ProvidersSubpage(
     var selectedModelForConfigSubpage by remember(activeProfile.id) { mutableStateOf<String?>(null) }
     var manualModelToAdd by remember { mutableStateOf("") }
     var showAddModelBox by remember { mutableStateOf(false) }
-    var isTestingOrFetching by remember { mutableStateOf(false) }
+    var testingOrFetchingProfileId by remember { mutableStateOf<String?>(null) }
+    val isTestingOrFetching = testingOrFetchingProfileId == activeProfile.id
     var mobileEditingProfileId by remember { mutableStateOf<String?>(null) }
+
+    fun launchProviderLookup(
+        onFailure: (Throwable) -> String,
+        onSuccess: (ProviderProfile, List<String>, Long) -> Unit
+    ) {
+        val targetProfile = activeProfile
+        if (testingOrFetchingProfileId == targetProfile.id) return
+        testingOrFetchingProfileId = targetProfile.id
+        scope.launch {
+            try {
+                val start = PlatformRuntime.currentTimeMillis()
+                AiProviderEngine.fetchAvailableModels(targetProfile).fold(
+                    onSuccess = { fetched ->
+                        onSuccess(targetProfile, fetched, PlatformRuntime.currentTimeMillis() - start)
+                    },
+                    onFailure = { err -> onNotify(onFailure(err)) }
+                )
+            } finally {
+                if (testingOrFetchingProfileId == targetProfile.id) {
+                    testingOrFetchingProfileId = null
+                }
+            }
+        }
+    }
 
     val filteredProfiles = remember(appState.profiles, providerSearch) {
         val q = providerSearch.trim()
@@ -386,7 +417,12 @@ internal fun ProvidersSubpage(
 
                 // Main Provider Detail Header with Inline Editable Name + Enable Switch
                 var isRenamingProvider by remember(activeProfile.id) { mutableStateOf(false) }
-                var providerNameBuffer by remember(activeProfile.id, activeProfile.name) { mutableStateOf(activeProfile.name) }
+                var providerNameBuffer by remember(activeProfile.id) { mutableStateOf(activeProfile.name) }
+                LaunchedEffect(activeProfile.id, activeProfile.name, isRenamingProvider) {
+                    if (!isRenamingProvider) {
+                        providerNameBuffer = activeProfile.name
+                    }
+                }
 
                 Row(
                     modifier = Modifier.fillMaxWidth(),
@@ -427,7 +463,10 @@ internal fun ProvidersSubpage(
                                 verticalAlignment = Alignment.CenterVertically,
                                 horizontalArrangement = Arrangement.spacedBy(Space.s6),
                                 modifier = Modifier
-                                    .kissClickable { isRenamingProvider = true }
+                                    .kissClickable {
+                                        providerNameBuffer = activeProfile.name
+                                        isRenamingProvider = true
+                                    }
                                     .padding(top = Space.s2)
                             ) {
                                 ModelLabSvgIcon(
@@ -492,36 +531,27 @@ internal fun ProvidersSubpage(
                             SepiaButton(
                                 text = if (isTestingOrFetching) Strings.testing else Strings.test,
                                 compact = true,
+                                enabled = !isTestingOrFetching,
                                 style = SepiaButtonStyle.GHOST,
                                 onClick = {
-                                    isTestingOrFetching = true
-                                    scope.launch {
-                                        val start = PlatformRuntime.currentTimeMillis()
-                                        AiProviderEngine.fetchAvailableModels(activeProfile).fold(
-                                            onSuccess = { list ->
-                                                val ms = PlatformRuntime.currentTimeMillis() - start
-                                                val secStr = formatDurationFromMs(ms)
-                                                onNotify(Strings.connectionOkModelsReachable(secStr, list.size))
-                                            },
-                                            onFailure = { err ->
-                                                onNotify(Strings.connectionTestFailed(err.message))
-                                                isTestingOrFetching = false
-                                            }
-                                        )
+                                    launchProviderLookup(
+                                        onFailure = { err -> Strings.connectionTestFailed(err.message) }
+                                    ) { _, list, ms ->
+                                        onNotify(Strings.connectionOkModelsReachable(formatDurationFromMs(ms), list.size))
                                     }
                                 }
                             )
                         }
                     }
                     SepiaTextField(
-                        value = if (showApiKey) activeProfile.apiKey else "•".repeat(activeProfile.apiKey.length.coerceAtMost(48)),
+                        value = activeProfile.apiKey,
                         onValueChange = { newVal ->
-                            if (showApiKey || activeProfile.apiKey.isEmpty()) {
-                                onUpdateProfileById(activeProfile.id) { it.copy(apiKey = newVal.trim()) }
-                            }
+                            val clean = newVal.trim()
+                            onUpdateProfileById(activeProfile.id) { it.copy(apiKey = clean) }
                         },
                         placeholder = Strings.pasteApiKeyToggleVisibility,
                         monospace = true,
+                        visualTransformation = if (showApiKey) VisualTransformation.None else PasswordVisualTransformation('•'),
                         modifier = Modifier.fillMaxWidth()
                     )
                 }
@@ -601,23 +631,17 @@ internal fun ProvidersSubpage(
 
                 // Fetch asks the provider for its models; used by the header button and the empty list.
                 val fetchModels: () -> Unit = {
-                    isTestingOrFetching = true
-                    scope.launch {
-                        AiProviderEngine.fetchAvailableModels(activeProfile).fold(
-                            onSuccess = { fetched ->
-                                val merged = (activeProfile.savedModels + fetched).distinct()
-                                // Never replace a default model the user already chose. If there is none, pick a chat
-                                // model (skipping deep-research and embedding models).
-                                val preferredDefault = activeProfile.defaultModel.ifBlank { pickBestInitialChatModel(merged) }
-                                onUpdateProfile { it.copy(savedModels = merged, defaultModel = preferredDefault) }
-                                onNotify(Strings.fetchedModels(fetched.size))
-                                isTestingOrFetching = false
-                            },
-                            onFailure = { err ->
-                                onNotify(Strings.fetchFailed(err.message))
-                                isTestingOrFetching = false
-                            }
-                        )
+                    launchProviderLookup(
+                        onFailure = { err -> Strings.fetchFailed(err.message) }
+                    ) { targetProfile, fetched, _ ->
+                        onUpdateProfileById(targetProfile.id) { current ->
+                            val merged = (current.savedModels + fetched).distinct()
+                            // Never replace a default model the user already chose. If there is none, pick a chat
+                            // model (skipping deep-research and embedding models).
+                            val preferredDefault = current.defaultModel.ifBlank { pickBestInitialChatModel(merged) }
+                            current.copy(savedModels = merged, defaultModel = preferredDefault)
+                        }
+                        onNotify(Strings.fetchedModels(fetched.size))
                     }
                 }
 
@@ -668,6 +692,7 @@ internal fun ProvidersSubpage(
                         SepiaButton(
                             text = if (isTestingOrFetching) Strings.fetching else Strings.fetch,
                             compact = true,
+                            enabled = !isTestingOrFetching,
                             style = SepiaButtonStyle.PRIMARY,
                             onClick = fetchModels
                         )
@@ -770,26 +795,29 @@ internal fun ProvidersSubpage(
                 // Grouped & Bounded Vertical Model List Card
                 val visibleModels = remember(activeProfile.savedModels, modelSearch, selectedVendorFamily) {
                     val tokens = modelSearch.trim().lowercase().split(Regex("\\s+")).filter { it.isNotEmpty() }
-                    activeProfile.savedModels.filter { m ->
-                        val vendOk = selectedVendorFamily.isEmpty() ||
-                            (m.contains('/') && m.substringBefore('/').trim().equals(selectedVendorFamily, ignoreCase = true))
-                        val searchOk = tokens.isEmpty() || tokens.all { tok -> m.lowercase().contains(tok) }
-                        vendOk && searchOk
-                    }
+                    activeProfile.savedModels.asSequence()
+                        .filter { m ->
+                            val vendOk = selectedVendorFamily.isEmpty() ||
+                                (m.contains('/') && m.substringBefore('/').trim().equals(selectedVendorFamily, ignoreCase = true))
+                            val searchOk = tokens.isEmpty() || tokens.all { tok -> m.lowercase().contains(tok) }
+                            vendOk && searchOk
+                        }
+                        .distinct()
+                        .toList()
                 }
 
-                Column(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .heightIn(max = 380.dp)
-                        .clip(RoundedCornerShape(Radius.r10))
-                        .background(p.cardBg)
-                        .border(LineWidth.hairline, p.border.copy(alpha = 0.75f), RoundedCornerShape(Radius.r10))
-                        .verticalScroll(rememberScrollState())
-                        .padding(Space.s10),
-                    verticalArrangement = Arrangement.spacedBy(Space.s6)
-                ) {
-                    if (visibleModels.isEmpty()) {
+                val listCardModifier = Modifier
+                    .fillMaxWidth()
+                    .heightIn(max = 380.dp)
+                    .clip(RoundedCornerShape(Radius.r10))
+                    .background(p.cardBg)
+                    .border(LineWidth.hairline, p.border.copy(alpha = 0.75f), RoundedCornerShape(Radius.r10))
+
+                if (visibleModels.isEmpty()) {
+                    Column(
+                        modifier = listCardModifier.padding(Space.s10),
+                        verticalArrangement = Arrangement.spacedBy(Space.s6)
+                    ) {
                         // Say why the list is empty, and offer the fix right here.
                         val nothingSaved = activeProfile.savedModels.isEmpty()
                         Column(
@@ -814,8 +842,14 @@ internal fun ProvidersSubpage(
                                 )
                             }
                         }
-                    } else {
-                        visibleModels.forEach { modelId ->
+                    }
+                } else {
+                    LazyColumn(
+                        modifier = listCardModifier,
+                        contentPadding = PaddingValues(Space.s10),
+                        verticalArrangement = Arrangement.spacedBy(Space.s6)
+                    ) {
+                        items(visibleModels, key = { it }) { modelId ->
                             val isSelectedModel = activeProfile.defaultModel == modelId
                             val customSpec = activeProfile.customModelSpecs[modelId]
                             val ctxTokens = customSpec?.contextWindowTokens ?: activeProfile.contextWindowTokens

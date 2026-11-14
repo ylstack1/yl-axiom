@@ -312,4 +312,29 @@ class ChatArchiveImportTest {
             PlatformStorage.deleteChatSessionFile(chatId)
         }
     }
+
+    @Test fun importSupportsSingleByteStreamReads() {
+        val chat = ChatSession(id = "single-byte-1", title = "Trickle Import", createdAt = 1L, updatedAt = 2L, profileId = "p1")
+        val zipOut = ByteArrayOutputStream()
+        ChatArchiveWriter.writeBundle(zipOut, sequenceOf(chatBundleEntry(chat)), PlatformStorage::resolveLocalMediaFile)
+        val rawStream = ByteArrayInputStream(zipOut.toByteArray())
+        val singleByteStream = object : InputStream() {
+            override fun read(): Int = rawStream.read()
+            override fun read(b: ByteArray, off: Int, len: Int): Int {
+                if (len <= 0) return 0
+                val next = read()
+                if (next < 0) return -1
+                b[off] = next.toByte()
+                return 1
+            }
+        }
+        val imported = ChatArchiveExtractor.importChatFile(
+            fileName = "trickle.chat.zip",
+            source = singleByteStream,
+            storageRoot = Files.createTempDirectory("parchment-trickle-").toFile().apply { deleteOnExit() },
+            limits = permissive,
+            decode = ::decodeImportedChats
+        )
+        assertEquals(listOf("Trickle Import"), imported.map { it.title })
+    }
 }

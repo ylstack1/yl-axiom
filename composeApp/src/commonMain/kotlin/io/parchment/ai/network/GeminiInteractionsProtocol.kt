@@ -291,12 +291,14 @@ private class GeminiInteractionsSession(
         }
     }
 
-    private fun buildRequestJson(useChainedId: Boolean, isContinuationHop: Boolean): String {
-        val baseInputSteps = if (useChainedId && previousAssistantIdx >= 0 && previousAssistantIdx < activeNodes.size - 1) {
-            val trailingNodes = activeNodes.subList(previousAssistantIdx + 1, activeNodes.size)
-            engine.buildGeminiInteractionsTurnsArray(trailingNodes, session, continuePrefix, foldHistoricalToolsOnRetry)
+    private suspend fun buildRequestJson(useChainedId: Boolean, isContinuationHop: Boolean): String {
+        val sourceNodes = if (useChainedId && previousAssistantIdx >= 0 && previousAssistantIdx < activeNodes.size - 1) {
+            activeNodes.subList(previousAssistantIdx + 1, activeNodes.size)
         } else {
-            engine.buildGeminiInteractionsTurnsArray(activeNodes, session, continuePrefix, foldHistoricalToolsOnRetry)
+            activeNodes
+        }
+        val baseInputSteps = withBinaryAttachmentIo(sourceNodes) {
+            engine.buildGeminiInteractionsTurnsArray(sourceNodes, session, continuePrefix, foldHistoricalToolsOnRetry)
         }
 
         // 3-Layer Rolling Context Compaction: prune verbose tool outputs older than 8 steps in-place in RAM

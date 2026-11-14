@@ -171,7 +171,9 @@ actual object PlatformPickers {
     }.getOrDefault(false)
 
     actual fun loadBundledFontFamily(bundleName: String): FontFamily? {
-        val key = "bundled:$bundleName"
+        val canonical = AppStorageInventory.canonicalBundledFontKey(bundleName)
+        if (canonical.isEmpty()) return null
+        val key = "bundled:$canonical"
         fontCache[key]?.let { return it }
 
         fun readResBytes(resPath: String): ByteArray? =
@@ -179,7 +181,7 @@ actual object PlatformPickers {
                 ?: PlatformPickers::class.java.classLoader?.getResourceAsStream(resPath)?.use { it.readBytes() }
 
         return runCatching {
-            val family = when (bundleName.lowercase()) {
+            val family = when (canonical) {
                 "inter" -> {
                     val reg = readResBytes("fonts/Inter-Regular.ttf") ?: return null
                     val ital = readResBytes("fonts/Inter-Italic.ttf") ?: reg
@@ -192,7 +194,7 @@ actual object PlatformPickers {
                         Font(identity = "Inter-BoldItalic", data = ital, weight = FontWeight.Bold, style = FontStyle.Italic)
                     )
                 }
-                "jetbrains mono", "jetbrainsmono nerd", "jetbrainsmono", "nerd" -> {
+                "jetbrains_mono" -> {
                     val reg = readResBytes("fonts/JetBrainsMono-Regular.ttf") ?: return null
                     val semi = readResBytes("fonts/JetBrainsMono-SemiBold.ttf") ?: reg
                     val bold = readResBytes("fonts/JetBrainsMono-Bold.ttf") ?: reg
@@ -205,7 +207,7 @@ actual object PlatformPickers {
                         Font(identity = "JBM-Italic", data = ital, weight = FontWeight.Normal, style = FontStyle.Italic)
                     )
                 }
-                "latex", "katex", "math" -> {
+                "latex" -> {
                     val katexReg = readResBytes("fonts/KaTeX_Main-Regular.ttf") ?: return null
                     val katexBold = readResBytes("fonts/KaTeX_Main-Bold.ttf") ?: katexReg
                     val katexItal = readResBytes("fonts/KaTeX_Math-Italic.ttf") ?: katexReg

@@ -103,23 +103,30 @@ internal class GeminiInteractionsRoundParser(
             )
         }
 
+        val interactionStatus = interactionSub?.get("status")?.jsonPrimitive?.contentOrNull
+            ?: evObj["status"]?.jsonPrimitive?.contentOrNull
+
         when (type) {
             "interaction.start", "interaction.created", "interaction.status_update" -> {
                 val persistedId = if (profile.keepsProviderState) idCandidate.orEmpty() else ""
+                val st = interactionStatus ?: "streaming"
+                val isTerminalStatus = st in setOf("completed", "requires_action", "requires_continuation", "incomplete", "failed", "cancelled", "expired")
                 onUsage(
                     usageRequestIdProvider(),
                     persistedId,
                     UsageDialect.GEMINI_INTERACTIONS,
-                    parseProviderUsage(UsageDialect.GEMINI_INTERACTIONS, interactionSub?.get("usage") as? JsonObject)
+                    parseProviderUsage(UsageDialect.GEMINI_INTERACTIONS, interactionSub?.get("usage") as? JsonObject, isFinal = isTerminalStatus, response = interactionSub ?: evObj)
                 )
-                val st = interactionSub?.get("status")?.jsonPrimitive?.contentOrNull
-                    ?: evObj["status"]?.jsonPrimitive?.contentOrNull ?: "streaming"
                 onStatus(Strings.interaction(st), if (profile.keepsProviderState) currentInteractionId() else "")
+                if (isTerminalStatus) {
+                    handleInteractionCompleted(evObj, interactionSub)
+                }
             }
             "content.start", "step.start" -> handleContentStart(evObj)
             "content.delta", "step.delta" -> handleContentDelta(evObj)
             "content.stop", "step.stop", "content.complete", "step.complete" -> handleContentStop(evObj)
-            "interaction.complete", "interaction.completed", "interaction.requires_action" ->
+            "interaction.complete", "interaction.completed", "interaction.requires_action",
+            "interaction.incomplete", "interaction.failed", "interaction.cancelled", "interaction.expired" ->
                 handleInteractionCompleted(evObj, interactionSub)
             "error" -> {
                 val errObj = evObj["error"] as? JsonObject
@@ -127,16 +134,11 @@ internal class GeminiInteractionsRoundParser(
                 error("Gemini Interactions Stream Error: $msg")
             }
             else -> {
-                val unknownStatus = (evObj["status"] as? JsonPrimitive)?.contentOrNull.orEmpty()
+                val unknownStatus = interactionStatus.orEmpty()
                 if (evObj.containsKey("outputs") || evObj.containsKey("steps") ||
                     unknownStatus in setOf("completed", "requires_action", "requires_continuation", "incomplete", "failed", "cancelled", "expired")
                 ) {
-                    streamFinished = true
-                    roundStatus = unknownStatus
-                    roundContinuationToken = (evObj["continuation_token"] as? JsonPrimitive)?.contentOrNull.orEmpty()
-                    throwIfInteractionFailed(roundStatus, evObj, dataLine)
-                    if (roundStatus == "incomplete") onOutputLimit()
-                    applyCompletedInteractionObject(evObj)
+                    handleInteractionCompleted(evObj, interactionSub)
                 }
             }
         }

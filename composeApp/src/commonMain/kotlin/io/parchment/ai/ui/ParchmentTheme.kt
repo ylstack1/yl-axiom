@@ -37,16 +37,29 @@ data class ParchmentPalette(
     val success: Color,
     val proseFontFamily: FontFamily,
     val codeFontFamily: FontFamily,
-    val mathFontFamily: FontFamily,
     val proseStyle: TextStyle,
-    val mathStyle: TextStyle,
     val uiBodyStyle: TextStyle,
     val uiLabelStyle: TextStyle,
     val uiHeaderStyle: TextStyle,
     val monoStyle: TextStyle,
     val paragraphSpacing: Dp,
     val maxReadingWidth: Dp
-)
+) {
+    /** Loaded lazily on first math render so KaTeX and NotoSansMath fonts stay out of startup RAM. */
+    val mathFontFamily: FontFamily by lazy(LazyThreadSafetyMode.PUBLICATION) {
+        PlatformPickers.loadBundledFontFamily("LaTeX") ?: FontFamily.Serif
+    }
+
+    val mathStyle: TextStyle by lazy(LazyThreadSafetyMode.PUBLICATION) {
+        TextStyle(
+            fontFamily = mathFontFamily,
+            fontSize = proseStyle.fontSize,
+            lineHeight = proseStyle.lineHeight,
+            color = primaryInk,
+            fontWeight = FontWeight.Normal
+        )
+    }
+}
 
 private const val READABLE_TEXT_CONTRAST = 4.5f
 private val WARM_FILL_INK = Color(0xFFFAF6EB)
@@ -123,16 +136,42 @@ fun buildPaletteFromConfig(config: ThemeConfig): ParchmentPalette {
         PlatformPickers.loadCustomFontFamily(config.customProseFontPath)
     } else null
 
-    val bundledInter = PlatformPickers.loadBundledFontFamily("Inter")
-    val bundledMono = PlatformPickers.loadBundledFontFamily("JetBrains Mono")
-    val bundledLatex = PlatformPickers.loadBundledFontFamily("LaTeX")
+    var loadedInter: FontFamily? = null
+    var interResolved = false
+    fun bundledInter(): FontFamily? {
+        if (!interResolved) {
+            loadedInter = PlatformPickers.loadBundledFontFamily("Inter")
+            interResolved = true
+        }
+        return loadedInter
+    }
+
+    var loadedMono: FontFamily? = null
+    var monoResolved = false
+    fun bundledMono(): FontFamily? {
+        if (!monoResolved) {
+            loadedMono = PlatformPickers.loadBundledFontFamily("JetBrains Mono")
+            monoResolved = true
+        }
+        return loadedMono
+    }
+
+    var loadedLatex: FontFamily? = null
+    var latexResolved = false
+    fun bundledLatex(): FontFamily? {
+        if (!latexResolved) {
+            loadedLatex = PlatformPickers.loadBundledFontFamily("LaTeX")
+            latexResolved = true
+        }
+        return loadedLatex
+    }
 
     val proseFont = customProseLoaded ?: when (canonicalFontName(config.proseFontFamily)) {
-        "inter" -> bundledInter ?: FontFamily.SansSerif
-        "jetbrainsmono", "nerd" -> bundledMono ?: FontFamily.Monospace
-        "latex", "katex", "math" -> bundledLatex ?: FontFamily.Serif
-        "sans", "sans-serif" -> bundledInter ?: FontFamily.SansSerif
-        "mono", "monospace" -> bundledMono ?: FontFamily.Monospace
+        "inter" -> bundledInter() ?: FontFamily.SansSerif
+        "jetbrainsmono", "nerd" -> bundledMono() ?: FontFamily.Monospace
+        "latex", "katex", "math" -> bundledLatex() ?: FontFamily.Serif
+        "sans", "sans-serif" -> bundledInter() ?: FontFamily.SansSerif
+        "mono", "monospace" -> bundledMono() ?: FontFamily.Monospace
         else -> FontFamily.Serif
     }
 
@@ -141,19 +180,17 @@ fun buildPaletteFromConfig(config: ThemeConfig): ParchmentPalette {
     } else null
 
     val codeFont = customCodeLoaded ?: when (canonicalFontName(config.codeFontFamily)) {
-        "inter", "sans", "sans-serif" -> bundledInter ?: FontFamily.SansSerif
+        "inter", "sans", "sans-serif" -> bundledInter() ?: FontFamily.SansSerif
         "serif" -> FontFamily.Serif
-        "latex", "katex" -> bundledLatex ?: FontFamily.Serif
-        else -> bundledMono ?: FontFamily.Monospace
+        "latex", "katex" -> bundledLatex() ?: FontFamily.Serif
+        else -> bundledMono() ?: FontFamily.Monospace
     }
-
-    val mathFont = bundledLatex ?: FontFamily.Serif
 
     val fontSize = config.proseFontSizeSp.coerceIn(12f, 32f)
     val lineHeight = (fontSize * config.proseLineHeightMultiplier.coerceIn(1.1f, 2.5f))
     val codeSize = config.codeFontSizeSp.coerceIn(10f, 28f)
     val codeLineHeight = (codeSize * 1.42f)
-    val uiFont = customProseLoaded ?: bundledInter ?: FontFamily.SansSerif
+    val uiFont = customProseLoaded ?: bundledInter() ?: FontFamily.SansSerif
 
     return ParchmentPalette(
         config = config,
@@ -172,19 +209,11 @@ fun buildPaletteFromConfig(config: ThemeConfig): ParchmentPalette {
         success = success,
         proseFontFamily = proseFont,
         codeFontFamily = codeFont,
-        mathFontFamily = mathFont,
         proseStyle = TextStyle(
             fontFamily = proseFont,
             fontSize = fontSize.sp,
             lineHeight = lineHeight.sp,
             letterSpacing = 0.05.sp,
-            color = primaryInk,
-            fontWeight = FontWeight.Normal
-        ),
-        mathStyle = TextStyle(
-            fontFamily = mathFont,
-            fontSize = fontSize.sp,
-            lineHeight = lineHeight.sp,
             color = primaryInk,
             fontWeight = FontWeight.Normal
         ),

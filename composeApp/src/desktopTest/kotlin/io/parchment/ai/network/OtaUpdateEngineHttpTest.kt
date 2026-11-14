@@ -156,4 +156,44 @@ class OtaUpdateEngineHttpTest {
         AtomicFileStorage.writeBytes(export, "new".encodeToByteArray())
         assertEquals("new", export.readText())
     }
+
+    @Test fun checkForUpdatesFallsBackFromLatest404AndSurfacesHttpErrors() = runBlocking {
+        var latestStatus = 404
+        var listStatus = 200
+        val shaHex = "b".repeat(64)
+        val server = HttpServer.create(InetSocketAddress("127.0.0.1", 0), 0).apply {
+            createContext("/repos/owner/parchment/releases/latest") { ex ->
+                val body = """{"message":"Not Found"}""".toByteArray()
+                ex.responseHeaders.set("Content-Type", "application/json")
+                ex.sendResponseHeaders(latestStatus, body.size.toLong())
+                ex.responseBody.use { it.write(body) }
+            }
+            createContext("/repos/owner/parchment/releases") { ex ->
+                val body = if (listStatus == 200) {
+                    """[{"tag_name":"v99.2.0","name":"Release 99.2.0","body":"Notes","published_at":"2026-11-15T00:00:00Z","assets":[{"name":"Parchment-Setup.exe","size":4096,"digest":"sha256:$shaHex","browser_download_url":"https://github.com/owner/parchment/releases/download/v99.2.0/Parchment-Setup.exe"}]}]"""
+                } else {
+                    "rate limit exceeded"
+                }.toByteArray()
+                ex.responseHeaders.set("Content-Type", "application/json")
+                ex.sendResponseHeaders(listStatus, body.size.toLong())
+                ex.responseBody.use { it.write(body) }
+            }
+            start()
+        }
+        try {
+            val base = "http://127.0.0.1:${server.address.port}"
+            val info = OtaUpdateEngine.checkForUpdatesFromBase("owner/parchment", base).getOrThrow()
+            assertEquals("v99.2.0", info.tagName)
+            assertEquals("Parchment-Setup.exe", info.assetName)
+            assertEquals(shaHex, info.assetSha256)
+            assertTrue(info.isNewerThanCurrent)
+
+            listStatus = 403
+            val failed = OtaUpdateEngine.checkForUpdatesFromBase("owner/parchment", base)
+            assertTrue(failed.isFailure)
+            assertTrue("HTTP 403" in failed.exceptionOrNull()?.message.orEmpty())
+        } finally {
+            server.stop(0)
+        }
+    }
 }

@@ -102,6 +102,13 @@ internal object AppStorageInventory {
         target.delete()
     }.getOrDefault(false)
 
+    fun canonicalBundledFontKey(bundleName: String): String = when (bundleName.trim().lowercase()) {
+        "inter" -> "inter"
+        "jetbrains mono", "jetbrainsmono nerd", "jetbrainsmono", "nerd" -> "jetbrains_mono"
+        "latex", "katex", "math" -> "latex"
+        else -> ""
+    }
+
     fun loadCachedFontFamily(
         fontCache: ConcurrentHashMap<String, FontFamily>,
         fontPath: String,

@@ -222,12 +222,16 @@ internal object ChatArchiveExtractor {
     /** ZipInputStream stops quietly at an entry boundary, so this keeps the final bytes to prove the archive ended. */
     private class TailRetainingInputStream(source: InputStream) : FilterInputStream(source) {
         private val tail = ByteArray(END_RECORD_SEARCH_BYTES)
+        private val singleByte = ByteArray(1)
         private var nextIndex = 0
         private var stored = 0
 
         override fun read(): Int {
             val value = super.read()
-            if (value >= 0) remember(byteArrayOf(value.toByte()), 0, 1)
+            if (value >= 0) {
+                singleByte[0] = value.toByte()
+                remember(singleByte, 0, 1)
+            }
             return value
         }
 

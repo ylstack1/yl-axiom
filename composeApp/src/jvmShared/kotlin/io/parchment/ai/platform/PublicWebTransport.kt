@@ -33,7 +33,11 @@ internal object PublicWebTransport {
     private val cancellationWatcher by lazy {
         ScheduledThreadPoolExecutor(1) { task ->
             Thread(task, "parchment-web-cancellation").apply { isDaemon = true }
-        }.apply { removeOnCancelPolicy = true }
+        }.apply {
+            removeOnCancelPolicy = true
+            setKeepAliveTime(30, java.util.concurrent.TimeUnit.SECONDS)
+            allowCoreThreadTimeOut(true)
+        }
     }
 
     // IANA special-purpose ranges, checked 2026-11-08. Conservative exclusions include
@@ -107,7 +111,11 @@ internal object PublicWebTransport {
             val result = try {
                 call.execute().use { response ->
                     check(isCancelled?.invoke() != true) { STOPPED }
-                    if (response.code in setOf(301, 302, 303, 307, 308)) {
+                    val isRedirect = when (response.code) {
+                        301, 302, 303, 307, 308 -> true
+                        else -> false
+                    }
+                    if (isRedirect) {
                         val location = response.header("Location") ?: error("Redirect has no Location header.")
                         target = validateUrl((target.resolve(location) ?: error("Redirect contains an invalid URL.")).toString())
                         null
@@ -143,13 +151,17 @@ internal object PublicWebTransport {
     }
 
     internal fun readBounded(input: InputStream, maxBytes: Int, isCancelled: (() -> Boolean)?): ByteArray {
-        val output = ByteArrayOutputStream(64 * 1024)
-        val buffer = ByteArray(64 * 1024)
+        check(maxBytes >= 0) { "Media download limit must be non-negative." }
+        val initialCap = minOf(maxBytes, 8 * 1024).coerceAtLeast(32)
+        val output = ByteArrayOutputStream(initialCap)
+        val buffer = ByteArray(minOf(maxBytes.coerceAtLeast(1), 64 * 1024))
         while (true) {
             check(isCancelled?.invoke() != true) { STOPPED }
             val count = input.read(buffer)
             if (count < 0) return output.toByteArray()
-            check(output.size() + count <= maxBytes) { "Media download exceeded the $maxBytes byte limit." }
+            check(output.size().toLong() + count.toLong() <= maxBytes.toLong()) {
+                "Media download exceeded the $maxBytes byte limit."
+            }
             output.write(buffer, 0, count)
         }
     }

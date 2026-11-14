@@ -232,17 +232,23 @@ internal fun ManuscriptViewport(
     val lastMsgContentLen = activeSession.messages.lastOrNull()?.activeVariant?.let {
         it.content.length + it.thinkingSummary.length + it.trailingThinking.length + it.toolCalls.size
     } ?: 0
+    val lastAutoFollowMs = remember { longArrayOf(0L) }
 
     LaunchedEffect(lastMsgContentLen, isStreaming) {
+        if (!isStreaming) {
+            lastAutoFollowMs[0] = 0L
+            return@LaunchedEffect
+        }
         val now = PlatformRuntime.currentTimeMillis()
-        if (isStreaming &&
-            preferences.autoFollowBottom &&
+        if (preferences.autoFollowBottom &&
             activeSession.messages.isNotEmpty() &&
             !listState.isScrollInProgress &&
             !userDisengagedAutoFollow &&
             now >= userScrollPausedUntilMs &&
+            (lastAutoFollowMs[0] == 0L || now - lastAutoFollowMs[0] >= 48L) &&
             (listState.canScrollForward || lastMsgContentLen % 24 == 0)
         ) {
+            lastAutoFollowMs[0] = now
             jumpToBottomEdge()
         }
     }
@@ -257,13 +263,14 @@ internal fun ManuscriptViewport(
     val ownedUtilityRecords = remember(activeSession.id, activeSession.utilityUsageRecords) {
         activeSession.utilityUsageRecords.filter { it.ownerSessionId.isBlank() || it.ownerSessionId == activeSession.id }
     }
-    val sessionSpend = remember(activeSession.takeUnless { isStreaming }, activeSession.id, activeSession.messages.size,
-        activeSession.messages.sumOf { it.variants.size }, throttledBreakdownTrigger, isStreaming, activeProfile, ownedUtilityRecords) {
+    val sessionSpend = remember(activeSession.messages.takeUnless { isStreaming }, activeSession.id, activeSession.modelOverride,
+        activeSession.messages.size, activeSession.messages.sumOf { it.variants.size }, throttledBreakdownTrigger,
+        isStreaming, activeProfile, ownedUtilityRecords) {
         sessionSpendSummary(activeSession, activeProfile)
     }
     val sessionTotalCostUsd = sessionSpend.estimateUsd
     val baseContextBreakdown = remember(
-        activeSession.takeUnless { isStreaming },
+        activeSession.messages.takeUnless { isStreaming },
         activeSession.id,
         activeSession.modelOverride,
         activeSession.storySummary,
@@ -290,17 +297,38 @@ internal fun ManuscriptViewport(
             globalWorldBook = appState.globalWorldBook
         )
     }
+    val pendingAttachmentsTokens = remember(pendingAttachments) {
+        O200kTokenizer.countAttachmentsTokens(pendingAttachments)
+    }
+    var exactDraftReady by remember(activeSession.id) { mutableStateOf(true) }
+    val firstDraftComposition = remember(activeSession.id) { booleanArrayOf(true) }
+    LaunchedEffect(activeSession.id, userPromptInput, assistantPrefillInput) {
+        if (firstDraftComposition[0]) {
+            firstDraftComposition[0] = false
+            exactDraftReady = true
+        } else if (userPromptInput.isEmpty() && assistantPrefillInput.isEmpty()) {
+            exactDraftReady = true
+        } else {
+            exactDraftReady = false
+            kotlinx.coroutines.delay(180L)
+            exactDraftReady = true
+        }
+    }
     val contextBreakdown = remember(
         baseContextBreakdown,
         userPromptInput,
         assistantPrefillInput,
-        pendingAttachments
+        pendingAttachments.size,
+        pendingAttachmentsTokens,
+        exactDraftReady
     ) {
         O200kTokenizer.applyComposerDraftToBreakdown(
             baseBreakdown = baseContextBreakdown,
             draftPrompt = userPromptInput,
             draftPrefill = assistantPrefillInput,
-            pendingAttachments = pendingAttachments
+            pendingAttachments = pendingAttachments,
+            estimateDraft = !exactDraftReady,
+            precomputedAttachmentsTokens = pendingAttachmentsTokens
         )
     }
     val liveContextTokens = contextBreakdown.totalUsedTokens

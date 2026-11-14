@@ -138,11 +138,13 @@ internal suspend fun AiProviderEngine.executeOpenAiResponsesLoop(
             currentRoundResponseId = ""
             stepEmittedOutput = false
             val useChainedId = profile.useStatefulChaining && currentPrevResponseId.isNotBlank()
-            val baseInputItems = if (useChainedId && previousAssistantIdx >= 0 && previousAssistantIdx < activeNodes.size - 1) {
-                val trailing = activeNodes.subList(previousAssistantIdx + 1, activeNodes.size)
-                buildOpenAiResponsesInputArray(trailing, session, continuePrefix, foldHistoricalToolsOnRetry)
+            val sourceNodes = if (useChainedId && previousAssistantIdx >= 0 && previousAssistantIdx < activeNodes.size - 1) {
+                activeNodes.subList(previousAssistantIdx + 1, activeNodes.size)
             } else {
-                buildOpenAiResponsesInputArray(activeNodes, session, continuePrefix, foldHistoricalToolsOnRetry)
+                activeNodes
+            }
+            val baseInputItems = withBinaryAttachmentIo(sourceNodes) {
+                buildOpenAiResponsesInputArray(sourceNodes, session, continuePrefix, foldHistoricalToolsOnRetry)
             }
 
             val compactedLoopItems = compactOpenAiResponsesExtraItems(extraResponsesLoopItems)
@@ -411,10 +413,8 @@ internal suspend fun AiProviderEngine.executeOpenAiResponsesLoop(
                                         extractCitationsFromOpenAiResponsesItem(item, onCitation)
                                     }
                                     val usage = respSub?.get("usage") as? JsonObject
-                                    if (usage != null) {
-                                        onUsage(usageRequestId, id.ifBlank { currentRoundResponseId.ifBlank { currentPrevResponseId } }, UsageDialect.OPENAI_RESPONSES,
-                                            parseProviderUsage(UsageDialect.OPENAI_RESPONSES, usage, isFinal = true, response = respSub))
-                                    }
+                                    onUsage(usageRequestId, id.ifBlank { currentRoundResponseId.ifBlank { currentPrevResponseId } }, UsageDialect.OPENAI_RESPONSES,
+                                        parseProviderUsage(UsageDialect.OPENAI_RESPONSES, usage, isFinal = true, response = respSub))
                                 }
                                 "error" -> {
                                     val msg = ((evObj["error"] as? JsonObject)?.get("message") as? JsonPrimitive)?.contentOrNull ?: dataLine

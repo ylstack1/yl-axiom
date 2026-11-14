@@ -94,7 +94,7 @@ internal fun ProfileCard(prefs: PreferencesConfig, onUpdatePreferences: (Prefere
                                 }
                                 val extension = picked.fileName.substringAfterLast('.', "png").lowercase()
                                 val saved = PlatformStorage.saveGeneratedMediaFile("profile-picture-${PlatformRuntime.currentTimeMillis()}.$extension", picked.bytes)
-                                if (withContext(Dispatchers.Default) { PlatformStorage.loadImageBitmapFromFile(saved) } == null) {
+                                if (withContext(Dispatchers.IO) { PlatformStorage.loadImageBitmapFromFile(saved) } == null) {
                                     onNotify(Strings.thatFileCouldNotBeRead)
                                     return@launch
                                 }
