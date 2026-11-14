@@ -2,6 +2,14 @@
 
 What changed in each release, newest first. From 2.1.7 on, release-please writes these entries from commit messages that follow [Conventional Commits](https://www.conventionalcommits.org/) (`feat:` and `fix:` appear here and set the next version); edit wording in its release PR before merging it.
 
+## [2.1.9](https://github.com/baros4294/parchment/compare/v2.1.8...v2.1.9) (2026-11-14)
+
+
+### Fixes
+
+* **network,ui,platform:** harden provider protocols, streaming recovery, persistence, and UI stability ([59e8450](https://github.com/baros4294/parchment/commit/59e84505b75e0d07ba744da1cc3d36443ff6b652))
+* **network,ui,platform:** modularize core files and harden protocols, recovery, and UI ([4c3ba08](https://github.com/baros4294/parchment/commit/4c3ba088cfa543646c17841886ef5292c8523f70))
+
 ## [2.1.8](https://github.com/baros4294/parchment/compare/v2.1.7...v2.1.8) (2026-11-14)
 
 
