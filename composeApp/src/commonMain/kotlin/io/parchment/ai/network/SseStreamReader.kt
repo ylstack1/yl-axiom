@@ -1,0 +1,137 @@
+package io.parchment.ai.network
+
+import io.ktor.utils.io.ByteReadChannel
+import io.ktor.utils.io.readLine
+import io.parchment.ai.platform.PlatformRuntime
+import io.parchment.ai.runtime.AppForeground
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.flow.drop
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeoutOrNull
+
+// SSE and plain-JSON fallback stream reader with background stall detection and adaptive line timeouts.
+
+private const val RETURN_GRACE_MS = 3_000L
+internal const val STREAM_CUT_WHILE_AWAY = "SSE stream timed out while the app was in the background."
+
+internal suspend fun readProviderSseOrJsonFallback(
+    channel: ByteReadChannel,
+    streamFinished: () -> Boolean,
+    onSseEvent: suspend (eventType: String, data: String) -> Unit,
+    onPlainJsonFallback: suspend (fullJson: String) -> Unit
+) {
+    var lastLineAt = PlatformRuntime.monotonicTimeMillis()
+    var sawAnyData = false
+    coroutineScope {
+        val stallWatch = launch {
+            AppForeground.resumedAt.drop(1).collectLatest { resumedAt ->
+                delay(RETURN_GRACE_MS)
+                if (AppForeground.leftAt in 1..resumedAt && sawAnyData && lastLineAt <= resumedAt) {
+                    channel.cancel(IllegalStateException(STREAM_CUT_WHILE_AWAY))
+                }
+            }
+        }
+        try {
+            var currentEvent = ""
+            val dataLines = mutableListOf<String>()
+            val rawFallbackBuffer = StringBuilder()
+            var sawSseLine = false
+            var sawEvent = false
+            var sawDone = false
+            suspend fun deliver(eventType: String, data: String) {
+                if (data == "[DONE]") sawDone = true else sawEvent = true
+                onSseEvent(eventType, data)
+            }
+
+            while (!channel.isClosedForRead) {
+                // Adaptive per-line SSE idle watchdog:
+                // - 90 seconds once lines have started arriving (catches a proxy that stalls mid-reply)
+                // - 300 seconds before the first SSE line arrives (allows deep pre-token reasoning on slow endpoints)
+                val perLineTimeoutMs = if (sawSseLine) 90_000L else 300_000L
+                val line = withTimeoutOrNull(perLineTimeoutMs) {
+                    channel.readLine().also { if (it != null) lastLineAt = PlatformRuntime.monotonicTimeMillis() }
+                } ?: if (channel.isClosedForRead) {
+                    break
+                } else {
+                    error("SSE stream timed out waiting for next event after ${perLineTimeoutMs / 1000}s (connection stalled).")
+                }
+                when {
+                    line.startsWith("event:") -> {
+                        sawSseLine = true
+                        sawAnyData = true
+                        if (dataLines.isNotEmpty()) {
+                            val combined = dataLines.joinToString("\n")
+                            dataLines.clear()
+                            deliver(currentEvent, combined)
+                        }
+                        currentEvent = line.removePrefix("event:").trim()
+                    }
+                    line.startsWith("data:") -> {
+                        sawSseLine = true
+                        sawAnyData = true
+                        val dataVal = line.removePrefix("data:").trim()
+                        if (dataVal == "[DONE]") {
+                            if (dataLines.isNotEmpty()) {
+                                deliver(currentEvent, dataLines.joinToString("\n"))
+                                dataLines.clear()
+                            }
+                            deliver(currentEvent, "[DONE]")
+                            currentEvent = ""
+                        } else if (dataLines.isEmpty() && isCompleteJsonObject(dataVal)) {
+                            // A complete JSON object on one data: line is delivered at once, without waiting for
+                            // the blank line: some proxies hold that line back or merge records.
+                            deliver(currentEvent, dataVal)
+                            currentEvent = ""
+                        } else {
+                            dataLines.add(dataVal)
+                        }
+                    }
+                    line.isBlank() -> {
+                        if (dataLines.isNotEmpty()) {
+                            val combinedData = dataLines.joinToString("\n")
+                            dataLines.clear()
+                            deliver(currentEvent, combinedData)
+                            currentEvent = ""
+                        }
+                    }
+                    else -> {
+                        if (!sawSseLine) {
+                            rawFallbackBuffer.appendLine(line)
+                        }
+                    }
+                }
+            }
+
+            if (dataLines.isNotEmpty()) {
+                deliver(currentEvent, dataLines.joinToString("\n"))
+            } else if (!sawSseLine && rawFallbackBuffer.isNotBlank()) {
+                onPlainJsonFallback(rawFallbackBuffer.toString().trim())
+            }
+            // A clean close is not a finished answer: proxies can cut a stream without a socket error.
+            if (sawEvent && !sawDone && !streamFinished()) {
+                error("Stream ended before the provider finished its response.")
+            }
+        } finally {
+            stallWatch.cancel()
+        }
+    }
+}
+
+private fun isCompleteJsonObject(text: String): Boolean {
+    if (!text.startsWith("{")) return false
+    var depth = 0
+    var inString = false
+    var escaped = false
+    for ((index, ch) in text.withIndex()) {
+        when {
+            escaped -> escaped = false
+            inString -> if (ch == '\\') escaped = true else if (ch == '"') inString = false
+            ch == '"' -> inString = true
+            ch == '{' || ch == '[' -> depth++
+            ch == '}' || ch == ']' -> if (--depth == 0) return index == text.lastIndex
+        }
+    }
+    return false
+}
