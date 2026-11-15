@@ -257,9 +257,21 @@ internal fun PreferencesSubpage(
                     FontChoiceRows(theme, onUpdateTheme, onNotify)
 
                     // Text sizes: values aren't clamped while typing, and fields stack on phones so labels never truncate.
-                    var proseSizeText by remember(theme.proseFontSizeSp) { mutableStateOf(theme.proseFontSizeSp.toString()) }
-                    var codeSizeText by remember(theme.codeFontSizeSp) { mutableStateOf(theme.codeFontSizeSp.toString()) }
-                    var maxWidthText by remember(theme.maxReadingWidthDp) { mutableStateOf(theme.maxReadingWidthDp.toInt().toString()) }
+                    var proseSizeText by rememberSyncedNumericDraft(
+                        externalValue = theme.proseFontSizeSp,
+                        format = { it.toString() },
+                        parse = { it.trim().toFloatOrNull() }
+                    )
+                    var codeSizeText by rememberSyncedNumericDraft(
+                        externalValue = theme.codeFontSizeSp,
+                        format = { it.toString() },
+                        parse = { it.trim().toFloatOrNull() }
+                    )
+                    var maxWidthText by rememberSyncedNumericDraft(
+                        externalValue = theme.maxReadingWidthDp,
+                        format = { it.toInt().toString() },
+                        parse = { it.trim().toFloatOrNull() }
+                    )
 
                     Column(verticalArrangement = Arrangement.spacedBy(Space.s10)) {
                         SepiaTextField(
@@ -594,9 +606,11 @@ internal fun PreferencesSubpage(
                         onCheckedChange = { onUpdatePreferences(prefs.copy(pasteLongTextAsFile = it)) }
                     )
                     if (prefs.pasteLongTextAsFile) {
-                        var threshStr by remember(prefs.pasteConversionThresholdChars) {
-                            mutableStateOf(prefs.pasteConversionThresholdChars.toString())
-                        }
+                        var threshStr by rememberSyncedNumericDraft(
+                            externalValue = prefs.pasteConversionThresholdChars,
+                            format = { it.toString() },
+                            parse = { it.trim().toIntOrNull() }
+                        )
                         SepiaTextField(
                             value = threshStr,
                             onValueChange = { v ->

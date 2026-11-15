@@ -86,7 +86,7 @@ internal fun ParchmentSidebar(
             )
             SepiaButton(
                 text = "+",
-                contentDescription = if (selectedTab == SidebarTab.ASSISTANTS) "New assistant" else "New chat",
+                contentDescription = if (selectedTab == SidebarTab.ASSISTANTS) Strings.newAssistantLabel else Strings.newChat2,
                 compact = true,
                 style = SepiaButtonStyle.PRIMARY,
                 onClick = {

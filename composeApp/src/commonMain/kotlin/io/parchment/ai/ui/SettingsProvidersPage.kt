@@ -202,7 +202,7 @@ internal fun ProvidersSubpage(
                                         .padding(horizontal = Space.s6, vertical = Space.s2)
                                 ) {
                                     BasicText(
-                                        text = if (statusOn) "On" else Strings.off,
+                                        text = if (statusOn) Strings.onLabel else Strings.off,
                                         style = p.uiLabelStyle.copy(
                                             fontSize = 11.sp,
                                             fontWeight = FontWeight.Bold,
@@ -312,7 +312,7 @@ internal fun ProvidersSubpage(
                                             text = prof.name,
                                             style = p.uiHeaderStyle.copy(fontSize = 15.sp)
                                         )
-                                        val modelCountInfo = if (prof.savedModels.isNotEmpty()) "${prof.savedModels.size} models" else prof.defaultModel.ifBlank { Strings.noModelsYet }
+                                        val modelCountInfo = if (prof.savedModels.isNotEmpty()) Strings.modelsCount(prof.savedModels.size) else prof.defaultModel.ifBlank { Strings.noModelsYet }
                                         BasicText(
                                             text = "${prof.protocol.displayName.substringBefore(" API")} • $modelCountInfo",
                                             maxLines = 1,
@@ -332,7 +332,7 @@ internal fun ProvidersSubpage(
                                             .padding(horizontal = Space.s6, vertical = Space.s2)
                                     ) {
                                         BasicText(
-                                            text = if (statusOn) "On" else Strings.off,
+                                            text = if (statusOn) Strings.onLabel else Strings.off,
                                             style = p.uiLabelStyle.copy(
                                                 fontSize = 11.sp,
                                                 fontWeight = FontWeight.Bold,
@@ -969,10 +969,30 @@ internal fun ProviderProtocolSubpage(
     onBack: () -> Unit
 ) {
     val p = LocalParchmentPalette.current
-    var tempText by remember(profile.id, profile.temperature) { mutableStateOf(profile.temperature?.toString() ?: "") }
-    var topPText by remember(profile.id, profile.topP) { mutableStateOf(profile.topP?.toString() ?: "") }
-    var maxOutText by remember(profile.id, profile.maxOutputTokens) { mutableStateOf(profile.maxOutputTokens?.toString() ?: "") }
-    var budgetText by remember(profile.id, profile.thinkingBudgetTokens) { mutableStateOf(profile.thinkingBudgetTokens?.toString() ?: "") }
+    var tempText by rememberSyncedNumericDraft(
+        externalValue = profile.temperature,
+        key = profile.id,
+        format = { it?.toString() ?: "" },
+        parse = { it.trim().toDoubleOrNull() }
+    )
+    var topPText by rememberSyncedNumericDraft(
+        externalValue = profile.topP,
+        key = profile.id,
+        format = { it?.toString() ?: "" },
+        parse = { it.trim().toDoubleOrNull() }
+    )
+    var maxOutText by rememberSyncedNumericDraft(
+        externalValue = profile.maxOutputTokens,
+        key = profile.id,
+        format = { it?.toString() ?: "" },
+        parse = { it.trim().toIntOrNull() }
+    )
+    var budgetText by rememberSyncedNumericDraft(
+        externalValue = profile.thinkingBudgetTokens,
+        key = profile.id,
+        format = { it?.toString() ?: "" },
+        parse = { it.trim().toIntOrNull() }
+    )
 
     Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
         @OptIn(ExperimentalLayoutApi::class)
@@ -1010,7 +1030,7 @@ internal fun ProviderProtocolSubpage(
                 }
                 SepiaTextField(
                     value = profile.endpointPathOverride,
-                    onValueChange = { ep -> onUpdateProfile { it.copy(endpointPathOverride = ep.trim()) } },
+                    onValueChange = { ep -> onUpdateProfile { it.copy(endpointPathOverride = ep) } },
                     label = Strings.customPathOptionalDefault(profile.protocol.defaultEndpointPath),
                     placeholder = profile.protocol.defaultEndpointPath,
                     monospace = true,

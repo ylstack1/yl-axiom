@@ -1127,4 +1127,117 @@ class UiBehaviorRegressionTest {
             assertEquals(false, aliceRow.config[SemanticsProperties.Selected])
         }
     }
+
+    @Test
+    fun chatHistoryActiveFormattingAndNumericDraftPreservation() {
+        assertEquals("Chat History (4 active)", Strings.chatHistoryActive(4))
+        assertEquals("Chat History (4 active, 2 left out)", Strings.chatHistoryActive(4, 2))
+
+        var prefs by mutableStateOf(PreferencesConfig(chatSpendLimitUsd = 0.0))
+        withUiScene(
+            content = {
+                SpendLimitCard(
+                    prefs = prefs,
+                    onUpdatePreferences = { prefs = it }
+                )
+            }
+        ) { scene ->
+            fun inputNode() = nodes(scene).single { it.config.contains(SemanticsActions.SetText) }
+
+            setText(inputNode(), "1")
+            settle(scene, 16_000_000L)
+            assertEquals(1.0, prefs.chatSpendLimitUsd)
+            assertEquals("1", inputNode().config[SemanticsProperties.EditableText].text)
+
+            setText(inputNode(), "1.")
+            settle(scene, 32_000_000L)
+            assertEquals(1.0, prefs.chatSpendLimitUsd)
+            assertEquals("1.", inputNode().config[SemanticsProperties.EditableText].text)
+
+            setText(inputNode(), "1.5")
+            settle(scene, 48_000_000L)
+            assertEquals(1.5, prefs.chatSpendLimitUsd)
+            assertEquals("1.5", inputNode().config[SemanticsProperties.EditableText].text)
+
+            // External state reset still syncs back cleanly.
+            prefs = prefs.copy(chatSpendLimitUsd = 0.0)
+            settle(scene, 64_000_000L)
+            assertEquals("", inputNode().config[SemanticsProperties.EditableText].text)
+        }
+    }
+
+    @Test
+    fun mobileTabSwitcherAndFilesSidebarVirtualizeAndFilterCleanly() {
+        val sessions = (0 until 80).map { idx ->
+            ChatSession(
+                id = "tab-$idx",
+                title = "TabSession-${idx.toString().padStart(3, '0')}",
+                createdAt = 1L,
+                updatedAt = 1L,
+                profileId = "p1",
+                assistantId = "a1"
+            )
+        }
+        val state = AppStateSnapshot(
+            sessions = sessions,
+            profiles = listOf(ProviderProfile(id = "p1", name = "P", protocol = ProviderProtocol.OPENAI_RESPONSES)),
+            activeProfileId = "p1",
+            assistants = listOf(AssistantAgent(id = "a1", name = "Writer")),
+            activeAssistantId = "a1"
+        )
+        withUiScene(
+            width = 960,
+            height = 480,
+            content = {
+                MobileTabSwitcherModal(
+                    appState = state,
+                    openTabIds = sessions.map { it.id },
+                    activeSessionId = "tab-0",
+                    activeStreamsBySession = emptyMap(),
+                    isCompactScreen = false,
+                    onSelectTab = {},
+                    onCloseTab = {},
+                    onNewTab = {},
+                    onCloseModal = {}
+                )
+            }
+        ) { scene ->
+            val visibleCount = nodes(scene).count { text(it).contains("TabSession-") }
+            assertTrue(visibleCount in 1..39, "Expected LazyColumn virtualization, but composed $visibleCount cards")
+
+            val filterInput = nodes(scene).single { it.config.contains(SemanticsActions.SetText) }
+            setText(filterInput, "TabSession-075")
+            settle(scene, 16_000_000L)
+            assertTrue(nodes(scene).any { text(it).contains("TabSession-075") })
+        }
+
+        val attachments = (0 until 60).map { idx ->
+            PromptAttachment(
+                id = "att-$idx",
+                fileName = "staged-${idx.toString().padStart(2, '0')}.txt",
+                mimeType = "text/plain",
+                textContent = "line 1\nline 2"
+            )
+        }
+        withUiScene(
+            width = 400,
+            height = 420,
+            content = {
+                ParchmentRightFilesSidebar(
+                    activeSession = sessions.first(),
+                    pendingAttachments = attachments,
+                    onInspectAttachment = {},
+                    onInspectGeneratedImage = {},
+                    onReattachAttachment = {},
+                    onClose = {},
+                    modifier = Modifier.fillMaxSize()
+                )
+            }
+        ) { scene ->
+            val visibleFiles = nodes(scene).count { text(it).contains("staged-") }
+            assertTrue(visibleFiles in 1..30, "Expected LazyColumn virtualization, but composed $visibleFiles files")
+            assertTrue(nodes(scene).any { text(it).contains(Strings.staged) })
+            assertTrue(nodes(scene).any { text(it).contains(Strings.linesCount(2)) })
+        }
+    }
 }

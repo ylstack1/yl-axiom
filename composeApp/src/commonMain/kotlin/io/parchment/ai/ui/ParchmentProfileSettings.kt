@@ -26,8 +26,6 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.text.BasicText
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -120,9 +118,11 @@ internal fun ProfileCard(prefs: PreferencesConfig, onUpdatePreferences: (Prefere
 @Composable
 internal fun SpendLimitCard(prefs: PreferencesConfig, onUpdatePreferences: (PreferencesConfig) -> Unit) {
     val p = LocalParchmentPalette.current
-    var limit by remember(prefs.chatSpendLimitUsd) {
-        mutableStateOf(if (prefs.chatSpendLimitUsd > 0.0) prefs.chatSpendLimitUsd.toString() else "")
-    }
+    var limit by rememberSyncedNumericDraft(
+        externalValue = prefs.chatSpendLimitUsd,
+        format = { if (it > 0.0) it.toString() else "" },
+        parse = { if (it.isBlank()) 0.0 else it.trim().toDoubleOrNull() }
+    )
     SepiaSectionCard(title = Strings.spendLimit) {
         Column(verticalArrangement = Arrangement.spacedBy(Space.s8)) {
             SepiaTextField(

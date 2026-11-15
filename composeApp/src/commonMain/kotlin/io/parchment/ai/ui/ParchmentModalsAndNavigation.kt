@@ -206,18 +206,22 @@ internal fun MobileTabSwitcherModal(
     val win = LocalParchmentWindowSize.current
     val columns = if (isCompactScreen && win.isVeryNarrow) 1 else 2
     var tabFilterQuery by remember { mutableStateOf("") }
-    val emptyTabsCount = remember(openTabIds, appState.sessions, activeStreamsBySession) {
+    val sessionsById = remember(appState.sessions) { appState.sessions.associateBy { it.id } }
+    val assistantsById = remember(appState.assistants) { appState.assistants.associateBy { it.id } }
+    val profilesById = remember(appState.profiles) { appState.profiles.associateBy { it.id } }
+
+    val emptyTabsCount = remember(openTabIds, sessionsById, activeStreamsBySession) {
         openTabIds.count { tabId ->
-            val s = appState.sessions.find { it.id == tabId }
+            val s = sessionsById[tabId]
             s != null && s.messages.isEmpty() && s.title == "New Chat" && s.draftInput.isBlank() && !activeStreamsBySession.containsKey(tabId)
         }
     }
-    val filteredTabIds = remember(openTabIds, appState.sessions, appState.assistants, tabFilterQuery) {
+    val filteredTabIds = remember(openTabIds, sessionsById, assistantsById, tabFilterQuery) {
         val q = tabFilterQuery.trim()
         if (q.isEmpty()) openTabIds
         else openTabIds.filter { tabId ->
-            val s = appState.sessions.find { it.id == tabId } ?: return@filter false
-            val asst = appState.assistants.find { it.id == s.assistantId }
+            val s = sessionsById[tabId] ?: return@filter false
+            val asst = assistantsById[s.assistantId]
             s.title.contains(q, ignoreCase = true) ||
                 (asst?.name?.contains(q, ignoreCase = true) == true) ||
                 s.modelOverride.contains(q, ignoreCase = true) ||
@@ -315,21 +319,21 @@ internal fun MobileTabSwitcherModal(
                 modifier = Modifier.heightIn(max = win.heightDp * 0.68f).fillMaxWidth(),
                 verticalArrangement = Arrangement.spacedBy(Space.s10)
             ) {
-                itemsIndexed(rows) { _, rowPair ->
+                itemsIndexed(rows, key = { _, row -> row.joinToString("|") }) { _, rowPair ->
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.spacedBy(Space.s10)
                     ) {
                         rowPair.forEach { tabId ->
-                            val sess = appState.sessions.find { it.id == tabId }
+                            val sess = sessionsById[tabId]
                             if (sess != null) {
                                 val isSel = tabId == activeSessionId
                                 val streamInfo = activeStreamsBySession[tabId]
-                                val tabAsst = appState.assistants.find { it.id == sess.assistantId && it.id.isNotBlank() }
+                                val tabAsst = sess.assistantId.takeIf { it.isNotBlank() }?.let { assistantsById[it] }
                                     ?: appState.assistants.firstOrNull()
-                                val tabProf = appState.profiles.find { it.id == sess.profileId }
+                                val tabProf = profilesById[sess.profileId]
                                     ?: appState.profiles.firstOrNull()
-                                val asstName = tabAsst?.name?.takeIf { it.isNotBlank() } ?: "Default Assistant"
+                                val asstName = tabAsst?.name?.takeIf { it.isNotBlank() } ?: Strings.defaultAssistant
                                 val modelLabel = sess.modelOverride.ifBlank { tabProf?.defaultModel.orEmpty() }
                                     .substringAfterLast('/')
                                     .ifBlank { tabProf?.name.orEmpty() }
@@ -1219,14 +1223,10 @@ internal fun buildContextCategorySlices(
     val colDraft = CategoryColor.brass
     val colFree = p.border.copy(alpha = 0.55f)
 
-    val historyLabel = buildString {
-        append(Strings.chatHistoryActive(breakdown.activeTurnsCount))
-        if (breakdown.mutedTurnsCount > 0) append(", ${breakdown.mutedTurnsCount} left out")
-        append(")")
-    }
+    val historyLabel = Strings.chatHistoryActive(breakdown.activeTurnsCount, breakdown.mutedTurnsCount)
 
     return listOf(
-        ContextCategorySlice("System & Persona Prompt", breakdown.systemAndPersonaTokens, colSystem),
+        ContextCategorySlice(Strings.systemAndPersonaPrompt, breakdown.systemAndPersonaTokens, colSystem),
         ContextCategorySlice(Strings.lorebookStoryMemory, breakdown.lorebookAndMemoryTokens, colLorebook),
         ContextCategorySlice(Strings.workspaceToolSchemas, breakdown.workspaceAndToolsTokens, colWorkspace),
         ContextCategorySlice(Strings.uploadedFiles(breakdown.uploadedFilesCount), breakdown.uploadedFilesTokens, colFiles),

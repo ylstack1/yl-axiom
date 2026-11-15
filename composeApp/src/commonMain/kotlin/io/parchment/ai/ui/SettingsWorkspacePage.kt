@@ -92,7 +92,7 @@ internal fun WorkspaceSubpage(
                                 text = if (discoveredFiles.isEmpty()) {
                                     Strings.noAgentsMdClaudeMdParchment
                                 } else {
-                                    "Auto-injected into system prompt: ${discoveredFiles.joinToString(", ")}"
+                                    Strings.autoInjectedIntoSystemPrompt(discoveredFiles.joinToString(", "))
                                 },
                                 style = p.uiLabelStyle.copy(color = if (discoveredFiles.isNotEmpty()) p.accent else p.mutedInk)
                             )

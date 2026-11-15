@@ -198,7 +198,7 @@ internal fun EmptyChatIntro(
             SepiaAvatarCircle(symbol = activeAssistant.iconEmoji, selected = true, sizeDp = 40.dp)
         }
         BasicText(
-            text = if (displayName == "Default Assistant") "Start with a question, a draft or a file." else displayName,
+            text = if (displayName == Strings.defaultAssistant) "Start with a question, a draft or a file." else displayName,
             style = p.uiHeaderStyle.copy(fontSize = 21.sp, lineHeight = 28.sp)
         )
         BasicText(

@@ -371,7 +371,7 @@ private fun MessageTurnHeader(
     val p = LocalParchmentPalette.current
     val win = LocalParchmentWindowSize.current
     // The stock assistant name says nothing the model name does not; characters keep theirs.
-    val namedCharacter = characterName.takeUnless { it == "Default Assistant" }.orEmpty()
+    val namedCharacter = characterName.takeUnless { it == Strings.defaultAssistant }.orEmpty()
     val speakerTitle = if (isAssistant) {
         characterName.ifBlank { activeVar.modelUsed.ifBlank { "Assistant" } }
     } else {

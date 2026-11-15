@@ -18,7 +18,6 @@ import androidx.compose.foundation.text.BasicText
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -365,9 +364,21 @@ internal fun GlobalSettingsSearchResultsSubpage(
                         FontChoiceRows(theme, onUpdateTheme, onNotify)
                     }
                     if (hitFontSizes) {
-                        var proseSizeText by remember(theme.proseFontSizeSp) { mutableStateOf(theme.proseFontSizeSp.toString()) }
-                        var codeSizeText by remember(theme.codeFontSizeSp) { mutableStateOf(theme.codeFontSizeSp.toString()) }
-                        var maxWidthText by remember(theme.maxReadingWidthDp) { mutableStateOf(theme.maxReadingWidthDp.toInt().toString()) }
+                        var proseSizeText by rememberSyncedNumericDraft(
+                            externalValue = theme.proseFontSizeSp,
+                            format = { it.toString() },
+                            parse = { it.trim().toFloatOrNull() }
+                        )
+                        var codeSizeText by rememberSyncedNumericDraft(
+                            externalValue = theme.codeFontSizeSp,
+                            format = { it.toString() },
+                            parse = { it.trim().toFloatOrNull() }
+                        )
+                        var maxWidthText by rememberSyncedNumericDraft(
+                            externalValue = theme.maxReadingWidthDp,
+                            format = { it.toInt().toString() },
+                            parse = { it.trim().toFloatOrNull() }
+                        )
                         Column(verticalArrangement = Arrangement.spacedBy(Space.s10)) {
                             SepiaTextField(
                                 value = proseSizeText,
@@ -790,8 +801,18 @@ internal fun GlobalSettingsSearchResultsSubpage(
                         )
                     }
                     if (hitSampling) {
-                        var tempStr by remember(activeProfile.temperature) { mutableStateOf(activeProfile.temperature?.toString().orEmpty()) }
-                        var topPStr by remember(activeProfile.topP) { mutableStateOf(activeProfile.topP?.toString().orEmpty()) }
+                        var tempStr by rememberSyncedNumericDraft(
+                            externalValue = activeProfile.temperature,
+                            key = activeProfile.id,
+                            format = { it?.toString().orEmpty() },
+                            parse = { it.trim().toDoubleOrNull() }
+                        )
+                        var topPStr by rememberSyncedNumericDraft(
+                            externalValue = activeProfile.topP,
+                            key = activeProfile.id,
+                            format = { it?.toString().orEmpty() },
+                            parse = { it.trim().toDoubleOrNull() }
+                        )
                         Column(verticalArrangement = Arrangement.spacedBy(Space.s8)) {
                             SepiaTextField(
                                 value = tempStr,

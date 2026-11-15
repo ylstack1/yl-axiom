@@ -8,6 +8,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
@@ -16,6 +17,8 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicText
@@ -325,25 +328,26 @@ internal fun BackupAndOtaSubpage(
                 }
 
                 // Scrollable File List
-                Column(
+                LazyColumn(
                     modifier = Modifier
                         .fillMaxWidth()
                         .heightIn(max = 320.dp)
                         .clip(RoundedCornerShape(Radius.r8))
                         .background(p.sheetBg.copy(alpha = 0.55f))
-                        .border(LineWidth.hairline, p.border.copy(alpha = 0.7f), RoundedCornerShape(Radius.r8))
-                        .verticalScroll(rememberScrollState())
-                        .padding(Space.s8),
+                        .border(LineWidth.hairline, p.border.copy(alpha = 0.7f), RoundedCornerShape(Radius.r8)),
+                    contentPadding = PaddingValues(Space.s8),
                     verticalArrangement = Arrangement.spacedBy(Space.s6)
                 ) {
                     if (filteredStorageFiles.isEmpty()) {
-                        BasicText(
-                            text = if (isScanningStorage && allStoredFiles.isEmpty()) Strings.loading else Strings.noMatchingFilesInStorage,
-                            style = p.uiLabelStyle.copy(color = p.mutedInk),
-                            modifier = Modifier.padding(Space.s8)
-                        )
+                        item(key = "empty") {
+                            BasicText(
+                                text = if (isScanningStorage && allStoredFiles.isEmpty()) Strings.loading else Strings.noMatchingFilesInStorage,
+                                style = p.uiLabelStyle.copy(color = p.mutedInk),
+                                modifier = Modifier.padding(Space.s8)
+                            )
+                        }
                     }
-                    filteredStorageFiles.forEach { item ->
+                    items(filteredStorageFiles, key = { it.fullPath }) { item ->
                         val matchedSession = resolveSessionForStoredFile(item)
                         val isOrphan = remember(item.fullPath, referencedMediaPaths) { isOrphanOrTempFile(item) }
                         val itemIcon = when (item.category) {
@@ -355,7 +359,7 @@ internal fun BackupAndOtaSubpage(
                         }
                         val displayTitle = when {
                             item.category == io.parchment.ai.model.StorageFileCategory.CHAT_SESSION && matchedSession != null ->
-                                "${matchedSession.title} (${matchedSession.displayMessageCount} msgs)"
+                                "${matchedSession.title} (${Strings.messagesCount(matchedSession.displayMessageCount)})"
                             matchedSession != null ->
                                 "${item.fileName} • ${matchedSession.title}"
                             else -> item.fileName

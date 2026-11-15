@@ -42,6 +42,7 @@ import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.MutableState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -745,4 +746,27 @@ internal fun SepiaProgressBar(
                 .background(p.accent)
         )
     }
+}
+
+private class NumericDraftSync<T>(var lastExternal: T, val draft: MutableState<String>)
+
+/**
+ * Keeps an editable numeric text field stable while typing partial inputs (`"1"`, `"1."`, `""`),
+ * syncing back to [externalValue] synchronously only when the underlying value changes out-of-band.
+ */
+@Composable
+internal fun <T> rememberSyncedNumericDraft(
+    externalValue: T,
+    key: Any? = Unit,
+    format: (T) -> String,
+    parse: (String) -> T?
+): MutableState<String> {
+    val holder = remember(key) { NumericDraftSync(externalValue, mutableStateOf(format(externalValue))) }
+    if (holder.lastExternal != externalValue) {
+        holder.lastExternal = externalValue
+        if (parse(holder.draft.value) != externalValue) {
+            holder.draft.value = format(externalValue)
+        }
+    }
+    return holder.draft
 }

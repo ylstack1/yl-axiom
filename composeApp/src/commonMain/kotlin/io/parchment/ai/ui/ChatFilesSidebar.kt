@@ -12,10 +12,10 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicText
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -359,39 +359,39 @@ internal fun ParchmentRightFilesSidebar(
                 }
             }
         } else {
-            Column(
+            val showAiSection = (selectedFilter == RightVaultFilter.ALL || selectedFilter == RightVaultFilter.AI_GENERATED) &&
+                aiArtifacts.isNotEmpty()
+            val showUploadedSection = (selectedFilter == RightVaultFilter.ALL || selectedFilter == RightVaultFilter.USER_UPLOADED) &&
+                userUploads.isNotEmpty()
+            val showSourcesSection = (selectedFilter == RightVaultFilter.ALL || selectedFilter == RightVaultFilter.WEB_SOURCES) &&
+                webSources.isNotEmpty()
+            LazyColumn(
                 modifier = Modifier
                     .weight(1f)
-                    .fillMaxWidth()
-                    .verticalScroll(rememberScrollState()),
+                    .fillMaxWidth(),
                 verticalArrangement = Arrangement.spacedBy(Space.s10)
             ) {
-                val showAiSection = (selectedFilter == RightVaultFilter.ALL || selectedFilter == RightVaultFilter.AI_GENERATED) &&
-                    aiArtifacts.isNotEmpty()
-                val showUploadedSection = (selectedFilter == RightVaultFilter.ALL || selectedFilter == RightVaultFilter.USER_UPLOADED) &&
-                    userUploads.isNotEmpty()
-                val showSourcesSection = (selectedFilter == RightVaultFilter.ALL || selectedFilter == RightVaultFilter.WEB_SOURCES) &&
-                    webSources.isNotEmpty()
-
                 // 1. AI-Generated Files & Media
                 if (showAiSection) {
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(5.dp)
-                    ) {
-                        KissVectorIcon(icon = KissIcon.SPARKLES, tint = p.accent, size = 12.dp)
-                        BasicText(
-                            text = Strings.filesAndMediaFromAi(aiArtifacts.size),
-                            style = p.uiLabelStyle.copy(
-                                color = p.accent,
-                                fontWeight = FontWeight.Bold,
-                                fontSize = 11.sp,
-                                letterSpacing = 0.5.sp
+                    item(key = "header-ai") {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(5.dp)
+                        ) {
+                            KissVectorIcon(icon = KissIcon.SPARKLES, tint = p.accent, size = 12.dp)
+                            BasicText(
+                                text = Strings.filesAndMediaFromAi(aiArtifacts.size),
+                                style = p.uiLabelStyle.copy(
+                                    color = p.accent,
+                                    fontWeight = FontWeight.Bold,
+                                    fontSize = 11.sp,
+                                    letterSpacing = 0.5.sp
+                                )
                             )
-                        )
+                        }
                     }
 
-                    aiArtifacts.forEach { item ->
+                    itemsIndexed(aiArtifacts, key = { idx, item -> "ai:${item.turnNumber}:$idx" }) { _, item ->
                         when (item) {
                             is AiGeneratedChatArtifact.WorkspaceFileArtifact -> {
                                 val shortName = item.filePath.substringAfterLast('/').substringAfterLast('\\')
@@ -524,7 +524,7 @@ internal fun ParchmentRightFilesSidebar(
                                                     size = IconSize.xs
                                                 )
                                                 BasicText(
-                                                    text = if (isVideo) "AI video" else "AI image",
+                                                    text = if (isVideo) Strings.aiVideo else Strings.aiImage,
                                                     style = p.uiLabelStyle.copy(color = p.accent, fontWeight = FontWeight.Bold, fontSize = 11.sp)
                                                 )
                                             }
@@ -632,23 +632,25 @@ internal fun ParchmentRightFilesSidebar(
 
                 // 2. User-Uploaded Documents & Files
                 if (showUploadedSection) {
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(5.dp)
-                    ) {
-                        KissVectorIcon(icon = KissIcon.UPLOAD, tint = p.narrationInk, size = 12.dp)
-                        BasicText(
-                            text = Strings.yourUploads(userUploads.size),
-                            style = p.uiLabelStyle.copy(
-                                color = p.narrationInk,
-                                fontWeight = FontWeight.Bold,
-                                fontSize = 11.sp,
-                                letterSpacing = 0.5.sp
+                    item(key = "header-uploaded") {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(5.dp)
+                        ) {
+                            KissVectorIcon(icon = KissIcon.UPLOAD, tint = p.narrationInk, size = 12.dp)
+                            BasicText(
+                                text = Strings.yourUploads(userUploads.size),
+                                style = p.uiLabelStyle.copy(
+                                    color = p.narrationInk,
+                                    fontWeight = FontWeight.Bold,
+                                    fontSize = 11.sp,
+                                    letterSpacing = 0.5.sp
+                                )
                             )
-                        )
+                        }
                     }
 
-                    userUploads.forEach { entry ->
+                    itemsIndexed(userUploads, key = { idx, entry -> "up:${entry.turnNumber}:$idx" }) { _, entry ->
                         val att = entry.attachment
                         val mime = att.mimeType.lowercase()
                         val lowerName = att.fileName.lowercase()
@@ -664,14 +666,14 @@ internal fun ParchmentRightFilesSidebar(
                             else -> KissIcon.FILE_TEXT
                         }
                         val kindLabel = when {
-                            isPdf -> "PDF Document"
+                            isPdf -> Strings.pdfDocument
                             isImg -> Strings.image
                             isVid -> Strings.video
                             isAud -> Strings.audio
-                            att.textContent.isNotBlank() -> "${att.textContent.lines().size} lines"
+                            att.textContent.isNotBlank() -> Strings.linesCount(att.textContent.lines().size)
                             else -> Strings.file
                         }
-                        val turnLabel = if (entry.turnNumber == 0) "Staged" else "Turn #${entry.turnNumber}"
+                        val turnLabel = if (entry.turnNumber == 0) Strings.staged else Strings.turnNumber(entry.turnNumber)
 
                         Column(
                             modifier = Modifier
@@ -748,23 +750,25 @@ internal fun ParchmentRightFilesSidebar(
 
                 // 3. Grounded Web Sources
                 if (showSourcesSection) {
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(5.dp)
-                    ) {
-                        KissVectorIcon(icon = KissIcon.GLOBE, tint = p.accentSecondary, size = 12.dp)
-                        BasicText(
-                            text = Strings.webSources(webSources.size),
-                            style = p.uiLabelStyle.copy(
-                                color = p.accentSecondary,
-                                fontWeight = FontWeight.Bold,
-                                fontSize = 11.sp,
-                                letterSpacing = 0.5.sp
+                    item(key = "header-sources") {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(5.dp)
+                        ) {
+                            KissVectorIcon(icon = KissIcon.GLOBE, tint = p.accentSecondary, size = 12.dp)
+                            BasicText(
+                                text = Strings.webSources(webSources.size),
+                                style = p.uiLabelStyle.copy(
+                                    color = p.accentSecondary,
+                                    fontWeight = FontWeight.Bold,
+                                    fontSize = 11.sp,
+                                    letterSpacing = 0.5.sp
+                                )
                             )
-                        )
+                        }
                     }
 
-                    webSources.forEach { item ->
+                    itemsIndexed(webSources, key = { idx, item -> "web:${item.turnNumber}:$idx" }) { _, item ->
                         val src = item.source
                         val lineLabel = if (src.groundedLineNumbers.isNotEmpty()) {
                             Strings.line(src.groundedLineNumbers.joinToString(", "))
