@@ -918,17 +918,27 @@ internal fun GenerationHost.beginGeneration(
                 }
             }
         } catch (c: kotlinx.coroutines.CancellationException) {
-            terminalPhase = if (activeStreamsBySession[sessionId]?.phase == AgentRunPhase.STOPPED) AgentRunPhase.STOPPED else AgentRunPhase.INTERRUPTED
+            terminalPhase = if (processState.runs.isStopRequested(identity) || activeStreamsBySession[sessionId]?.phase == AgentRunPhase.STOPPED) {
+                AgentRunPhase.STOPPED
+            } else {
+                AgentRunPhase.INTERRUPTED
+            }
             runFlags.aborted = true
             networkDone = true
-            pacerJob.cancel()
-            flushCheckpointToDisk(isFinal = true)
+            kotlinx.coroutines.withContext(kotlinx.coroutines.NonCancellable) {
+                pacerJob.cancel()
+                pacerJob.join()
+                flushCheckpointToDisk(isFinal = true)
+            }
             throw c
         } catch (t: Throwable) {
             terminalPhase = AgentRunPhase.INTERRUPTED
             runFlags.aborted = true
             networkDone = true
-            pacerJob.cancel()
+            kotlinx.coroutines.withContext(kotlinx.coroutines.NonCancellable) {
+                pacerJob.cancel()
+                pacerJob.join()
+            }
             val partialProse = networkContentTarget.toString()
             val hasPartialReasoningOrTools = networkThinkingTarget.isNotEmpty() || accumulatedTools.isNotEmpty()
             flushCheckpointToDisk(isFinal = true) { v ->
@@ -954,7 +964,10 @@ internal fun GenerationHost.beginGeneration(
         } finally {
             approvalObserver.cancel()
             networkDone = true
-            if (activeStreamsBySession[sessionId]?.phase == AgentRunPhase.STOPPED) terminalPhase = AgentRunPhase.STOPPED
+            if (processState.runs.isStopRequested(identity) || activeStreamsBySession[sessionId]?.phase == AgentRunPhase.STOPPED) {
+                terminalPhase = AgentRunPhase.STOPPED
+            }
+            processState.runs.clearStopRequested(identity)
             kotlinx.coroutines.withContext(kotlinx.coroutines.NonCancellable) { approvalBroker.close() }
             val finishedOwnRun = processState.runs.finish(identity, terminalPhase)
 

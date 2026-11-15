@@ -749,7 +749,7 @@ internal class ParchmentAppController(
         )
     }
 
-    private fun stopSessionStream(targetSessionId: String): kotlinx.coroutines.Job? {
+    fun stopSessionStream(targetSessionId: String): kotlinx.coroutines.Job? {
         val curStream = activeStreamsBySession[targetSessionId]
         curStream?.identity?.let { processState.runs.requestStop(it) }
         curStream?.job?.cancel()
@@ -760,6 +760,21 @@ internal class ParchmentAppController(
         }
         updateSessionStreamState(targetSessionId) { null }
         return curStream?.job
+    }
+
+    fun steerQueuedPromptNow(targetSessionId: String, item: QueuedPromptItem) {
+        val curList = queuedPromptsBySession[targetSessionId].orEmpty()
+        queuedPromptsBySession = queuedPromptsBySession + (targetSessionId to curList.filterNot { it.id == item.id })
+        uiScope.launch {
+            stopSessionStream(targetSessionId)?.join()
+            dispatchPromptItem(
+                sessionId = targetSessionId,
+                text = item.text,
+                prefill = item.prefill,
+                attachments = item.attachments,
+                isGuidedDirection = item.isGuidedDirection
+            )
+        }
     }
 
     fun continueAssistantNodeAt(nodeIndex: Int, sessionId: String = activeSession.id) {

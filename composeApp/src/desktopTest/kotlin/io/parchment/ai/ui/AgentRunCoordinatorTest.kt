@@ -201,4 +201,21 @@ class AgentRunCoordinatorTest {
         assertTrue(coordinator.streams.value.isEmpty())
         assertEquals(AgentRunPhase.COMPLETED, coordinator.lastPhases.value["chat-23"])
     }
+
+    @Test fun stopRequestRemainsDetectableAfterStreamEntryIsCleared() = runBlocking {
+        val coordinator = AgentRunCoordinator(this)
+        val id = identity("run-stop")
+        val job = Job()
+        try {
+            coordinator.attach(id, runtime(id, job))
+            assertTrue(coordinator.requestStop(id))
+            // stopSessionStream removes the active stream immediately while cancellation cleanup is still running.
+            coordinator.streams.value = coordinator.streams.value - id.sessionId
+            assertTrue(coordinator.isStopRequested(id))
+            coordinator.clearStopRequested(id)
+            assertFalse(coordinator.isStopRequested(id))
+        } finally {
+            job.cancel()
+        }
+    }
 }

@@ -65,7 +65,6 @@ import io.parchment.ai.model.ChatSession
 import io.parchment.ai.model.MessageRole
 import io.parchment.ai.model.PromptAttachment
 import io.parchment.ai.model.ProviderProfile
-import io.parchment.ai.network.cancelBackgroundInteraction
 import io.parchment.ai.network.fetchAvailableModels
 import io.parchment.ai.model.AgentPermissionResolver
 import io.parchment.ai.model.withImportedPermissions
@@ -1090,21 +1089,7 @@ fun ParchmentApp(
                                             queuedPromptsBySession = queuedPromptsBySession + (activeSession.id to curList.filterNot { it.id == qId })
                                         },
                                         onSteerQueuedPromptNow = { item ->
-                                            val targetSessId = activeSession.id
-                                            val curList = queuedPromptsBySession[targetSessId].orEmpty()
-                                            queuedPromptsBySession = queuedPromptsBySession + (targetSessId to curList.filterNot { it.id == item.id })
-                                            uiScope.launch {
-                                                val runningJob = activeStreamsBySession[targetSessId]?.job
-                                                runningJob?.cancel()
-                                                runningJob?.join()
-                                                dispatchPromptItem(
-                                                    sessionId = targetSessId,
-                                                    text = item.text,
-                                                    prefill = item.prefill,
-                                                    attachments = item.attachments,
-                                                    isGuidedDirection = item.isGuidedDirection
-                                                )
-                                            }
+                                            steerQueuedPromptNow(activeSession.id, item)
                                         },
                                         userPromptInput = userPromptInput,
                                         onUserPromptChange = { text -> userPromptInput = text },
@@ -1286,8 +1271,7 @@ fun ParchmentApp(
                                         onCompactContext = { triggerAutoSummarizeStory(autoMuteOlderTurns = true) },
                                         onRewindToNode = { nodeIndex ->
                                             val sessId = activeSession.id
-                                            activeStreamsBySession[sessId]?.job?.cancel()
-                                            updateSessionStreamState(sessId) { null }
+                                            stopSessionStream(sessId)
                                             val total = activeSession.messages.size
                                             if (total > 0) {
                                                 if (nodeIndex < total - 1) {
@@ -1335,16 +1319,7 @@ fun ParchmentApp(
                                             bannerNotification = Strings.startedANewBranchAtMessage(nodeIndex + 1)
                                         },
                                         onStopStream = {
-                                            val targetSessId = activeSession.id
-                                            val curStream = activeStreamsBySession[targetSessId]
-                                            curStream?.identity?.let { processState.runs.requestStop(it) }
-                                            curStream?.job?.cancel()
-                                            if (curStream != null && curStream.interactionId.isNotBlank() && (curStream.providerContext?.profile ?: activeProfile).useBackgroundLongDecode) {
-                                                appProcessScope.launch {
-                                                    AiProviderEngine.cancelBackgroundInteraction(curStream.providerContext?.profile ?: activeProfile, curStream.interactionId)
-                                                }
-                                            }
-                                            updateSessionStreamState(targetSessId) { null }
+                                            stopSessionStream(activeSession.id)
                                         },
                                         onUpdateSession = { transform -> updateActiveSession(immediate = true, transform = transform) },
                                         onUpdateProfile = ::updateActiveProfile,

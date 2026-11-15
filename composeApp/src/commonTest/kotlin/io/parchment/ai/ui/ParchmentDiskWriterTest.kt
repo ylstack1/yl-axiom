@@ -227,4 +227,22 @@ class ParchmentDiskWriterTest {
             scope.cancel()
         }
     }
+
+    @Test
+    fun urgentWriteWakesPendingDebounceImmediately() = runBlocking {
+        val scope = CoroutineScope(SupervisorJob())
+        val firstSaved = CompletableDeferred<String>()
+        try {
+            val writer = ParchmentDiskWriter(scope, {}, { session ->
+                if (!firstSaved.isCompleted) firstSaved.complete(session.title)
+            }, {}, debounceMs = 15_000)
+            writer.enqueue(sessions = listOf(chat("a", "debounced")), urgent = false)
+            delay(20)
+            writer.enqueue(sessions = listOf(chat("a", "urgent-now")), urgent = true)
+            val result = withTimeout(1_000) { firstSaved.await() }
+            assertEquals("urgent-now", result)
+        } finally {
+            scope.cancel()
+        }
+    }
 }
