@@ -45,6 +45,7 @@ internal class AgentRunCoordinator(
     val streams = mutableStateOf<Map<String, SessionStreamRuntime>>(emptyMap())
     val lastPhases = mutableStateOf<Map<String, AgentRunPhase>>(emptyMap())
     private val workers = MutableStateFlow<Map<Job, SessionStreamRuntime>>(emptyMap())
+    private val stoppedRuns = LinkedHashSet<AgentRunIdentity>()
 
     /** Keep draining workers after their tab/status has disappeared; a new run waits for them. */
     fun track(runtime: SessionStreamRuntime) {
@@ -107,11 +108,27 @@ internal class AgentRunCoordinator(
     fun requestStop(identity: AgentRunIdentity): Boolean {
         val current = streams.value[identity.sessionId] ?: return false
         if (current.identity != identity) return false
+        synchronized(stoppedRuns) {
+            stoppedRuns.add(identity)
+            if (stoppedRuns.size > 32) {
+                stoppedRuns.remove(stoppedRuns.first())
+            }
+        }
         streams.value = streams.value + (identity.sessionId to current.copy(phase = AgentRunPhase.STOPPED))
         lastPhases.value = (lastPhases.value.filterKeys { it != identity.sessionId } +
             (identity.sessionId to AgentRunPhase.STOPPED)).entries.toList().takeLast(12).associate { it.key to it.value }
         current.job?.cancel()
         return true
+    }
+
+    fun isStopRequested(identity: AgentRunIdentity): Boolean {
+        val current = streams.value[identity.sessionId]
+        if (current?.identity == identity && current.phase == AgentRunPhase.STOPPED) return true
+        return synchronized(stoppedRuns) { identity in stoppedRuns }
+    }
+
+    fun clearStopRequested(identity: AgentRunIdentity) {
+        synchronized(stoppedRuns) { stoppedRuns.remove(identity) }
     }
 
     fun owns(identity: AgentRunIdentity): Boolean = streams.value[identity.sessionId]?.identity == identity

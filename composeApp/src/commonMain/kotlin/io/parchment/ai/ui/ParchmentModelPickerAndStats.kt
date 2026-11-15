@@ -548,7 +548,7 @@ private fun ModelPickerOptionRow(
                 KissVectorIcon(
                     icon = KissIcon.CHECK,
                     tint = p.accent,
-                    size = 13.dp
+                    size = IconSize.md
                 )
             }
         }

@@ -1,10 +1,22 @@
 package io.parchment.ai.ui
 
+import androidx.compose.animation.EnterTransition
+import androidx.compose.animation.ExitTransition
 import androidx.compose.animation.core.FiniteAnimationSpec
 import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.snap
 import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
+import androidx.compose.animation.expandHorizontally
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.scaleIn
+import androidx.compose.animation.scaleOut
+import androidx.compose.animation.shrinkHorizontally
+import androidx.compose.animation.shrinkVertically
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.runtime.Composable
@@ -12,6 +24,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.shadow
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Shape
 import io.parchment.ai.platform.PlatformRuntime
 import androidx.compose.ui.platform.LocalDensity
@@ -72,6 +85,27 @@ object Elevation {
     val overlay = 8.dp
 }
 
+/** Backdrop scrims layered behind modal dialogs, slide-over drawers, and quick popovers. */
+object Scrim {
+    val subtle = Color.Black.copy(alpha = 0.18f)
+    val drawer = Color.Black.copy(alpha = 0.34f)
+    val dialog = Color.Black.copy(alpha = 0.42f)
+}
+
+/** Muted categorical chart and storage bar accents reused across context and backup visuals. */
+object CategoryColor {
+    val sage = Color(0xFF4A7C59)
+    val slate = Color(0xFF3D6B8E)
+    val ochre = Color(0xFF9B5B34)
+    val brass = Color(0xFFB5892E)
+}
+
+/** Legibility alphas applied on top of [ParchmentPalette.mutedInk] so disabled/hint text stays >= 3.0:1. */
+object Alpha {
+    const val disabledInk = 0.88f
+    const val placeholder = 0.88f
+}
+
 /**
  * Animation timings. Everything that moves takes its spec from here, so Reduce motion in Settings turns all of it
  * into an instant change.
@@ -90,6 +124,10 @@ object Motion {
 
     /** Stiffness of a brisk spring for things that pop in. */
     const val POP_STIFFNESS = 580f
+
+    /** Springs shared by interactive press and hover feedback. */
+    val SCALE_SPRING: FiniteAnimationSpec<Float> = spring(dampingRatio = 0.78f, stiffness = 680f)
+    val LIFT_SPRING: FiniteAnimationSpec<Float> = spring(dampingRatio = Spring.DampingRatioNoBouncy, stiffness = 560f)
 }
 
 /**
@@ -147,3 +185,49 @@ fun <T> motionSpring(
     dampingRatio: Float = Spring.DampingRatioNoBouncy
 ): FiniteAnimationSpec<T> =
     if (LocalReduceMotion.current) snap() else spring(dampingRatio = dampingRatio, stiffness = stiffness)
+
+/** Vertical disclosure transitions that honor [LocalReduceMotion]. */
+@Composable
+fun motionExpandEnter(stiffness: Float = Spring.StiffnessMediumLow, fadeDurationMillis: Int = Motion.STANDARD): EnterTransition =
+    if (LocalReduceMotion.current) EnterTransition.None
+    else expandVertically(motionSpring(stiffness)) + fadeIn(motionTween(fadeDurationMillis))
+
+@Composable
+fun motionShrinkExit(stiffness: Float = Spring.StiffnessMediumLow, fadeDurationMillis: Int = Motion.QUICK): ExitTransition =
+    if (LocalReduceMotion.current) ExitTransition.None
+    else shrinkVertically(motionSpring(stiffness)) + fadeOut(motionTween(fadeDurationMillis))
+
+/** Floating pill pop transitions that honor [LocalReduceMotion]. */
+@Composable
+fun motionPopEnter(): EnterTransition =
+    if (LocalReduceMotion.current) EnterTransition.None
+    else slideInVertically(initialOffsetY = { it / 2 }, animationSpec = motionSpring(Motion.POP_STIFFNESS)) +
+        scaleIn(initialScale = 0.90f, animationSpec = motionSpring(Motion.POP_STIFFNESS, 0.8f)) +
+        fadeIn(motionTween(Motion.QUICK))
+
+@Composable
+fun motionPopExit(): ExitTransition =
+    if (LocalReduceMotion.current) ExitTransition.None
+    else slideOutVertically(targetOffsetY = { it / 2 }, animationSpec = motionTween(Motion.QUICK)) +
+        scaleOut(targetScale = 0.92f, animationSpec = motionTween(Motion.QUICK)) +
+        fadeOut(motionTween(Motion.QUICK))
+
+/** Horizontal drawer panel transitions that honor [LocalReduceMotion]. */
+@Composable
+fun motionSideExpandEnter(): EnterTransition =
+    if (LocalReduceMotion.current) EnterTransition.None
+    else expandHorizontally(motionSpring()) + fadeIn(motionTween(Motion.STANDARD))
+
+@Composable
+fun motionSideShrinkExit(): ExitTransition =
+    if (LocalReduceMotion.current) ExitTransition.None
+    else shrinkHorizontally(motionSpring()) + fadeOut(motionTween(Motion.QUICK))
+
+/** Simple fade transitions that honor [LocalReduceMotion]. */
+@Composable
+fun motionFadeEnter(durationMillis: Int = Motion.STANDARD): EnterTransition =
+    if (LocalReduceMotion.current) EnterTransition.None else fadeIn(motionTween(durationMillis))
+
+@Composable
+fun motionFadeExit(durationMillis: Int = Motion.STANDARD): ExitTransition =
+    if (LocalReduceMotion.current) ExitTransition.None else fadeOut(motionTween(durationMillis))

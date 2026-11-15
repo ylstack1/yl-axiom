@@ -430,10 +430,21 @@ fun KissVectorIcon(
 // any other lab's logo is fetched from raw.githubusercontent.com/lobehub/lobe-icons when first needed.
 private val LOBE_ICONS_HTTP_CLIENT
     get() = AiProviderEngine.httpClient
+private const val MAX_DYNAMIC_LOBE_SVG_CACHE = 128
+private const val MAX_MISSING_LOBE_SVG_SLUGS = 256
+private const val MAX_PARSED_LAB_SVG_PATHS = 192
+private val LOBE_SVG_LOCK = Any()
 private val DYNAMIC_LOBE_SVG_CACHE = mutableStateMapOf<String, List<String>>()
-private val MISSING_LOBE_SVG_SLUGS = mutableSetOf<String>()
-private val LOADING_LOBE_SVG_SLUGS = mutableSetOf<String>()
-private val PARSED_LAB_SVG_PATH_CACHE = mutableMapOf<String, List<Path>>()
+private val DYNAMIC_LOBE_SVG_ORDER = ArrayDeque<String>()
+private val MISSING_LOBE_SVG_SLUGS = object : LinkedHashMap<String, Unit>(64, 0.75f, true) {
+    override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, Unit>?): Boolean =
+        size > MAX_MISSING_LOBE_SVG_SLUGS
+}
+private val LOADING_LOBE_SVG_SLUGS = hashSetOf<String>()
+private val PARSED_LAB_SVG_PATH_CACHE = object : LinkedHashMap<String, List<Path>>(64, 0.75f, true) {
+    override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, List<Path>>?): Boolean =
+        size > MAX_PARSED_LAB_SVG_PATHS
+}
 
 internal val BUILTIN_LAB_SVG_PATHS: Map<String, List<String>> = mapOf(
     "gemini" to listOf(
@@ -672,7 +683,7 @@ internal fun parseSvgPathNormalized(dStr: String): Path {
 fun ModelLabSvgIcon(
     modelOrProvider: String,
     tint: Color,
-    size: Dp = 15.dp,
+    size: Dp = IconSize.lg,
     fallbackProtocolName: String = "",
     modifier: Modifier = Modifier
 ) {
@@ -682,7 +693,10 @@ fun ModelLabSvgIcon(
     val rawPaths = BUILTIN_LAB_SVG_PATHS[slug] ?: DYNAMIC_LOBE_SVG_CACHE[slug]
 
     LaunchedEffect(slug) {
-        if (rawPaths == null && slug !in MISSING_LOBE_SVG_SLUGS && LOADING_LOBE_SVG_SLUGS.add(slug)) {
+        val shouldFetch = rawPaths == null && synchronized(LOBE_SVG_LOCK) {
+            slug !in MISSING_LOBE_SVG_SLUGS && LOADING_LOBE_SVG_SLUGS.add(slug)
+        }
+        if (shouldFetch) {
             try {
                 runCatching {
                     val url = "https://raw.githubusercontent.com/lobehub/lobe-icons/master/packages/static-svg/icons/$slug.svg"
@@ -690,27 +704,36 @@ fun ModelLabSvgIcon(
                     if (resp.status.isSuccess()) {
                         val svgText = resp.bodyAsText()
                         val extracted = SVG_PATH_D_REGEX.findAll(svgText).map { it.groupValues[1] }.toList()
-                        if (extracted.isNotEmpty()) DYNAMIC_LOBE_SVG_CACHE[slug] = extracted else MISSING_LOBE_SVG_SLUGS += slug
+                        if (extracted.isNotEmpty()) {
+                            synchronized(LOBE_SVG_LOCK) {
+                                DYNAMIC_LOBE_SVG_ORDER.remove(slug)
+                                DYNAMIC_LOBE_SVG_ORDER.addLast(slug)
+                                while (DYNAMIC_LOBE_SVG_ORDER.size > MAX_DYNAMIC_LOBE_SVG_CACHE) {
+                                    val evicted = DYNAMIC_LOBE_SVG_ORDER.removeFirst()
+                                    DYNAMIC_LOBE_SVG_CACHE.remove(evicted)
+                                }
+                            }
+                            DYNAMIC_LOBE_SVG_CACHE[slug] = extracted
+                        } else {
+                            synchronized(LOBE_SVG_LOCK) { MISSING_LOBE_SVG_SLUGS[slug] = Unit }
+                        }
                     } else if (resp.status.value == 404) {
-                        MISSING_LOBE_SVG_SLUGS += slug
+                        synchronized(LOBE_SVG_LOCK) { MISSING_LOBE_SVG_SLUGS[slug] = Unit }
                     }
                 }
             } finally {
-                LOADING_LOBE_SVG_SLUGS.remove(slug)
+                synchronized(LOBE_SVG_LOCK) { LOADING_LOBE_SVG_SLUGS.remove(slug) }
             }
         }
     }
 
     val parsedVectorPaths = remember(slug, rawPaths) {
-        val cached = PARSED_LAB_SVG_PATH_CACHE[slug]
-        if (cached != null) {
-            cached
-        } else {
+        synchronized(LOBE_SVG_LOCK) { PARSED_LAB_SVG_PATH_CACHE[slug] } ?: run {
             val parsed = rawPaths?.mapNotNull { dStr ->
                 runCatching { parseSvgPathNormalized(dStr) }.getOrNull()
             }.orEmpty()
             if (parsed.isNotEmpty()) {
-                PARSED_LAB_SVG_PATH_CACHE[slug] = parsed
+                synchronized(LOBE_SVG_LOCK) { PARSED_LAB_SVG_PATH_CACHE[slug] = parsed }
             }
             parsed
         }

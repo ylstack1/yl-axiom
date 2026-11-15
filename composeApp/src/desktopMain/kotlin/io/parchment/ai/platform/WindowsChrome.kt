@@ -26,18 +26,23 @@ internal object WindowsChrome {
     private fun colorRef(argb: Int): Int =
         ((argb and 0xFF) shl 16) or (argb and 0xFF00) or ((argb shr 16) and 0xFF)
 
+    private fun setAttribute(window: Pointer, buffer: IntArray, attribute: Int, value: Int): Int {
+        buffer[0] = value
+        return dwm.DwmSetWindowAttribute(window, attribute, buffer, Int.SIZE_BYTES)
+    }
+
     /** Returns each call's result code, 0 meaning success. Older Windows builds decline the color attributes. */
     fun applyCaption(handle: Long, captionArgb: Int, inkArgb: Int, borderArgb: Int, dark: Boolean): Map<String, Int> {
         if (!isWindows || handle == 0L) return emptyMap()
         return runCatching {
             val window = Pointer(handle)
-            fun attribute(id: Int, value: Int) = dwm.DwmSetWindowAttribute(window, id, intArrayOf(value), Int.SIZE_BYTES)
+            val arg = IntArray(1)
             mapOf(
-                "darkMode" to attribute(DARK_MODE, if (dark) 1 else 0),
-                "corners" to attribute(CORNERS, ROUND_CORNERS),
-                "caption" to attribute(CAPTION_COLOR, colorRef(captionArgb)),
-                "text" to attribute(TEXT_COLOR, colorRef(inkArgb)),
-                "border" to attribute(BORDER_COLOR, colorRef(borderArgb))
+                "darkMode" to setAttribute(window, arg, DARK_MODE, if (dark) 1 else 0),
+                "corners" to setAttribute(window, arg, CORNERS, ROUND_CORNERS),
+                "caption" to setAttribute(window, arg, CAPTION_COLOR, colorRef(captionArgb)),
+                "text" to setAttribute(window, arg, TEXT_COLOR, colorRef(inkArgb)),
+                "border" to setAttribute(window, arg, BORDER_COLOR, colorRef(borderArgb))
             )
         }.getOrDefault(emptyMap())
     }

@@ -43,6 +43,11 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.onPreviewKeyEvent
+import androidx.compose.ui.input.key.type
 import androidx.compose.ui.input.pointer.PointerEventType
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
@@ -148,9 +153,10 @@ internal fun DesktopBrowserTabBar(
                     }
                     Box(
                         modifier = Modifier
-                            .size(16.dp)
+                            .size(22.dp)
                             .clip(CircleShape)
-                            .kissClickable { onCloseTab(tabId) },
+                            .kissClickable { onCloseTab(tabId) }
+                            .accessibilityLabel("${Strings.close} $primaryTitle"),
                         contentAlignment = Alignment.Center
                     ) {
                         KissVectorIcon(
@@ -200,18 +206,22 @@ internal fun MobileTabSwitcherModal(
     val win = LocalParchmentWindowSize.current
     val columns = if (isCompactScreen && win.isVeryNarrow) 1 else 2
     var tabFilterQuery by remember { mutableStateOf("") }
-    val emptyTabsCount = remember(openTabIds, appState.sessions, activeStreamsBySession) {
+    val sessionsById = remember(appState.sessions) { appState.sessions.associateBy { it.id } }
+    val assistantsById = remember(appState.assistants) { appState.assistants.associateBy { it.id } }
+    val profilesById = remember(appState.profiles) { appState.profiles.associateBy { it.id } }
+
+    val emptyTabsCount = remember(openTabIds, sessionsById, activeStreamsBySession) {
         openTabIds.count { tabId ->
-            val s = appState.sessions.find { it.id == tabId }
+            val s = sessionsById[tabId]
             s != null && s.messages.isEmpty() && s.title == "New Chat" && s.draftInput.isBlank() && !activeStreamsBySession.containsKey(tabId)
         }
     }
-    val filteredTabIds = remember(openTabIds, appState.sessions, appState.assistants, tabFilterQuery) {
+    val filteredTabIds = remember(openTabIds, sessionsById, assistantsById, tabFilterQuery) {
         val q = tabFilterQuery.trim()
         if (q.isEmpty()) openTabIds
         else openTabIds.filter { tabId ->
-            val s = appState.sessions.find { it.id == tabId } ?: return@filter false
-            val asst = appState.assistants.find { it.id == s.assistantId }
+            val s = sessionsById[tabId] ?: return@filter false
+            val asst = assistantsById[s.assistantId]
             s.title.contains(q, ignoreCase = true) ||
                 (asst?.name?.contains(q, ignoreCase = true) == true) ||
                 s.modelOverride.contains(q, ignoreCase = true) ||
@@ -237,6 +247,14 @@ internal fun MobileTabSwitcherModal(
                 .clip(sheetShape)
                 .background(p.canvasBg)
                 .border(1.dp, p.border, sheetShape)
+                .onPreviewKeyEvent { event ->
+                    if (event.type == KeyEventType.KeyDown && event.key == Key.Escape) {
+                        onCloseModal()
+                        true
+                    } else {
+                        false
+                    }
+                }
                 .blockTapThrough()
                 .padding(14.dp),
             verticalArrangement = Arrangement.spacedBy(Space.s10)
@@ -301,21 +319,21 @@ internal fun MobileTabSwitcherModal(
                 modifier = Modifier.heightIn(max = win.heightDp * 0.68f).fillMaxWidth(),
                 verticalArrangement = Arrangement.spacedBy(Space.s10)
             ) {
-                itemsIndexed(rows) { _, rowPair ->
+                itemsIndexed(rows, key = { _, row -> row.joinToString("|") }) { _, rowPair ->
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.spacedBy(Space.s10)
                     ) {
                         rowPair.forEach { tabId ->
-                            val sess = appState.sessions.find { it.id == tabId }
+                            val sess = sessionsById[tabId]
                             if (sess != null) {
                                 val isSel = tabId == activeSessionId
                                 val streamInfo = activeStreamsBySession[tabId]
-                                val tabAsst = appState.assistants.find { it.id == sess.assistantId && it.id.isNotBlank() }
+                                val tabAsst = sess.assistantId.takeIf { it.isNotBlank() }?.let { assistantsById[it] }
                                     ?: appState.assistants.firstOrNull()
-                                val tabProf = appState.profiles.find { it.id == sess.profileId }
+                                val tabProf = profilesById[sess.profileId]
                                     ?: appState.profiles.firstOrNull()
-                                val asstName = tabAsst?.name?.takeIf { it.isNotBlank() } ?: "Default Assistant"
+                                val asstName = tabAsst?.name?.takeIf { it.isNotBlank() } ?: Strings.defaultAssistant
                                 val modelLabel = sess.modelOverride.ifBlank { tabProf?.defaultModel.orEmpty() }
                                     .substringAfterLast('/')
                                     .ifBlank { tabProf?.name.orEmpty() }
@@ -367,12 +385,13 @@ internal fun MobileTabSwitcherModal(
                                             }
                                             Box(
                                                 modifier = Modifier
-                                                    .size(20.dp)
+                                                    .size(32.dp)
                                                     .clip(CircleShape)
-                                                    .kissClickable { onCloseTab(tabId) },
+                                                    .kissClickable { onCloseTab(tabId) }
+                                                    .accessibilityLabel("${Strings.close} ${sess.title.ifBlank { Strings.newChat2 }}"),
                                                 contentAlignment = Alignment.Center
                                             ) {
-                                                KissVectorIcon(icon = KissIcon.CLOSE, tint = p.mutedInk, size = 11.dp)
+                                                KissVectorIcon(icon = KissIcon.CLOSE, tint = p.mutedInk, size = IconSize.sm)
                                             }
                                         }
                                         Column(verticalArrangement = Arrangement.spacedBy(Space.s2)) {
@@ -419,7 +438,7 @@ internal fun MobileTabSwitcherModal(
                                             " • ${formatCompactTimestamp(sess.updatedAt)}"
                                         } else ""
                                         BasicText(
-                                            text = Strings.messages(sess.messages.size, dateSuffix),
+                                            text = Strings.messages(sess.displayMessageCount, dateSuffix),
                                             style = p.uiLabelStyle.copy(fontSize = 11.sp)
                                         )
                                     }
@@ -597,7 +616,10 @@ internal fun TopEditorialBar(
                         Row(
                             verticalAlignment = Alignment.CenterVertically,
                             horizontalArrangement = Arrangement.spacedBy(Space.s4),
-                            modifier = Modifier.kissClickable(hoverScale = 1.01f) { onToggleQuickModelPopover() }
+                            modifier = Modifier
+                                .heightIn(min = 32.dp)
+                                .kissClickable(hoverScale = 1.01f) { onToggleQuickModelPopover() }
+                                .accessibilityLabel(if (showQuickModelPopover) Strings.closeModelPicker else Strings.chooseAModel)
                         ) {
                             BasicText(
                                 text = capsuleText,
@@ -609,7 +631,7 @@ internal fun TopEditorialBar(
                             KissVectorIcon(
                                 icon = if (showQuickModelPopover) KissIcon.CHEVRON_UP else KissIcon.CHEVRON_DOWN,
                                 tint = p.mutedInk,
-                                size = 11.dp
+                                size = IconSize.sm
                             )
                         }
 
@@ -634,6 +656,14 @@ internal fun TopEditorialBar(
                                         .clip(RoundedCornerShape(Radius.r10))
                                         .background(p.cardBg)
                                         .border(1.dp, p.border, RoundedCornerShape(Radius.r10))
+                                        .onPreviewKeyEvent { event ->
+                                            if (event.type == KeyEventType.KeyDown && event.key == Key.Escape) {
+                                                onDismissQuickModelPopover()
+                                                true
+                                            } else {
+                                                false
+                                            }
+                                        }
                                         .padding(11.dp),
                                     verticalArrangement = Arrangement.spacedBy(Space.s8)
                                 ) {
@@ -655,7 +685,7 @@ internal fun TopEditorialBar(
                                             )
                                             BasicText(
                                                 text = "($totalModelsCount)",
-                                                style = p.monoStyle.copy(color = p.mutedInk, fontSize = 11.sp)
+                                                style = p.monoStyle.copy(color = p.mutedInk, fontSize = 11.sp, fontFeatureSettings = "tnum")
                                             )
                                         }
                                         Row(
@@ -714,7 +744,7 @@ internal fun TopEditorialBar(
                             .clip(tabBadgeShape)
                             .background(if (backgroundStreamingCount > 0) p.accent.copy(alpha = 0.16f) else p.cardBg)
                             .border(
-                                width = if (backgroundStreamingCount > 0) 1.dp else 1.dp,
+                                width = LineWidth.hairline,
                                 color = if (backgroundStreamingCount > 0) p.accent else p.border,
                                 shape = tabBadgeShape
                             )
@@ -773,6 +803,28 @@ internal fun TopEditorialBar(
 
 // Attachment viewer: zoomable images, and text or code files.
 @Composable
+internal fun ImageViewerFallbackState(isLoading: Boolean, sourceLabel: String) {
+    val p = LocalParchmentPalette.current
+    if (isLoading) {
+        Row(
+            horizontalArrangement = Arrangement.spacedBy(Space.s8),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            KissStreamingPulseDot(color = p.accent)
+            BasicText(
+                text = Strings.loading,
+                style = p.uiLabelStyle.copy(color = p.mutedInk)
+            )
+        }
+    } else {
+        BasicText(
+            text = Strings.unableToDecodeImagePreview(sourceLabel),
+            style = p.uiHeaderStyle.copy(color = p.narrationInk)
+        )
+    }
+}
+
+@Composable
 internal fun ParchmentAttachmentViewerModal(
     item: ActiveMediaViewerItem,
     onNotify: (String) -> Unit,
@@ -786,6 +838,14 @@ internal fun ParchmentAttachmentViewerModal(
     Box(
         modifier = Modifier
             .fillMaxSize()
+            .onPreviewKeyEvent { event ->
+                if (event.type == KeyEventType.KeyDown && event.key == Key.Escape) {
+                    onClose()
+                    true
+                } else {
+                    false
+                }
+            }
             .dismissOnOutsideTap(onClose),
         contentAlignment = Alignment.Center
     ) {
@@ -797,14 +857,16 @@ internal fun ParchmentAttachmentViewerModal(
                 var offsetX by remember(item) { mutableStateOf(0f) }
                 var offsetY by remember(item) { mutableStateOf(0f) }
 
+                val viewerShape = RoundedCornerShape(Radius.r12)
                 Column(
                     modifier = Modifier
                         .widthIn(max = 1040.dp)
                         .fillMaxWidth(0.94f)
                         .fillMaxHeight(0.88f)
-                        .clip(RoundedCornerShape(Radius.r12))
+                        .overlayShadow(viewerShape)
+                        .clip(viewerShape)
                         .background(p.cardBg)
-                        .border(1.dp, p.accent, RoundedCornerShape(Radius.r12))
+                        .border(LineWidth.hairline, p.border, viewerShape)
                         .blockTapThrough()
                         .padding(14.dp),
                     verticalArrangement = Arrangement.SpaceBetween
@@ -813,10 +875,7 @@ internal fun ParchmentAttachmentViewerModal(
                     FlowRow(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .clip(RoundedCornerShape(Radius.r10))
-                            .background(p.sheetBg.copy(alpha = 0.85f))
-                            .border(LineWidth.hairline, p.border, RoundedCornerShape(Radius.r10))
-                            .padding(horizontal = Space.s12, vertical = Space.s8),
+                            .padding(horizontal = Space.s4, vertical = Space.s4),
                         horizontalArrangement = Arrangement.SpaceBetween,
                         verticalArrangement = Arrangement.spacedBy(Space.s6)
                     ) {
@@ -825,7 +884,7 @@ internal fun ParchmentAttachmentViewerModal(
                                 verticalAlignment = Alignment.CenterVertically,
                                 horizontalArrangement = Arrangement.spacedBy(Space.s6)
                             ) {
-                                KissVectorIcon(icon = KissIcon.IMAGE, tint = p.accent, size = 15.dp)
+                                KissVectorIcon(icon = KissIcon.IMAGE, tint = p.accent, size = IconSize.lg)
                                 BasicText(
                                     text = item.title,
                                     maxLines = 2,
@@ -862,6 +921,7 @@ internal fun ParchmentAttachmentViewerModal(
                                 text = "${(scale * 100).toInt()}%",
                                 compact = true,
                                 style = SepiaButtonStyle.GHOST,
+                                tabularNums = true,
                                 onClick = {
                                     scale = 1f
                                     offsetX = 0f
@@ -982,10 +1042,10 @@ internal fun ParchmentAttachmentViewerModal(
                                         translationY = offsetY
                                     )
                             )
-                        } else if (!fileImage.isLoading) {
-                            BasicText(
-                                text = Strings.unableToDecodeImagePreview(item.localFilePath.ifBlank { item.remoteUrl }),
-                                style = p.uiHeaderStyle.copy(color = p.narrationInk)
+                        } else {
+                            ImageViewerFallbackState(
+                                isLoading = fileImage.isLoading,
+                                sourceLabel = item.localFilePath.ifBlank { item.remoteUrl }
                             )
                         }
                     }
@@ -1007,14 +1067,16 @@ internal fun ParchmentAttachmentViewerModal(
                     mutableStateOf(isSvgContent || isMarkdownContent)
                 }
 
+                val viewerShape = RoundedCornerShape(Radius.r12)
                 Column(
                     modifier = Modifier
                         .widthIn(max = 940.dp)
                         .fillMaxWidth(0.94f)
                         .fillMaxHeight(0.88f)
-                        .clip(RoundedCornerShape(Radius.r12))
+                        .overlayShadow(viewerShape)
+                        .clip(viewerShape)
                         .background(p.cardBg)
-                        .border(1.dp, p.accent, RoundedCornerShape(Radius.r12))
+                        .border(LineWidth.hairline, p.border, viewerShape)
                         .blockTapThrough()
                         .padding(Space.s16),
                     verticalArrangement = Arrangement.spacedBy(Space.s10)
@@ -1030,7 +1092,7 @@ internal fun ParchmentAttachmentViewerModal(
                                 verticalAlignment = Alignment.CenterVertically,
                                 horizontalArrangement = Arrangement.spacedBy(Space.s6)
                             ) {
-                                KissVectorIcon(icon = KissIcon.FILE_TEXT, tint = p.accent, size = 15.dp)
+                                KissVectorIcon(icon = KissIcon.FILE_TEXT, tint = p.accent, size = IconSize.lg)
                                 BasicText(
                                     text = item.title,
                                     maxLines = 2,
@@ -1142,6 +1204,43 @@ internal fun ParchmentAttachmentViewerModal(
 // Opened by clicking `SepiaContextGaugeRing` in the Composer footer.
 // Displays unified `o200k_base` token counts across 7 context categories + Free Space + 1-tap actions.
 // ============================================================================================
+internal data class ContextCategorySlice(
+    val label: String,
+    val tokens: Int,
+    val color: Color,
+    val isFreeSpace: Boolean = false
+)
+
+internal fun buildContextCategorySlices(
+    breakdown: ContextWindowBreakdown,
+    p: ParchmentPalette
+): List<ContextCategorySlice> {
+    val colSystem = p.accent
+    val colLorebook = p.accentSecondary
+    val colWorkspace = CategoryColor.sage
+    val colFiles = CategoryColor.slate
+    val colHistory = CategoryColor.ochre
+    val colDraft = CategoryColor.brass
+    val colFree = p.border.copy(alpha = 0.55f)
+
+    val historyLabel = Strings.chatHistoryActive(breakdown.activeTurnsCount, breakdown.mutedTurnsCount)
+
+    return listOf(
+        ContextCategorySlice(Strings.systemAndPersonaPrompt, breakdown.systemAndPersonaTokens, colSystem),
+        ContextCategorySlice(Strings.lorebookStoryMemory, breakdown.lorebookAndMemoryTokens, colLorebook),
+        ContextCategorySlice(Strings.workspaceToolSchemas, breakdown.workspaceAndToolsTokens, colWorkspace),
+        ContextCategorySlice(Strings.uploadedFiles(breakdown.uploadedFilesCount), breakdown.uploadedFilesTokens, colFiles),
+        ContextCategorySlice(historyLabel, breakdown.chatHistoryTokens, colHistory),
+        ContextCategorySlice(Strings.currentComposerDraft, breakdown.composerDraftTokens, colDraft),
+        ContextCategorySlice(
+            label = Strings.freeSpaceRemaining,
+            tokens = breakdown.freeSpaceTokens,
+            color = colFree,
+            isFreeSpace = true
+        )
+    )
+}
+
 @Composable
 internal fun ContextWindowBreakdownPopover(
     breakdown: ContextWindowBreakdown,
@@ -1162,49 +1261,17 @@ internal fun ContextWindowBreakdownPopover(
     val safeLimit = if (isUnlimited) maxOf(breakdown.totalUsedTokens, 128_000) else breakdown.contextLimitTokens
     val pctInt = ((breakdown.totalUsedTokens.toDouble() / safeLimit.toDouble()) * 1000.0).toInt() / 10.0
 
-    val colSystem = p.accent
-    val colLorebook = p.accentSecondary
-    val colWorkspace = Color(0xFF4A7C59)
-    val colFiles = Color(0xFF3D6B8E)
-    val colHistory = Color(0xFF9B5B34)
-    val colDraft = Color(0xFFB5892E)
-    val colFree = p.border.copy(alpha = 0.55f)
+    val slices = remember(breakdown, p) { buildContextCategorySlices(breakdown, p) }
 
-    data class CategorySlice(
-        val label: String,
-        val tokens: Int,
-        val color: Color,
-        val isFreeSpace: Boolean = false
-    )
-
-    val historyLabel = buildString {
-        append(Strings.chatHistoryActive(breakdown.activeTurnsCount))
-        if (breakdown.mutedTurnsCount > 0) append(", ${breakdown.mutedTurnsCount} left out")
-        append(")")
-    }
-
-    val slices = listOf(
-        CategorySlice("System & Persona Prompt", breakdown.systemAndPersonaTokens, colSystem),
-        CategorySlice(Strings.lorebookStoryMemory, breakdown.lorebookAndMemoryTokens, colLorebook),
-        CategorySlice(Strings.workspaceToolSchemas, breakdown.workspaceAndToolsTokens, colWorkspace),
-        CategorySlice(Strings.uploadedFiles(breakdown.uploadedFilesCount), breakdown.uploadedFilesTokens, colFiles),
-        CategorySlice(historyLabel, breakdown.chatHistoryTokens, colHistory),
-        CategorySlice(Strings.currentComposerDraft, breakdown.composerDraftTokens, colDraft),
-        CategorySlice(
-            label = Strings.freeSpaceRemaining,
-            tokens = breakdown.freeSpaceTokens,
-            color = colFree,
-            isFreeSpace = true
-        )
-    )
-
+    val popoverShape = RoundedCornerShape(Radius.r12)
     Column(
         modifier = modifier
             .fillMaxWidth()
             .padding(bottom = Space.s8)
-            .clip(RoundedCornerShape(Radius.r12))
+            .overlayShadow(popoverShape)
+            .clip(popoverShape)
             .background(p.cardBg)
-            .border(1.dp, p.accent.copy(alpha = 0.75f), RoundedCornerShape(Radius.r12))
+            .border(LineWidth.hairline, p.border, popoverShape)
             .padding(Space.s12),
         verticalArrangement = Arrangement.spacedBy(Space.s8)
     ) {
@@ -1223,7 +1290,7 @@ internal fun ContextWindowBreakdownPopover(
                     ?: if (sessionTotalCostUsd > 0.0) Strings.session2(formatUsdCost(sessionTotalCostUsd)) else ""
                 BasicText(
                     text = Strings.o200kBaseTokUsed(breakdown.totalUsedTokens, limitText, pctInt, costSuffix),
-                    style = p.monoStyle.copy(fontSize = 11.sp, color = p.mutedInk)
+                    style = p.monoStyle.copy(fontSize = 11.sp, color = p.mutedInk, fontFeatureSettings = "tnum")
                 )
             }
             SepiaButton(
@@ -1278,7 +1345,7 @@ internal fun ContextWindowBreakdownPopover(
                             modifier = Modifier
                                 .size(8.dp)
                                 .clip(CircleShape)
-                                .background(if (slice.isFreeSpace) p.accentSecondary else slice.color)
+                                .background(slice.color)
                         )
                         BasicText(
                             text = slice.label,
@@ -1287,7 +1354,7 @@ internal fun ContextWindowBreakdownPopover(
                             style = p.uiBodyStyle.copy(
                                 fontSize = 12.sp,
                                 fontWeight = if (slice.isFreeSpace || slice.tokens > 0) FontWeight.SemiBold else FontWeight.Normal,
-                                color = if (slice.isFreeSpace) p.accent else if (slice.tokens > 0) p.primaryInk else p.mutedInk
+                                color = if (slice.isFreeSpace) p.narrationInk else if (slice.tokens > 0) p.primaryInk else p.mutedInk
                             )
                         )
                     }
@@ -1295,8 +1362,9 @@ internal fun ContextWindowBreakdownPopover(
                         text = Strings.tokens2(formatCompactTokens(slice.tokens), slicePct),
                         style = p.monoStyle.copy(
                             fontSize = 11.sp,
+                            fontFeatureSettings = "tnum",
                             fontWeight = if (slice.isFreeSpace || slice.tokens > 0) FontWeight.SemiBold else FontWeight.Normal,
-                            color = if (slice.isFreeSpace) p.accent else if (slice.tokens > 0) p.narrationInk else p.mutedInk
+                            color = if (slice.isFreeSpace) p.narrationInk else if (slice.tokens > 0) p.narrationInk else p.mutedInk
                         )
                     )
                 }

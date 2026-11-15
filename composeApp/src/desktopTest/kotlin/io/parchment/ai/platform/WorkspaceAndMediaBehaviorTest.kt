@@ -131,4 +131,12 @@ class WorkspaceAndMediaBehaviorTest {
         val afterMultiEditListing = PlatformWorkspace.workspaceList(workspace, "", recursive = true).getOrThrow()
         assertTrue(afterMultiEditListing.contains("notes.txt (29 bytes)"), afterMultiEditListing)
     }
+
+    @Test fun isReadableLocalFileResolvesDirectAndPortableMediaPaths() {
+        val saved = PlatformStorage.saveGeneratedMediaFile("check-readable.png", byteArrayOf(4, 5, 6), sessionId = "behavior-readable")
+        assertTrue(PlatformStorage.isReadableLocalFile(saved))
+        assertTrue(PlatformStorage.isReadableLocalFile("D:/other/device/chats/behavior-readable/media/check-readable.png"))
+        assertFalse(PlatformStorage.isReadableLocalFile("chats/behavior-readable/media/missing.png"))
+        assertFalse(PlatformStorage.isReadableLocalFile("   "))
+    }
 }

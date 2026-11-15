@@ -223,6 +223,10 @@ object LatexMathRenderer {
                 parseDisplayMathNodes(lineLatex, p)
             }
         }
+        val bodyMathStyle = remember(p) { p.mathStyle.copy(fontSize = (p.config.proseFontSizeSp * 1.12f).sp) }
+        val fracMathStyle = remember(p) { p.mathStyle.copy(fontSize = (p.config.proseFontSizeSp * 0.96f).sp) }
+        val delimMathStyle = remember(p) { p.mathStyle.copy(fontSize = (p.config.proseFontSizeSp * 1.45f).sp) }
+        val matrixCellStyle = remember(p) { p.mathStyle.copy(fontSize = p.config.proseFontSizeSp.sp) }
 
         val shape = RoundedCornerShape(Radius.r6)
         Column(
@@ -251,7 +255,7 @@ object LatexMathRenderer {
                                 is DisplayMathNode.TextRun -> {
                                     BasicText(
                                         text = node.annotated,
-                                        style = p.mathStyle.copy(fontSize = (p.config.proseFontSizeSp * 1.12f).sp)
+                                        style = bodyMathStyle
                                     )
                                 }
                                 is DisplayMathNode.StackedFraction -> {
@@ -263,7 +267,7 @@ object LatexMathRenderer {
                                     ) {
                                         BasicText(
                                             text = node.numerator,
-                                            style = p.mathStyle.copy(fontSize = (p.config.proseFontSizeSp * 0.96f).sp),
+                                            style = fracMathStyle,
                                             modifier = Modifier.padding(horizontal = Space.s4)
                                         )
                                         Box(
@@ -274,7 +278,7 @@ object LatexMathRenderer {
                                         )
                                         BasicText(
                                             text = node.denominator,
-                                            style = p.mathStyle.copy(fontSize = (p.config.proseFontSizeSp * 0.96f).sp),
+                                            style = fracMathStyle,
                                             modifier = Modifier.padding(horizontal = Space.s4)
                                         )
                                     }
@@ -287,7 +291,7 @@ object LatexMathRenderer {
                                         if (node.leftDelim.isNotEmpty()) {
                                             BasicText(
                                                 text = node.leftDelim,
-                                                style = p.mathStyle.copy(fontSize = (p.config.proseFontSizeSp * 1.45f).sp)
+                                                style = delimMathStyle
                                             )
                                         }
                                         Column(
@@ -302,7 +306,7 @@ object LatexMathRenderer {
                                                     rowCells.forEach { cell ->
                                                         BasicText(
                                                             text = cell,
-                                                            style = p.mathStyle.copy(fontSize = p.config.proseFontSizeSp.sp)
+                                                            style = matrixCellStyle
                                                         )
                                                     }
                                                 }
@@ -311,7 +315,7 @@ object LatexMathRenderer {
                                         if (node.rightDelim.isNotEmpty()) {
                                             BasicText(
                                                 text = node.rightDelim,
-                                                style = p.mathStyle.copy(fontSize = (p.config.proseFontSizeSp * 1.45f).sp)
+                                                style = delimMathStyle
                                             )
                                         }
                                     }
@@ -346,7 +350,7 @@ object LatexMathRenderer {
      * and `\begin{pmatrix|bmatrix|matrix|cases}...\end{...}` matrices.
      */
     internal fun parseDisplayMathNodes(latex: String, palette: ParchmentPalette): List<DisplayMathNode> {
-        if (!latexWithinLimits(latex)) {
+        if (!latexWithinLimits(latex, 0, latex.length)) {
             return listOf(DisplayMathNode.TextRun(formatInlineLatexToAnnotatedString(latex, palette)))
         }
         val nodes = mutableListOf<DisplayMathNode>()
@@ -365,18 +369,29 @@ object LatexMathRenderer {
             when {
                 latex.startsWith("\\frac", i) || latex.startsWith("\\dfrac", i) -> {
                     val cmdLen = if (latex.startsWith("\\dfrac", i)) 6 else 5
-                    val numGroup = extractBracedGroup(latex, i + cmdLen)
-                    if (numGroup != null) {
-                        val denGroup = extractBracedGroup(latex, numGroup.second)
-                        if (denGroup != null) {
+                    val numPacked = extractBracedGroupRange(latex, i + cmdLen, n)
+                    if (numPacked != -1L) {
+                        val afterNum = afterBracedGroup(latex, numPacked, n)
+                        val denPacked = extractBracedGroupRange(latex, afterNum, n)
+                        if (denPacked != -1L) {
                             flushRun()
                             nodes.add(
                                 DisplayMathNode.StackedFraction(
-                                    numerator = formatInlineLatexToAnnotatedString(numGroup.first, palette),
-                                    denominator = formatInlineLatexToAnnotatedString(denGroup.first, palette)
+                                    numerator = formatInlineLatexToAnnotatedString(
+                                        latex,
+                                        palette,
+                                        bracedGroupStart(numPacked),
+                                        bracedGroupEnd(numPacked)
+                                    ),
+                                    denominator = formatInlineLatexToAnnotatedString(
+                                        latex,
+                                        palette,
+                                        bracedGroupStart(denPacked),
+                                        bracedGroupEnd(denPacked)
+                                    )
                                 )
                             )
-                            i = denGroup.second
+                            i = afterBracedGroup(latex, denPacked, n)
                             continue
                         }
                     }
@@ -426,32 +441,68 @@ object LatexMathRenderer {
         return nodes
     }
 
+    private val MATH_ITALIC_STYLE = SpanStyle(fontStyle = FontStyle.Italic)
+    private val MATH_UPRIGHT_STYLE = SpanStyle(fontStyle = FontStyle.Normal)
+    private val MATH_BOLD_STYLE = SpanStyle(fontWeight = FontWeight.Bold)
+    private val MATH_UNDERLINE_STYLE = SpanStyle(textDecoration = TextDecoration.Underline)
+
+    private class MathStyleSheet(private val palette: ParchmentPalette) {
+        private var _codeUpright: SpanStyle? = null
+        private var _cancel: SpanStyle? = null
+
+        fun codeUpright(): SpanStyle = _codeUpright ?: SpanStyle(
+            fontFamily = palette.codeFontFamily,
+            fontStyle = FontStyle.Normal
+        ).also { _codeUpright = it }
+
+        fun cancel(): SpanStyle = _cancel ?: SpanStyle(
+            textDecoration = TextDecoration.LineThrough,
+            color = palette.mutedInk
+        ).also { _cancel = it }
+    }
+
     /**
      * Converts inline LaTeX math into a rich AnnotatedString using the bundled KaTeX / NotoSansMath font,
      * italic mathematical variables, upright numbers/operators, and real superscript/subscript spans.
      */
     fun formatInlineLatexToAnnotatedString(
         latex: String,
-        palette: ParchmentPalette
+        palette: ParchmentPalette,
+        start: Int = 0,
+        end: Int = latex.length
     ): AnnotatedString = buildAnnotatedString {
-        val baseMathSpan = SpanStyle(
-            fontFamily = palette.mathFontFamily,
-            color = palette.primaryInk
+        var ts = start
+        var te = end
+        while (ts < te && latex[ts].isWhitespace()) ts++
+        while (te > ts && latex[te - 1].isWhitespace()) te--
+        pushStyle(
+            SpanStyle(
+                fontFamily = palette.mathFontFamily,
+                color = palette.primaryInk
+            )
         )
-        pushStyle(baseMathSpan)
-        if (latexWithinLimits(latex)) {
-            appendLatexSegment(this, latex.trim(), palette, scaleFactor = 1.0f)
-        } else {
-            append(latex.trim())
+        if (latexWithinLimits(latex, ts, te)) {
+            appendLatexSegment(
+                builder = this,
+                src = latex,
+                start = ts,
+                end = te,
+                palette = palette,
+                styles = MathStyleSheet(palette),
+                scaleFactor = 1.0f
+            )
+        } else if (te > ts) {
+            append(latex, ts, te)
         }
         pop()
     }
 
     /** Every recursive step opens a brace, so counting braces bounds both depth and repeated scans. */
-    private fun latexWithinLimits(latex: String): Boolean {
-        if (latex.length > MAX_LATEX_CHARS) return false
+    private fun latexWithinLimits(latex: String, start: Int, end: Int): Boolean {
+        if (end - start > MAX_LATEX_CHARS) return false
         var open = 0
-        for (ch in latex) {
+        for (idx in start until end) {
+            val ch = latex[idx]
             if (ch == '{') {
                 if (++open > MAX_LATEX_NESTING) return false
             } else if (ch == '}' && open > 0) {
@@ -464,22 +515,38 @@ object LatexMathRenderer {
     private const val MAX_LATEX_CHARS = 10_000
     private const val MAX_LATEX_NESTING = 32
 
+    private fun appendMappedMathChars(
+        builder: AnnotatedString.Builder,
+        src: String,
+        start: Int,
+        end: Int,
+        map: Map<Char, String>
+    ) {
+        for (k in start until end) {
+            val c = src[k]
+            val mapped = map[c]
+            if (mapped != null) builder.append(mapped) else builder.append(c)
+        }
+    }
+
     private fun appendLatexSegment(
         builder: AnnotatedString.Builder,
         src: String,
+        start: Int,
+        end: Int,
         palette: ParchmentPalette,
+        styles: MathStyleSheet,
         scaleFactor: Float,
         forceUprightLetters: Boolean = false
     ) {
-        var i = 0
-        val n = src.length
+        var i = start
         val baseSizeSp = palette.config.proseFontSizeSp * scaleFactor
 
-        while (i < n) {
+        while (i < end) {
             val ch = src[i]
             when {
                 ch == '\\' -> {
-                    if (i + 1 < n && !src[i + 1].isLetter()) {
+                    if (i + 1 < end && !src[i + 1].isLetter()) {
                         val symChar = src[i + 1].toString()
                         val mapped = LATEX_SYMBOLS[symChar] ?: symChar
                         builder.append(mapped)
@@ -487,210 +554,206 @@ object LatexMathRenderer {
                         continue
                     }
                     var endCmd = i + 1
-                    while (endCmd < n && src[endCmd].isLetter()) endCmd++
+                    while (endCmd < end && src[endCmd].isLetter()) endCmd++
                     val cmd = src.substring(i + 1, endCmd)
 
                     when (cmd) {
                         "frac", "dfrac", "tfrac" -> {
-                            val g1 = extractBracedGroup(src, endCmd)
-                            val g2 = if (g1 != null) extractBracedGroup(src, g1.second) else null
-                            if (g1 != null && g2 != null) {
+                            val g1 = extractBracedGroupRange(src, endCmd, end)
+                            val g2 = if (g1 != -1L) extractBracedGroupRange(src, afterBracedGroup(src, g1, end), end) else -1L
+                            if (g1 != -1L && g2 != -1L) {
                                 builder.append("(")
-                                appendLatexSegment(builder, g1.first, palette, scaleFactor * 0.92f)
+                                appendLatexSegment(builder, src, bracedGroupStart(g1), bracedGroupEnd(g1), palette, styles, scaleFactor * 0.92f)
                                 builder.append(" ⁄ ")
-                                appendLatexSegment(builder, g2.first, palette, scaleFactor * 0.92f)
+                                appendLatexSegment(builder, src, bracedGroupStart(g2), bracedGroupEnd(g2), palette, styles, scaleFactor * 0.92f)
                                 builder.append(")")
-                                i = g2.second
+                                i = afterBracedGroup(src, g2, end)
                             } else {
                                 i = endCmd
                             }
                         }
                         "binom", "dbinom", "tbinom" -> {
-                            val g1 = extractBracedGroup(src, endCmd)
-                            val g2 = if (g1 != null) extractBracedGroup(src, g1.second) else null
-                            if (g1 != null && g2 != null) {
+                            val g1 = extractBracedGroupRange(src, endCmd, end)
+                            val g2 = if (g1 != -1L) extractBracedGroupRange(src, afterBracedGroup(src, g1, end), end) else -1L
+                            if (g1 != -1L && g2 != -1L) {
                                 builder.append("(")
-                                appendLatexSegment(builder, g1.first, palette, scaleFactor * 0.92f)
+                                appendLatexSegment(builder, src, bracedGroupStart(g1), bracedGroupEnd(g1), palette, styles, scaleFactor * 0.92f)
                                 builder.append(" choose ")
-                                appendLatexSegment(builder, g2.first, palette, scaleFactor * 0.92f)
+                                appendLatexSegment(builder, src, bracedGroupStart(g2), bracedGroupEnd(g2), palette, styles, scaleFactor * 0.92f)
                                 builder.append(")")
-                                i = g2.second
+                                i = afterBracedGroup(src, g2, end)
                             } else {
                                 i = endCmd
                             }
                         }
                         "boxed" -> {
-                            val g = extractBracedGroup(src, endCmd)
-                            if (g != null) {
+                            val g = extractBracedGroupRange(src, endCmd, end)
+                            if (g != -1L) {
                                 builder.append("[")
-                                appendLatexSegment(builder, g.first, palette, scaleFactor)
+                                appendLatexSegment(builder, src, bracedGroupStart(g), bracedGroupEnd(g), palette, styles, scaleFactor)
                                 builder.append("]")
-                                i = g.second
+                                i = afterBracedGroup(src, g, end)
                             } else i = endCmd
                         }
                         "pmod" -> {
-                            val g = extractBracedGroup(src, endCmd)
-                            if (g != null) {
+                            val g = extractBracedGroupRange(src, endCmd, end)
+                            if (g != -1L) {
                                 builder.append(" (mod ")
-                                appendLatexSegment(builder, g.first, palette, scaleFactor)
+                                appendLatexSegment(builder, src, bracedGroupStart(g), bracedGroupEnd(g), palette, styles, scaleFactor)
                                 builder.append(")")
-                                i = g.second
+                                i = afterBracedGroup(src, g, end)
                             } else i = endCmd
                         }
                         "sqrt" -> {
                             var cursor = endCmd
-                            if (cursor < n && src[cursor] == '[') {
+                            if (cursor < end && src[cursor] == '[') {
                                 val closeBracket = src.indexOf(']', cursor + 1)
-                                if (closeBracket != -1) {
-                                    val rootDeg = src.substring(cursor + 1, closeBracket)
+                                if (closeBracket != -1 && closeBracket < end) {
                                     builder.pushStyle(
                                         SpanStyle(
                                             baselineShift = BaselineShift.Superscript,
                                             fontSize = (baseSizeSp * 0.65f).sp
                                         )
                                     )
-                                    appendLatexSegment(builder, rootDeg, palette, scaleFactor * 0.65f)
+                                    appendLatexSegment(builder, src, cursor + 1, closeBracket, palette, styles, scaleFactor * 0.65f)
                                     builder.pop()
                                     cursor = closeBracket + 1
                                 }
                             }
-                            val radGroup = extractBracedGroup(src, cursor)
+                            val radGroup = extractBracedGroupRange(src, cursor, end)
                             builder.append("√")
-                            if (radGroup != null) {
+                            if (radGroup != -1L) {
                                 builder.append("(")
-                                appendLatexSegment(builder, radGroup.first, palette, scaleFactor)
+                                appendLatexSegment(builder, src, bracedGroupStart(radGroup), bracedGroupEnd(radGroup), palette, styles, scaleFactor)
                                 builder.append(")")
-                                i = radGroup.second
+                                i = afterBracedGroup(src, radGroup, end)
                             } else {
                                 i = cursor
                             }
                         }
                         "mathbb", "Bbb" -> {
-                            val g = extractBracedGroup(src, endCmd)
-                            if (g != null) {
-                                val mapped = g.first.map { c -> BLACKBOARD_BOLD[c] ?: c.toString() }.joinToString("")
-                                builder.append(mapped)
-                                i = g.second
+                            val g = extractBracedGroupRange(src, endCmd, end)
+                            if (g != -1L) {
+                                appendMappedMathChars(builder, src, bracedGroupStart(g), bracedGroupEnd(g), BLACKBOARD_BOLD)
+                                i = afterBracedGroup(src, g, end)
                             } else i = endCmd
                         }
                         "mathcal", "mathscr", "cal" -> {
-                            val g = extractBracedGroup(src, endCmd)
-                            if (g != null) {
-                                val mapped = g.first.map { c -> CALLIGRAPHIC_SCRIPT[c] ?: c.toString() }.joinToString("")
-                                builder.append(mapped)
-                                i = g.second
+                            val g = extractBracedGroupRange(src, endCmd, end)
+                            if (g != -1L) {
+                                appendMappedMathChars(builder, src, bracedGroupStart(g), bracedGroupEnd(g), CALLIGRAPHIC_SCRIPT)
+                                i = afterBracedGroup(src, g, end)
                             } else i = endCmd
                         }
                         "mathfrak", "frak" -> {
-                            val g = extractBracedGroup(src, endCmd)
-                            if (g != null) {
-                                val mapped = g.first.map { c -> FRAKTUR_MAP[c] ?: c.toString() }.joinToString("")
-                                builder.append(mapped)
-                                i = g.second
+                            val g = extractBracedGroupRange(src, endCmd, end)
+                            if (g != -1L) {
+                                appendMappedMathChars(builder, src, bracedGroupStart(g), bracedGroupEnd(g), FRAKTUR_MAP)
+                                i = afterBracedGroup(src, g, end)
                             } else i = endCmd
                         }
                         "mathbf", "boldsymbol", "bm", "textbf" -> {
-                            val g = extractBracedGroup(src, endCmd)
-                            if (g != null) {
-                                builder.pushStyle(SpanStyle(fontWeight = FontWeight.Bold))
-                                appendLatexSegment(builder, g.first, palette, scaleFactor)
+                            val g = extractBracedGroupRange(src, endCmd, end)
+                            if (g != -1L) {
+                                builder.pushStyle(MATH_BOLD_STYLE)
+                                appendLatexSegment(builder, src, bracedGroupStart(g), bracedGroupEnd(g), palette, styles, scaleFactor)
                                 builder.pop()
-                                i = g.second
+                                i = afterBracedGroup(src, g, end)
                             } else i = endCmd
                         }
                         "mathrm", "text", "textrm", "textnormal", "operatorname", "mathsf", "textsf" -> {
-                            val g = extractBracedGroup(src, endCmd)
-                            if (g != null) {
-                                builder.pushStyle(SpanStyle(fontStyle = FontStyle.Normal))
-                                appendLatexSegment(builder, g.first, palette, scaleFactor, forceUprightLetters = true)
+                            val g = extractBracedGroupRange(src, endCmd, end)
+                            if (g != -1L) {
+                                builder.pushStyle(MATH_UPRIGHT_STYLE)
+                                appendLatexSegment(builder, src, bracedGroupStart(g), bracedGroupEnd(g), palette, styles, scaleFactor, forceUprightLetters = true)
                                 builder.pop()
-                                i = g.second
+                                i = afterBracedGroup(src, g, end)
                             } else i = endCmd
                         }
                         "mathtt", "texttt" -> {
-                            val g = extractBracedGroup(src, endCmd)
-                            if (g != null) {
-                                builder.pushStyle(SpanStyle(fontFamily = palette.codeFontFamily, fontStyle = FontStyle.Normal))
-                                appendLatexSegment(builder, g.first, palette, scaleFactor * 0.92f, forceUprightLetters = true)
+                            val g = extractBracedGroupRange(src, endCmd, end)
+                            if (g != -1L) {
+                                builder.pushStyle(styles.codeUpright())
+                                appendLatexSegment(builder, src, bracedGroupStart(g), bracedGroupEnd(g), palette, styles, scaleFactor * 0.92f, forceUprightLetters = true)
                                 builder.pop()
-                                i = g.second
+                                i = afterBracedGroup(src, g, end)
                             } else i = endCmd
                         }
                         "mathit", "textit", "emph" -> {
-                            val g = extractBracedGroup(src, endCmd)
-                            if (g != null) {
-                                builder.pushStyle(SpanStyle(fontStyle = FontStyle.Italic))
-                                appendLatexSegment(builder, g.first, palette, scaleFactor)
+                            val g = extractBracedGroupRange(src, endCmd, end)
+                            if (g != -1L) {
+                                builder.pushStyle(MATH_ITALIC_STYLE)
+                                appendLatexSegment(builder, src, bracedGroupStart(g), bracedGroupEnd(g), palette, styles, scaleFactor)
                                 builder.pop()
-                                i = g.second
+                                i = afterBracedGroup(src, g, end)
                             } else i = endCmd
                         }
                         "underline" -> {
-                            val g = extractBracedGroup(src, endCmd)
-                            if (g != null) {
-                                builder.pushStyle(SpanStyle(textDecoration = TextDecoration.Underline))
-                                appendLatexSegment(builder, g.first, palette, scaleFactor)
+                            val g = extractBracedGroupRange(src, endCmd, end)
+                            if (g != -1L) {
+                                builder.pushStyle(MATH_UNDERLINE_STYLE)
+                                appendLatexSegment(builder, src, bracedGroupStart(g), bracedGroupEnd(g), palette, styles, scaleFactor)
                                 builder.pop()
-                                i = g.second
+                                i = afterBracedGroup(src, g, end)
                             } else i = endCmd
                         }
                         "cancel", "bcancel", "xcancel", "sout" -> {
-                            val g = extractBracedGroup(src, endCmd)
-                            if (g != null) {
-                                builder.pushStyle(SpanStyle(textDecoration = TextDecoration.LineThrough, color = palette.mutedInk))
-                                appendLatexSegment(builder, g.first, palette, scaleFactor)
+                            val g = extractBracedGroupRange(src, endCmd, end)
+                            if (g != -1L) {
+                                builder.pushStyle(styles.cancel())
+                                appendLatexSegment(builder, src, bracedGroupStart(g), bracedGroupEnd(g), palette, styles, scaleFactor)
                                 builder.pop()
-                                i = g.second
+                                i = afterBracedGroup(src, g, end)
                             } else i = endCmd
                         }
                         "xrightarrow", "xleftarrow" -> {
                             val arrowSym = if (cmd == "xrightarrow") "→" else "←"
-                            val g = extractBracedGroup(src, endCmd)
-                            if (g != null) {
+                            val g = extractBracedGroupRange(src, endCmd, end)
+                            if (g != -1L) {
                                 builder.append(" $arrowSym(")
-                                appendLatexSegment(builder, g.first, palette, scaleFactor * 0.85f)
+                                appendLatexSegment(builder, src, bracedGroupStart(g), bracedGroupEnd(g), palette, styles, scaleFactor * 0.85f)
                                 builder.append(") ")
-                                i = g.second
+                                i = afterBracedGroup(src, g, end)
                             } else {
                                 builder.append(arrowSym)
                                 i = endCmd
                             }
                         }
                         "overset", "stackrel", "uderset", "underset" -> {
-                            val g1 = extractBracedGroup(src, endCmd)
-                            val g2 = if (g1 != null) extractBracedGroup(src, g1.second) else null
-                            if (g1 != null && g2 != null) {
-                                appendLatexSegment(builder, g2.first, palette, scaleFactor)
+                            val g1 = extractBracedGroupRange(src, endCmd, end)
+                            val g2 = if (g1 != -1L) extractBracedGroupRange(src, afterBracedGroup(src, g1, end), end) else -1L
+                            if (g1 != -1L && g2 != -1L) {
+                                appendLatexSegment(builder, src, bracedGroupStart(g2), bracedGroupEnd(g2), palette, styles, scaleFactor)
                                 builder.pushStyle(
                                     SpanStyle(
                                         baselineShift = if (cmd.startsWith("u")) BaselineShift.Subscript else BaselineShift.Superscript,
                                         fontSize = (baseSizeSp * 0.70f).sp
                                     )
                                 )
-                                appendLatexSegment(builder, g1.first, palette, scaleFactor * 0.70f)
+                                appendLatexSegment(builder, src, bracedGroupStart(g1), bracedGroupEnd(g1), palette, styles, scaleFactor * 0.70f)
                                 builder.pop()
-                                i = g2.second
+                                i = afterBracedGroup(src, g2, end)
                             } else i = endCmd
                         }
                         "overbrace", "underbrace" -> {
-                            val g = extractBracedGroup(src, endCmd)
-                            if (g != null) {
-                                appendLatexSegment(builder, g.first, palette, scaleFactor)
-                                i = g.second
+                            val g = extractBracedGroupRange(src, endCmd, end)
+                            if (g != -1L) {
+                                appendLatexSegment(builder, src, bracedGroupStart(g), bracedGroupEnd(g), palette, styles, scaleFactor)
+                                i = afterBracedGroup(src, g, end)
                             } else i = endCmd
                         }
                         "color", "textcolor" -> {
-                            val g1 = extractBracedGroup(src, endCmd)
-                            val g2 = if (cmd == "textcolor" && g1 != null) extractBracedGroup(src, g1.second) else null
-                            if (g2 != null) {
-                                appendLatexSegment(builder, g2.first, palette, scaleFactor)
-                                i = g2.second
-                            } else if (g1 != null) {
-                                i = g1.second
+                            val g1 = extractBracedGroupRange(src, endCmd, end)
+                            val g2 = if (cmd == "textcolor" && g1 != -1L) extractBracedGroupRange(src, afterBracedGroup(src, g1, end), end) else -1L
+                            if (g2 != -1L) {
+                                appendLatexSegment(builder, src, bracedGroupStart(g2), bracedGroupEnd(g2), palette, styles, scaleFactor)
+                                i = afterBracedGroup(src, g2, end)
+                            } else if (g1 != -1L) {
+                                i = afterBracedGroup(src, g1, end)
                             } else i = endCmd
                         }
                         "hat", "widehat", "bar", "vec", "overrightarrow", "dot", "ddot", "tilde", "widetilde", "overline" -> {
-                            val g = extractBracedGroup(src, endCmd)
+                            val g = extractBracedGroupRange(src, endCmd, end)
                             val combining = when (cmd) {
                                 "hat", "widehat" -> "\u0302"
                                 "bar", "overline" -> "\u0304"
@@ -700,21 +763,21 @@ object LatexMathRenderer {
                                 "tilde", "widetilde" -> "\u0303"
                                 else -> ""
                             }
-                            if (g != null) {
-                                appendLatexSegment(builder, g.first, palette, scaleFactor)
+                            if (g != -1L) {
+                                appendLatexSegment(builder, src, bracedGroupStart(g), bracedGroupEnd(g), palette, styles, scaleFactor)
                                 builder.append(combining)
-                                i = g.second
+                                i = afterBracedGroup(src, g, end)
                             } else i = endCmd
                         }
                         "left", "right", "big", "Big", "bigg", "Bigg", "bigl", "bigr", "Bigl", "Bigr",
                         "displaystyle", "textstyle", "scriptstyle", "limits", "nolimits", "noindent", "hspace", "vspace" -> {
-                            val g = if (cmd == "hspace" || cmd == "vspace") extractBracedGroup(src, endCmd) else null
-                            i = g?.second ?: endCmd
+                            val g = if (cmd == "hspace" || cmd == "vspace") extractBracedGroupRange(src, endCmd, end) else -1L
+                            i = if (g != -1L) afterBracedGroup(src, g, end) else endCmd
                         }
                         "sin", "cos", "tan", "cot", "sec", "csc", "arcsin", "arccos", "arctan",
                         "sinh", "cosh", "tanh", "log", "ln", "exp", "lim", "sup", "inf",
                         "min", "max", "det", "dim", "ker", "deg", "gcd", "Pr", "arg" -> {
-                            builder.pushStyle(SpanStyle(fontStyle = FontStyle.Normal))
+                            builder.pushStyle(MATH_UPRIGHT_STYLE)
                             builder.append(cmd)
                             builder.pop()
                             i = endCmd
@@ -735,25 +798,24 @@ object LatexMathRenderer {
                     val isSuper = (ch == '^')
                     val shift = if (isSuper) BaselineShift.Superscript else BaselineShift.Subscript
                     val subScale = (scaleFactor * 0.72f).coerceAtLeast(0.55f)
-                    val group = extractBracedGroup(src, i + 1)
+                    val group = extractBracedGroupRange(src, i + 1, end)
                     builder.pushStyle(
                         SpanStyle(
                             baselineShift = shift,
                             fontSize = (palette.config.proseFontSizeSp * subScale).sp
                         )
                     )
-                    if (group != null) {
-                        appendLatexSegment(builder, group.first, palette, subScale)
-                        i = group.second
-                    } else if (i + 1 < n) {
+                    if (group != -1L) {
+                        appendLatexSegment(builder, src, bracedGroupStart(group), bracedGroupEnd(group), palette, styles, subScale)
+                        i = afterBracedGroup(src, group, end)
+                    } else if (i + 1 < end) {
                         if (src[i + 1] == '\\') {
                             var endCmd = i + 2
-                            while (endCmd < n && src[endCmd].isLetter()) endCmd++
-                            val subCmd = src.substring(i + 1, endCmd)
-                            appendLatexSegment(builder, subCmd, palette, subScale)
+                            while (endCmd < end && src[endCmd].isLetter()) endCmd++
+                            appendLatexSegment(builder, src, i + 1, endCmd, palette, styles, subScale)
                             i = endCmd
                         } else {
-                            appendLatexSegment(builder, src[i + 1].toString(), palette, subScale)
+                            appendLatexSegment(builder, src, i + 1, i + 2, palette, styles, subScale)
                             i += 2
                         }
                     } else {
@@ -767,15 +829,17 @@ object LatexMathRenderer {
                 }
 
                 ch.isLetter() -> {
+                    var endLetters = i + 1
+                    while (endLetters < end && src[endLetters].isLetter()) endLetters++
                     if (forceUprightLetters) {
-                        builder.append(ch)
+                        builder.append(src, i, endLetters)
                     } else {
-                        // Single mathematical variables in TeX are italicized by convention
-                        builder.pushStyle(SpanStyle(fontStyle = FontStyle.Italic))
-                        builder.append(ch)
+                        // Coalesce consecutive variable letters into a single italic span.
+                        builder.pushStyle(MATH_ITALIC_STYLE)
+                        builder.append(src, i, endLetters)
                         builder.pop()
                     }
-                    i++
+                    i = endLetters
                 }
 
                 ch == '-' -> {
@@ -784,36 +848,49 @@ object LatexMathRenderer {
                 }
 
                 else -> {
-                    builder.append(ch)
-                    i++
+                    var endPlain = i + 1
+                    while (endPlain < end) {
+                        val c = src[endPlain]
+                        if (c == '\\' || c == '^' || c == '_' || c == '{' || c == '}' || c == '-' || c.isLetter()) break
+                        endPlain++
+                    }
+                    builder.append(src, i, endPlain)
+                    i = endPlain
                 }
             }
         }
     }
 
+    private fun bracedGroupStart(packed: Long): Int = (packed ushr 32).toInt()
+    private fun bracedGroupEnd(packed: Long): Int = packed.toInt()
+    private fun afterBracedGroup(s: String, packed: Long, limit: Int): Int {
+        val groupEnd = bracedGroupEnd(packed)
+        return if (groupEnd < limit && s[groupEnd] == '}') groupEnd + 1 else groupEnd
+    }
+
     /**
      * Extracts `{ ... }` starting at `startIndex` (skipping leading whitespace), returning
-     * `(innerContent, indexAfterClosingBrace)`.
+     * packed `(innerStart, innerEnd)` offsets or `-1L`.
      */
-    private fun extractBracedGroup(s: String, startIndex: Int): Pair<String, Int>? {
+    private fun extractBracedGroupRange(s: String, startIndex: Int, limit: Int): Long {
         var idx = startIndex
-        while (idx < s.length && s[idx].isWhitespace()) idx++
-        if (idx >= s.length || s[idx] != '{') return null
+        while (idx < limit && s[idx].isWhitespace()) idx++
+        if (idx >= limit || s[idx] != '{') return -1L
         var depth = 0
         val startInner = idx + 1
         var cursor = idx
-        while (cursor < s.length) {
+        while (cursor < limit) {
             when (s[cursor]) {
                 '{' -> depth++
                 '}' -> {
                     depth--
                     if (depth == 0) {
-                        return s.substring(startInner, cursor) to (cursor + 1)
+                        return (startInner.toLong() shl 32) or (cursor.toLong() and 0xFFFFFFFFL)
                     }
                 }
             }
             cursor++
         }
-        return s.substring(startInner) to s.length
+        return (startInner.toLong() shl 32) or (limit.toLong() and 0xFFFFFFFFL)
     }
 }

@@ -8,6 +8,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
@@ -16,20 +17,24 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicText
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -44,6 +49,7 @@ import io.parchment.ai.platform.PlatformPickers
 import io.parchment.ai.platform.PlatformRuntime
 import io.parchment.ai.platform.PlatformStorage
 import io.parchment.ai.protocol.CardAndPromptCodec
+import kotlinx.coroutines.IO
 import kotlinx.coroutines.launch
 
 // ============================================================================================
@@ -71,8 +77,14 @@ internal fun BackupAndOtaSubpage(
     var storageCategoryFilter by remember { mutableStateOf<io.parchment.ai.model.StorageFileCategory?>(null) }
     var storageSearchQuery by remember { mutableStateOf("") }
 
-    val allStoredFiles = remember(storageRefreshTick, appState.sessions.size) {
-        PlatformStorage.listAppStorageFiles()
+    var allStoredFiles by remember { mutableStateOf<List<io.parchment.ai.model.StoredAppFileItem>>(emptyList()) }
+    var isScanningStorage by remember { mutableStateOf(true) }
+    LaunchedEffect(storageRefreshTick, appState.sessions.size) {
+        isScanningStorage = true
+        allStoredFiles = withContext(Dispatchers.IO) {
+            PlatformStorage.listAppStorageFiles()
+        }
+        isScanningStorage = false
     }
     val sessionsByFileStem = remember(appState.sessions) {
         appState.sessions.associateBy { sess ->
@@ -218,8 +230,8 @@ internal fun BackupAndOtaSubpage(
                         if (catBytes > 0L) {
                             val col = when (cat) {
                                 io.parchment.ai.model.StorageFileCategory.CHAT_SESSION -> p.accent
-                                io.parchment.ai.model.StorageFileCategory.UPLOADED_MEDIA -> Color(0xFF3D6B8E)
-                                io.parchment.ai.model.StorageFileCategory.GENERATED_MEDIA -> Color(0xFF4A7C59)
+                                io.parchment.ai.model.StorageFileCategory.UPLOADED_MEDIA -> CategoryColor.slate
+                                io.parchment.ai.model.StorageFileCategory.GENERATED_MEDIA -> CategoryColor.sage
                                 io.parchment.ai.model.StorageFileCategory.SETTINGS_AND_BACKUPS -> p.accentSecondary
                                 io.parchment.ai.model.StorageFileCategory.OTA_AND_TEMP -> p.mutedInk
                             }
@@ -316,25 +328,26 @@ internal fun BackupAndOtaSubpage(
                 }
 
                 // Scrollable File List
-                Column(
+                LazyColumn(
                     modifier = Modifier
                         .fillMaxWidth()
                         .heightIn(max = 320.dp)
                         .clip(RoundedCornerShape(Radius.r8))
                         .background(p.sheetBg.copy(alpha = 0.55f))
-                        .border(LineWidth.hairline, p.border.copy(alpha = 0.7f), RoundedCornerShape(Radius.r8))
-                        .verticalScroll(rememberScrollState())
-                        .padding(Space.s8),
+                        .border(LineWidth.hairline, p.border.copy(alpha = 0.7f), RoundedCornerShape(Radius.r8)),
+                    contentPadding = PaddingValues(Space.s8),
                     verticalArrangement = Arrangement.spacedBy(Space.s6)
                 ) {
                     if (filteredStorageFiles.isEmpty()) {
-                        BasicText(
-                            text = Strings.noMatchingFilesInStorage,
-                            style = p.uiLabelStyle.copy(color = p.mutedInk),
-                            modifier = Modifier.padding(Space.s8)
-                        )
+                        item(key = "empty") {
+                            BasicText(
+                                text = if (isScanningStorage && allStoredFiles.isEmpty()) Strings.loading else Strings.noMatchingFilesInStorage,
+                                style = p.uiLabelStyle.copy(color = p.mutedInk),
+                                modifier = Modifier.padding(Space.s8)
+                            )
+                        }
                     }
-                    filteredStorageFiles.forEach { item ->
+                    items(filteredStorageFiles, key = { it.fullPath }) { item ->
                         val matchedSession = resolveSessionForStoredFile(item)
                         val isOrphan = remember(item.fullPath, referencedMediaPaths) { isOrphanOrTempFile(item) }
                         val itemIcon = when (item.category) {
@@ -346,7 +359,7 @@ internal fun BackupAndOtaSubpage(
                         }
                         val displayTitle = when {
                             item.category == io.parchment.ai.model.StorageFileCategory.CHAT_SESSION && matchedSession != null ->
-                                "${matchedSession.title} (${matchedSession.messages.size} msgs)"
+                                "${matchedSession.title} (${Strings.messagesCount(matchedSession.displayMessageCount)})"
                             matchedSession != null ->
                                 "${item.fileName} • ${matchedSession.title}"
                             else -> item.fileName
@@ -357,9 +370,8 @@ internal fun BackupAndOtaSubpage(
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .clip(RoundedCornerShape(Radius.r8))
-                                .background(p.cardBg)
-                                .border(LineWidth.hairline, p.border.copy(alpha = 0.65f), RoundedCornerShape(Radius.r8))
-                                .padding(horizontal = Space.s10, vertical = 7.dp),
+                                .background(p.cardBg.copy(alpha = 0.85f))
+                                .padding(horizontal = Space.s10, vertical = Space.s8),
                             horizontalArrangement = Arrangement.SpaceBetween,
                             verticalAlignment = Alignment.CenterVertically
                         ) {
@@ -507,23 +519,9 @@ internal fun BackupAndOtaSubpage(
                         val totalMb = (otaState.totalBytes / (1024.0 * 1024.0) * 10).toInt() / 10.0
                         BasicText(
                             text = Strings.downloadingMbMb(otaState.release.assetName, downMb, totalMb, otaState.progressPercent),
-                            style = p.uiBodyStyle.copy(color = p.accent, fontWeight = FontWeight.SemiBold)
+                            style = p.uiBodyStyle.copy(color = p.accent, fontWeight = FontWeight.SemiBold, fontFeatureSettings = "tnum")
                         )
-                        Box(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .height(6.dp)
-                                .clip(RoundedCornerShape(Radius.pill))
-                                .background(p.border.copy(alpha = 0.45f))
-                        ) {
-                            Box(
-                                modifier = Modifier
-                                    .fillMaxWidth((otaState.progressPercent / 100f).coerceIn(0.02f, 1f))
-                                    .height(6.dp)
-                                    .clip(RoundedCornerShape(Radius.pill))
-                                    .background(p.accent)
-                            )
-                        }
+                        SepiaProgressBar(fraction = otaState.progressPercent / 100f)
                     }
                     is OtaUpdateState.Installing -> {
                         BasicText(text = otaState.message, style = p.uiBodyStyle.copy(color = p.accentSecondary))
@@ -550,7 +548,9 @@ internal fun BackupAndOtaSubpage(
                         onClick = {
                             scope.launch {
                                 val saved = runCatching {
-                                    exportChatSessionsBundle("parchment-chats-backup.zip", appState.sessions)
+                                    withContext(Dispatchers.IO) {
+                                        exportChatSessionsBundle("parchment-chats-backup.zip", appState.sessions)
+                                    }
                                 }.getOrElse { error ->
                                     onNotify(Strings.chatExportFailed(error.message))
                                     return@launch
@@ -567,7 +567,11 @@ internal fun BackupAndOtaSubpage(
                         onClick = {
                             scope.launch {
                                 val zipName = buildExportZipFileNameForChat(activeSession)
-                                val saved = runCatching { exportChatSessionsBundle(zipName, listOf(activeSession)) }.getOrElse { error ->
+                                val saved = runCatching {
+                                    withContext(Dispatchers.IO) {
+                                        exportChatSessionsBundle(zipName, listOf(activeSession))
+                                    }
+                                }.getOrElse { error ->
                                     onNotify(Strings.chatExportFailed(error.message))
                                     return@launch
                                 }
@@ -633,7 +637,9 @@ internal fun BackupAndOtaSubpage(
                         onClick = {
                             scope.launch {
                                 val settingsOnly = appState.copy(sessions = emptyList())
-                                val bytes = CardAndPromptCodec.prettyJson.encodeToString(AppStateSnapshot.serializer(), settingsOnly).encodeToByteArray()
+                                val bytes = withContext(Dispatchers.Default) {
+                                    CardAndPromptCodec.prettyJson.encodeToString(AppStateSnapshot.serializer(), settingsOnly).encodeToByteArray()
+                                }
                                 val saved = PlatformPickers.saveFileForExport("parchment-settings.json", bytes)
                                 if (saved != null) onNotify(Strings.exportedSettingsAssistantsTo(saved))
                             }
@@ -650,7 +656,9 @@ internal fun BackupAndOtaSubpage(
                                     return@launch
                                 }
                                 runCatching {
-                                    CardAndPromptCodec.prettyJson.decodeFromString<AppStateSnapshot>(picked.bytes.decodeToString())
+                                    withContext(Dispatchers.Default) {
+                                        CardAndPromptCodec.prettyJson.decodeFromString<AppStateSnapshot>(picked.bytes.decodeToString())
+                                    }
                                 }.fold(
                                     onSuccess = { restored -> onRestoreFullBackup(restored) },
                                     onFailure = { err -> onNotify(Strings.settingsImportFailed(err.message)) }

@@ -160,8 +160,6 @@ internal fun PreferencesSubpage(
                 Column(verticalArrangement = Arrangement.spacedBy(Space.s10)) {
                     ThemePresetChoices(theme, onUpdateTheme)
 
-                    SepiaDivider()
-
                     SepiaToggleRow(
                         title = Strings.reduceMotion,
                         checked = prefs.reduceMotion,
@@ -182,7 +180,11 @@ internal fun PreferencesSubpage(
                         }
                     }
 
-                    AnimatedVisibility(visible = showCustomColorHexDrawer) {
+                    AnimatedVisibility(
+                        visible = showCustomColorHexDrawer,
+                        enter = motionExpandEnter(),
+                        exit = motionShrinkExit()
+                    ) {
                         Column(verticalArrangement = Arrangement.spacedBy(Space.s8)) {
                             if (win.isCompact) {
                                 Row(horizontalArrangement = Arrangement.spacedBy(Space.s8)) {
@@ -252,14 +254,24 @@ internal fun PreferencesSubpage(
                         }
                     }
 
-                    SepiaDivider()
-
                     FontChoiceRows(theme, onUpdateTheme, onNotify)
 
                     // Text sizes: values aren't clamped while typing, and fields stack on phones so labels never truncate.
-                    var proseSizeText by remember(theme.proseFontSizeSp) { mutableStateOf(theme.proseFontSizeSp.toString()) }
-                    var codeSizeText by remember(theme.codeFontSizeSp) { mutableStateOf(theme.codeFontSizeSp.toString()) }
-                    var maxWidthText by remember(theme.maxReadingWidthDp) { mutableStateOf(theme.maxReadingWidthDp.toInt().toString()) }
+                    var proseSizeText by rememberSyncedNumericDraft(
+                        externalValue = theme.proseFontSizeSp,
+                        format = { it.toString() },
+                        parse = { it.trim().toFloatOrNull() }
+                    )
+                    var codeSizeText by rememberSyncedNumericDraft(
+                        externalValue = theme.codeFontSizeSp,
+                        format = { it.toString() },
+                        parse = { it.trim().toFloatOrNull() }
+                    )
+                    var maxWidthText by rememberSyncedNumericDraft(
+                        externalValue = theme.maxReadingWidthDp,
+                        format = { it.toInt().toString() },
+                        parse = { it.trim().toFloatOrNull() }
+                    )
 
                     Column(verticalArrangement = Arrangement.spacedBy(Space.s10)) {
                         SepiaTextField(
@@ -300,7 +312,7 @@ internal fun PreferencesSubpage(
         // 2. Chat Item Display (Matching Screenshots 4 & 5)
         if (matchesSearch("chat item display", "layout", "bubble", "page", "avatar", "timestamp", "tokens", "thinking cards", "tool cards", "model name", "provider")) {
             SepiaSectionCard(title = Strings.chatItemDisplay) {
-                Column {
+                Column(verticalArrangement = Arrangement.spacedBy(Space.s4)) {
                     SepiaAdaptiveRow(label = Strings.messageLayoutStyle) {
                         @OptIn(ExperimentalLayoutApi::class)
                         FlowRow(
@@ -325,19 +337,16 @@ internal fun PreferencesSubpage(
                             )
                         }
                     }
-                    SepiaDivider()
                     SepiaToggleRow(
                         title = Strings.showProviderInModelCapsule,
                         checked = prefs.showProviderInModelCapsule,
                         onCheckedChange = { onUpdatePreferences(prefs.copy(showProviderInModelCapsule = it)) }
                     )
-                    SepiaDivider()
                     SepiaToggleRow(
                         title = Strings.showAssistantAvatarInTitle,
                         checked = prefs.showAssistantAvatarInTitleBar,
                         onCheckedChange = { onUpdatePreferences(prefs.copy(showAssistantAvatarInTitleBar = it)) }
                     )
-                    SepiaDivider()
                     SepiaToggleRow(
                         title = Strings.showUserAvatar,
                         checked = prefs.showUserAvatar,
@@ -348,25 +357,21 @@ internal fun PreferencesSubpage(
                         checked = prefs.showUserName,
                         onCheckedChange = { onUpdatePreferences(prefs.copy(showUserName = it)) }
                     )
-                    SepiaDivider()
                     SepiaToggleRow(
                         title = Strings.showUserTimestamp,
                         checked = prefs.showUserTimestamp,
                         onCheckedChange = { onUpdatePreferences(prefs.copy(showUserTimestamp = it)) }
                     )
-                    SepiaDivider()
                     SepiaToggleRow(
                         title = Strings.showUserMessageActions,
                         checked = prefs.showUserMessageActions,
                         onCheckedChange = { onUpdatePreferences(prefs.copy(showUserMessageActions = it)) }
                     )
-                    SepiaDivider()
                     SepiaToggleRow(
                         title = Strings.showModelIconAvatar,
                         checked = prefs.showModelIcon,
                         onCheckedChange = { onUpdatePreferences(prefs.copy(showModelIcon = it)) }
                     )
-                    SepiaDivider()
                     SepiaToggleRow(
                         title = Strings.showModelName,
                         checked = prefs.showModelName,
@@ -377,37 +382,31 @@ internal fun PreferencesSubpage(
                         checked = prefs.showModelTimestamp,
                         onCheckedChange = { onUpdatePreferences(prefs.copy(showModelTimestamp = it)) }
                     )
-                    SepiaDivider()
                     SepiaToggleRow(
                         title = Strings.showProviderAfterModelName,
                         checked = prefs.showProviderAfterModelName,
                         onCheckedChange = { onUpdatePreferences(prefs.copy(showProviderAfterModelName = it)) }
                     )
-                    SepiaDivider()
                     SepiaToggleRow(
                         title = Strings.showUsageStats,
                         checked = prefs.showTokenAndContextStats,
                         onCheckedChange = { onUpdatePreferences(prefs.copy(showTokenAndContextStats = it)) }
                     )
-                    SepiaDivider()
                     SepiaToggleRow(
                         title = Strings.countUsageForTheWhole,
                         checked = prefs.showTokensForEntireTurn,
                         onCheckedChange = { onUpdatePreferences(prefs.copy(showTokensForEntireTurn = it)) }
                     )
-                    SepiaDivider()
                     SepiaToggleRow(
                         title = Strings.showThinkingCards,
                         checked = prefs.showThinkingCards,
                         onCheckedChange = { onUpdatePreferences(prefs.copy(showThinkingCards = it)) }
                     )
-                    SepiaDivider()
                     SepiaToggleRow(
                         title = Strings.showToolCards,
                         checked = prefs.showToolCards,
                         onCheckedChange = { onUpdatePreferences(prefs.copy(showToolCards = it)) }
                     )
-                    SepiaDivider()
                     SepiaToggleRow(
                         title = Strings.showThinkingLevelOnThe,
                         checked = prefs.showReasoningLevelOnButton,
@@ -420,49 +419,42 @@ internal fun PreferencesSubpage(
         // 3. Rendering Settings (Matching Screenshot 6)
         if (matchesSearch("rendering", "markdown", "math", "latex", "reasoning", "thinking", "code blocks", "dialogue")) {
             SepiaSectionCard(title = Strings.renderingSettings) {
-                Column {
+                Column(verticalArrangement = Arrangement.spacedBy(Space.s4)) {
                     SepiaToggleRow(
                         title = Strings.inlineRendering,
                         checked = prefs.inlineDollarMathRendering,
                         onCheckedChange = { onUpdatePreferences(prefs.copy(inlineDollarMathRendering = it)) }
                     )
-                    SepiaDivider()
                     SepiaToggleRow(
                         title = Strings.mathFormulaRendering,
                         checked = prefs.mathFormulaRendering,
                         onCheckedChange = { onUpdatePreferences(prefs.copy(mathFormulaRendering = it)) }
                     )
-                    SepiaDivider()
                     SepiaToggleRow(
                         title = Strings.renderUserMessagesWithMarkdown,
                         checked = prefs.renderUserMessagesWithMarkdown,
                         onCheckedChange = { onUpdatePreferences(prefs.copy(renderUserMessagesWithMarkdown = it)) }
                     )
-                    SepiaDivider()
                     SepiaToggleRow(
                         title = Strings.formatThinkingTextHeadingsMath,
                         checked = prefs.renderReasoningWithMarkdown,
                         onCheckedChange = { onUpdatePreferences(prefs.copy(renderReasoningWithMarkdown = it)) }
                     )
-                    SepiaDivider()
                     SepiaToggleRow(
                         title = Strings.renderAssistantMessagesWithMarkdown,
                         checked = prefs.renderAssistantMessagesWithMarkdown,
                         onCheckedChange = { onUpdatePreferences(prefs.copy(renderAssistantMessagesWithMarkdown = it)) }
                     )
-                    SepiaDivider()
                     SepiaToggleRow(
                         title = Strings.highlightSpokenDialogueNarrationInk,
                         checked = theme.highlightDialogueAndNarration,
                         onCheckedChange = { onUpdateTheme(theme.copy(highlightDialogueAndNarration = it)) }
                     )
-                    SepiaDivider()
                     SepiaToggleRow(
                         title = Strings.autoCollapseCodeBlocks,
                         checked = prefs.autoCollapseCodeBlocks,
                         onCheckedChange = { onUpdatePreferences(prefs.copy(autoCollapseCodeBlocks = it)) }
                     )
-                    SepiaDivider()
                     SepiaToggleRow(
                         title = Strings.collapseLongMessages1800,
                         checked = prefs.collapseLongMessages,
@@ -475,7 +467,7 @@ internal fun PreferencesSubpage(
         // 4. Behavior & Startup (Matching Screenshots 7 & 8)
         if (matchesSearch("behavior", "startup", "thinking", "regenerate", "delete", "navigation", "minimap", "shortcut", "paste", "battery", "background", "scroll")) {
             SepiaSectionCard(title = Strings.behaviorStartup) {
-                Column {
+                Column(verticalArrangement = Arrangement.spacedBy(Space.s4)) {
                     if (PlatformRuntime.isAndroid) {
                         val isUnrestricted = remember { PlatformRuntime.isIgnoringBatteryOptimizations() }
                         @OptIn(ExperimentalLayoutApi::class)
@@ -497,7 +489,6 @@ internal fun PreferencesSubpage(
                                 onClick = { PlatformRuntime.requestUnrestrictedBackgroundBattery() }
                             )
                         }
-                        SepiaDivider()
                     }
 
                     SepiaToggleRow(
@@ -505,91 +496,76 @@ internal fun PreferencesSubpage(
                         checked = prefs.autoSwitchToTopics,
                         onCheckedChange = { onUpdatePreferences(prefs.copy(autoSwitchToTopics = it)) }
                     )
-                    SepiaDivider()
                     SepiaToggleRow(
                         title = Strings.autoCollapseThinking,
                         checked = prefs.autoCollapseThinking,
                         onCheckedChange = { onUpdatePreferences(prefs.copy(autoCollapseThinking = it)) }
                     )
-                    SepiaDivider()
                     SepiaToggleRow(
                         title = Strings.showToolResultSummary,
                         checked = prefs.showToolResultSummary,
                         onCheckedChange = { onUpdatePreferences(prefs.copy(showToolResultSummary = it)) }
                     )
-                    SepiaDivider()
                     SepiaToggleRow(
                         title = Strings.deleteMessagesBelowWhenRegenerating,
                         checked = prefs.deleteMessagesBelowWhenRegenerating,
                         onCheckedChange = { onUpdatePreferences(prefs.copy(deleteMessagesBelowWhenRegenerating = it)) }
                     )
-                    SepiaDivider()
                     SepiaToggleRow(
                         title = Strings.deletePreviousMessageWhenRegenerating,
                         checked = prefs.deletePreviousMessageWhenRegenerating,
                         onCheckedChange = { onUpdatePreferences(prefs.copy(deletePreviousMessageWhenRegenerating = it)) }
                     )
-                    SepiaDivider()
                     SepiaToggleRow(
                         title = Strings.confirmBeforeRegenerating,
                         checked = prefs.confirmBeforeRegenerating,
                         onCheckedChange = { onUpdatePreferences(prefs.copy(confirmBeforeRegenerating = it)) }
                     )
-                    SepiaDivider()
                     SepiaToggleRow(
                         title = Strings.confirmBeforeDeletingOrClearing,
                         checked = prefs.confirmBeforeDeletingChat,
                         onCheckedChange = { onUpdatePreferences(prefs.copy(confirmBeforeDeletingChat = it)) }
                     )
-                    SepiaDivider()
                     SepiaToggleRow(
                         title = Strings.keepMessageVersionsWhenBranching,
                         checked = prefs.keepMessageVersionsWhenForking,
                         onCheckedChange = { onUpdatePreferences(prefs.copy(keepMessageVersionsWhenForking = it)) }
                     )
-                    SepiaDivider()
                     SepiaToggleRow(
                         title = Strings.showChatListDates,
                         checked = prefs.showChatListDates,
                         onCheckedChange = { onUpdatePreferences(prefs.copy(showChatListDates = it)) }
                     )
-                    SepiaDivider()
                     SepiaToggleRow(
                         title = Strings.newChatWhenSwitchingAssistants,
                         checked = prefs.newChatWhenSwitchingAssistants,
                         onCheckedChange = { onUpdatePreferences(prefs.copy(newChatWhenSwitchingAssistants = it)) }
                     )
-                    SepiaDivider()
                     SepiaToggleRow(
                         title = Strings.newChatAfterDeletingTopic,
                         checked = prefs.newChatAfterDeletingTopic,
                         onCheckedChange = { onUpdatePreferences(prefs.copy(newChatAfterDeletingTopic = it)) }
                     )
-                    SepiaDivider()
                     SepiaToggleRow(
                         title = Strings.newChatOnLaunch,
                         checked = prefs.newChatOnLaunch,
                         onCheckedChange = { onUpdatePreferences(prefs.copy(newChatOnLaunch = it)) }
                     )
-                    SepiaDivider()
                     SepiaToggleRow(
                         title = Strings.autoScrollToBottomWhen,
                         checked = prefs.autoScrollToBottomOnOpen,
                         onCheckedChange = { onUpdatePreferences(prefs.copy(autoScrollToBottomOnOpen = it)) }
                     )
-                    SepiaDivider()
                     SepiaToggleRow(
                         title = Strings.autoFollowBottomWhileStreaming,
                         checked = prefs.autoFollowBottom,
                         onCheckedChange = { onUpdatePreferences(prefs.copy(autoFollowBottom = it)) }
                     )
-                    SepiaDivider()
                     SepiaToggleRow(
                         title = Strings.shortenTheConversationAutomaticallyWhen,
                         checked = prefs.autoCompactWhenNearContextLimit,
                         onCheckedChange = { onUpdatePreferences(prefs.copy(autoCompactWhenNearContextLimit = it)) }
                     )
-                    SepiaDivider()
                     // Message Navigation Buttons (Minimap) Visibility
                     SepiaAdaptiveRow(label = Strings.messageNavigationMinimap) {
                         @OptIn(ExperimentalLayoutApi::class)
@@ -606,7 +582,6 @@ internal fun PreferencesSubpage(
                             }
                         }
                     }
-                    SepiaDivider()
 
                     // Send Shortcut
                     SepiaAdaptiveRow(label = Strings.sendShortcutDesktop) {
@@ -624,7 +599,6 @@ internal fun PreferencesSubpage(
                             }
                         }
                     }
-                    SepiaDivider()
 
                     SepiaToggleRow(
                         title = Strings.pasteLongTextAsFile,
@@ -632,9 +606,11 @@ internal fun PreferencesSubpage(
                         onCheckedChange = { onUpdatePreferences(prefs.copy(pasteLongTextAsFile = it)) }
                     )
                     if (prefs.pasteLongTextAsFile) {
-                        var threshStr by remember(prefs.pasteConversionThresholdChars) {
-                            mutableStateOf(prefs.pasteConversionThresholdChars.toString())
-                        }
+                        var threshStr by rememberSyncedNumericDraft(
+                            externalValue = prefs.pasteConversionThresholdChars,
+                            format = { it.toString() },
+                            parse = { it.trim().toIntOrNull() }
+                        )
                         SepiaTextField(
                             value = threshStr,
                             onValueChange = { v ->

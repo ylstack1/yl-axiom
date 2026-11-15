@@ -3,10 +3,6 @@ package io.parchment.ai.ui
 import io.parchment.ai.strings.Strings
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.Crossfade
-import androidx.compose.animation.expandHorizontally
-import androidx.compose.animation.fadeIn
-import androidx.compose.animation.fadeOut
-import androidx.compose.animation.shrinkHorizontally
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -46,7 +42,6 @@ import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyEvent
 import androidx.compose.ui.input.key.KeyEventType
@@ -65,7 +60,6 @@ import io.parchment.ai.model.ChatSession
 import io.parchment.ai.model.MessageRole
 import io.parchment.ai.model.PromptAttachment
 import io.parchment.ai.model.ProviderProfile
-import io.parchment.ai.network.cancelBackgroundInteraction
 import io.parchment.ai.network.fetchAvailableModels
 import io.parchment.ai.model.AgentPermissionResolver
 import io.parchment.ai.model.withImportedPermissions
@@ -82,6 +76,7 @@ import io.parchment.ai.platform.PlatformWorkspace
 import io.parchment.ai.protocol.O200kTokenizer
 import io.parchment.ai.protocol.CardAndPromptCodec
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.IO
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -143,23 +138,19 @@ fun ParchmentApp(
         }
 
         // Load the chat being switched to in full and shrink inactive ones back to stubs, to keep memory low.
-        LaunchedEffect(appState.activeSessionId) {
+        LaunchedEffect(appState.activeSessionId, tabRebalanceTick) {
             val current = appState
             val target = current.sessions.find { it.id == current.activeSessionId }
-            if (target != null && target.isCompactStub) {
-                val keepHydrated = activeStreamsBySession.keys
-                val rebalanced = withContext(Dispatchers.Default) {
-                    ensureActiveSessionHydratedAndDehydrateOthers(current, keepHydrated)
-                }
+            val hadStubTarget = target?.isCompactStub == true
+            val keepHydrated = activeStreamsBySession.keys
+            val rebalanced = withContext(Dispatchers.Default) {
+                ensureActiveSessionHydratedAndDehydrateOthers(current, keepHydrated)
+            }
+            if (rebalanced !== current) {
                 appState = mergeLoadedSessions(appState, current, rebalanced)
-                if (appState.sessions.find { it.id == appState.activeSessionId }?.isCompactStub == true) {
-                    bannerNotification = Strings.chatHistoryIsUnavailableRestoreIts
-                }
-            } else {
-                val rebalanced = ensureActiveSessionHydratedAndDehydrateOthers(current, activeStreamsBySession.keys)
-                if (rebalanced !== current) {
-                    appState = rebalanced
-                }
+            }
+            if (hadStubTarget && appState.sessions.find { it.id == appState.activeSessionId }?.isCompactStub == true) {
+                bannerNotification = Strings.chatHistoryIsUnavailableRestoreIts
             }
         }
 
@@ -255,6 +246,7 @@ fun ParchmentApp(
             val hasCredentialsOrCustomProxy = activeProfile.apiKey.isNotBlank() ||
                 activeProfile.baseUrl.trimEnd('/') != activeProfile.protocol.defaultBaseUrl.trimEnd('/')
             if (activeProfile.autoFetchModels && hasCredentialsOrCustomProxy && activeProfile.savedModels.isEmpty()) {
+                withFrameNanos { }
                 AiProviderEngine.fetchAvailableModels(activeProfile).onSuccess { fetched ->
                     if (fetched.isNotEmpty()) {
                         val existingModel = activeProfile.defaultModel.trim()
@@ -302,6 +294,7 @@ fun ParchmentApp(
                             )
                         }
                     }
+                    withFrameNanos { }
                     ModelsDevClient.fetchModelSpec(currentEffectiveModel).onSuccess { spec ->
                         updateProfileById(activeProfile.id) {
                             val mergedSpec = if (savedCustom != null) {
@@ -687,21 +680,7 @@ fun ParchmentApp(
                                             style = p.monoStyle.copy(color = p.accent, fontWeight = FontWeight.Bold, fontSize = 12.sp)
                                         )
                                     }
-                                    Box(
-                                        modifier = Modifier
-                                            .fillMaxWidth()
-                                            .height(6.dp)
-                                            .clip(RoundedCornerShape(Radius.pill))
-                                            .background(p.border.copy(alpha = 0.45f))
-                                    ) {
-                                        Box(
-                                            modifier = Modifier
-                                                .fillMaxWidth((currentOta.progressPercent / 100f).coerceIn(0.02f, 1f))
-                                                .height(6.dp)
-                                                .clip(RoundedCornerShape(Radius.pill))
-                                                .background(p.accent)
-                                        )
-                                    }
+                                    SepiaProgressBar(fraction = currentOta.progressPercent / 100f)
                                 }
                                 SepiaDivider()
                             }
@@ -789,11 +768,18 @@ fun ParchmentApp(
                         // - On phones: the chat or Settings underneath, with the sidebar sliding over 86% of the width.
                         // A streaming reply replaces appState every frame. The sidebar gets the copy it last drew from until
                         // something it shows changes, so its lists and pinned replies aren't rebuilt per frame.
-                        val sidebarKey = sidebarFingerprint(appState)
+                        val sidebarCache = remember { SidebarFingerprintCache() }
+                        val sidebarKey = sidebarFingerprint(appState, sidebarCache)
                         val sidebarAppState = remember(sidebarKey) { appState }
                         val sidebarActiveSession = remember(sidebarKey) { activeSession }
-                        val sidebarComposable: @Composable (Modifier) -> Unit = { mod ->
-                            ParchmentSidebar(
+                        val sidebarComposable: @Composable (Modifier) -> Unit = remember(
+                            sidebarKey,
+                            activeAssistant,
+                            sidebarTab,
+                            isCompactScreen
+                        ) {
+                            @Composable { mod ->
+                                ParchmentSidebar(
                                 appState = sidebarAppState,
                                 activeAssistant = activeAssistant,
                                 activeSession = sidebarActiveSession,
@@ -889,14 +875,15 @@ fun ParchmentApp(
                                     if (isCompactScreen) showSidebar = false
                                 }
                             )
+                            }
                         }
 
                         Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
                             Row(modifier = Modifier.fillMaxSize()) {
                                 AnimatedVisibility(
                                     visible = !isCompactScreen && showSidebar && !isSettingsOpen,
-                                    enter = expandHorizontally(motionSpring()) + fadeIn(motionTween(Motion.STANDARD)),
-                                    exit = shrinkHorizontally(motionSpring()) + fadeOut(motionTween(Motion.QUICK))
+                                    enter = motionSideExpandEnter(),
+                                    exit = motionSideShrinkExit()
                                 ) {
                                     Row(modifier = Modifier.fillMaxHeight()) {
                                         sidebarComposable(Modifier.textScaledWidth(285.dp).fillMaxHeight())
@@ -996,63 +983,79 @@ fun ParchmentApp(
                                             activeStreamsBySession = emptyMap()
                                             queuedPromptsBySession = emptyMap()
                                             pendingAttachmentsBySession = emptyMap()
-                                            // Importing a settings-only file keeps the chats already on disk.
-                                            val mergedSessions = if (restored.sessions.isEmpty()) {
-                                                appState.sessions
-                                            } else {
-                                                val byId = LinkedHashMap<String, ChatSession>()
-                                                for (s in appState.sessions) byId[s.id] = s
-                                                for (s in restored.sessions) byId[s.id] = s
-                                                byId.values.toList()
+                                            val existingSessions = appState.sessions
+                                            appProcessScope.launch {
+                                                val (finalSnap, removedIds) = withContext(Dispatchers.Default) {
+                                                    // Importing a settings-only file keeps the chats already on disk.
+                                                    val mergedSessions = if (restored.sessions.isEmpty()) {
+                                                        existingSessions
+                                                    } else {
+                                                        val byId = LinkedHashMap<String, ChatSession>()
+                                                        for (s in existingSessions) byId[s.id] = s
+                                                        for (s in restored.sessions) byId[s.id] = s
+                                                        byId.values.toList()
+                                                    }
+                                                    val snap = sanitizeLoadedSnapshot(restored.copy(sessions = mergedSessions))
+                                                    val removed = existingSessions.map { it.id }.toSet() - snap.sessions.map { it.id }.toSet()
+                                                    snap to removed
+                                                }
+                                                withContext(Dispatchers.IO) {
+                                                    appDiskWriter.replaceState(finalSnap, removedIds)
+                                                    appDiskWriter.flush()
+                                                }
+                                                appState = finalSnap
+                                                bannerNotification = Strings.importedSettingsAssistantsPreserved(plural(finalSnap.sessions.size, "chat"))
                                             }
-                                            val finalSnap = sanitizeLoadedSnapshot(restored.copy(sessions = mergedSessions))
-                                            val removedIds = appState.sessions.map { it.id }.toSet() - finalSnap.sessions.map { it.id }.toSet()
-                                            appDiskWriter.replaceState(finalSnap, removedIds)
-                                            appDiskWriter.flushBlocking()
-                                            appState = finalSnap
-                                            bannerNotification = Strings.importedSettingsAssistantsPreserved(plural(finalSnap.sessions.size, "chat"))
                                         },
                                         onImportChatSessions = { importedList ->
-                                            val byId = LinkedHashMap<String, ChatSession>()
-                                            for (existing in appState.sessions) {
-                                                byId[existing.id] = existing
-                                            }
                                             val defaultProfId = appState.activeProfileId.ifBlank { appState.profiles.first().id }
                                             val defaultAsstId = appState.activeAssistantId.ifBlank { appState.assistants.first().id }
-                                            var addedOrUpdated = 0
-                                            var firstImportedId = ""
-                                            for (incomingChat in importedList) {
-                                                val rawChat = incomingChat.withImportedPermissions()
-                                                val safeId = rawChat.id.ifBlank { "sess-imp-${PlatformRuntime.currentTimeMillis()}-$addedOrUpdated" }
-                                                val validProfId = appState.profiles.find { it.id == rawChat.profileId }?.id ?: defaultProfId
-                                                val validAsstId = appState.assistants.find { it.id == rawChat.assistantId }?.id ?: defaultAsstId
-                                                val normalized = rawChat.copy(
-                                                    id = safeId,
-                                                    profileId = validProfId,
-                                                    assistantId = validAsstId,
-                                                    messages = rawChat.messages.map { n ->
-                                                        n.copy(variants = n.variants.map { v -> if (v.isStreaming) v.copy(isStreaming = false) else v })
+                                            val validProfIds = appState.profiles.map { it.id }.toSet()
+                                            val validAsstIds = appState.assistants.map { it.id }.toSet()
+                                            appProcessScope.launch {
+                                                val (importedChats, addedOrUpdated, firstImportedId) = withContext(Dispatchers.IO) {
+                                                    val baseTs = PlatformRuntime.currentTimeMillis()
+                                                    var count = 0
+                                                    var firstId = ""
+                                                    val list = ArrayList<ChatSession>(importedList.size)
+                                                    for (incomingChat in importedList) {
+                                                        val rawChat = incomingChat.withImportedPermissions()
+                                                        val safeId = rawChat.id.ifBlank { "sess-imp-$baseTs-$count" }
+                                                        val validProfId = rawChat.profileId.takeIf { it in validProfIds } ?: defaultProfId
+                                                        val validAsstId = rawChat.assistantId.takeIf { it in validAsstIds } ?: defaultAsstId
+                                                        val normalized = rawChat.copy(
+                                                            id = safeId,
+                                                            profileId = validProfId,
+                                                            assistantId = validAsstId,
+                                                            messages = rawChat.messages.map { n ->
+                                                                n.copy(variants = n.variants.map { v -> if (v.isStreaming) v.copy(isStreaming = false) else v })
+                                                            }
+                                                        )
+                                                        saveSingleChatSessionToDisk(normalized)
+                                                        list.add(normalized)
+                                                        if (firstId.isEmpty()) firstId = safeId
+                                                        count++
                                                     }
+                                                    Triple(list, count, firstId)
+                                                }
+                                                val byId = LinkedHashMap<String, ChatSession>(appState.sessions.size + importedChats.size)
+                                                for (existing in appState.sessions) byId[existing.id] = existing
+                                                for (normalized in importedChats) byId[normalized.id] = normalized
+                                                val sorted = byId.values.sortedWith(
+                                                    compareByDescending<ChatSession> { it.isPinned }.thenByDescending { it.updatedAt }
                                                 )
-                                                byId[safeId] = normalized
-                                                saveSingleChatSessionToDisk(normalized)
-                                                if (firstImportedId.isEmpty()) firstImportedId = safeId
-                                                addedOrUpdated++
+                                                val nextActive = if (firstImportedId.isNotEmpty()) firstImportedId else appState.activeSessionId
+                                                val nextTabs = (openTabIds + firstImportedId).filter { it.isNotBlank() }.distinct()
+                                                persist(
+                                                    appState.copy(
+                                                        sessions = sorted,
+                                                        activeSessionId = nextActive,
+                                                        openTabSessionIds = nextTabs
+                                                    ),
+                                                    immediateFlush = true
+                                                )
+                                                bannerNotification = Strings.importedInto(plural(addedOrUpdated, "chat"), PlatformStorage.getChatsStorageDirectoryPath())
                                             }
-                                            val sorted = byId.values.sortedWith(
-                                                compareByDescending<ChatSession> { it.isPinned }.thenByDescending { it.updatedAt }
-                                            )
-                                            val nextActive = if (firstImportedId.isNotEmpty()) firstImportedId else appState.activeSessionId
-                                            val nextTabs = (openTabIds + firstImportedId).filter { it.isNotBlank() }.distinct()
-                                            persist(
-                                                appState.copy(
-                                                    sessions = sorted,
-                                                    activeSessionId = nextActive,
-                                                    openTabSessionIds = nextTabs
-                                                ),
-                                                immediateFlush = true
-                                            )
-                                            bannerNotification = Strings.importedInto(plural(addedOrUpdated, "chat"), PlatformStorage.getChatsStorageDirectoryPath())
                                         },
                                         onWipeAllData = {
                                             activeStreamsBySession.values.forEach { it.job?.cancel() }
@@ -1061,9 +1064,11 @@ fun ParchmentApp(
                                             pendingAttachmentsBySession = emptyMap()
                                             PlatformVoice.stopSpeakingAloud()
                                             PlatformVoice.stopVoiceInput()
-                                            PlatformStorage.wipeAllLocalData()
-                                            appState = createDefaultAppState()
-                                            bannerNotification = Strings.allLocalDataWipedCleanly
+                                            appProcessScope.launch {
+                                                withContext(Dispatchers.IO) { PlatformStorage.wipeAllLocalData() }
+                                                appState = createDefaultAppState()
+                                                bannerNotification = Strings.allLocalDataWipedCleanly
+                                            }
                                         },
                                         onDeleteChatSessionById = ::executeDeleteSingleSession,
                                         onInspectAttachment = ::openAttachmentInViewer,
@@ -1078,7 +1083,7 @@ fun ParchmentApp(
                                         activeProfile = activeProfile,
                                         preferences = appState.preferences,
                                         showSessionInspector = showSessionInspector,
-                                        onToggleSessionInspector = { showSessionInspector = !showSessionInspector },
+                                        onToggleSessionInspector = stableAction { showSessionInspector = !showSessionInspector },
                                         isStreaming = isStreaming,
                                         isCurrentlyThinkingPhase = isCurrentlyThinkingPhase,
                                         streamingTargetNodeId = streamingTargetNodeId,
@@ -1090,21 +1095,7 @@ fun ParchmentApp(
                                             queuedPromptsBySession = queuedPromptsBySession + (activeSession.id to curList.filterNot { it.id == qId })
                                         },
                                         onSteerQueuedPromptNow = { item ->
-                                            val targetSessId = activeSession.id
-                                            val curList = queuedPromptsBySession[targetSessId].orEmpty()
-                                            queuedPromptsBySession = queuedPromptsBySession + (targetSessId to curList.filterNot { it.id == item.id })
-                                            uiScope.launch {
-                                                val runningJob = activeStreamsBySession[targetSessId]?.job
-                                                runningJob?.cancel()
-                                                runningJob?.join()
-                                                dispatchPromptItem(
-                                                    sessionId = targetSessId,
-                                                    text = item.text,
-                                                    prefill = item.prefill,
-                                                    attachments = item.attachments,
-                                                    isGuidedDirection = item.isGuidedDirection
-                                                )
-                                            }
+                                            steerQueuedPromptNow(activeSession.id, item)
                                         },
                                         userPromptInput = userPromptInput,
                                         onUserPromptChange = { text -> userPromptInput = text },
@@ -1133,13 +1124,16 @@ fun ParchmentApp(
                                             }
                                         },
                                         onAttachWorkspaceFile = { relPath ->
+                                            val targetSessionId = activeSession.id
                                             val wsRoot = AgentPermissionResolver.resolve(activeSession, activeAssistant, activeProfile).workspacePath
                                             if (wsRoot.isNotBlank()) {
-                                                PlatformWorkspace.workspaceRead(wsRoot, relPath, 1, 1500).onSuccess { rawRead ->
-                                                    val cleanLines = rawRead.lines().drop(1).joinToString("\n") {
-                                                        it.replaceFirst(Regex("^\\d+:\\s?"), "")
-                                                    }
-                                                    val curList = pendingAttachmentsBySession[activeSession.id].orEmpty()
+                                                uiScope.launch {
+                                                    val cleanLines = withContext(Dispatchers.IO) {
+                                                        PlatformWorkspace.workspaceRead(wsRoot, relPath, 1, 1500)
+                                                            .getOrNull()
+                                                            ?.let(::stripWorkspaceReadLineNumbers)
+                                                    } ?: return@launch
+                                                    val curList = pendingAttachmentsBySession[targetSessionId].orEmpty()
                                                     if (curList.none { it.fileName == relPath }) {
                                                         val att = PromptAttachment(
                                                             id = "att-ws-${PlatformRuntime.currentTimeMillis()}",
@@ -1148,44 +1142,48 @@ fun ParchmentApp(
                                                             textContent = cleanLines
                                                         )
                                                         pendingAttachmentsBySession = pendingAttachmentsBySession +
-                                                            (activeSession.id to (curList + att))
+                                                            (targetSessionId to (curList + att))
                                                     }
                                                 }
                                             }
                                         },
-                                        onReattachExistingAttachment = { existingAtt ->
+                                        onReattachExistingAttachment = stableCallback { existingAtt ->
                                             val curList = pendingAttachmentsBySession[activeSession.id].orEmpty()
                                             if (curList.none { it.fileName == existingAtt.fileName }) {
                                                 pendingAttachmentsBySession = pendingAttachmentsBySession +
                                                     (activeSession.id to (curList + existingAtt.copy(id = "att-re-${PlatformRuntime.currentTimeMillis()}")))
                                             }
                                         },
-                                        onPasteClipboardMedia = {
-                                            val pasted = PlatformPickers.readClipboardFiles()
-                                            if (pasted.isNotEmpty()) {
-                                                attachPickedFiles(pasted)
-                                                if (pasted.none { it.oversized }) {
-                                                    bannerNotification = Strings.attached(plural(pasted.size, "clipboard item"), pasted.joinToString { it.fileName })
+                                        onPasteClipboardMedia = run {
+                                            val holder = remember { Array(1) { { false } } }
+                                            holder[0] = {
+                                                val pasted = PlatformPickers.readClipboardFiles()
+                                                if (pasted.isNotEmpty()) {
+                                                    attachPickedFiles(pasted)
+                                                    if (pasted.none { it.oversized }) {
+                                                        bannerNotification = Strings.attached(plural(pasted.size, "clipboard item"), pasted.joinToString { it.fileName })
+                                                    }
+                                                    true
+                                                } else {
+                                                    false
                                                 }
-                                                true
-                                            } else {
-                                                false
                                             }
+                                            remember { { holder[0]() } }
                                         },
-                                        onRequestClearCurrentChat = {
+                                        onRequestClearCurrentChat = stableAction {
                                             if (appState.preferences.confirmBeforeDeletingChat) {
                                                 pendingDeleteConfirmation = DeleteConfirmRequest.ClearCurrentMessages(activeSession.title)
                                             } else {
                                                 clearCurrentChatMessages(activeSession.id)
                                             }
                                         },
-                                        onRemoveAttachment = { attId ->
+                                        onRemoveAttachment = stableCallback { attId ->
                                             val curAtts = pendingAttachmentsBySession[activeSession.id].orEmpty()
                                             pendingAttachmentsBySession = pendingAttachmentsBySession +
                                                 (activeSession.id to curAtts.filterNot { it.id == attId })
                                         },
                                         onInspectAttachment = ::openAttachmentInViewer,
-                                        onInspectGeneratedImage = { media ->
+                                        onInspectGeneratedImage = stableCallback { media ->
                                             activeViewerItem = ActiveMediaViewerItem.ImageViewer(
                                                 title = media.revisedPrompt.take(48).ifBlank { "Generated Image" },
                                                 mimeType = media.mimeType.ifBlank { "image/png" },
@@ -1193,7 +1191,7 @@ fun ParchmentApp(
                                                 remoteUrl = media.remoteUrl
                                             )
                                         },
-                                        onExportChatMarkdown = {
+                                        onExportChatMarkdown = stableAction {
                                             uiScope.launch {
                                                 val md = buildString {
                                                     appendLine("# ${activeSession.title}")
@@ -1249,7 +1247,7 @@ fun ParchmentApp(
                                                 if (saved != null) bannerNotification = Strings.exportedMarkdownTo(saved)
                                             }
                                         },
-                                        onExportChatJson = {
+                                        onExportChatJson = stableAction {
                                             uiScope.launch {
                                                 val hasLocalMedia = activeSession.messages.any { n ->
                                                     n.variants.any { v ->
@@ -1272,7 +1270,7 @@ fun ParchmentApp(
                                                 }
                                             }
                                         },
-                                        onOpenProviderSettings = {
+                                        onOpenProviderSettings = stableAction {
                                             activeSettingsCategory = SettingsCategory.PROVIDERS
                                             startMobileSettingsAtRoot = false
                                             isSettingsOpen = true
@@ -1282,12 +1280,11 @@ fun ParchmentApp(
                                         onSteerNow = ::triggerSteerNow,
                                         onQueuePrompt = ::enqueueFollowUpPrompt,
                                         onImpersonateDraft = ::triggerImpersonateDraft,
-                                        onAutoSummarizeStory = { triggerAutoSummarizeStory(autoMuteOlderTurns = false) },
-                                        onCompactContext = { triggerAutoSummarizeStory(autoMuteOlderTurns = true) },
-                                        onRewindToNode = { nodeIndex ->
+                                        onAutoSummarizeStory = stableAction { triggerAutoSummarizeStory(autoMuteOlderTurns = false) },
+                                        onCompactContext = stableAction { triggerAutoSummarizeStory(autoMuteOlderTurns = true) },
+                                        onRewindToNode = stableCallback { nodeIndex ->
                                             val sessId = activeSession.id
-                                            activeStreamsBySession[sessId]?.job?.cancel()
-                                            updateSessionStreamState(sessId) { null }
+                                            stopSessionStream(sessId)
                                             val total = activeSession.messages.size
                                             if (total > 0) {
                                                 if (nodeIndex < total - 1) {
@@ -1307,7 +1304,7 @@ fun ParchmentApp(
                                                 }
                                             }
                                         },
-                                        onForkSessionFromNode = { nodeIndex ->
+                                        onForkSessionFromNode = stableCallback { nodeIndex ->
                                             val now = PlatformRuntime.currentTimeMillis()
                                             val keepVersions = appState.preferences.keepMessageVersionsWhenForking
                                             val sourceSession = activeSession.withSpendProvenance()
@@ -1334,21 +1331,12 @@ fun ParchmentApp(
                                             )
                                             bannerNotification = Strings.startedANewBranchAtMessage(nodeIndex + 1)
                                         },
-                                        onStopStream = {
-                                            val targetSessId = activeSession.id
-                                            val curStream = activeStreamsBySession[targetSessId]
-                                            curStream?.identity?.let { processState.runs.requestStop(it) }
-                                            curStream?.job?.cancel()
-                                            if (curStream != null && curStream.interactionId.isNotBlank() && (curStream.providerContext?.profile ?: activeProfile).useBackgroundLongDecode) {
-                                                appProcessScope.launch {
-                                                    AiProviderEngine.cancelBackgroundInteraction(curStream.providerContext?.profile ?: activeProfile, curStream.interactionId)
-                                                }
-                                            }
-                                            updateSessionStreamState(targetSessId) { null }
+                                        onStopStream = stableAction {
+                                            stopSessionStream(activeSession.id)
                                         },
-                                        onUpdateSession = { transform -> updateActiveSession(immediate = true, transform = transform) },
+                                        onUpdateSession = stableCallback { transform -> updateActiveSession(immediate = true, transform = transform) },
                                         onUpdateProfile = ::updateActiveProfile,
-                                        onRegenerateNode = { nodeIndex ->
+                                        onRegenerateNode = stableCallback { nodeIndex ->
                                             if (appState.preferences.confirmBeforeRegenerating) {
                                                 pendingRegenerateConfirm = RegenerateConfirmRequest(activeSession.id, nodeIndex)
                                             } else {
@@ -1370,8 +1358,8 @@ fun ParchmentApp(
 
                             AnimatedVisibility(
                                 visible = !isCompactScreen && showRightFilesSidebar && !isSettingsOpen,
-                                enter = expandHorizontally(motionSpring()) + fadeIn(motionTween(Motion.STANDARD)),
-                                exit = shrinkHorizontally(motionSpring()) + fadeOut(motionTween(Motion.QUICK))
+                                enter = motionSideExpandEnter(),
+                                exit = motionSideShrinkExit()
                             ) {
                                 Row(modifier = Modifier.fillMaxHeight()) {
                                     Box(
@@ -1412,13 +1400,13 @@ fun ParchmentApp(
                                 Row(modifier = Modifier.fillMaxSize()) {
                                     AnimatedVisibility(
                                         visible = showSidebar && !isSettingsOpen,
-                                        enter = fadeIn(motionTween(Motion.STANDARD)),
-                                        exit = fadeOut(motionTween(Motion.STANDARD))
+                                        enter = motionFadeEnter(Motion.STANDARD),
+                                        exit = motionFadeExit(Motion.STANDARD)
                                     ) {
                                         Box(
                                             modifier = Modifier
                                                 .fillMaxSize()
-                                                .background(Color.Black.copy(alpha = 0.34f))
+                                                .background(Scrim.drawer)
                                                 .dismissOnOutsideTap { showSidebar = false }
                                         )
                                     }
@@ -1427,8 +1415,8 @@ fun ParchmentApp(
                                 Row(modifier = Modifier.fillMaxHeight()) {
                                     AnimatedVisibility(
                                         visible = showSidebar && !isSettingsOpen,
-                                        enter = expandHorizontally(motionSpring()) + fadeIn(motionTween(Motion.STANDARD)),
-                                        exit = shrinkHorizontally(motionSpring()) + fadeOut(motionTween(Motion.QUICK))
+                                        enter = motionSideExpandEnter(),
+                                        exit = motionSideShrinkExit()
                                     ) {
                                         Row(modifier = Modifier.fillMaxHeight()) {
                                             sidebarComposable(
@@ -1451,13 +1439,13 @@ fun ParchmentApp(
                                 Row(modifier = Modifier.fillMaxSize()) {
                                     AnimatedVisibility(
                                         visible = showRightFilesSidebar && !isSettingsOpen,
-                                        enter = fadeIn(motionTween(Motion.STANDARD)),
-                                        exit = fadeOut(motionTween(Motion.STANDARD))
+                                        enter = motionFadeEnter(Motion.STANDARD),
+                                        exit = motionFadeExit(Motion.STANDARD)
                                     ) {
                                         Box(
                                             modifier = Modifier
                                                 .fillMaxSize()
-                                                .background(Color.Black.copy(alpha = 0.34f))
+                                                .background(Scrim.drawer)
                                                 .dismissOnOutsideTap { showRightFilesSidebar = false }
                                         )
                                     }
@@ -1466,8 +1454,8 @@ fun ParchmentApp(
                                 Row(modifier = Modifier.fillMaxSize(), horizontalArrangement = Arrangement.End) {
                                     AnimatedVisibility(
                                         visible = showRightFilesSidebar && !isSettingsOpen,
-                                        enter = expandHorizontally(motionSpring()) + fadeIn(motionTween(Motion.STANDARD)),
-                                        exit = shrinkHorizontally(motionSpring()) + fadeOut(motionTween(Motion.QUICK))
+                                        enter = motionSideExpandEnter(),
+                                        exit = motionSideShrinkExit()
                                     ) {
                                         Row(modifier = Modifier.fillMaxHeight()) {
                                             Box(
@@ -1594,35 +1582,88 @@ fun ParchmentApp(
  * Changes only when something the sidebar displays changes, so a streaming reply doesn't redraw it. Per chat:
  * what the sidebar shows, leaving out reply text on purpose (it changes every frame). Allocation-free key.
  */
-internal fun sidebarFingerprint(state: AppStateSnapshot): Any {
+internal class SidebarFingerprintCache(
+    var lastAppState: AppStateSnapshot? = null,
+    internal var lastKey: SidebarFingerprintKey? = null,
+    val entries: HashMap<String, CachedSidebarSession> = HashMap()
+)
+
+internal class CachedSidebarSession(
+    val session: ChatSession,
+    val messagesRef: List<io.parchment.ai.model.MessageNode>,
+    val structuralHash1: Long,
+    val structuralHash2: Long,
+    val pinnedHash1: Long,
+    val pinnedHash2: Long
+)
+
+internal fun sidebarFingerprint(
+    state: AppStateSnapshot,
+    cache: SidebarFingerprintCache? = null
+): Any {
+    if (cache != null && cache.lastAppState === state) {
+        cache.lastKey?.let { return it }
+    }
     var h1 = 0x123456789ABCDEF0L
     var h2 = -0x5432109876543210L
     val sessions = state.sessions
     for (i in sessions.indices) {
         val s = sessions[i]
-        val idHash = (s.id.hashCode().toLong() shl 32) or (s.id.length.toLong() and 0xffffffffL)
-        val titleHash = (s.title.hashCode().toLong() shl 32) or (s.title.length.toLong() and 0xffffffffL)
-        val asstHash = (s.assistantId.hashCode().toLong() shl 32) or (s.assistantId.length.toLong() and 0xffffffffL)
-        val flags = (if (s.isPinned) 1L else 0L) or (if (s.isCompactStub) 2L else 0L)
-        h1 = mixSidebar64(h1, idHash)
-        h1 = mixSidebar64(h1, titleHash)
-        h1 = mixSidebar64(h1, s.updatedAt)
-        h1 = mixSidebar64(h1, asstHash)
-        h1 = mixSidebar64(h1, (s.messages.size.toLong() shl 2) or flags)
-        h2 = mixSidebar64(h2, s.updatedAt xor idHash xor ((i + 1).toLong() shl 40))
-        h2 = mixSidebar64(h2, titleHash xor (asstHash.rotateLeft(13)))
-        h2 = mixSidebar64(h2, (flags shl 32) or s.messages.size.toLong())
-        val msgs = s.messages
-        for (j in msgs.indices) {
-            val node = msgs[j]
-            if (node.pinned) {
-                val nodeHash = (node.id.hashCode().toLong() shl 32) or ((j + 1).toLong() shl 16) or (node.id.length.toLong() and 0xffffL)
-                h1 = mixSidebar64(h1, nodeHash)
-                h2 = mixSidebar64(h2, nodeHash.rotateLeft(19))
+        val cached = cache?.entries?.get(s.id)
+        val sH1: Long
+        val sH2: Long
+        val pH1: Long
+        val pH2: Long
+        if (cached != null && cached.session === s) {
+            sH1 = cached.structuralHash1
+            sH2 = cached.structuralHash2
+            pH1 = cached.pinnedHash1
+            pH2 = cached.pinnedHash2
+        } else {
+            val idHash = (s.id.hashCode().toLong() shl 32) or (s.id.length.toLong() and 0xffffffffL)
+            val titleHash = (s.title.hashCode().toLong() shl 32) or (s.title.length.toLong() and 0xffffffffL)
+            val asstHash = (s.assistantId.hashCode().toLong() shl 32) or (s.assistantId.length.toLong() and 0xffffffffL)
+            val flags = (if (s.isPinned) 1L else 0L) or (if (s.isCompactStub) 2L else 0L)
+            val msgCount = s.displayMessageCount.toLong()
+            var m1 = mixSidebar64(0x243F6A8885A308D3L, idHash)
+            m1 = mixSidebar64(m1, titleHash)
+            m1 = mixSidebar64(m1, s.updatedAt)
+            m1 = mixSidebar64(m1, asstHash)
+            sH1 = mixSidebar64(m1, (msgCount shl 2) or flags)
+            var m2 = mixSidebar64(-0x50A2B9C3D4E5F617L, s.updatedAt xor idHash)
+            m2 = mixSidebar64(m2, titleHash xor (asstHash.rotateLeft(13)))
+            sH2 = mixSidebar64(m2, (flags shl 32) or msgCount)
+            if (cached != null && cached.messagesRef === s.messages) {
+                pH1 = cached.pinnedHash1
+                pH2 = cached.pinnedHash2
+            } else {
+                var ph1 = 0x13198A2E03707344L
+                var ph2 = -0x540F2A11C7D0B539L
+                val msgs = s.messages
+                for (j in msgs.indices) {
+                    val node = msgs[j]
+                    if (node.pinned) {
+                        val nodeHash = (node.id.hashCode().toLong() shl 32) or ((j + 1).toLong() shl 16) or (node.id.length.toLong() and 0xffffL)
+                        ph1 = mixSidebar64(ph1, nodeHash)
+                        ph2 = mixSidebar64(ph2, nodeHash.rotateLeft(19))
+                    }
+                }
+                pH1 = ph1
+                pH2 = ph2
             }
+            cache?.entries?.put(s.id, CachedSidebarSession(s, s.messages, sH1, sH2, pH1, pH2))
         }
+        h1 = mixSidebar64(h1, sH1)
+        h1 = mixSidebar64(h1, pH1)
+        h2 = mixSidebar64(h2, sH2 xor ((i + 1).toLong() shl 40))
+        h2 = mixSidebar64(h2, pH2)
     }
-    return SidebarFingerprintKey(
+    if (cache != null && cache.entries.size > sessions.size + 64) {
+        val activeIds = HashSet<String>(sessions.size)
+        for (i in sessions.indices) activeIds.add(sessions[i].id)
+        cache.entries.keys.retainAll(activeIds)
+    }
+    val key = SidebarFingerprintKey(
         sessionsHash1 = h1,
         sessionsHash2 = h2,
         sessionCount = sessions.size,
@@ -1630,6 +1671,11 @@ internal fun sidebarFingerprint(state: AppStateSnapshot): Any {
         preferences = state.preferences,
         activeSessionId = state.activeSessionId
     )
+    if (cache != null) {
+        cache.lastAppState = state
+        cache.lastKey = key
+    }
+    return key
 }
 
 private inline fun mixSidebar64(h: Long, value: Long): Long {
@@ -1638,7 +1684,7 @@ private inline fun mixSidebar64(h: Long, value: Long): Long {
     return z xor (z ushr 27)
 }
 
-private class SidebarFingerprintKey(
+internal class SidebarFingerprintKey(
     private val sessionsHash1: Long,
     private val sessionsHash2: Long,
     private val sessionCount: Int,
@@ -1653,8 +1699,8 @@ private class SidebarFingerprintKey(
             sessionsHash2 == other.sessionsHash2 &&
             sessionCount == other.sessionCount &&
             activeSessionId == other.activeSessionId &&
-            assistants == other.assistants &&
-            preferences == other.preferences
+            (assistants === other.assistants || assistants == other.assistants) &&
+            (preferences === other.preferences || preferences == other.preferences)
     }
 
     override fun hashCode(): Int {
@@ -1668,9 +1714,15 @@ private class SidebarFingerprintKey(
     }
 }
 
-/** Chats removed by the last delete, with their saved data, so Undo can put them back as they were. */
+/** Chats removed by the last delete, retaining in-memory data or cold stub JSON so Undo can restore them without main-thread serialization. */
+internal class DeletedChatEntry(
+    val listed: ChatSession,
+    val fullSession: ChatSession? = null,
+    val diskJson: String? = null
+)
+
 internal class DeletedChats(
-    val chats: List<Pair<ChatSession, String?>>,
+    val entries: List<DeletedChatEntry>,
     val activeSessionId: String,
     val openTabIds: List<String>
 )

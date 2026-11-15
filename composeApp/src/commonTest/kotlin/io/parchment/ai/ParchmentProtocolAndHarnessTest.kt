@@ -655,6 +655,20 @@ class ParchmentProtocolAndHarnessTest {
         assertEquals("Refining Humorous Angles", peekHeading)
         assertTrue(peekText.startsWith("I'm exploring genuinely funny ideas"))
 
+        val largePrefix = buildString {
+            repeat(300) { idx ->
+                append("**Earlier Step $idx**\nReasoning filler paragraph for performance bounded tail test.\n\n")
+            }
+        }
+        val boundedTailVar = MessageVariant(
+            id = "v-peek-tail",
+            content = "",
+            thinkingSummary = "$largePrefix**Latest Beyond Scan Tail**\nFinal tail insight here."
+        )
+        val (tailHeading, tailText) = extractLatestThoughtPeek(boundedTailVar)
+        assertEquals("Latest Beyond Scan Tail", tailHeading)
+        assertEquals("Final tail insight here.", tailText)
+
         // 15. Verify Balanced-Parenthesis Markdown Link Parser & HTML-to-Markdown Converter
         val wikiLink = "[Kotlin](https://en.wikipedia.org/wiki/Kotlin_(programming_language)) is great."
         val openParenIdx = wikiLink.indexOf('(')
@@ -1384,8 +1398,9 @@ class ParchmentProtocolAndHarnessTest {
 
         val stub = io.parchment.ai.ui.dehydrateChatSessionToCompactStub(fullSession)
         assertTrue(stub.isCompactStub)
-        assertEquals(2, stub.messages.size, "Dehydrated stub must preserve exact message count for sidebar badges")
-        assertTrue(stub.messages.first().activeVariant.content.isEmpty(), "Earlier messages in stub must be empty")
+        assertEquals(2, stub.displayMessageCount, "Dehydrated stub must preserve exact message count for sidebar badges")
+        assertEquals(1, stub.messages.size, "Dehydrated stub must retain only the preview node when earlier messages are unpinned")
+        assertTrue(stub.messages.dropLast(1).all { it.pinned }, "Unpinned earlier messages must be omitted from compact stub")
         assertTrue(stub.messages.last().activeVariant.thinkingSummary.isEmpty(), "Thinking summary must be freed in stub")
         assertTrue(stub.messages.last().activeVariant.toolCalls.isEmpty(), "Tool calls must be freed in stub")
         assertEquals(persistedAttachmentPath, stub.messages.last().activeVariant.attachments.first().localFilePath)
@@ -1983,6 +1998,11 @@ class ParchmentProtocolAndHarnessTest {
             sessions = listOf(sess.copy(messages = listOf(sess.messages[0].copy(pinned = true), sess.messages[1])))
         )
         kotlin.test.assertNotEquals(io.parchment.ai.ui.sidebarFingerprint(baseSnap), io.parchment.ai.ui.sidebarFingerprint(pinnedMsgSnap))
+
+        val fpCache = io.parchment.ai.ui.SidebarFingerprintCache()
+        assertEquals(io.parchment.ai.ui.sidebarFingerprint(baseSnap), io.parchment.ai.ui.sidebarFingerprint(baseSnap, fpCache))
+        assertEquals(io.parchment.ai.ui.sidebarFingerprint(streamedTextSnap), io.parchment.ai.ui.sidebarFingerprint(streamedTextSnap, fpCache))
+        assertEquals(io.parchment.ai.ui.sidebarFingerprint(pinnedMsgSnap), io.parchment.ai.ui.sidebarFingerprint(pinnedMsgSnap, fpCache))
     }
 
     @Test

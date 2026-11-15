@@ -52,6 +52,7 @@ internal object AtomicFileStorage {
      */
     fun writeStream(target: File, commit: (Path, Path) -> Unit = ::commitExport, write: (OutputStream) -> Unit) {
         val parent = checkNotNull(target.absoluteFile.parentFile) { "Export target has no parent directory." }
+        check(parent.exists() || parent.mkdirs()) { "Unable to create export directory." }
         val staged = File(parent, target.name + ".tmp")
         try {
             FileOutputStream(staged).use { stream ->

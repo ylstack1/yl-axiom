@@ -67,8 +67,6 @@ internal fun WorkspaceSubpage(
             .padding(if (win.isCompact) 12.dp else 20.dp),
         verticalArrangement = Arrangement.spacedBy(Space.s16)
     ) {
-        McpServersCard(appState.preferences, onUpdatePreferences)
-        SkillInstallCard(effectiveWsPath, effectiveWsMode == io.parchment.ai.model.WorkspaceMode.READ_WRITE, onNotify)
         BasicText(text = Strings.workspaceAndAgentTools, style = p.uiHeaderStyle.copy(fontSize = 19.sp))
 
         SepiaSectionCard(
@@ -81,7 +79,6 @@ internal fun WorkspaceSubpage(
                     onReset = { onUpdateSession { it.copy(permissionOverrides = AgentPermissionOverrides()) } }
                 )
                 if (effectiveWsPath.isNotBlank()) {
-                    SepiaDivider()
                     Column(
                         modifier = Modifier.fillMaxWidth(),
                         verticalArrangement = Arrangement.spacedBy(Space.s10)
@@ -95,7 +92,7 @@ internal fun WorkspaceSubpage(
                                 text = if (discoveredFiles.isEmpty()) {
                                     Strings.noAgentsMdClaudeMdParchment
                                 } else {
-                                    "Auto-injected into system prompt: ${discoveredFiles.joinToString(", ")}"
+                                    Strings.autoInjectedIntoSystemPrompt(discoveredFiles.joinToString(", "))
                                 },
                                 style = p.uiLabelStyle.copy(color = if (discoveredFiles.isNotEmpty()) p.accent else p.mutedInk)
                             )
@@ -121,6 +118,9 @@ internal fun WorkspaceSubpage(
                 }
             }
         }
+
+        McpServersCard(appState.preferences, onUpdatePreferences)
+        SkillInstallCard(effectiveWsPath, effectiveWsMode == io.parchment.ai.model.WorkspaceMode.READ_WRITE, onNotify)
 
         SepiaSectionCard(title = Strings.agentTools) {
             AgentToolRegistry(

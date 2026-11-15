@@ -41,6 +41,8 @@ import androidx.compose.foundation.text.BasicText
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.MutableState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -52,6 +54,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.input.key.KeyEvent
 import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.isAltPressed
 import androidx.compose.ui.input.key.isCtrlPressed
@@ -87,9 +90,35 @@ fun SepiaChoiceRow(
     leading: (@Composable () -> Unit)? = null
 ) {
     val p = LocalParchmentPalette.current
+    val interactionSource = remember { MutableInteractionSource() }
+    val isHovered by interactionSource.collectIsHoveredAsState()
+    val isPressed by interactionSource.collectIsPressedAsState()
+    val isFocused by interactionSource.collectIsFocusedAsState()
+    var focusFromPointer by remember { mutableStateOf(false) }
+    LaunchedEffect(isPressed, isFocused) {
+        if (isPressed) focusFromPointer = true else if (!isFocused) focusFromPointer = false
+    }
+    val rowShape = RoundedCornerShape(Radius.r8)
+    val rowBg = when {
+        isPressed -> p.accent.copy(alpha = 0.14f)
+        isHovered -> p.accent.copy(alpha = 0.07f)
+        else -> Color.Transparent
+    }
     Row(
-        modifier.fillMaxWidth().heightIn(min = Space.s48)
-            .selectable(selected, role = Role.RadioButton, onClick = onClick)
+        modifier
+            .fillMaxWidth()
+            .heightIn(min = Space.s48)
+            .pointerHoverIcon(PointerIcon.Hand)
+            .clip(rowShape)
+            .background(rowBg)
+            .sepiaFocusRing(isFocused && !focusFromPointer, p.accent)
+            .selectable(
+                selected = selected,
+                interactionSource = interactionSource,
+                indication = null,
+                role = Role.RadioButton,
+                onClick = onClick
+            )
             .padding(horizontal = Space.s6, vertical = Space.s10),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(Space.s12)
@@ -149,9 +178,24 @@ fun SepiaConfirmationCard(
 @Composable
 fun SepiaAccentSwatch(color: Color, name: String, selected: Boolean, onClick: () -> Unit) {
     val p = LocalParchmentPalette.current
+    val interactionSource = remember { MutableInteractionSource() }
+    val isPressed by interactionSource.collectIsPressedAsState()
+    val isFocused by interactionSource.collectIsFocusedAsState()
+    var focusFromPointer by remember { mutableStateOf(false) }
+    LaunchedEffect(isPressed, isFocused) {
+        if (isPressed) focusFromPointer = true else if (!isFocused) focusFromPointer = false
+    }
     Box(
         Modifier.size(48.dp)
-            .selectable(selected, role = Role.RadioButton, onClick = onClick)
+            .pointerHoverIcon(PointerIcon.Hand)
+            .then(if (isFocused && !focusFromPointer) Modifier.border(LineWidth.focus, p.accent, CircleShape) else Modifier)
+            .selectable(
+                selected = selected,
+                interactionSource = interactionSource,
+                indication = null,
+                role = Role.RadioButton,
+                onClick = onClick
+            )
             .semantics { contentDescription = name },
         contentAlignment = Alignment.Center
     ) {
@@ -177,6 +221,7 @@ fun SepiaTextField(
     maxLines: Int = if (singleLine) 1 else Int.MAX_VALUE,
     onEnterKeySend: ((isCtrlOrMetaPressed: Boolean, isShiftPressed: Boolean) -> Boolean)? = null,
     onClipboardPaste: (() -> Boolean)? = null,
+    onKeyNavigation: ((KeyEvent) -> Boolean)? = null,
     visualTransformation: VisualTransformation = VisualTransformation.None
 ) {
     val p = LocalParchmentPalette.current
@@ -235,8 +280,19 @@ fun SepiaTextField(
             modifier = Modifier
                 .fillMaxWidth()
                 .then(
-                    if (!singleLine || onEnterKeySend != null || onClipboardPaste != null) {
+                    if (!singleLine || onEnterKeySend != null || onClipboardPaste != null || onKeyNavigation != null) {
                         Modifier.onPreviewKeyEvent { keyEvent ->
+                            val isEnter = keyEvent.key == Key.Enter || keyEvent.key == Key.NumPadEnter
+                            if (keyEvent.type == KeyEventType.KeyUp && isEnter && consumeNextEnterKeyUp) {
+                                consumeNextEnterKeyUp = false
+                                return@onPreviewKeyEvent true
+                            }
+                            if (onKeyNavigation?.invoke(keyEvent) == true) {
+                                if (isEnter && keyEvent.type == KeyEventType.KeyDown) {
+                                    consumeNextEnterKeyUp = true
+                                }
+                                return@onPreviewKeyEvent true
+                            }
                             // 1. Check Ctrl+V / Cmd+V / Shift+Insert for Clipboard Image / Video / File Paste
                             if (onClipboardPaste != null &&
                                 keyEvent.type == KeyEventType.KeyDown &&
@@ -250,7 +306,6 @@ fun SepiaTextField(
                             }
 
                             // 2. Check Enter / Shift+Enter / Ctrl+Enter for Send vs Newline
-                            val isEnter = keyEvent.key == Key.Enter || keyEvent.key == Key.NumPadEnter
                             if (isEnter && !keyEvent.isAltPressed) {
                                 val isCtrlOrMeta = keyEvent.isCtrlPressed || keyEvent.isMetaPressed
                                 val isShift = keyEvent.isShiftPressed
@@ -340,7 +395,7 @@ fun SepiaTextField(
                                     text = parsedPlaceholder.cleanText,
                                     maxLines = if (singleLine) 1 else 2,
                                     overflow = TextOverflow.Ellipsis,
-                                    style = textStyle.copy(color = p.mutedInk.copy(alpha = 0.6f))
+                                    style = textStyle.copy(color = p.mutedInk.copy(alpha = Alpha.placeholder))
                                 )
                             }
                             innerTextField()
@@ -386,7 +441,7 @@ fun SepiaSectionCard(
                             KissVectorIcon(
                                 icon = parsedTitle.leadingIcon,
                                 tint = p.accent,
-                                size = 15.dp
+                                size = IconSize.lg
                             )
                         }
                         BasicText(
@@ -432,8 +487,6 @@ fun SepiaSectionCard(
                     }
                 }
             }
-            Spacer(Modifier.height(Space.s10))
-            SepiaDivider()
             Spacer(Modifier.height(Space.s12))
         }
         content()
@@ -564,7 +617,7 @@ private fun SepiaToggleTrack(checked: Boolean) {
                 }
                 .size(18.dp)
                 .clip(CircleShape)
-                .background(Color(0xFFFAF6EB))
+                .background(WARM_FILL_INK)
         )
     }
 }
@@ -665,4 +718,55 @@ fun KissStreamingPulseDot(
             .clip(CircleShape)
             .background(color)
     )
+}
+
+/** Calm determinate progress bar whose fill interpolates with [motionTween]. */
+@Composable
+internal fun SepiaProgressBar(
+    fraction: Float,
+    modifier: Modifier = Modifier
+) {
+    val p = LocalParchmentPalette.current
+    val smoothFraction by animateFloatAsState(
+        targetValue = fraction.coerceIn(0.02f, 1f),
+        animationSpec = motionTween(Motion.MEDIUM)
+    )
+    Box(
+        modifier = modifier
+            .fillMaxWidth()
+            .height(6.dp)
+            .clip(RoundedCornerShape(Radius.pill))
+            .background(p.border.copy(alpha = 0.45f))
+    ) {
+        Box(
+            modifier = Modifier
+                .fillMaxWidth(smoothFraction)
+                .height(6.dp)
+                .clip(RoundedCornerShape(Radius.pill))
+                .background(p.accent)
+        )
+    }
+}
+
+private class NumericDraftSync<T>(var lastExternal: T, val draft: MutableState<String>)
+
+/**
+ * Keeps an editable numeric text field stable while typing partial inputs (`"1"`, `"1."`, `""`),
+ * syncing back to [externalValue] synchronously only when the underlying value changes out-of-band.
+ */
+@Composable
+internal fun <T> rememberSyncedNumericDraft(
+    externalValue: T,
+    key: Any? = Unit,
+    format: (T) -> String,
+    parse: (String) -> T?
+): MutableState<String> {
+    val holder = remember(key) { NumericDraftSync(externalValue, mutableStateOf(format(externalValue))) }
+    if (holder.lastExternal != externalValue) {
+        holder.lastExternal = externalValue
+        if (parse(holder.draft.value) != externalValue) {
+            holder.draft.value = format(externalValue)
+        }
+    }
+    return holder.draft
 }

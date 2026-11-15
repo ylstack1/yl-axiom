@@ -16,6 +16,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withTimeoutOrNull
 
 /**
  * Retains the newest dirty value for every file until its write succeeds.
@@ -46,6 +47,7 @@ internal class ParchmentDiskWriter(
     private val pending = MutableStateFlow(Pending())
     private val writeMutex = Mutex()
     private val wakeups = Channel<Unit>(Channel.CONFLATED)
+    private val urgentWakeups = Channel<Unit>(Channel.CONFLATED)
     private val errorState = MutableStateFlow<String?>(null)
     val lastError: StateFlow<String?> = errorState.asStateFlow()
 
@@ -53,7 +55,11 @@ internal class ParchmentDiskWriter(
         require(debounceMs >= 0L && retryInitialMs > 0L && retryMaxMs >= retryInitialMs)
         scope.launch(Dispatchers.IO) {
             for (ignored in wakeups) {
-                if (!pending.value.urgent && debounceMs > 0L) delay(debounceMs)
+                if (!pending.value.urgent && debounceMs > 0L) {
+                    withTimeoutOrNull(debounceMs) { urgentWakeups.receive() }
+                }
+                while (urgentWakeups.tryReceive().isSuccess) { }
+                while (wakeups.tryReceive().isSuccess) { }
                 var retryDelay = retryInitialMs
                 while (true) {
                     try {
@@ -99,7 +105,10 @@ internal class ParchmentDiskWriter(
                 urgent = old.urgent || urgent
             )
         }
-        if (notify) wakeups.trySend(Unit)
+        if (notify) {
+            if (urgent) urgentWakeups.trySend(Unit)
+            wakeups.trySend(Unit)
+        }
     }
 
     fun replaceState(snapshot: AppStateSnapshot, deletedIds: Set<String>) {
@@ -114,6 +123,7 @@ internal class ParchmentDiskWriter(
             val required = snapshot.sessions.associate { it.id to revision }
             Pending(revision, SettingsWrite(revision, snapshot.copy(sessions = emptyList()), required), chats, urgent = true)
         }
+        urgentWakeups.trySend(Unit)
         wakeups.trySend(Unit)
     }
 

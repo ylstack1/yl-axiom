@@ -26,8 +26,20 @@ private const val SUBAGENT_INSTRUCTIONS = "You are a focused helper working on o
     "Reply with only your findings, including file paths and exact details the other agent will need."
 private val SUBAGENT_FILE_TOOLS = setOf("fs_read", "fs_list", "fs_glob", "fs_search", "skill_load", "calc_eval")
 private val SUBAGENT_WEB_TOOLS = setOf("web_search", "web_fetch")
+private val SUBAGENT_FILE_AND_WEB_TOOLS = SUBAGENT_FILE_TOOLS + SUBAGENT_WEB_TOOLS
 /** Run on the provider's side, so they are not in the local tool list. */
 private val PROVIDER_SIDE_TOOLS = listOf("code_execution", "image_generation", "video_generation")
+private val SUBAGENT_DENIED_FILE_ONLY: Map<String, Boolean> by lazy {
+    buildSubagentDeniedOverrides(SUBAGENT_FILE_TOOLS)
+}
+private val SUBAGENT_DENIED_WITH_WEB: Map<String, Boolean> by lazy {
+    buildSubagentDeniedOverrides(SUBAGENT_FILE_AND_WEB_TOOLS)
+}
+
+private fun buildSubagentDeniedOverrides(allowed: Set<String>): Map<String, Boolean> {
+    val allNames = WorkspaceHarness.allTools().map { it.name } + PROVIDER_SIDE_TOOLS
+    return allNames.asSequence().filter { it !in allowed }.associateWith { false }
+}
 
 /**
  * A helper can only read. It cannot ask for approval because nobody is watching its cards, so web
@@ -35,14 +47,14 @@ private val PROVIDER_SIDE_TOOLS = listOf("code_execution", "image_generation", "
  */
 internal fun subagentPolicy(parent: AgentPermissionPolicy): AgentPermissionPolicy {
     val web = parent.webAccess && parent.approvalMode == ToolApprovalMode.NEVER
-    val allowed = SUBAGENT_FILE_TOOLS + if (web) SUBAGENT_WEB_TOOLS else emptySet()
+    val deniedOverrides = if (web) SUBAGENT_DENIED_WITH_WEB else SUBAGENT_DENIED_FILE_ONLY
     return parent.copy(
         workspaceMode = if (parent.hasWorkspace) WorkspaceMode.READ_ONLY else parent.workspaceMode,
         shellAccess = ShellAccess.DISABLED,
         webAccess = web,
         approvalMode = ToolApprovalMode.NEVER,
         computerAccess = false,
-        toolOverrides = parent.toolOverrides + (WorkspaceHarness.allTools().map { it.name } + PROVIDER_SIDE_TOOLS).filter { it !in allowed }.associateWith { false }
+        toolOverrides = if (parent.toolOverrides.isEmpty()) deniedOverrides else parent.toolOverrides + deniedOverrides
     )
 }
 

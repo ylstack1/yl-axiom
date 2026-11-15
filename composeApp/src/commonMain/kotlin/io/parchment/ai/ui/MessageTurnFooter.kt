@@ -20,8 +20,11 @@ import androidx.compose.foundation.text.BasicText
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -99,6 +102,7 @@ internal fun MessageTurnActionFooter(
             if (!win.isCompact || isLatestTurn || showMoreActions) {
                 SepiaButton(
                     text = if (copiedBadge == "txt") "✓" else "📋",
+                    contentDescription = if (copiedBadge == "txt") Strings.copied else Strings.copy,
                     compact = true,
                     style = SepiaButtonStyle.GHOST,
                     onClick = {
@@ -230,6 +234,7 @@ internal fun MessageTurnActionFooter(
                 if (node.variants.size > 1) {
                     SepiaButton(
                         text = "🗑 ${node.activeVariantIndex + 1}/${node.variants.size}",
+                        contentDescription = "${Strings.deleteMessage} (${node.activeVariantIndex + 1}/${node.variants.size})",
                         compact = true,
                         style = SepiaButtonStyle.GHOST,
                         onClick = onDeleteCurrentVariant
@@ -261,6 +266,38 @@ internal fun MessageTurnActionFooter(
 }
 
 @Composable
+private fun rememberVariantProseTokens(
+    role: MessageRole,
+    variant: MessageVariant,
+    isStreaming: Boolean
+): Int {
+    val bucketKey = if (isStreaming) variant.content.length / 64 else variant.content.hashCode()
+    val fastEstimate = remember(bucketKey, isStreaming, variant.attachments) {
+        4 + O200kTokenizer.estimateTokensFast(variant.content) +
+            variant.attachments.sumOf { O200kTokenizer.countAttachmentTokens(it) }
+    }
+    if (isStreaming) return fastEstimate
+    val hasHeavyContent = variant.content.length > 1500 || variant.attachments.any { it.textContent.length > 1500 }
+    if (!hasHeavyContent) {
+        return remember(variant.id, variant.content, variant.attachments, role) {
+            O200kTokenizer.countMessageVariantTokens(role, variant, includeReasoningAndTools = false)
+        }
+    }
+    val exactCount by produceState(
+        initialValue = fastEstimate,
+        role,
+        variant.id,
+        variant.content,
+        variant.attachments
+    ) {
+        value = withContext(Dispatchers.Default) {
+            O200kTokenizer.countMessageVariantTokens(role, variant, includeReasoningAndTools = false)
+        }
+    }
+    return exactCount
+}
+
+@Composable
 private fun AssistantTurnUsageStats(
     activeVar: MessageVariant,
     preferences: PreferencesConfig,
@@ -270,21 +307,11 @@ private fun AssistantTurnUsageStats(
 ) {
     val p = LocalParchmentPalette.current
     val m = activeVar.tokenMetrics
-    val proseTokenKey = if (activeVar.isStreaming) activeVar.content.length / 64 else activeVar.content.hashCode()
-    val outProseTok = remember(proseTokenKey, activeVar.isStreaming, activeVar.attachments, m.outputTokens) {
-        val counted = O200kTokenizer.countMessageVariantTokens(
-            role = MessageRole.ASSISTANT,
-            variant = activeVar,
-            includeReasoningAndTools = false
-        )
-        if (activeVar.content.isNotBlank()) counted.toLong() else m.outputTokens
-    }
+    val countedProse = rememberVariantProseTokens(MessageRole.ASSISTANT, activeVar, activeVar.isStreaming)
+    val outProseTok = if (activeVar.content.isNotBlank()) countedProse.toLong() else m.outputTokens
     val toolPayloadTok = remember(activeVar.toolCalls, activeVar.isStreaming) {
         activeVar.toolCalls.sumOf { tc ->
-            val tcLive = activeVar.isStreaming || tc.isRunning
-            6 + O200kTokenizer.countTokens(tc.name) +
-                (if (tcLive) O200kTokenizer.estimateTokensFast(tc.argumentsJson) else O200kTokenizer.countTokens(tc.argumentsJson)) +
-                (if (tcLive) O200kTokenizer.estimateTokensFast(tc.resultText) else O200kTokenizer.countTokens(tc.resultText))
+            O200kTokenizer.countToolCallTokens(tc, isLiveOverride = activeVar.isStreaming)
         }
     }
     val thinkTokenKey = if (activeVar.isStreaming) activeVar.thinkingSummary.length / 64 else activeVar.thinkingSummary.hashCode()
@@ -518,9 +545,7 @@ internal fun UserTurnUsageStats(
     val p = LocalParchmentPalette.current
     val win = LocalParchmentWindowSize.current
     if (win.isCompact || !showTokenAndContextStats || (activeVar.content.isBlank() && activeVar.attachments.isEmpty())) return
-    val userTok = remember(activeVar.content, activeVar.attachments) {
-        O200kTokenizer.countMessageVariantTokens(MessageRole.USER, activeVar)
-    }
+    val userTok = rememberVariantProseTokens(MessageRole.USER, activeVar, isStreaming = activeVar.isStreaming)
     val userCost = (userTok / 1_000_000.0) * inputPricePerM
     @OptIn(ExperimentalLayoutApi::class)
     FlowRow(

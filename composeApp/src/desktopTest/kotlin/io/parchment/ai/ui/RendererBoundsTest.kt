@@ -168,4 +168,102 @@ class RendererBoundsTest {
             assertEquals(3, counter.count(buffer))
         }
     }
+
+    @Test fun boundedStylePreservesNestedFormattingAndSpanIsolation() {
+        val sample = styleLiteraryParagraph(
+            raw = "**unclosed *italic** then *outside* and [site *name*](https://example.com/a_(b))",
+            palette = palette,
+            indentChars = 0
+        )
+        assertEquals("unclosed *italic then outside and site name", sample.text)
+        assertEquals(1, sample.getLinkAnnotations(0, sample.length).size)
+        assertEquals(
+            "https://example.com/a_(b)",
+            (sample.getLinkAnnotations(0, sample.length).single().item as? androidx.compose.ui.text.LinkAnnotation.Url)?.url
+        )
+
+        val escapedAndCode = styleLiteraryParagraph(
+            raw = """\*\*lit\*\* and ``  a `b`  `` and _word_snake_case_ and **bold $50 to $100**""",
+            palette = palette,
+            indentChars = 1
+        )
+        assertEquals("  **lit** and a `b` and word_snake_case and bold \$50 to \$100", escapedAndCode.text)
+        assertTrue(escapedAndCode.spanStyles.any { it.item.background == palette.accent.copy(alpha = 0.12f) })
+
+        val dialogue = styleLiteraryParagraph(
+            raw = "\"Wait **now** *please*\" and _lead_",
+            palette = palette,
+            indentChars = 1
+        )
+        assertEquals("  \"Wait now please\" and lead", dialogue.text)
+        val dialogueSpans = dialogue.spanStyles.count { it.item.color == palette.dialogueInk }
+        assertEquals(1, dialogueSpans)
+    }
+
+    @Test fun parseProseBlocksHandlesEdgeCasesWithoutLineSplitRegressions() {
+        val markdown = listOf(
+            "##### Deep Heading",
+            "> quote 1\n> quote 2",
+            "```py\n\n\nprint(1)\n\n```\r\n",
+            "  - [ ] todo  ",
+            "- ",
+            "  1. subitem",
+            "$$ x + y $$",
+            "\\[\na + b\n\\]"
+        ).joinToString("\n\n")
+        val blocks = parseProseBlocks(markdown, enableMath = true)
+        assertEquals(
+            listOf(
+                ProseBlock.Heading(4, "# Deep Heading"),
+                ProseBlock.BlockQuote("quote 1\nquote 2"),
+                ProseBlock.CodeFence("py", "print(1)\n"),
+                ProseBlock.Paragraph("   ☐ todo"),
+                ProseBlock.Paragraph("•"),
+                ProseBlock.Paragraph("   1. subitem"),
+                ProseBlock.MathBlock(" x + y "),
+                ProseBlock.MathBlock("a + b")
+            ),
+            blocks
+        )
+    }
+
+    @Test fun latexAndSvgOptimizationsPreserveFormattingAndGeometry() {
+        val inline = LatexMathRenderer.formatInlineLatexToAnnotatedString(
+            "  xyz^{ab} + \\mathbb{R} - \\sqrt[3]{k_i}  ",
+            palette
+        )
+        assertEquals("xyzab + ℝ − 3√(ki)", inline.text)
+        // Outer base style + coalesced italic "xyz" + italic "ab" + italic "k" + italic "i" (NOT 1 span per letter)
+        val italicSpans = inline.spanStyles.filter { it.item.fontStyle == androidx.compose.ui.text.font.FontStyle.Italic }
+        assertTrue(italicSpans.any { inline.text.substring(it.start, it.end) == "xyz" })
+        assertTrue(italicSpans.any { inline.text.substring(it.start, it.end) == "ab" })
+        assertTrue(
+            inline.spanStyles.any {
+                it.item.baselineShift == androidx.compose.ui.text.style.BaselineShift.Superscript &&
+                    inline.text.substring(it.start, it.end) == "3"
+            }
+        )
+
+        val displayNodes = LatexMathRenderer.parseDisplayMathNodes("\\frac{alpha + 1}{beta - 2}", palette)
+        assertEquals(1, displayNodes.size)
+        val frac = displayNodes.single() as LatexMathRenderer.DisplayMathNode.StackedFraction
+        assertEquals("alpha + 1", frac.numerator.text)
+        assertEquals("beta − 2", frac.denominator.text)
+
+        val svg = """
+            <svg viewBox="0, 0 120 80">
+              <defs>
+                <linearGradient id="g"><stop offset="0%" stop-color="#112233"/><stop offset="100%" stop-color="#445566"/></linearGradient>
+              </defs>
+              <g transform="translate(10, 5)">
+                <rect x="0" y="0" width="40" height="20" fill="url(#g)" stroke="#000000" stroke-dasharray="3,2"/>
+              </g>
+            </svg>
+        """.trimIndent()
+        val scene = assertNotNull(parseSvgSceneDocument(svg, Color.Black))
+        assertEquals(120f, scene.width)
+        assertEquals(80f, scene.height)
+        assertEquals(1, scene.drawItems.size)
+        assertTrue(scene.gradients.containsKey("g"))
+    }
 }

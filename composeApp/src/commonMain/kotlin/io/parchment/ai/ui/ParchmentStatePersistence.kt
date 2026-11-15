@@ -313,12 +313,29 @@ internal const val MAX_TEXT_PREVIEW_BYTES = 4L * 1024L * 1024L
 private val MULTIPLE_UNDERSCORES_REGEX = Regex("_+")
 private val EXPORT_SHORT_ID_REGEX = Regex("[^a-zA-Z0-9_-]")
 
+private const val MAX_THOUGHT_PEEK_SCAN_CHARS = 8192
+
 /**
  * Extracts the latest single thought block (title + body) for the Compact Single-Thought Peek Window
  * when the user presses `Hide ▲` while the model is still actively reasoning.
  */
 internal fun extractLatestThoughtPeek(variant: MessageVariant): Pair<String, String> {
-    val raw = variant.trailingThinking.ifBlank { variant.thinkingSummary }.trim()
+    val rawFull = variant.trailingThinking.ifBlank { variant.thinkingSummary }
+    if (rawFull.isBlank()) return "" to ""
+    val raw = if (rawFull.length > MAX_THOUGHT_PEEK_SCAN_CHARS) {
+        val targetStart = rawFull.length - MAX_THOUGHT_PEEK_SCAN_CHARS
+        val prevBreak = rawFull.lastIndexOf("\n\n", startIndex = targetStart)
+        val sliceStart = when {
+            prevBreak >= targetStart - 2048 && prevBreak >= 0 -> prevBreak + 2
+            else -> {
+                val nl = rawFull.indexOf('\n', startIndex = targetStart)
+                if (nl in targetStart until (rawFull.length - 128)) nl + 1 else targetStart
+            }
+        }
+        rawFull.substring(sliceStart).trim()
+    } else {
+        rawFull.trim()
+    }
     if (raw.isEmpty()) return "" to ""
 
     val blocks = raw.split(THOUGHT_BLOCK_SPLIT_REGEX)
@@ -407,8 +424,6 @@ internal fun buildFreshSessionForAssistant(
         messages = initialMessages
     )
 }
-
-private val EMPTY_STUB_VARIANT = MessageVariant(id = "stub-var", content = "")
 
 /**
  * Strips duplicate in-memory base64 strings from attachments when `localFilePath` is already persisted on disk,
@@ -512,6 +527,7 @@ internal fun mergeSessionMetadata(full: ChatSession, metadata: ChatSession): Cha
     systemPrompt = metadata.systemPrompt,
     activeCard = metadata.activeCard,
     authorsNoteDepth = metadata.authorsNoteDepth,
+    stubMessageCount = 0,
     isCompactStub = false
 )
 
@@ -524,24 +540,40 @@ internal fun dehydrateChatSessionToCompactStub(session: ChatSession): ChatSessio
     if (session.isCompactStub || session.id.isBlank() || session.messages.isEmpty()) return session
     val msgCount = session.messages.size
     val lastNode = session.messages.last()
-    val lastPreviewText = lastNode.activeVariant.content.take(140)
+    val lastPreviewText = lastNode.activeVariant.content.take(
+        if (lastNode.pinned) maxOf(140, PIN_PREVIEW_CHARS) else 140
+    )
+    var hasAttachments = false
+    var hasMedia = false
+    for (msg in session.messages) {
+        for (v in msg.variants) {
+            if (!hasAttachments && v.attachments.isNotEmpty()) hasAttachments = true
+            if (!hasMedia && v.mediaItems.isNotEmpty()) hasMedia = true
+            if (hasAttachments && hasMedia) break
+        }
+        if (hasAttachments && hasMedia) break
+    }
     // Preserve only localFilePath references so Storage Manager orphan detection knows which media files belong to this chat
-    val refAttachments = session.messages
-        .asSequence()
-        .flatMap { it.variants.asSequence() }
-        .flatMap { it.attachments.asSequence() }
-        .filter { it.localFilePath.isNotBlank() }
-        .map { PromptAttachment(id = "", fileName = "", mimeType = "", localFilePath = it.localFilePath) }
-        .distinctBy { it.localFilePath }
-        .toList()
-    val refMedia = session.messages
-        .asSequence()
-        .flatMap { it.variants.asSequence() }
-        .flatMap { it.mediaItems.asSequence() }
-        .filter { it.localFilePath.isNotBlank() }
-        .map { GeneratedMediaItem(id = "", kind = io.parchment.ai.model.MediaKind.IMAGE, mimeType = "", localFilePath = it.localFilePath) }
-        .distinctBy { it.localFilePath }
-        .toList()
+    val refAttachments = if (!hasAttachments) emptyList() else {
+        session.messages
+            .asSequence()
+            .flatMap { it.variants.asSequence() }
+            .flatMap { it.attachments.asSequence() }
+            .filter { it.localFilePath.isNotBlank() }
+            .map { PromptAttachment(id = "", fileName = "", mimeType = "", localFilePath = it.localFilePath) }
+            .distinctBy { it.localFilePath }
+            .toList()
+    }
+    val refMedia = if (!hasMedia) emptyList() else {
+        session.messages
+            .asSequence()
+            .flatMap { it.variants.asSequence() }
+            .flatMap { it.mediaItems.asSequence() }
+            .filter { it.localFilePath.isNotBlank() }
+            .map { GeneratedMediaItem(id = "", kind = io.parchment.ai.model.MediaKind.IMAGE, mimeType = "", localFilePath = it.localFilePath) }
+            .distinctBy { it.localFilePath }
+            .toList()
+    }
     val stubLastNode = MessageNode(
         id = lastNode.id,
         role = lastNode.role,
@@ -555,30 +587,29 @@ internal fun dehydrateChatSessionToCompactStub(session: ChatSession): ChatSessio
         ),
         pinned = lastNode.pinned
     )
-    val stubList = ArrayList<MessageNode>(msgCount)
-    for (i in 0 until msgCount - 1) {
-        val node = session.messages[i]
-        // Pinned replies keep their id and a preview so the all-chats pin list works without loading the chat.
-        stubList.add(
+    val stubList = buildList {
+        for (i in 0 until msgCount - 1) {
+            val node = session.messages[i]
+            // Pinned replies keep their id and a preview so the all-chats pin list works without loading the chat.
             if (node.pinned) {
-                MessageNode(
-                    id = node.id,
-                    role = node.role,
-                    variants = listOf(MessageVariant(id = node.activeVariant.id, content = node.activeVariant.content.take(PIN_PREVIEW_CHARS))),
-                    pinned = true
+                add(
+                    MessageNode(
+                        id = node.id,
+                        role = node.role,
+                        variants = listOf(MessageVariant(id = node.activeVariant.id, content = node.activeVariant.content.take(PIN_PREVIEW_CHARS))),
+                        pinned = true
+                    )
                 )
-            } else {
-                // The chat list needs a unique id for each row, and a stub is on screen until the real chat loads.
-                MessageNode(id = "stub-node-$i", role = MessageRole.USER, variants = listOf(EMPTY_STUB_VARIANT))
             }
-        )
+        }
+        add(stubLastNode)
     }
-    stubList.add(stubLastNode)
     return session.copy(
         storySummary = "",
         fragments = emptyList(),
         authorsNote = "",
         messages = stubList,
+        stubMessageCount = msgCount,
         isCompactStub = true
     )
 }

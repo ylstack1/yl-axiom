@@ -34,8 +34,10 @@ class ParchmentHydrationPersistenceTest {
     fun everyMessageInAStubHasAUniqueId() {
         val messages = List(5) { MessageNode(id = "real-$it", role = MessageRole.USER, variants = listOf(MessageVariant(id = "v$it", content = "text"))) }
         val stub = dehydrateChatSessionToCompactStub(full("stub-ids").copy(messages = messages))
-        assertEquals(5, stub.messages.size)
-        assertEquals(5, stub.messages.map { it.id }.toSet().size)
+        assertEquals(5, stub.displayMessageCount)
+        assertEquals(1, stub.messages.size)
+        assertEquals(stub.messages.size, stub.messages.map { it.id }.toSet().size)
+        assertTrue(stub.messages.none { it.id.startsWith("stub-node-") })
     }
 
     @Test
@@ -259,5 +261,29 @@ class ParchmentHydrationPersistenceTest {
         val recovered = recoverAppStateFromPartialJson(raw)
         assertEquals("", recovered.activeSessionId)
         assertEquals(listOf("tab-alpha", "42"), recovered.openTabSessionIds)
+    }
+
+    @Test
+    fun compactStubPreservesPinnedOrderLastPreviewAndBadgeCountWithoutDummyNodes() {
+        val messages = listOf(
+            MessageNode("m0", MessageRole.USER, variants = listOf(MessageVariant("v0", "hello"))),
+            MessageNode("p1", MessageRole.ASSISTANT, variants = listOf(MessageVariant("v1", "first pinned reply")), pinned = true),
+            MessageNode("m2", MessageRole.USER, variants = listOf(MessageVariant("v2", "follow up"))),
+            MessageNode("m3", MessageRole.ASSISTANT, variants = listOf(MessageVariant("v3", "intermediate reply"))),
+            MessageNode("p4", MessageRole.ASSISTANT, variants = listOf(MessageVariant("v4", "second pinned reply")), pinned = true),
+            MessageNode("m5", MessageRole.ASSISTANT, variants = listOf(MessageVariant("v5", "latest message preview")))
+        )
+        val original = full("pin-stub-compact").copy(messages = messages)
+        val stub = dehydrateChatSessionToCompactStub(original)
+        assertTrue(stub.isCompactStub)
+        assertEquals(6, stub.displayMessageCount)
+        assertEquals(3, stub.messages.size)
+        assertEquals(listOf("p1", "p4", "m5"), stub.messages.map { it.id })
+        assertEquals(listOf("p1", "p4"), pinnedReplies(listOf(stub)).map { it.nodeId })
+        assertTrue(stub.messages.none { it.id.startsWith("stub-node-") })
+        val merged = mergeSessionMetadata(original, stub.copy(title = "Updated"))
+        assertFalse(merged.isCompactStub)
+        assertEquals(0, merged.stubMessageCount)
+        assertEquals(6, merged.displayMessageCount)
     }
 }

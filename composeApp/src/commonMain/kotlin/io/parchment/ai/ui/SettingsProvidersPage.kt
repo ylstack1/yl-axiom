@@ -4,7 +4,6 @@ import androidx.compose.animation.AnimatedVisibility
 import io.parchment.ai.strings.Strings
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsHoveredAsState
 import androidx.compose.foundation.interaction.collectIsPressedAsState
@@ -45,8 +44,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.semantics.Role
-import androidx.compose.ui.semantics.selected
-import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
@@ -163,8 +160,7 @@ internal fun ProvidersSubpage(
                                     .clip(shape)
                                     .background(if (isSel) p.cardBg else Color.Transparent)
                                     .border(LineWidth.hairline, if (isSel) p.border else Color.Transparent, shape)
-                                    .clickable(role = Role.Button) { onSelectProfile(prof.id) }
-                                    .semantics { selected = isSel }
+                                    .kissClickable(pressScale = 0.99f, hoverScale = 1.004f, role = Role.Button, selected = isSel) { onSelectProfile(prof.id) }
                                     .padding(horizontal = Space.s10, vertical = Space.s8),
                                 horizontalArrangement = Arrangement.SpaceBetween,
                                 verticalAlignment = Alignment.CenterVertically
@@ -178,8 +174,7 @@ internal fun ProvidersSubpage(
                                         modifier = Modifier
                                             .size(26.dp)
                                             .clip(CircleShape)
-                                            .background(if (isSel) p.accent.copy(alpha = 0.16f) else p.elevatedBg)
-                                            .border(LineWidth.hairline, if (isSel) p.accent else p.border, CircleShape),
+                                            .background(if (isSel) p.accent.copy(alpha = 0.16f) else p.elevatedBg),
                                         contentAlignment = Alignment.Center
                                     ) {
                                         ModelLabSvgIcon(
@@ -207,7 +202,7 @@ internal fun ProvidersSubpage(
                                         .padding(horizontal = Space.s6, vertical = Space.s2)
                                 ) {
                                     BasicText(
-                                        text = if (statusOn) "On" else Strings.off,
+                                        text = if (statusOn) Strings.onLabel else Strings.off,
                                         style = p.uiLabelStyle.copy(
                                             fontSize = 11.sp,
                                             fontWeight = FontWeight.Bold,
@@ -226,7 +221,11 @@ internal fun ProvidersSubpage(
                         onClick = { showAddProviderMenu = !showAddProviderMenu }
                     )
 
-                    AnimatedVisibility(visible = showAddProviderMenu) {
+                    AnimatedVisibility(
+                        visible = showAddProviderMenu,
+                        enter = motionExpandEnter(),
+                        exit = motionShrinkExit()
+                    ) {
                         Column(verticalArrangement = Arrangement.spacedBy(Space.s4)) {
                             ProviderProtocol.entries.forEach { proto ->
                                 SepiaButton(
@@ -295,14 +294,13 @@ internal fun ProvidersSubpage(
                                         modifier = Modifier
                                             .size(34.dp)
                                             .clip(CircleShape)
-                                            .background(if (isSel) p.accent.copy(alpha = 0.16f) else p.elevatedBg)
-                                            .border(LineWidth.hairline, if (isSel) p.accent else p.border, CircleShape),
+                                            .background(if (isSel) p.accent.copy(alpha = 0.16f) else p.elevatedBg),
                                         contentAlignment = Alignment.Center
                                     ) {
                                         ModelLabSvgIcon(
                                             modelOrProvider = prof.defaultModel.ifBlank { prof.name },
                                             tint = if (isSel) p.accent else p.narrationInk,
-                                            size = 17.dp,
+                                            size = IconSize.lg,
                                             fallbackProtocolName = prof.protocol.displayName
                                         )
                                     }
@@ -314,12 +312,12 @@ internal fun ProvidersSubpage(
                                             text = prof.name,
                                             style = p.uiHeaderStyle.copy(fontSize = 15.sp)
                                         )
-                                        val modelCountInfo = if (prof.savedModels.isNotEmpty()) "${prof.savedModels.size} models" else prof.defaultModel.ifBlank { Strings.noModelsYet }
+                                        val modelCountInfo = if (prof.savedModels.isNotEmpty()) Strings.modelsCount(prof.savedModels.size) else prof.defaultModel.ifBlank { Strings.noModelsYet }
                                         BasicText(
                                             text = "${prof.protocol.displayName.substringBefore(" API")} • $modelCountInfo",
                                             maxLines = 1,
                                             overflow = TextOverflow.Ellipsis,
-                                            style = p.uiLabelStyle.copy(fontSize = 11.sp, color = p.narrationInk)
+                                            style = p.uiLabelStyle.copy(fontSize = 11.sp, color = p.narrationInk, fontFeatureSettings = "tnum")
                                         )
                                     }
                                 }
@@ -334,7 +332,7 @@ internal fun ProvidersSubpage(
                                             .padding(horizontal = Space.s6, vertical = Space.s2)
                                     ) {
                                         BasicText(
-                                            text = if (statusOn) "On" else Strings.off,
+                                            text = if (statusOn) Strings.onLabel else Strings.off,
                                             style = p.uiLabelStyle.copy(
                                                 fontSize = 11.sp,
                                                 fontWeight = FontWeight.Bold,
@@ -342,7 +340,7 @@ internal fun ProvidersSubpage(
                                             )
                                         )
                                     }
-                                    KissVectorIcon(icon = KissIcon.CHEVRON_RIGHT, tint = p.mutedInk, size = 15.dp)
+                                    KissVectorIcon(icon = KissIcon.CHEVRON_RIGHT, tint = p.mutedInk, size = IconSize.lg)
                                 }
                             }
                         }
@@ -353,7 +351,11 @@ internal fun ProvidersSubpage(
                             modifier = Modifier.fillMaxWidth(),
                             onClick = { showAddProviderMenu = !showAddProviderMenu }
                         )
-                        AnimatedVisibility(visible = showAddProviderMenu) {
+                        AnimatedVisibility(
+                            visible = showAddProviderMenu,
+                            enter = motionExpandEnter(),
+                            exit = motionShrinkExit()
+                        ) {
                             Column(verticalArrangement = Arrangement.spacedBy(Space.s6)) {
                                 ProviderProtocol.entries.forEach { proto ->
                                     SepiaButton(
@@ -472,7 +474,7 @@ internal fun ProvidersSubpage(
                                 ModelLabSvgIcon(
                                     modelOrProvider = activeProfile.defaultModel.ifBlank { activeProfile.name },
                                     tint = p.accent,
-                                    size = 17.dp,
+                                    size = IconSize.lg,
                                     fallbackProtocolName = activeProfile.protocol.displayName
                                 )
                                 BasicText(
@@ -482,7 +484,7 @@ internal fun ProvidersSubpage(
                                 KissVectorIcon(
                                     icon = KissIcon.EDIT,
                                     tint = p.mutedInk,
-                                    size = 13.dp
+                                    size = IconSize.md
                                 )
                             }
                         }
@@ -664,7 +666,7 @@ internal fun ProvidersSubpage(
                         ) {
                             BasicText(
                                 text = "${activeProfile.savedModels.size}",
-                                style = p.uiLabelStyle.copy(fontWeight = FontWeight.Bold)
+                                style = p.uiLabelStyle.copy(fontWeight = FontWeight.Bold, fontFeatureSettings = "tnum")
                             )
                         }
                     }
@@ -700,7 +702,11 @@ internal fun ProvidersSubpage(
                 }
 
                 // Manual Model Add Drawer
-                AnimatedVisibility(visible = showAddModelBox || activeProfile.savedModels.isEmpty()) {
+                AnimatedVisibility(
+                    visible = showAddModelBox || activeProfile.savedModels.isEmpty(),
+                    enter = motionExpandEnter(),
+                    exit = motionShrinkExit()
+                ) {
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.spacedBy(Space.s8),
@@ -879,11 +885,7 @@ internal fun ProvidersSubpage(
                                             else -> p.elevatedBg.copy(alpha = 0.35f)
                                         }
                                     )
-                                    .border(
-                                        LineWidth.hairline,
-                                        if (isSelectedModel || rowHovered) p.accent.copy(alpha = if (isSelectedModel) 1f else 0.55f) else Color.Transparent,
-                                        RoundedCornerShape(Radius.r8)
-                                    )
+                                    .then(if (isSelectedModel) Modifier.rubricMark(p.accent, verticalInset = Space.s6) else Modifier)
                                     .padding(horizontal = Space.s12, vertical = Space.s8),
                                 horizontalArrangement = Arrangement.SpaceBetween,
                                 verticalArrangement = Arrangement.spacedBy(Space.s6)
@@ -967,10 +969,30 @@ internal fun ProviderProtocolSubpage(
     onBack: () -> Unit
 ) {
     val p = LocalParchmentPalette.current
-    var tempText by remember(profile.id, profile.temperature) { mutableStateOf(profile.temperature?.toString() ?: "") }
-    var topPText by remember(profile.id, profile.topP) { mutableStateOf(profile.topP?.toString() ?: "") }
-    var maxOutText by remember(profile.id, profile.maxOutputTokens) { mutableStateOf(profile.maxOutputTokens?.toString() ?: "") }
-    var budgetText by remember(profile.id, profile.thinkingBudgetTokens) { mutableStateOf(profile.thinkingBudgetTokens?.toString() ?: "") }
+    var tempText by rememberSyncedNumericDraft(
+        externalValue = profile.temperature,
+        key = profile.id,
+        format = { it?.toString() ?: "" },
+        parse = { it.trim().toDoubleOrNull() }
+    )
+    var topPText by rememberSyncedNumericDraft(
+        externalValue = profile.topP,
+        key = profile.id,
+        format = { it?.toString() ?: "" },
+        parse = { it.trim().toDoubleOrNull() }
+    )
+    var maxOutText by rememberSyncedNumericDraft(
+        externalValue = profile.maxOutputTokens,
+        key = profile.id,
+        format = { it?.toString() ?: "" },
+        parse = { it.trim().toIntOrNull() }
+    )
+    var budgetText by rememberSyncedNumericDraft(
+        externalValue = profile.thinkingBudgetTokens,
+        key = profile.id,
+        format = { it?.toString() ?: "" },
+        parse = { it.trim().toIntOrNull() }
+    )
 
     Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
         @OptIn(ExperimentalLayoutApi::class)
@@ -1008,7 +1030,7 @@ internal fun ProviderProtocolSubpage(
                 }
                 SepiaTextField(
                     value = profile.endpointPathOverride,
-                    onValueChange = { ep -> onUpdateProfile { it.copy(endpointPathOverride = ep.trim()) } },
+                    onValueChange = { ep -> onUpdateProfile { it.copy(endpointPathOverride = ep) } },
                     label = Strings.customPathOptionalDefault(profile.protocol.defaultEndpointPath),
                     placeholder = profile.protocol.defaultEndpointPath,
                     monospace = true,
@@ -1299,31 +1321,40 @@ private fun ModelConfigSubpage(
             )
         }
 
+        var isSyncingCatalog by remember(modelId) { mutableStateOf(false) }
+
         SepiaSectionCard(
             title = Strings.conversationAndReplyLimits,
             headerAction = {
                 SepiaButton(
-                    text = Strings.fillInFromModelCatalog,
+                    text = if (isSyncingCatalog) Strings.fetching else Strings.fillInFromModelCatalog,
                     compact = true,
+                    enabled = !isSyncingCatalog,
                     style = SepiaButtonStyle.SECONDARY,
                     onClick = {
+                        if (isSyncingCatalog) return@SepiaButton
+                        isSyncingCatalog = true
                         scope.launch {
-                            ModelsDevClient.fetchModelSpec(modelId).fold(
-                                onSuccess = { spec ->
-                                    ctxText = spec.contextWindowTokens.toString()
-                                    maxOutText = spec.maxOutputTokens?.toString() ?: ""
-                                    val syncedPricing = spec.knownPricing ?: io.parchment.ai.model.legacyTokenPricing(spec.inputPricePerM, spec.outputPricePerM, spec.cacheReadPricePerM, spec.cacheWritePricePerM, spec.reasoningPricePerM)
-                                    inPriceText = syncedPricing.inputPerM?.toString() ?: ""
-                                    outPriceText = syncedPricing.outputPerM?.toString() ?: ""
-                                    cachePriceText = syncedPricing.cacheReadPerM?.toString() ?: ""
-                                    thinkPriceText = syncedPricing.reasoningPerM?.toString() ?: ""
-                                    writePriceText = syncedPricing.cacheWritePerM?.toString() ?: ""
-                                    longWritePriceText = syncedPricing.longCacheWritePerM?.toString() ?: ""
-                                    saveSpec(spec)
-                                    onNotify(Strings.syncedFromTheModelCatalog(modelId))
-                                },
-                                onFailure = { err -> onNotify(Strings.modelCatalog(err.message)) }
-                            )
+                            try {
+                                ModelsDevClient.fetchModelSpec(modelId).fold(
+                                    onSuccess = { spec ->
+                                        ctxText = spec.contextWindowTokens.toString()
+                                        maxOutText = spec.maxOutputTokens?.toString() ?: ""
+                                        val syncedPricing = spec.knownPricing ?: io.parchment.ai.model.legacyTokenPricing(spec.inputPricePerM, spec.outputPricePerM, spec.cacheReadPricePerM, spec.cacheWritePricePerM, spec.reasoningPricePerM)
+                                        inPriceText = syncedPricing.inputPerM?.toString() ?: ""
+                                        outPriceText = syncedPricing.outputPerM?.toString() ?: ""
+                                        cachePriceText = syncedPricing.cacheReadPerM?.toString() ?: ""
+                                        thinkPriceText = syncedPricing.reasoningPerM?.toString() ?: ""
+                                        writePriceText = syncedPricing.cacheWritePerM?.toString() ?: ""
+                                        longWritePriceText = syncedPricing.longCacheWritePerM?.toString() ?: ""
+                                        saveSpec(spec)
+                                        onNotify(Strings.syncedFromTheModelCatalog(modelId))
+                                    },
+                                    onFailure = { err -> onNotify(Strings.modelCatalog(err.message)) }
+                                )
+                            } finally {
+                                isSyncingCatalog = false
+                            }
                         }
                     }
                 )

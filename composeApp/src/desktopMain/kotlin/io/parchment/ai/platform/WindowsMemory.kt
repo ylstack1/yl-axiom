@@ -27,11 +27,14 @@ internal object WindowsMemory {
         fun GlobalMemoryStatusEx(status: MemoryStatusEx): Boolean
     }
 
+    private val isWindows = System.getProperty("os.name").orEmpty().startsWith("Windows", ignoreCase = true)
+    private val kernel32 by lazy { Native.load("kernel32", Kernel32::class.java) }
+
     /** 0 when unknown (not Windows, or the call failed), which callers treat as "not low". */
     fun totalPhysicalBytes(): Long = runCatching {
-        if (!System.getProperty("os.name").orEmpty().startsWith("Windows", ignoreCase = true)) return 0L
+        if (!isWindows) return 0L
         val status = MemoryStatusEx()
         status.dwLength = status.size()
-        if (Native.load("kernel32", Kernel32::class.java).GlobalMemoryStatusEx(status)) status.ullTotalPhys else 0L
+        if (kernel32.GlobalMemoryStatusEx(status)) status.ullTotalPhys else 0L
     }.getOrDefault(0L)
 }

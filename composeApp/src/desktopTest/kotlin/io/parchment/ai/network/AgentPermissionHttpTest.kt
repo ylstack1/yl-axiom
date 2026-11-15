@@ -3,6 +3,7 @@ package io.parchment.ai.network
 import com.sun.net.httpserver.HttpServer
 import io.parchment.ai.harness.*
 import io.parchment.ai.model.*
+import io.parchment.ai.protocol.O200kTokenizer
 import io.parchment.ai.runtime.RunActivity
 import io.parchment.ai.runtime.RunActivityContext
 import kotlinx.coroutines.*
@@ -12,13 +13,19 @@ import kotlinx.serialization.json.*
 import java.net.InetSocketAddress
 import java.nio.file.Files
 import java.util.Collections
+import java.util.concurrent.CountDownLatch
 import java.util.concurrent.Executors
+import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicLong
 import kotlin.test.*
 
 class AgentPermissionHttpTest {
-    private class Fixture(val toolCalls: List<Pair<String, JsonObject>>, val reject: Boolean = false) : AutoCloseable {
+    private class Fixture(
+        val toolCalls: List<Pair<String, JsonObject>>,
+        val reject: Boolean = false,
+        val onRequest: (() -> Unit)? = null
+    ) : AutoCloseable {
         val root = Files.createTempDirectory("parchment-permission-http-")
         private val count = AtomicInteger()
         val requests = Collections.synchronizedList(mutableListOf<JsonObject>())
@@ -28,6 +35,7 @@ class AgentPermissionHttpTest {
             createContext("/") { exchange ->
                 val request = exchange.requestBody.bufferedReader().use { it.readText() }
                 requests.add(Json.parseToJsonElement(request).jsonObject)
+                onRequest?.invoke()
                 val round = count.getAndIncrement()
                 val response = buildJsonObject {
                     put("id", "response-$round")
@@ -306,5 +314,112 @@ class AgentPermissionHttpTest {
             }
             assertTrue(fixture.requests.isEmpty())
         }
+    }
+
+    @Test fun concurrentIdenticalUtilityCallsCoalesceToSingleHttpRequest() = runBlocking(Dispatchers.Default) {
+        val entered = CountDownLatch(1)
+        val release = CountDownLatch(1)
+        Fixture(emptyList(), onRequest = {
+            if (entered.count > 0) {
+                entered.countDown()
+                release.await(5, TimeUnit.SECONDS)
+            }
+        }).use { fixture ->
+            val usageRunIds = Collections.synchronizedList(mutableListOf<String>())
+            val callA = async {
+                AiProviderEngine.generateUtilityText(
+                    fixture.profile, "fixture-model", "Summarize this.",
+                    ownerSessionId = "chat-1", ownerRunId = "run-a", purpose = "summary",
+                    onUsage = { rec, _ -> usageRunIds.add(rec.ownerRunId) }
+                ).getOrThrow()
+            }
+            assertTrue(entered.await(3, TimeUnit.SECONDS))
+            val callB = async {
+                AiProviderEngine.generateUtilityText(
+                    fixture.profile, "fixture-model", "Summarize this.",
+                    ownerSessionId = "chat-1", ownerRunId = "run-b", purpose = "summary",
+                    onUsage = { rec, _ -> usageRunIds.add(rec.ownerRunId) }
+                ).getOrThrow()
+            }
+            delay(40)
+            release.countDown()
+            assertEquals("Done.", callA.await())
+            assertEquals("Done.", callB.await())
+            assertEquals(1, fixture.requests.size)
+            assertTrue("run-a" in usageRunIds && "run-b" in usageRunIds, "Both callers must receive usage attribution: $usageRunIds")
+
+            val sequential = AiProviderEngine.generateUtilityText(
+                fixture.profile, "fixture-model", "Summarize this.",
+                ownerSessionId = "chat-1", ownerRunId = "run-c", purpose = "summary"
+            ).getOrThrow()
+            assertEquals("Done.", sequential)
+            assertEquals(2, fixture.requests.size)
+        }
+    }
+
+    @Test fun tokenizerVariantCacheAndContextHelpersPreserveExactValuesAndReflectEdits() {
+        val baseTool = ToolCallRecord(id = "tc-1", name = "fs_read", argumentsJson = """{"path":"a.txt"}""", resultText = "hello world")
+        val editedTool = baseTool.copy(resultText = "hello world with a much longer tool output payload across many tokens")
+        val t1 = O200kTokenizer.countToolCallTokens(baseTool)
+        assertEquals(t1, O200kTokenizer.countToolCallTokens(baseTool))
+        assertTrue(O200kTokenizer.countToolCallTokens(editedTool) > t1)
+
+        val baseVar = MessageVariant(id = "v-1", content = "Short answer.", thinkingSummary = "Thought", toolCalls = listOf(baseTool))
+        val editedVar = baseVar.copy(content = "Short answer expanded into a considerably longer paragraph with extra tokens.", toolCalls = listOf(editedTool))
+        val vTok1 = O200kTokenizer.countMessageVariantTokens(MessageRole.ASSISTANT, baseVar)
+        assertEquals(vTok1, O200kTokenizer.countMessageVariantTokens(MessageRole.ASSISTANT, baseVar))
+        assertTrue(O200kTokenizer.countMessageVariantTokens(MessageRole.ASSISTANT, editedVar) > vTok1)
+
+        val metrics = AiProviderEngine.computeTurnTokenMetrics(
+            reportedInputTokens = 100L,
+            reportedCachedTokens = 20L,
+            reportedReasoningTokens = 0L,
+            reportedOutputTokens = 17L,
+            fallbackInputTokens = 999L,
+            contentText = "Should not fall back when output reported",
+            thinkingText = "Thought ignored when output reported",
+            executedTools = listOf(editedTool),
+            totalDurationMs = 1000L,
+            ttftMs = 100L,
+            activeDecodeDurationMs = 900L,
+            totalToolExecutionMs = 0L
+        )
+        assertEquals(100L, metrics.inputTokens)
+        assertEquals(17L, metrics.outputTokens)
+        assertEquals(0L, metrics.reasoningTokens)
+
+        assertEquals("clean", AiProviderEngine.stripInlineErrorNotices("clean\n\n*[Stream interrupted]"))
+        assertEquals("", AiProviderEngine.stripInlineErrorNotices("   **[Provider Error: bad]**"))
+        val session = ChatSession(
+            id = "s",
+            title = "t",
+            createdAt = 1L,
+            updatedAt = 1L,
+            profileId = "p",
+            fragments = listOf(
+                ContextFragment(
+                    id = "f1",
+                    title = "Dragon",
+                    content = "Fire breathing lore",
+                    mode = FragmentActivationMode.KEYWORD,
+                    keywords = listOf("wyvern")
+                )
+            )
+        )
+        val nodes = listOf(
+            MessageNode("n1", MessageRole.USER, listOf(MessageVariant("u1", "Early turn with   extra\n\nwhitespace"))),
+            MessageNode("n2", MessageRole.ASSISTANT, listOf(MessageVariant("a1", "Mentioned wyvern here"))),
+            MessageNode("n3", MessageRole.USER, listOf(MessageVariant("u2", "Turn 3"))),
+            MessageNode("n4", MessageRole.ASSISTANT, listOf(MessageVariant("a2", "Turn 4"))),
+            MessageNode("n5", MessageRole.USER, listOf(MessageVariant("u3", "Turn 5")))
+        )
+        val injected = AiProviderEngine.injectAuthorsNoteIntoHistory(nodes, session)
+        val expectedNoteIdx = (injected.size - 1 - session.authorsNoteDepth).coerceIn(0, injected.lastIndex)
+        assertTrue(injected[expectedNoteIdx].second.contains("Fire breathing lore"))
+        val compacted = AiProviderEngine.compactHistoryNodesOnOverflow(nodes)
+        assertTrue(compacted.first().activeVariant.content.contains("Early turn with extra whitespace"))
+        val p1 = subagentPolicy(AgentPermissionPolicy(workspacePath = "C:/tmp", workspaceMode = WorkspaceMode.READ_WRITE))
+        val p2 = subagentPolicy(AgentPermissionPolicy(workspacePath = "C:/tmp", workspaceMode = WorkspaceMode.READ_WRITE))
+        assertEquals(p1.toolOverrides, p2.toolOverrides)
     }
 }

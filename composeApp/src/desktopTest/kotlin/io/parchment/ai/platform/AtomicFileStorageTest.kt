@@ -99,6 +99,26 @@ class AtomicFileStorageTest {
         assertFalse(closer.isAlive)
     }
 
+    @Test
+    fun writeStreamCreatesMissingParentsAndCleansUpTempOnFailure() = withStorage { root ->
+        val export = File(root, "nested/export/out.bin")
+        val payload = byteArrayOf(1, 2, 3, 4, 5)
+        AtomicFileStorage.writeStream(export) { it.write(payload) }
+        assertTrue(export.isFile)
+        assertTrue(export.readBytes().contentEquals(payload))
+        assertFalse(File(export.parentFile, "out.bin.tmp").exists())
+
+        val brokenTarget = File(root, "nested/export/fail.bin")
+        assertFailsWith<IOException> {
+            AtomicFileStorage.writeStream(brokenTarget) { output ->
+                output.write(payload)
+                throw IOException("Simulated stream failure")
+            }
+        }
+        assertFalse(brokenTarget.exists())
+        assertFalse(File(brokenTarget.parentFile, "fail.bin.tmp").exists())
+    }
+
     private fun withStorage(block: (File) -> Unit) {
         val root = Files.createTempDirectory("parchment-atomic-test-").toFile()
         try {

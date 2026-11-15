@@ -8,7 +8,6 @@ import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -54,11 +53,12 @@ internal fun FloatingNotification(
     SideEffect { if (message.isNotBlank()) lastMessage = message }
     val visibleMessage = message.ifBlank { lastMessage }
     val shape = RoundedCornerShape(Radius.r12)
+    val reduceMotion = LocalReduceMotion.current
     AnimatedVisibility(
         visible = message.isNotBlank(),
         modifier = modifier.widthIn(max = 560.dp),
-        enter = fadeIn(motionTween(Motion.STANDARD)) + slideInVertically(motionTween(Motion.MEDIUM)) { -it / 3 },
-        exit = fadeOut(motionTween(Motion.STANDARD)) + slideOutVertically(motionTween(Motion.STANDARD)) { -it / 3 }
+        enter = if (reduceMotion) androidx.compose.animation.EnterTransition.None else fadeIn(motionTween(Motion.STANDARD)) + slideInVertically(motionTween(Motion.MEDIUM)) { -it / 3 },
+        exit = if (reduceMotion) androidx.compose.animation.ExitTransition.None else fadeOut(motionTween(Motion.STANDARD)) + slideOutVertically(motionTween(Motion.STANDARD)) { -it / 3 }
     ) {
         Row(
             modifier = Modifier
@@ -85,7 +85,7 @@ internal fun FloatingNotification(
                 modifier = Modifier
                     .size(48.dp)
                     .clip(CircleShape)
-                    .clickable(role = Role.Button, onClick = onDismiss)
+                    .kissClickable(pressScale = 0.94f, hoverScale = 1.04f, role = Role.Button, onClick = onDismiss)
                     .semantics { contentDescription = Strings.dismissNotification },
                 contentAlignment = Alignment.Center
             ) { KissVectorIcon(KissIcon.CLOSE, palette.mutedInk, size = IconSize.lg) }

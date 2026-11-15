@@ -615,8 +615,12 @@ data class ChatSession(
     val permissionOverrides: AgentPermissionOverrides? = null,
     val utilityUsageRecords: List<ApiUsageRecord> = emptyList(),
     val messages: List<MessageNode> = emptyList(),
+    @Transient val stubMessageCount: Int = 0,
     @Transient val isCompactStub: Boolean = false
-)
+) {
+    val displayMessageCount: Int
+        get() = if (isCompactStub && stubMessageCount > 0) maxOf(stubMessageCount, messages.size) else messages.size
+}
 
 @Immutable
 @Serializable

@@ -4,7 +4,6 @@ import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -12,6 +11,7 @@ import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
@@ -24,6 +24,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -44,6 +45,10 @@ import io.parchment.ai.model.WebSourceCitation
 import io.parchment.ai.platform.PlatformPickers
 import io.parchment.ai.platform.PlatformStorage
 import io.parchment.ai.strings.Strings
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.IO
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 /**
  * Attached images and non-image file chips shown below a message body.
@@ -99,14 +104,15 @@ private fun AttachmentImageCard(
     onInspectAttachment: (PromptAttachment) -> Unit
 ) {
     val p = LocalParchmentPalette.current
-    val bmp = rememberFileImage(att.localFilePath).bitmap
+    val fileImage = rememberFileImage(att.localFilePath)
+    val bmp = fileImage.bitmap
     Column(
         modifier = Modifier
             .widthIn(max = 360.dp)
             .clip(RoundedCornerShape(Radius.r10))
             .background(p.cardBg)
             .border(LineWidth.hairline, p.border, RoundedCornerShape(Radius.r10))
-            .clickable(role = Role.Button, onClickLabel = Strings.openAttachment) { onInspectAttachment(att) }
+            .kissClickable(pressScale = 0.99f, hoverScale = 1.004f, role = Role.Button, onClickLabel = Strings.openAttachment) { onInspectAttachment(att) }
             .padding(Space.s8),
         verticalArrangement = Arrangement.spacedBy(Space.s6)
     ) {
@@ -120,15 +126,27 @@ private fun AttachmentImageCard(
                     .clip(RoundedCornerShape(Radius.r6))
             )
         } else {
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(Space.s6)
+            Box(
+                modifier = Modifier
+                    .widthIn(min = 200.dp, max = 360.dp)
+                    .height(180.dp)
+                    .clip(RoundedCornerShape(Radius.r6))
+                    .background(p.sheetBg.copy(alpha = 0.6f))
+                    .padding(Space.s10),
+                contentAlignment = Alignment.Center
             ) {
-                KissVectorIcon(icon = KissIcon.IMAGE, tint = p.accent, size = 14.dp)
-                BasicText(
-                    text = att.fileName,
-                    style = p.uiBodyStyle.copy(color = p.accent, fontWeight = FontWeight.SemiBold)
-                )
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(Space.s6)
+                ) {
+                    KissVectorIcon(icon = KissIcon.IMAGE, tint = p.accent, size = IconSize.md)
+                    BasicText(
+                        text = if (fileImage.isLoading) Strings.loading else att.fileName,
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis,
+                        style = p.uiBodyStyle.copy(color = p.accent, fontWeight = FontWeight.SemiBold)
+                    )
+                }
             }
         }
         Row(
@@ -185,7 +203,7 @@ private fun AttachmentFileChip(
             .clip(RoundedCornerShape(Radius.r8))
             .background(p.cardBg)
             .border(LineWidth.hairline, p.border, RoundedCornerShape(Radius.r8))
-            .clickable(role = Role.Button, onClickLabel = Strings.openAttachment) { onInspectAttachment(att) }
+            .kissClickable(pressScale = 0.99f, hoverScale = 1.004f, role = Role.Button, onClickLabel = Strings.openAttachment) { onInspectAttachment(att) }
             .padding(horizontal = Space.s10, vertical = 7.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(7.dp)
@@ -239,13 +257,41 @@ internal fun TurnGeneratedMediaSection(
     }
 }
 
+private fun parseMediaAspectRatio(raw: String): Float {
+    val cleaned = raw.trim()
+    if (cleaned.isEmpty()) return 4f / 3f
+    val sep = when {
+        ':' in cleaned -> ':'
+        '/' in cleaned -> '/'
+        'x' in cleaned -> 'x'
+        'X' in cleaned -> 'X'
+        else -> null
+    }
+    if (sep != null) {
+        val parts = cleaned.split(sep, limit = 2)
+        val w = parts.getOrNull(0)?.trim()?.toFloatOrNull()
+        val h = parts.getOrNull(1)?.trim()?.toFloatOrNull()
+        if (w != null && h != null && w > 0f && h > 0f) {
+            return (w / h).coerceIn(0.55f, 2.2f)
+        }
+    }
+    val numeric = cleaned.toFloatOrNull()
+    if (numeric != null && numeric > 0f) {
+        return numeric.coerceIn(0.55f, 2.2f)
+    }
+    return 4f / 3f
+}
+
 @Composable
 private fun GeneratedImageMediaCard(
     media: GeneratedMediaItem,
     onInspectGeneratedImage: (GeneratedMediaItem) -> Unit
 ) {
     val p = LocalParchmentPalette.current
-    val bmp = rememberFileImage(media.localFilePath).bitmap
+    val scope = rememberCoroutineScope()
+    val fileImage = rememberFileImage(media.localFilePath)
+    val bmp = fileImage.bitmap
+    val reservedAspect = remember(media.aspectRatio) { parseMediaAspectRatio(media.aspectRatio) }
     Column(
         modifier = Modifier
             .fillMaxWidth()
@@ -264,20 +310,33 @@ private fun GeneratedImageMediaCard(
                     .fillMaxWidth()
                     .heightIn(max = 520.dp)
                     .clip(RoundedCornerShape(Radius.r6))
-                    .clickable(role = Role.Button) {
+                    .kissClickable(pressScale = 0.99f, hoverScale = 1.004f, role = Role.Button, onClickLabel = Strings.openAttachment) {
                         onInspectGeneratedImage(media)
                     }
             )
         } else {
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(Space.s6)
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .heightIn(min = 160.dp, max = 360.dp)
+                    .aspectRatio(reservedAspect, matchHeightConstraintsFirst = false)
+                    .clip(RoundedCornerShape(Radius.r6))
+                    .background(p.sheetBg.copy(alpha = 0.6f))
+                    .padding(Space.s12),
+                contentAlignment = Alignment.Center
             ) {
-                KissVectorIcon(icon = KissIcon.IMAGE, tint = p.accent, size = IconSize.md)
-                BasicText(
-                    text = Strings.generatedImage(media.localFilePath.ifBlank { media.remoteUrl }),
-                    style = p.uiBodyStyle.copy(color = p.accent)
-                )
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(Space.s6)
+                ) {
+                    KissVectorIcon(icon = KissIcon.IMAGE, tint = p.accent, size = IconSize.md)
+                    BasicText(
+                        text = Strings.generatedImage(media.localFilePath.ifBlank { media.remoteUrl }),
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis,
+                        style = p.uiBodyStyle.copy(color = p.accent)
+                    )
+                }
             }
         }
         @OptIn(ExperimentalLayoutApi::class)
@@ -315,9 +374,14 @@ private fun GeneratedImageMediaCard(
                         compact = true,
                         style = SepiaButtonStyle.OUTLINE,
                         onClick = {
-                            val bytes = PlatformStorage.readBinaryFileBytes(media.localFilePath)
-                            if (bytes != null) {
-                                PlatformPickers.copyImageToClipboard(bytes)
+                            val path = media.localFilePath
+                            scope.launch {
+                                val bytes = withContext(Dispatchers.IO) {
+                                    PlatformStorage.readBinaryFileBytes(path)
+                                }
+                                if (bytes != null) {
+                                    PlatformPickers.copyImageToClipboard(bytes)
+                                }
                             }
                         }
                     )
@@ -340,7 +404,7 @@ private fun PlayableGeneratedMediaCard(
             .fillMaxWidth()
             .clip(RoundedCornerShape(Radius.r10))
             .background(p.cardBg)
-            .border(LineWidth.hairline, p.accentSecondary, RoundedCornerShape(Radius.r10))
+            .border(LineWidth.hairline, p.border, RoundedCornerShape(Radius.r10))
             .padding(Space.s12),
         verticalArrangement = Arrangement.spacedBy(Space.s8)
     ) {
@@ -348,7 +412,7 @@ private fun PlayableGeneratedMediaCard(
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(Space.s6)
         ) {
-            KissVectorIcon(icon = icon, tint = p.accent, size = 15.dp)
+            KissVectorIcon(icon = icon, tint = p.accent, size = IconSize.lg)
             BasicText(
                 text = title,
                 style = p.uiHeaderStyle.copy(fontSize = 15.sp, color = p.accent)
@@ -379,14 +443,18 @@ internal fun TurnWebSourcesDrawer(
     onClose: () -> Unit
 ) {
     val p = LocalParchmentPalette.current
-    AnimatedVisibility(visible = visible && webSources.isNotEmpty()) {
+    AnimatedVisibility(
+        visible = visible && webSources.isNotEmpty(),
+        enter = motionExpandEnter(),
+        exit = motionShrinkExit()
+    ) {
         Column(
             modifier = Modifier
                 .padding(top = Space.s8)
                 .fillMaxWidth()
                 .clip(RoundedCornerShape(Radius.r10))
                 .background(p.sheetBg.copy(alpha = 0.85f))
-                .border(LineWidth.hairline, p.accent.copy(alpha = 0.65f), RoundedCornerShape(Radius.r10))
+                .border(LineWidth.hairline, p.border, RoundedCornerShape(Radius.r10))
                 .padding(11.dp),
             verticalArrangement = Arrangement.spacedBy(Space.s8)
         ) {
@@ -462,7 +530,7 @@ private fun WebSourceCitationCard(
                 color = if (isSelectedLine) p.accent else p.border,
                 shape = RoundedCornerShape(Radius.r8)
             )
-            .clickable(role = Role.Button) {
+            .kissClickable(pressScale = 0.99f, hoverScale = 1.004f, role = Role.Button, onClickLabel = Strings.openSource) {
                 if (firstGroundedLine.isNotBlank()) {
                     onHighlightLineChange(if (isSelectedLine) "" else firstGroundedLine)
                 } else {
@@ -582,7 +650,11 @@ internal fun TurnRawWireDrawer(
     val p = LocalParchmentPalette.current
     @Suppress("DEPRECATION")
     val clipboard = LocalClipboardManager.current
-    AnimatedVisibility(visible = visible && rawRequestPreview.isNotBlank()) {
+    AnimatedVisibility(
+        visible = visible && rawRequestPreview.isNotBlank(),
+        enter = motionExpandEnter(),
+        exit = motionShrinkExit()
+    ) {
         var copiedRawWire by remember(nodeId, activeVariantIndex) { mutableStateOf("") }
         SelectionContainer {
             Column(
@@ -622,7 +694,7 @@ internal fun TurnRawWireDrawer(
 }
 
 @Composable
-private fun RawWirePreviewBlock(
+internal fun RawWirePreviewBlock(
     title: String,
     rawText: String,
     isCopied: Boolean,
@@ -637,6 +709,7 @@ private fun RawWirePreviewBlock(
         BasicText(text = title, style = p.uiLabelStyle.copy(fontWeight = FontWeight.Bold))
         SepiaButton(
             text = if (isCopied) "✓" else "📋",
+            contentDescription = if (isCopied) Strings.copied else Strings.copy,
             compact = true,
             style = SepiaButtonStyle.GHOST,
             onClick = onCopy

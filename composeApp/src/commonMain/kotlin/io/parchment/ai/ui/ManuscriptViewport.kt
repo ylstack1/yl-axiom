@@ -5,21 +5,12 @@ import io.parchment.ai.strings.Strings
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.ui.draw.alpha
 import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.animateContentSize
-import androidx.compose.animation.expandVertically
-import androidx.compose.animation.fadeIn
-import androidx.compose.animation.fadeOut
-import androidx.compose.animation.scaleIn
-import androidx.compose.animation.scaleOut
-import androidx.compose.animation.shrinkVertically
-import androidx.compose.animation.slideInVertically
-import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsDraggedAsState
 import androidx.compose.foundation.interaction.collectIsHoveredAsState
 import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.Arrangement
@@ -55,13 +46,23 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.isAltPressed
+import androidx.compose.ui.input.key.isCtrlPressed
+import androidx.compose.ui.input.key.isMetaPressed
+import androidx.compose.ui.input.key.isShiftPressed
 import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
+import androidx.compose.ui.layout.onPlaced
+import androidx.compose.ui.layout.positionInParent
 import androidx.compose.ui.input.pointer.PointerEventType
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
@@ -96,6 +97,7 @@ import io.parchment.ai.platform.PlatformWorkspace
 import io.parchment.ai.protocol.O200kTokenizer
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
@@ -174,26 +176,69 @@ internal fun ManuscriptViewport(
     // Following the newest text:
     // 1. Scrolls to the bottom spacer with a large offset, so a long reply keeps its bottom edge in view
     //    instead of jumping to its top.
-    // 2. Stops following as soon as the user scrolls up, and stays stopped until they scroll back down or tap
-    //    Latest, so the page never moves away while they read.
-    var userScrollPausedUntilMs by remember(activeSession.id) { mutableStateOf(0L) }
+    // 2. Stops following the instant the user drags or scrolls away, and resumes only when they scroll
+    //    back within the bottom threshold or tap Latest.
+    val isListDragged by listState.interactionSource.collectIsDraggedAsState()
+    var isPointerInteracting by remember(activeSession.id) { mutableStateOf(false) }
     var userDisengagedAutoFollow by remember(activeSession.id) { mutableStateOf(false) }
+    var wasScrolledUpSincePause by remember(activeSession.id) { mutableStateOf(false) }
+    var isProgrammaticAutoFollow by remember { mutableStateOf(false) }
+    var wasStreamingFollow by remember(activeSession.id) { mutableStateOf(false) }
+
+    val isScrolledUpFromBottom by remember(activeSession.id, activeSession.messages.size) {
+        derivedStateOf {
+            if (activeSession.messages.isEmpty()) {
+                false
+            } else {
+                val layout = listState.layoutInfo
+                val lastVisible = layout.visibleItemsInfo.lastOrNull()
+                val total = layout.totalItemsCount
+                if (lastVisible == null || total <= 0) {
+                    false
+                } else {
+                    val overhangPx = (lastVisible.offset + lastVisible.size) - layout.viewportEndOffset
+                    lastVisible.index < total - 1 || overhangPx > 24
+                }
+            }
+        }
+    }
 
     suspend fun jumpToBottomEdge() {
-        val totalItems = listState.layoutInfo.totalItemsCount
-        val bottomSpacerIdx = (totalItems - 1).coerceAtLeast(activeSession.messages.size)
-        listState.scrollToItem(bottomSpacerIdx, scrollOffset = 100_000)
+        isProgrammaticAutoFollow = true
+        try {
+            val totalItems = listState.layoutInfo.totalItemsCount
+            val bottomSpacerIdx = (totalItems - 1).coerceAtLeast(activeSession.messages.size)
+            listState.scrollToItem(bottomSpacerIdx, scrollOffset = 100_000)
+        } finally {
+            isProgrammaticAutoFollow = false
+        }
+    }
+
+    fun resumeAutoFollowAndJumpToBottom() {
+        userDisengagedAutoFollow = false
+        wasScrolledUpSincePause = false
+        isPointerInteracting = false
+        scope.launch {
+            jumpToBottomEdge()
+        }
     }
 
     // Auto-scroll to bottom when opening or switching to a chat (when enabled in Settings -> Preferences)
     LaunchedEffect(activeSession.id, preferences.autoScrollToBottomOnOpen) {
         userDisengagedAutoFollow = false
-        userScrollPausedUntilMs = 0L
+        wasScrolledUpSincePause = false
+        isPointerInteracting = false
+        wasStreamingFollow = false
         if (activeSession.messages.isNotEmpty() && jumpToNodeId.isBlank()) {
+            snapshotFlow { listState.layoutInfo.totalItemsCount }.first { it > 0 }
             if (preferences.autoScrollToBottomOnOpen) {
-                jumpToBottomEdge()
-                kotlinx.coroutines.delay(16L)
-                jumpToBottomEdge()
+                if (!userDisengagedAutoFollow && !isListDragged && !isPointerInteracting) {
+                    jumpToBottomEdge()
+                }
+                withFrameNanos { }
+                if (!userDisengagedAutoFollow && !isListDragged && !isPointerInteracting) {
+                    jumpToBottomEdge()
+                }
             } else {
                 listState.scrollToItem(0)
             }
@@ -206,26 +251,34 @@ internal fun ManuscriptViewport(
         val index = activeSession.messages.indexOfFirst { it.id == jumpToNodeId }
         if (index >= 0) {
             userDisengagedAutoFollow = true
-            withFrameNanos { }
+            wasScrolledUpSincePause = true
+            snapshotFlow { listState.layoutInfo.totalItemsCount }.first { it > index + 1 }
             listState.scrollToItem(index + 1) // Item 0 is the top spacer.
         }
         onJumpHandled()
     }
 
     LaunchedEffect(isStreaming) {
-        if (isStreaming) {
-            if (!listState.canScrollForward) {
-                userDisengagedAutoFollow = false
-            }
+        if (isStreaming && !isScrolledUpFromBottom) {
+            userDisengagedAutoFollow = false
+            wasScrolledUpSincePause = false
         }
     }
 
-    LaunchedEffect(listState.isScrollInProgress, listState.canScrollForward) {
-        if (listState.isScrollInProgress && listState.canScrollForward) {
-            userDisengagedAutoFollow = true
-        } else if (!listState.isScrollInProgress && !listState.canScrollForward) {
-            userDisengagedAutoFollow = false
-            userScrollPausedUntilMs = 0L
+    LaunchedEffect(isListDragged, isPointerInteracting, listState.isScrollInProgress, isScrolledUpFromBottom) {
+        val userMoving = isListDragged || isPointerInteracting || (!isProgrammaticAutoFollow && listState.isScrollInProgress)
+        if (userMoving) {
+            if (isScrolledUpFromBottom) {
+                userDisengagedAutoFollow = true
+                wasScrolledUpSincePause = true
+            }
+        } else if (userDisengagedAutoFollow) {
+            if (isScrolledUpFromBottom) {
+                wasScrolledUpSincePause = true
+            } else if (wasScrolledUpSincePause) {
+                userDisengagedAutoFollow = false
+                wasScrolledUpSincePause = false
+            }
         }
     }
 
@@ -235,20 +288,45 @@ internal fun ManuscriptViewport(
     val lastAutoFollowMs = remember { longArrayOf(0L) }
 
     LaunchedEffect(lastMsgContentLen, isStreaming) {
-        if (!isStreaming) {
-            lastAutoFollowMs[0] = 0L
+        if (!preferences.autoFollowBottom || activeSession.messages.isEmpty()) {
+            if (!isStreaming) {
+                lastAutoFollowMs[0] = 0L
+                wasStreamingFollow = false
+            }
             return@LaunchedEffect
         }
+        val canFollowNow = !listState.isScrollInProgress &&
+            !isListDragged &&
+            !isPointerInteracting &&
+            !userDisengagedAutoFollow
+        if (!isStreaming) {
+            val streamJustFinished = wasStreamingFollow
+            wasStreamingFollow = false
+            lastAutoFollowMs[0] = 0L
+            if (streamJustFinished && canFollowNow && listState.canScrollForward) {
+                withFrameNanos { }
+                if (!isListDragged && !isPointerInteracting && !userDisengagedAutoFollow) {
+                    jumpToBottomEdge()
+                }
+            }
+            return@LaunchedEffect
+        }
+        wasStreamingFollow = true
+        if (!canFollowNow) return@LaunchedEffect
         val now = PlatformRuntime.currentTimeMillis()
+        val elapsed = now - lastAutoFollowMs[0]
+        if (lastAutoFollowMs[0] != 0L && elapsed in 0L until 48L) {
+            kotlinx.coroutines.delay(48L - elapsed)
+        }
         if (preferences.autoFollowBottom &&
             activeSession.messages.isNotEmpty() &&
             !listState.isScrollInProgress &&
+            !isListDragged &&
+            !isPointerInteracting &&
             !userDisengagedAutoFollow &&
-            now >= userScrollPausedUntilMs &&
-            (lastAutoFollowMs[0] == 0L || now - lastAutoFollowMs[0] >= 48L) &&
             (listState.canScrollForward || lastMsgContentLen % 24 == 0)
         ) {
-            lastAutoFollowMs[0] = now
+            lastAutoFollowMs[0] = PlatformRuntime.currentTimeMillis()
             jumpToBottomEdge()
         }
     }
@@ -347,30 +425,34 @@ internal fun ManuscriptViewport(
         }
     }
 
-    val isScrolledUpFromBottom by remember(activeSession.id, activeSession.messages.size) {
-        derivedStateOf {
-            if (activeSession.messages.isEmpty()) {
-                false
-            } else if (listState.canScrollForward) {
-                true
-            } else {
-                val layout = listState.layoutInfo
-                val lastVisible = layout.visibleItemsInfo.lastOrNull()
-                val total = layout.totalItemsCount
-                lastVisible != null && total > 0 && (
-                    lastVisible.index < total - 1 ||
-                        (lastVisible.offset + lastVisible.size) > (layout.viewportEndOffset + 20)
-                    )
-            }
-        }
-    }
-
     Column(
-        modifier = Modifier.fillMaxSize(),
+        modifier = Modifier
+            .fillMaxSize()
+            .onPreviewKeyEvent { event ->
+                if (event.type == KeyEventType.KeyDown && event.key == Key.Escape) {
+                    when {
+                        showContextBreakdownPopover -> {
+                            showContextBreakdownPopover = false
+                            true
+                        }
+                        showMinimapTreeModal -> {
+                            showMinimapTreeModal = false
+                            true
+                        }
+                        else -> false
+                    }
+                } else {
+                    false
+                }
+            },
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
         // Chat notes and memory, opened from Notes in the top bar.
-        AnimatedVisibility(visible = showSessionInspector) {
+        AnimatedVisibility(
+            visible = showSessionInspector,
+            enter = motionExpandEnter(),
+            exit = motionShrinkExit()
+        ) {
             ChatNotesPanel(
                 activeSession = activeSession,
                 isStreaming = isStreaming,
@@ -403,17 +485,15 @@ internal fun ManuscriptViewport(
                         awaitPointerEventScope {
                             while (true) {
                                 val ev = awaitPointerEvent()
+                                isPointerInteracting = ev.type != PointerEventType.Exit && ev.changes.any { it.pressed }
                                 if (ev.type == PointerEventType.Scroll) {
                                     val dy = ev.changes.firstOrNull()?.scrollDelta?.y ?: 0f
                                     if (dy < 0f) {
-                                        // Scrolling up with the wheel or trackpad pauses following for 5 seconds.
+                                        // Scrolling up via wheel/trackpad pauses auto-follow immediately.
                                         userDisengagedAutoFollow = true
-                                        userScrollPausedUntilMs = PlatformRuntime.currentTimeMillis() + 5000L
-                                    }
-                                } else if (ev.type == PointerEventType.Press) {
-                                    // Touch or scrollbar press while streaming — pause auto-follow so user can read
-                                    if (isStreaming) {
-                                        userScrollPausedUntilMs = PlatformRuntime.currentTimeMillis() + 5000L
+                                    } else if (dy > 0f && userDisengagedAutoFollow && !isScrolledUpFromBottom) {
+                                        userDisengagedAutoFollow = false
+                                        wasScrolledUpSincePause = false
                                     }
                                 }
                             }
@@ -563,17 +643,8 @@ internal fun ManuscriptViewport(
             ) {
                 AnimatedVisibility(
                     visible = showFloatingAudioPill,
-                    enter = slideInVertically(
-                        initialOffsetY = { it / 2 },
-                        animationSpec = motionSpring(Motion.POP_STIFFNESS)
-                    ) + scaleIn(
-                        initialScale = 0.90f,
-                        animationSpec = motionSpring(Motion.POP_STIFFNESS, 0.8f)
-                    ) + fadeIn(motionTween(Motion.QUICK)),
-                    exit = slideOutVertically(
-                        targetOffsetY = { it / 2 },
-                        animationSpec = motionTween(Motion.QUICK)
-                    ) + scaleOut(targetScale = 0.92f, animationSpec = motionTween(Motion.QUICK)) + fadeOut(motionTween(Motion.QUICK))
+                    enter = motionPopEnter(),
+                    exit = motionPopExit()
                 ) {
                     val audioPillShape = RoundedCornerShape(Radius.pill)
                     Box(
@@ -590,7 +661,7 @@ internal fun ManuscriptViewport(
                             if (isVoiceListening || isStreaming || isLiveVoiceMode) {
                                 KissStreamingPulseDot(color = p.accent)
                             } else {
-                                KissVectorIcon(icon = KissIcon.VOLUME_ON, tint = p.accent, size = 13.dp)
+                                KissVectorIcon(icon = KissIcon.VOLUME_ON, tint = p.accent, size = IconSize.md)
                             }
                             val liveStatusLabel = when {
                                 isVoiceListening -> Strings.listening
@@ -653,7 +724,7 @@ internal fun ManuscriptViewport(
                                         verticalAlignment = Alignment.CenterVertically,
                                         horizontalArrangement = Arrangement.spacedBy(Space.s4)
                                     ) {
-                                        KissVectorIcon(icon = KissIcon.PLAY, tint = p.accent, size = 11.dp)
+                                        KissVectorIcon(icon = KissIcon.PLAY, tint = p.accent, size = IconSize.sm)
                                         BasicText(
                                             text = Strings.continueLabel,
                                             style = p.uiLabelStyle.copy(color = p.primaryInk, fontWeight = FontWeight.Medium, fontSize = 11.sp)
@@ -677,7 +748,7 @@ internal fun ManuscriptViewport(
                                     verticalAlignment = Alignment.CenterVertically,
                                     horizontalArrangement = Arrangement.spacedBy(Space.s4)
                                 ) {
-                                    KissVectorIcon(icon = KissIcon.STOP, tint = p.danger, size = 11.dp)
+                                    KissVectorIcon(icon = KissIcon.STOP, tint = p.danger, size = IconSize.sm)
                                     BasicText(
                                         text = Strings.stop2,
                                         style = p.uiLabelStyle.copy(color = p.danger, fontWeight = FontWeight.SemiBold, fontSize = 11.sp)
@@ -712,61 +783,38 @@ internal fun ManuscriptViewport(
                 // The Latest pill, shown when scrolled up; opaque so text behind it doesn't show through.
                 AnimatedVisibility(
                     visible = isScrolledUpFromBottom,
-                    enter = slideInVertically(
-                        initialOffsetY = { it / 2 },
-                        animationSpec = motionSpring(Motion.POP_STIFFNESS)
-                    ) + scaleIn(
-                        initialScale = 0.90f,
-                        animationSpec = motionSpring(Motion.POP_STIFFNESS, 0.8f)
-                    ) + fadeIn(motionTween(Motion.QUICK)),
-                    exit = slideOutVertically(
-                        targetOffsetY = { it / 2 },
-                        animationSpec = motionTween(Motion.QUICK)
-                    ) + scaleOut(targetScale = 0.92f, animationSpec = motionTween(Motion.QUICK)) + fadeOut(motionTween(Motion.QUICK))
+                    enter = motionPopEnter(),
+                    exit = motionPopExit()
                 ) {
-                    val pillOuterShape = RoundedCornerShape(Radius.pill)
-                    val pillInnerShape = RoundedCornerShape(Radius.pill)
-                    // Outer frosted halo shield blocks underlying manuscript text completely
-                    Box(
+                    val pillShape = RoundedCornerShape(Radius.pill)
+                    Row(
                         modifier = Modifier
-                            .clip(pillOuterShape)
-                            .background(p.canvasBg.copy(alpha = 0.96f))
-                            .border(1.dp, p.border, pillOuterShape)
-                            .padding(3.dp)
-                    ) {
-                        Row(
-                            modifier = Modifier
-                                .clip(pillInnerShape)
-                                .background(p.accent)
-                                .border(1.dp, p.cardBg.copy(alpha = 0.55f), pillInnerShape)
-                                .kissClickable {
-                                    userDisengagedAutoFollow = false
-                                    userScrollPausedUntilMs = 0L
-                                    scope.launch {
-                                        jumpToBottomEdge()
-                                    }
-                                }
-                                .padding(horizontal = 14.dp, vertical = Space.s6),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(Space.s6)
-                        ) {
-                            if (isStreaming) {
-                                KissStreamingPulseDot(color = onFillInk(p.accent))
+                            .overlayShadow(pillShape)
+                            .clip(pillShape)
+                            .background(p.accent)
+                            .kissClickable {
+                                resumeAutoFollowAndJumpToBottom()
                             }
-                            KissVectorIcon(
-                                icon = KissIcon.ARROW_DOWN,
-                                tint = onFillInk(p.accent),
-                                size = IconSize.sm
-                            )
-                            BasicText(
-                                text = Strings.latest,
-                                style = p.uiLabelStyle.copy(
-                                    color = onFillInk(p.accent),
-                                    fontWeight = FontWeight.Bold,
-                                    fontSize = 12.sp
-                                )
-                            )
+                            .padding(horizontal = 14.dp, vertical = Space.s6),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(Space.s6)
+                    ) {
+                        if (isStreaming) {
+                            KissStreamingPulseDot(color = onFillInk(p.accent))
                         }
+                        KissVectorIcon(
+                            icon = KissIcon.ARROW_DOWN,
+                            tint = onFillInk(p.accent),
+                            size = IconSize.sm
+                        )
+                        BasicText(
+                            text = Strings.latest,
+                            style = p.uiLabelStyle.copy(
+                                color = onFillInk(p.accent),
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 12.sp
+                            )
+                        )
                     }
                 }
             }
@@ -784,15 +832,19 @@ internal fun ManuscriptViewport(
             ) {
                 AnimatedVisibility(
                     visible = showNavButtons || showMinimapTreeModal,
-                    enter = fadeIn(motionTween(Motion.STANDARD)),
-                    exit = fadeOut(motionTween(Motion.SLOW))
+                    enter = motionFadeEnter(Motion.STANDARD),
+                    exit = motionFadeExit(Motion.SLOW)
                 ) {
                     Row(
                         horizontalArrangement = Arrangement.spacedBy(Space.s6),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                     // Expandable Interactive Tree & Swipe Minimap Modal with In-Chat Turn Filter
-                    AnimatedVisibility(visible = showMinimapTreeModal) {
+                    AnimatedVisibility(
+                        visible = showMinimapTreeModal,
+                        enter = motionExpandEnter(),
+                        exit = motionShrinkExit()
+                    ) {
                         var mapFilterQuery by remember { mutableStateOf("") }
                         val filteredMapItems = remember(activeSession.messages, mapFilterQuery) {
                             val q = mapFilterQuery.trim()
@@ -994,11 +1046,7 @@ internal fun ManuscriptViewport(
                             style = SepiaButtonStyle.GHOST,
                             onClick = {
                                 minimapInteractionTick++
-                                userDisengagedAutoFollow = false
-                                userScrollPausedUntilMs = 0L
-                                scope.launch {
-                                    jumpToBottomEdge()
-                                }
+                                resumeAutoFollowAndJumpToBottom()
                             }
                         )
                     }
@@ -1031,13 +1079,16 @@ internal fun ManuscriptViewport(
                         color = if (isStreaming) p.accent else p.border.copy(alpha = 0.85f),
                         shape = deckShape
                     )
-                    .animateContentSize(animationSpec = motionSpring())
                     .padding(horizontal = Space.s12, vertical = 9.dp),
                 verticalArrangement = Arrangement.spacedBy(7.dp)
             ) {
                 // 1. Live status while streaming: the headline and its detail on separate lines.
                 var statusExpanded by remember { mutableStateOf(false) }
-                AnimatedVisibility(visible = isStreaming) {
+                AnimatedVisibility(
+                    visible = isStreaming,
+                    enter = motionExpandEnter(),
+                    exit = motionShrinkExit()
+                ) {
                     val rawStatus = streamingStatus.ifBlank { Strings.generatingReply }
                     val (statusHeadline, statusDetail) = remember(rawStatus) {
                         when {
@@ -1060,7 +1111,7 @@ internal fun ManuscriptViewport(
                             .clip(RoundedCornerShape(Radius.r8))
                             .background(p.sheetBg.copy(alpha = 0.78f))
                             .border(LineWidth.hairline, p.border.copy(alpha = 0.65f), RoundedCornerShape(Radius.r8))
-                            .clickable(role = Role.Button, onClickLabel = if (statusExpanded) Strings.collapseStatus else Strings.expandStatus) { statusExpanded = !statusExpanded }
+                            .kissClickable(pressScale = 0.99f, hoverScale = 1.004f, role = Role.Button, onClickLabel = if (statusExpanded) Strings.collapseStatus else Strings.expandStatus) { statusExpanded = !statusExpanded }
                             .padding(horizontal = Space.s10, vertical = Space.s6),
                         verticalArrangement = Arrangement.spacedBy(3.dp)
                     ) {
@@ -1090,7 +1141,7 @@ internal fun ManuscriptViewport(
                                 KissVectorIcon(
                                     icon = if (statusExpanded) KissIcon.CHEVRON_UP else KissIcon.CHEVRON_DOWN,
                                     tint = p.mutedInk,
-                                    size = 11.dp
+                                    size = IconSize.sm
                                 )
                             }
                         }
@@ -1111,7 +1162,11 @@ internal fun ManuscriptViewport(
                 }
 
                 // 2. Queued Prompts Bar (`⏳ Queue` mode)
-                AnimatedVisibility(visible = queuedPrompts.isNotEmpty()) {
+                AnimatedVisibility(
+                    visible = queuedPrompts.isNotEmpty(),
+                    enter = motionExpandEnter(),
+                    exit = motionShrinkExit()
+                ) {
                     Column(
                         modifier = Modifier
                             .fillMaxWidth()
@@ -1161,9 +1216,17 @@ internal fun ManuscriptViewport(
 
                 // 3. Collapsible Capabilities, Workspace Mount & 16-Tool Harness Tray (`⚙ Tools`)
                 var showAllHarnessToolsInComposer by remember { mutableStateOf(false) }
-                val composerPermissionDefaults = AgentPermissionResolver.defaults(activeAssistant)
-                val composerPermissionOverrides = activeSession.permissionOverrides ?: AgentPermissionResolver.legacyOverrides(activeSession, activeProfile)
-                val composerToolPolicy = composerPermissionOverrides.applyTo(composerPermissionDefaults)
+                val (composerPermissionDefaults, composerPermissionOverrides, composerToolPolicy) = remember(
+                    activeAssistant,
+                    activeSession.permissionOverrides,
+                    activeSession.workspacePath,
+                    activeSession.workspaceMode,
+                    activeProfile
+                ) {
+                    val defaults = AgentPermissionResolver.defaults(activeAssistant)
+                    val overrides = activeSession.permissionOverrides ?: AgentPermissionResolver.legacyOverrides(activeSession, activeProfile)
+                    Triple(defaults, overrides, overrides.applyTo(defaults))
+                }
                 val effectiveComposerWsPath = composerToolPolicy.workspacePath
                 val effectiveComposerWsMode = composerToolPolicy.workspaceMode
                 val allHarnessTools = remember { WorkspaceHarness.allTools() }
@@ -1177,8 +1240,8 @@ internal fun ManuscriptViewport(
 
                 AnimatedVisibility(
                     visible = showComposerToolsDrawer,
-                    enter = expandVertically(motionSpring(Motion.POP_STIFFNESS)) + fadeIn(motionTween(Motion.QUICK)),
-                    exit = shrinkVertically(motionSpring(Motion.POP_STIFFNESS)) + fadeOut(motionTween(Motion.QUICK))
+                    enter = motionExpandEnter(Motion.POP_STIFFNESS, Motion.QUICK),
+                    exit = motionShrinkExit(Motion.POP_STIFFNESS, Motion.QUICK)
                 ) {
                     BoxWithConstraints {
                         val drawerMaxHeight = (maxHeight * 0.5f).coerceAtMost(420.dp)
@@ -1242,7 +1305,11 @@ internal fun ManuscriptViewport(
                                     onClick = onTogglePrefillBox
                                 )
                             }
-                            AnimatedVisibility(visible = showAllHarnessToolsInComposer) {
+                            AnimatedVisibility(
+                                visible = showAllHarnessToolsInComposer,
+                                enter = motionExpandEnter(),
+                                exit = motionShrinkExit()
+                            ) {
                                 AgentToolRegistry(
                                     policy = composerToolPolicy, overrides = composerPermissionOverrides,
                                     onChange = { value -> onUpdateSession { it.copy(permissionOverrides = value) } },
@@ -1309,7 +1376,7 @@ internal fun ManuscriptViewport(
                                     .clip(RoundedCornerShape(Radius.r8))
                                     .background(p.cardBg)
                                     .border(LineWidth.hairline, p.accent.copy(alpha = 0.7f), RoundedCornerShape(Radius.r8))
-                                    .clickable(role = Role.Button, onClickLabel = Strings.openAttachment) { onInspectAttachment(att) }
+                                    .kissClickable(pressScale = 0.99f, hoverScale = 1.004f, role = Role.Button, onClickLabel = Strings.openAttachment) { onInspectAttachment(att) }
                                     .padding(horizontal = Space.s6, vertical = Space.s4),
                                 verticalAlignment = Alignment.CenterVertically,
                                 horizontalArrangement = Arrangement.spacedBy(Space.s6)
@@ -1350,7 +1417,11 @@ internal fun ManuscriptViewport(
                     }
                 }
 
-                AnimatedVisibility(visible = showPrefillBox) {
+                AnimatedVisibility(
+                    visible = showPrefillBox,
+                    enter = motionExpandEnter(),
+                    exit = motionShrinkExit()
+                ) {
                     SepiaTextField(
                         value = assistantPrefillInput,
                         onValueChange = onAssistantPrefillChange,
@@ -1377,10 +1448,59 @@ internal fun ManuscriptViewport(
                         }
                     }
                 }
+                var dismissedSlashInput by remember { mutableStateOf<String?>(null) }
+                var selectedSlashIndex by remember { mutableStateOf(0) }
+                val slashPopupVisible = matchingSlashCommands.isNotEmpty() && dismissedSlashInput != userPromptInput
+                val activeSlashIndex = if (matchingSlashCommands.isEmpty()) 0 else selectedSlashIndex.coerceIn(0, matchingSlashCommands.lastIndex)
+                LaunchedEffect(trimmedSlashPrefix, slashPopupVisible) {
+                    if (!slashPopupVisible) {
+                        selectedSlashIndex = 0
+                    } else if (selectedSlashIndex >= matchingSlashCommands.size) {
+                        selectedSlashIndex = 0
+                    }
+                }
+                fun executeSlashSpec(spec: SlashCommandSpec) {
+                    dismissedSlashInput = null
+                    if (spec.takesArgument) {
+                        onUserPromptChange("${spec.command} ")
+                    } else {
+                        // Commands without an argument run on a single tap.
+                        onUserPromptChange("")
+                        when (spec.command) {
+                            "/compact" -> onCompactContext()
+                            "/summarize" -> onAutoSummarizeStory()
+                            "/clear" -> onRequestClearCurrentChat()
+                            "/continue" -> {
+                                val lastAsst = activeSession.messages.indexOfLast { it.role == MessageRole.ASSISTANT }
+                                if (lastAsst >= 0) onContinueAssistantNode(lastAsst)
+                            }
+                            "/rewind" -> {
+                                if (activeSession.messages.isNotEmpty()) {
+                                    onRewindToNode(activeSession.messages.lastIndex)
+                                }
+                            }
+                        }
+                    }
+                }
+                val slashScrollState = rememberScrollState()
+                val slashRowBounds = remember { mutableMapOf<Int, Pair<Int, Int>>() }
+                LaunchedEffect(slashPopupVisible, activeSlashIndex) {
+                    if (slashPopupVisible) {
+                        val (top, height) = slashRowBounds[activeSlashIndex] ?: return@LaunchedEffect
+                        val viewport = slashScrollState.viewportSize
+                        if (viewport > 0) {
+                            if (activeSlashIndex == 0 || top < slashScrollState.value) {
+                                slashScrollState.scrollTo(if (activeSlashIndex == 0) 0 else top)
+                            } else if (top + height > slashScrollState.value + viewport) {
+                                slashScrollState.scrollTo((top + height - viewport).coerceAtLeast(0))
+                            }
+                        }
+                    }
+                }
                 AnimatedVisibility(
-                    visible = matchingSlashCommands.isNotEmpty(),
-                    enter = expandVertically(motionSpring()) + fadeIn(motionTween(Motion.STANDARD)),
-                    exit = shrinkVertically(motionSpring()) + fadeOut(motionTween(Motion.QUICK))
+                    visible = slashPopupVisible,
+                    enter = motionExpandEnter(),
+                    exit = motionShrinkExit()
                 ) {
                     Column(
                         modifier = Modifier
@@ -1389,80 +1509,84 @@ internal fun ManuscriptViewport(
                             .clip(RoundedCornerShape(Radius.r10))
                             .background(p.sheetBg.copy(alpha = 0.82f))
                             .border(LineWidth.hairline, p.border.copy(alpha = 0.55f), RoundedCornerShape(Radius.r10))
-                            .verticalScroll(rememberScrollState())
+                            .verticalScroll(slashScrollState)
                             .padding(Space.s6),
                         verticalArrangement = Arrangement.spacedBy(3.dp)
                     ) {
-                        matchingSlashCommands.forEach { spec ->
-                            val isExact = trimmedSlashPrefix.equals(spec.command, ignoreCase = true)
-                            val rowInteraction = remember { MutableInteractionSource() }
-                            val isHovered by rowInteraction.collectIsHoveredAsState()
-                            val isPressed by rowInteraction.collectIsPressedAsState()
-                            val parsedCmdIcon = remember(spec.label) {
-                                parseKissLabelIcons(spec.label).leadingIcon ?: KissIcon.SPARKLES
-                            }
-                            Row(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .clip(RoundedCornerShape(Radius.r8))
-                                    .background(
-                                        when {
-                                            isExact || isPressed -> p.accent.copy(alpha = 0.14f)
-                                            isHovered -> p.accent.copy(alpha = 0.08f)
-                                            else -> p.cardBg.copy(alpha = 0.72f)
-                                        }
-                                    )
-                                    .border(
-                                        width = LineWidth.hairline,
-                                        color = if (isExact || isHovered) p.accent.copy(alpha = 0.55f) else Color.Transparent,
-                                        shape = RoundedCornerShape(Radius.r8)
-                                    )
-                                    .kissClickable(
-                                        pressScale = 0.99f,
-                                        hoverScale = 1.004f,
-                                        interactionSource = rowInteraction,
-                                        onClick = {
-                                            if (spec.takesArgument) {
-                                                onUserPromptChange("${spec.command} ")
-                                            } else {
-                                                // Commands without an argument run on a single tap.
-                                                onUserPromptChange("")
-                                                when (spec.command) {
-                                                    "/compact" -> onCompactContext()
-                                                    "/summarize" -> onAutoSummarizeStory()
-                                                    "/clear" -> onRequestClearCurrentChat()
-                                                    "/continue" -> {
-                                                        val lastAsst = activeSession.messages.indexOfLast { it.role == MessageRole.ASSISTANT }
-                                                        if (lastAsst >= 0) onContinueAssistantNode(lastAsst)
-                                                    }
-                                                    "/rewind" -> {
-                                                        if (activeSession.messages.isNotEmpty()) {
-                                                            onRewindToNode(activeSession.messages.lastIndex)
-                                                        }
-                                                    }
-                                                }
-                                            }
-                                        }
-                                    )
-                                    .padding(horizontal = Space.s10, vertical = 7.dp),
-                                horizontalArrangement = Arrangement.SpaceBetween,
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
+                        matchingSlashCommands.forEachIndexed { idx, spec ->
+                            key(spec.command) {
+                                val isExact = trimmedSlashPrefix.equals(spec.command, ignoreCase = true)
+                                val isKeyboardSelected = idx == activeSlashIndex
+                                val rowInteraction = remember { MutableInteractionSource() }
+                                val isHovered by rowInteraction.collectIsHoveredAsState()
+                                val isPressed by rowInteraction.collectIsPressedAsState()
+                                val parsedCmdIcon = remember(spec.label) {
+                                    parseKissLabelIcons(spec.label).leadingIcon ?: KissIcon.SPARKLES
+                                }
                                 Row(
-                                    modifier = Modifier.weight(1f).padding(end = Space.s8),
-                                    horizontalArrangement = Arrangement.spacedBy(Space.s8),
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .onPlaced { coords ->
+                                            slashRowBounds[idx] = coords.positionInParent().y.toInt() to coords.size.height
+                                        }
+                                        .clip(RoundedCornerShape(Radius.r8))
+                                        .background(
+                                            when {
+                                                isExact || isKeyboardSelected || isPressed -> p.accent.copy(alpha = 0.14f)
+                                                isHovered -> p.accent.copy(alpha = 0.08f)
+                                                else -> p.cardBg.copy(alpha = 0.72f)
+                                            }
+                                        )
+                                        .border(
+                                            width = LineWidth.hairline,
+                                            color = if (isExact || isKeyboardSelected || isHovered) p.accent.copy(alpha = 0.55f) else Color.Transparent,
+                                            shape = RoundedCornerShape(Radius.r8)
+                                        )
+                                        .kissClickable(
+                                            pressScale = 0.99f,
+                                            hoverScale = 1.004f,
+                                            interactionSource = rowInteraction,
+                                            selected = isKeyboardSelected,
+                                            onClick = { executeSlashSpec(spec) }
+                                        )
+                                        .padding(horizontal = Space.s10, vertical = 7.dp),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
                                     verticalAlignment = Alignment.CenterVertically
                                 ) {
-                                    KissVectorIcon(
-                                        icon = parsedCmdIcon,
-                                        tint = p.accent,
-                                        size = IconSize.md
-                                    )
-                                    if (win.isCompact) {
-                                        Column(
-                                            modifier = Modifier.weight(1f),
-                                            verticalArrangement = Arrangement.spacedBy(1.dp)
-                                        ) {
+                                    Row(
+                                        modifier = Modifier.weight(1f).padding(end = Space.s8),
+                                        horizontalArrangement = Arrangement.spacedBy(Space.s8),
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        KissVectorIcon(
+                                            icon = parsedCmdIcon,
+                                            tint = p.accent,
+                                            size = IconSize.md
+                                        )
+                                        if (win.isCompact) {
+                                            Column(
+                                                modifier = Modifier.weight(1f),
+                                                verticalArrangement = Arrangement.spacedBy(1.dp)
+                                            ) {
+                                                BasicText(
+                                                    text = spec.command,
+                                                    style = p.monoStyle.copy(
+                                                        color = p.accent,
+                                                        fontWeight = FontWeight.Bold,
+                                                        fontSize = 12.sp
+                                                    )
+                                                )
+                                                BasicText(
+                                                    text = spec.description,
+                                                    maxLines = 2,
+                                                    overflow = TextOverflow.Ellipsis,
+                                                    style = p.uiBodyStyle.copy(
+                                                        color = p.primaryInk,
+                                                        fontSize = 12.sp
+                                                    )
+                                                )
+                                            }
+                                        } else {
                                             BasicText(
                                                 text = spec.command,
                                                 style = p.monoStyle.copy(
@@ -1473,7 +1597,7 @@ internal fun ManuscriptViewport(
                                             )
                                             BasicText(
                                                 text = spec.description,
-                                                maxLines = 2,
+                                                maxLines = 1,
                                                 overflow = TextOverflow.Ellipsis,
                                                 style = p.uiBodyStyle.copy(
                                                     color = p.primaryInk,
@@ -1481,49 +1605,31 @@ internal fun ManuscriptViewport(
                                                 )
                                             )
                                         }
-                                    } else {
-                                        BasicText(
-                                            text = spec.command,
-                                            style = p.monoStyle.copy(
-                                                color = p.accent,
-                                                fontWeight = FontWeight.Bold,
-                                                fontSize = 12.sp
-                                            )
-                                        )
-                                        BasicText(
-                                            text = spec.description,
-                                            maxLines = 1,
-                                            overflow = TextOverflow.Ellipsis,
-                                            style = p.uiBodyStyle.copy(
-                                                color = p.primaryInk,
-                                                fontSize = 12.sp
-                                            )
-                                        )
                                     }
-                                }
-                                Box(
-                                    modifier = Modifier
-                                        .clip(RoundedCornerShape(Radius.r6))
-                                        .background(p.elevatedBg.copy(alpha = 0.7f))
-                                        .padding(horizontal = Space.s6, vertical = Space.s2)
-                                ) {
-                                    Row(
-                                        verticalAlignment = Alignment.CenterVertically,
-                                        horizontalArrangement = Arrangement.spacedBy(Space.s4)
+                                    Box(
+                                        modifier = Modifier
+                                            .clip(RoundedCornerShape(Radius.r6))
+                                            .background(p.elevatedBg.copy(alpha = 0.7f))
+                                            .padding(horizontal = Space.s6, vertical = Space.s2)
                                     ) {
-                                        KissVectorIcon(
-                                            icon = if (spec.takesArgument) KissIcon.ARROW_RIGHT else KissIcon.SEND_ENTER,
-                                            tint = p.narrationInk,
-                                            size = 10.dp
-                                        )
-                                        BasicText(
-                                            text = if (spec.takesArgument) "arg" else Strings.run,
-                                            style = p.monoStyle.copy(
-                                                fontSize = 11.sp,
-                                                color = p.narrationInk,
-                                                fontWeight = FontWeight.Medium
+                                        Row(
+                                            verticalAlignment = Alignment.CenterVertically,
+                                            horizontalArrangement = Arrangement.spacedBy(Space.s4)
+                                        ) {
+                                            KissVectorIcon(
+                                                icon = if (spec.takesArgument) KissIcon.ARROW_RIGHT else KissIcon.SEND_ENTER,
+                                                tint = p.narrationInk,
+                                                size = 10.dp
                                             )
-                                        )
+                                            BasicText(
+                                                text = if (spec.takesArgument) "arg" else Strings.run,
+                                                style = p.monoStyle.copy(
+                                                    fontSize = 11.sp,
+                                                    color = p.narrationInk,
+                                                    fontWeight = FontWeight.Medium
+                                                )
+                                            )
+                                        }
                                     }
                                 }
                             }
@@ -1562,7 +1668,14 @@ internal fun ManuscriptViewport(
                 val allLoreFragments = remember(appState.globalWorldBook, activeAssistant.fragments, activeSession.fragments) {
                     (appState.globalWorldBook + activeAssistant.fragments + activeSession.fragments).distinctBy { it.id }
                 }
-                val matchingAtItems = remember(activeAtQuery, workspaceFiles, historyAttachments, allLoreFragments) {
+                val matchingAtItems = remember(
+                    activeAtQuery,
+                    workspaceFiles,
+                    historyAttachments,
+                    allLoreFragments,
+                    userPromptInput,
+                    effectiveWorkspacePath
+                ) {
                     val q = activeAtQuery?.lowercase() ?: return@remember emptyList<Triple<String, String, () -> Unit>>()
                     val list = mutableListOf<Triple<String, String, () -> Unit>>()
                     fun replaceTrailingAt(replacement: String) {
@@ -1657,10 +1770,36 @@ internal fun ManuscriptViewport(
                         }
                     list
                 }
+                var dismissedAtInput by remember { mutableStateOf<String?>(null) }
+                var selectedAtIndex by remember { mutableStateOf(0) }
+                val atPopupVisible = matchingAtItems.isNotEmpty() && dismissedAtInput != userPromptInput
+                val activeAtIndex = if (matchingAtItems.isEmpty()) 0 else selectedAtIndex.coerceIn(0, matchingAtItems.lastIndex)
+                LaunchedEffect(activeAtQuery, atPopupVisible) {
+                    if (!atPopupVisible) {
+                        selectedAtIndex = 0
+                    } else if (selectedAtIndex >= matchingAtItems.size) {
+                        selectedAtIndex = 0
+                    }
+                }
+                val atScrollState = rememberScrollState()
+                val atRowBounds = remember { mutableMapOf<Int, Pair<Int, Int>>() }
+                LaunchedEffect(atPopupVisible, activeAtIndex) {
+                    if (atPopupVisible) {
+                        val (top, height) = atRowBounds[activeAtIndex] ?: return@LaunchedEffect
+                        val viewport = atScrollState.viewportSize
+                        if (viewport > 0) {
+                            if (activeAtIndex == 0 || top < atScrollState.value) {
+                                atScrollState.scrollTo(if (activeAtIndex == 0) 0 else top)
+                            } else if (top + height > atScrollState.value + viewport) {
+                                atScrollState.scrollTo((top + height - viewport).coerceAtLeast(0))
+                            }
+                        }
+                    }
+                }
                 AnimatedVisibility(
-                    visible = matchingAtItems.isNotEmpty(),
-                    enter = expandVertically(motionSpring()) + fadeIn(motionTween(Motion.STANDARD)),
-                    exit = shrinkVertically(motionSpring()) + fadeOut(motionTween(Motion.QUICK))
+                    visible = atPopupVisible,
+                    enter = motionExpandEnter(),
+                    exit = motionShrinkExit()
                 ) {
                     Column(
                         modifier = Modifier
@@ -1669,61 +1808,91 @@ internal fun ManuscriptViewport(
                             .clip(RoundedCornerShape(Radius.r10))
                             .background(p.sheetBg.copy(alpha = 0.82f))
                             .border(LineWidth.hairline, p.border.copy(alpha = 0.55f), RoundedCornerShape(Radius.r10))
-                            .verticalScroll(rememberScrollState())
+                            .verticalScroll(atScrollState)
                             .padding(Space.s6),
                         verticalArrangement = Arrangement.spacedBy(3.dp)
                     ) {
-                        matchingAtItems.forEach { (badgeLabel, descText, action) ->
-                            val rowInteraction = remember { MutableInteractionSource() }
-                            val isHovered by rowInteraction.collectIsHoveredAsState()
-                            val isPressed by rowInteraction.collectIsPressedAsState()
-                            val parsedIcon = remember(badgeLabel) {
-                                parseKissLabelIcons(badgeLabel).leadingIcon ?: KissIcon.FILE_TEXT
-                            }
-                            val cleanBadge = remember(badgeLabel) {
-                                parseKissLabelIcons(badgeLabel).cleanText
-                            }
-                            Row(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .clip(RoundedCornerShape(Radius.r8))
-                                    .background(
-                                        when {
-                                            isPressed -> p.accent.copy(alpha = 0.14f)
-                                            isHovered -> p.accent.copy(alpha = 0.08f)
-                                            else -> p.cardBg.copy(alpha = 0.72f)
-                                        }
-                                    )
-                                    .border(
-                                        width = LineWidth.hairline,
-                                        color = if (isHovered) p.accent.copy(alpha = 0.55f) else Color.Transparent,
-                                        shape = RoundedCornerShape(Radius.r8)
-                                    )
-                                    .kissClickable(
-                                        pressScale = 0.99f,
-                                        hoverScale = 1.004f,
-                                        interactionSource = rowInteraction,
-                                        onClick = action
-                                    )
-                                    .padding(horizontal = Space.s10, vertical = 7.dp),
-                                horizontalArrangement = Arrangement.SpaceBetween,
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
+                        matchingAtItems.forEachIndexed { idx, (badgeLabel, descText, action) ->
+                            key(badgeLabel, descText) {
+                                val isKeyboardSelected = idx == activeAtIndex
+                                val rowInteraction = remember { MutableInteractionSource() }
+                                val isHovered by rowInteraction.collectIsHoveredAsState()
+                                val isPressed by rowInteraction.collectIsPressedAsState()
+                                val parsedIcon = remember(badgeLabel) {
+                                    parseKissLabelIcons(badgeLabel).leadingIcon ?: KissIcon.FILE_TEXT
+                                }
+                                val cleanBadge = remember(badgeLabel) {
+                                    parseKissLabelIcons(badgeLabel).cleanText
+                                }
                                 Row(
-                                    modifier = Modifier.weight(1f).padding(end = Space.s8),
-                                    horizontalArrangement = Arrangement.spacedBy(Space.s8),
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .onPlaced { coords ->
+                                            atRowBounds[idx] = coords.positionInParent().y.toInt() to coords.size.height
+                                        }
+                                        .clip(RoundedCornerShape(Radius.r8))
+                                        .background(
+                                            when {
+                                                isKeyboardSelected || isPressed -> p.accent.copy(alpha = 0.14f)
+                                                isHovered -> p.accent.copy(alpha = 0.08f)
+                                                else -> p.cardBg.copy(alpha = 0.72f)
+                                            }
+                                        )
+                                        .border(
+                                            width = LineWidth.hairline,
+                                            color = if (isKeyboardSelected || isHovered) p.accent.copy(alpha = 0.55f) else Color.Transparent,
+                                            shape = RoundedCornerShape(Radius.r8)
+                                        )
+                                        .kissClickable(
+                                            pressScale = 0.99f,
+                                            hoverScale = 1.004f,
+                                            interactionSource = rowInteraction,
+                                            selected = isKeyboardSelected,
+                                            onClick = {
+                                                dismissedAtInput = null
+                                                action()
+                                            }
+                                        )
+                                        .padding(horizontal = Space.s10, vertical = 7.dp),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
                                     verticalAlignment = Alignment.CenterVertically
                                 ) {
-                                    KissVectorIcon(
-                                        icon = parsedIcon,
-                                        tint = p.accent,
-                                        size = IconSize.md
-                                    )
-                                    if (win.isCompact) {
-                                        Column(
-                                            modifier = Modifier.weight(1f),
-                                            verticalArrangement = Arrangement.spacedBy(1.dp)
-                                        ) {
+                                    Row(
+                                        modifier = Modifier.weight(1f).padding(end = Space.s8),
+                                        horizontalArrangement = Arrangement.spacedBy(Space.s8),
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        KissVectorIcon(
+                                            icon = parsedIcon,
+                                            tint = p.accent,
+                                            size = IconSize.md
+                                        )
+                                        if (win.isCompact) {
+                                            Column(
+                                                modifier = Modifier.weight(1f),
+                                                verticalArrangement = Arrangement.spacedBy(1.dp)
+                                            ) {
+                                                BasicText(
+                                                    text = cleanBadge,
+                                                    maxLines = 1,
+                                                    overflow = TextOverflow.Ellipsis,
+                                                    style = p.monoStyle.copy(
+                                                        color = p.accent,
+                                                        fontWeight = FontWeight.Bold,
+                                                        fontSize = 12.sp
+                                                    )
+                                                )
+                                                BasicText(
+                                                    text = descText,
+                                                    maxLines = 2,
+                                                    overflow = TextOverflow.Ellipsis,
+                                                    style = p.uiBodyStyle.copy(
+                                                        color = p.narrationInk,
+                                                        fontSize = 11.sp
+                                                    )
+                                                )
+                                            }
+                                        } else {
                                             BasicText(
                                                 text = cleanBadge,
                                                 maxLines = 1,
@@ -1736,41 +1905,21 @@ internal fun ManuscriptViewport(
                                             )
                                             BasicText(
                                                 text = descText,
-                                                maxLines = 2,
+                                                maxLines = 1,
                                                 overflow = TextOverflow.Ellipsis,
                                                 style = p.uiBodyStyle.copy(
                                                     color = p.narrationInk,
-                                                    fontSize = 11.sp
+                                                    fontSize = 12.sp
                                                 )
                                             )
                                         }
-                                    } else {
-                                        BasicText(
-                                            text = cleanBadge,
-                                            maxLines = 1,
-                                            overflow = TextOverflow.Ellipsis,
-                                            style = p.monoStyle.copy(
-                                                color = p.accent,
-                                                fontWeight = FontWeight.Bold,
-                                                fontSize = 12.sp
-                                            )
-                                        )
-                                        BasicText(
-                                            text = descText,
-                                            maxLines = 1,
-                                            overflow = TextOverflow.Ellipsis,
-                                            style = p.uiBodyStyle.copy(
-                                                color = p.narrationInk,
-                                                fontSize = 12.sp
-                                            )
-                                        )
                                     }
+                                    KissVectorIcon(
+                                        icon = KissIcon.PLUS,
+                                        tint = p.mutedInk,
+                                        size = IconSize.sm
+                                    )
                                 }
-                                KissVectorIcon(
-                                    icon = KissIcon.PLUS,
-                                    tint = p.mutedInk,
-                                    size = IconSize.sm
-                                )
                             }
                         }
                     }
@@ -1794,6 +1943,55 @@ internal fun ManuscriptViewport(
                     minHeight = 40.dp,
                     maxHeight = 148.dp,
                     modifier = Modifier.fillMaxWidth(),
+                    onKeyNavigation = { keyEvent ->
+                        if (keyEvent.type != KeyEventType.KeyDown || keyEvent.isAltPressed) {
+                            false
+                        } else {
+                            val hasModifier = keyEvent.isCtrlPressed || keyEvent.isMetaPressed || keyEvent.isShiftPressed
+                            when {
+                                slashPopupVisible && !hasModifier -> when (keyEvent.key) {
+                                    Key.DirectionDown -> {
+                                        selectedSlashIndex = (activeSlashIndex + 1) % matchingSlashCommands.size
+                                        true
+                                    }
+                                    Key.DirectionUp -> {
+                                        selectedSlashIndex = (activeSlashIndex - 1 + matchingSlashCommands.size) % matchingSlashCommands.size
+                                        true
+                                    }
+                                    Key.Tab, Key.Enter, Key.NumPadEnter -> {
+                                        executeSlashSpec(matchingSlashCommands[activeSlashIndex])
+                                        true
+                                    }
+                                    Key.Escape -> {
+                                        dismissedSlashInput = userPromptInput
+                                        true
+                                    }
+                                    else -> false
+                                }
+                                atPopupVisible && !hasModifier -> when (keyEvent.key) {
+                                    Key.DirectionDown -> {
+                                        selectedAtIndex = (activeAtIndex + 1) % matchingAtItems.size
+                                        true
+                                    }
+                                    Key.DirectionUp -> {
+                                        selectedAtIndex = (activeAtIndex - 1 + matchingAtItems.size) % matchingAtItems.size
+                                        true
+                                    }
+                                    Key.Tab, Key.Enter, Key.NumPadEnter -> {
+                                        dismissedAtInput = null
+                                        matchingAtItems[activeAtIndex].third.invoke()
+                                        true
+                                    }
+                                    Key.Escape -> {
+                                        dismissedAtInput = userPromptInput
+                                        true
+                                    }
+                                    else -> false
+                                }
+                                else -> false
+                            }
+                        }
+                    },
                     onEnterKeySend = if (!PlatformRuntime.isAndroid) {
                         { isCtrlOrMeta, isShift ->
                             val shouldTrigger = when (preferences.sendShortcut) {
@@ -1815,7 +2013,11 @@ internal fun ManuscriptViewport(
                 )
 
                 // Interactive Context Window Breakdown Popover (Opened by clicking the Circular Context Ring)
-                AnimatedVisibility(visible = showContextBreakdownPopover) {
+                AnimatedVisibility(
+                    visible = showContextBreakdownPopover,
+                    enter = motionExpandEnter(),
+                    exit = motionShrinkExit()
+                ) {
                     val canCompactNow = activeSession.messages.count { it.includedInContext } > 1 ||
                         activeSession.messages.any { it.includedInContext && it.activeVariant.toolCalls.isNotEmpty() }
                     ContextWindowBreakdownPopover(
@@ -1886,7 +2088,7 @@ internal fun ManuscriptViewport(
                     onTriggerVoiceInput = onTriggerVoiceInput,
                     onUpdateProfile = onUpdateProfile,
                     onComposerToolsDrawerChange = onComposerToolsDrawerChange,
-                    onToggleContextBreakdown = { showContextBreakdownPopover = !showContextBreakdownPopover },
+                    onToggleContextBreakdown = stableAction { showContextBreakdownPopover = !showContextBreakdownPopover },
                     onStopStream = onStopStream,
                     onQueuePrompt = onQueuePrompt,
                     onSteerNow = onSteerNow,

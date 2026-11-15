@@ -11,19 +11,29 @@ import kotlinx.serialization.json.*
 import java.net.InetSocketAddress
 import java.nio.file.Files
 import java.util.Collections
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.Executors
+import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicInteger
 import kotlin.test.*
 
 /** Runs the client against real servers: an HTTP one and a separate operating-system process. */
 class McpEndToEndTest {
-    private class HttpMcp(val stateless: Boolean, val streamed: Boolean = false) : AutoCloseable {
+    private class HttpMcp(
+        val stateless: Boolean,
+        val streamed: Boolean = false,
+        val onMethod: ((String) -> Unit)? = null
+    ) : AutoCloseable {
         val requests = Collections.synchronizedList(mutableListOf<Pair<JsonObject, Map<String, String>>>())
+        private val executor = Executors.newCachedThreadPool { task -> Thread(task, "mcp-e2e-fixture").apply { isDaemon = true } }
         private val server = HttpServer.create(InetSocketAddress("127.0.0.1", 0), 0).apply {
+            this.executor = this@HttpMcp.executor
             createContext("/mcp") { exchange ->
                 val message = Json.parseToJsonElement(exchange.requestBody.bufferedReader().readText()).jsonObject
                 val headers = exchange.requestHeaders.entries.associate { it.key.lowercase() to it.value.first() }
                 requests += message to headers
                 val method = message.getValue("method").jsonPrimitive.content
+                onMethod?.invoke(method)
                 val id = message["id"]
                 val result: JsonElement? = when {
                     method == "initialize" && stateless -> null
@@ -332,5 +342,52 @@ for line in sys.stdin:
         assertFailsWith<McpException> { HttpMcpTransport("https://[]/mcp", "") }
         assertFailsWith<McpException> { HttpMcpTransport("http://example.com/mcp", "secret-token") }
         HttpMcpTransport("http://[::1]:8080/mcp", "local-token")
+    }
+
+    @Test
+    fun concurrentConnectAndListToolsCoalesceToSingleRpc() = runBlocking<Unit>(Dispatchers.Default) {
+        val initEntered = CountDownLatch(1)
+        val allowInit = CountDownLatch(1)
+        val listEntered = CountDownLatch(1)
+        val allowList = CountDownLatch(1)
+        HttpMcp(stateless = false, onMethod = { method ->
+            when (method) {
+                "initialize" -> {
+                    initEntered.countDown()
+                    allowInit.await(5, TimeUnit.SECONDS)
+                }
+                "tools/list" -> {
+                    listEntered.countDown()
+                    allowList.await(5, TimeUnit.SECONDS)
+                }
+            }
+        }).use { mcp ->
+            val client = McpClient(HttpMcpTransport(mcp.url, ""))
+            try {
+                val connectCalls = List(3) { async { client.connect() } }
+                assertTrue(initEntered.await(3, TimeUnit.SECONDS))
+                delay(40)
+                allowInit.countDown()
+                connectCalls.awaitAll()
+                client.connect()
+
+                val methodsAfterConnect = mcp.requests.map { it.first.getValue("method").jsonPrimitive.content }
+                assertEquals(1, methodsAfterConnect.count { it == "initialize" })
+                assertEquals(1, methodsAfterConnect.count { it == "notifications/initialized" })
+
+                val listCalls = List(3) { async { client.listTools() } }
+                assertTrue(listEntered.await(3, TimeUnit.SECONDS))
+                delay(40)
+                allowList.countDown()
+                val results = listCalls.awaitAll()
+                results.forEach { tools ->
+                    assertEquals(listOf("first one", "second"), tools.map { it.name })
+                }
+                val listRequests = mcp.requests.count { it.first.getValue("method").jsonPrimitive.content == "tools/list" }
+                assertEquals(2, listRequests, "Paged tools/list (2 pages) should execute once across 3 concurrent callers")
+            } finally {
+                client.close()
+            }
+        }
     }
 }

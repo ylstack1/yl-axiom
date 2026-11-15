@@ -1,13 +1,8 @@
 package io.parchment.ai.ui
 
 import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.expandVertically
-import androidx.compose.animation.fadeIn
-import androidx.compose.animation.fadeOut
-import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -15,6 +10,7 @@ import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicText
@@ -66,8 +62,8 @@ internal fun MessageTurnReasoningDrawer(
 
     AnimatedVisibility(
         visible = showDrawer,
-        enter = expandVertically(motionSpring()) + fadeIn(motionTween(Motion.STANDARD)),
-        exit = shrinkVertically(motionSpring()) + fadeOut(motionTween(Motion.QUICK))
+        enter = motionExpandEnter(),
+        exit = motionShrinkExit()
     ) {
         val livePeekInfo = remember(isLivePeekOnly, activeVar.thinkingSummary, activeVar.trailingThinking, activeVar.toolCalls) {
             if (isLivePeekOnly) extractLatestAgentPeek(activeVar) else LiveAgentPeekInfo(isToolPeek = false, title = "", body = "")
@@ -210,8 +206,9 @@ private fun LiveAgentPeekContent(livePeekInfo: LiveAgentPeekInfo) {
     Column(
         modifier = Modifier
             .fillMaxWidth()
+            .heightIn(min = 72.dp)
             .padding(vertical = Space.s2),
-        verticalArrangement = Arrangement.spacedBy(5.dp)
+        verticalArrangement = Arrangement.spacedBy(Space.s4)
     ) {
         if (livePeekInfo.title.isNotEmpty()) {
             Row(
@@ -222,7 +219,7 @@ private fun LiveAgentPeekContent(livePeekInfo: LiveAgentPeekInfo) {
                     KissVectorIcon(
                         icon = resolveToolKissIcon(livePeekInfo.toolName),
                         tint = p.accent,
-                        size = 13.dp
+                        size = IconSize.md
                     )
                 }
                 BasicText(
@@ -362,7 +359,7 @@ private fun ReasoningThoughtStepBlock(
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(5.dp)
         ) {
-            KissVectorIcon(icon = KissIcon.SPARKLES, tint = p.accent, size = 11.dp)
+            KissVectorIcon(icon = KissIcon.SPARKLES, tint = p.accent, size = IconSize.sm)
             BasicText(
                 text = Strings.thought(stepNumber),
                 style = p.uiLabelStyle.copy(color = p.accent, fontWeight = FontWeight.SemiBold, fontSize = 11.sp)
@@ -450,7 +447,9 @@ private fun ToolExecutionCard(
                 .fillMaxWidth()
                 .then(
                     if (canExpandTool) {
-                        Modifier.clickable(
+                        Modifier.kissClickable(
+                            pressScale = 0.99f,
+                            hoverScale = 1.004f,
                             role = Role.Button,
                             onClickLabel = if (isToolResultExpanded) Strings.collapseToolResult else Strings.expandToolResult
                         ) { isToolResultExpanded = !isToolResultExpanded }
@@ -470,7 +469,7 @@ private fun ToolExecutionCard(
                     KissVectorIcon(
                         icon = toolIcon,
                         tint = if (tc.isError) p.danger else p.accentSecondary,
-                        size = 13.dp
+                        size = IconSize.md
                     )
                 }
                 BasicText(
@@ -552,7 +551,7 @@ internal fun MessageTurnGoalTrackerCard(goalTracker: GoalTrackerState?) {
             .background(p.sheetBg.copy(alpha = 0.78f))
             .border(
                 width = LineWidth.hairline,
-                color = if (goalTracker.isCompleted) p.accentSecondary else p.accent,
+                color = if (goalTracker.isCompleted) p.border else p.accent.copy(alpha = 0.55f),
                 shape = RoundedCornerShape(Radius.r8)
             )
             .padding(11.dp),
