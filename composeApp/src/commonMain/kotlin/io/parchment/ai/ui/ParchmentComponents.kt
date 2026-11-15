@@ -41,6 +41,7 @@ import androidx.compose.ui.input.pointer.pointerHoverIcon
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.hideFromAccessibility
 import androidx.compose.ui.semantics.selected
@@ -351,6 +352,7 @@ fun SepiaButton(
             if (parsed.cleanText.isNotEmpty()) {
                 BasicText(
                     text = parsed.cleanText,
+                    modifier = if (contentDescription != null) Modifier.clearAndSetSemantics {} else Modifier,
                     maxLines = if (wrapText) Int.MAX_VALUE else 1,
                     softWrap = wrapText,
                     overflow = TextOverflow.Ellipsis,
@@ -370,7 +372,7 @@ fun SepiaButton(
                 KissVectorIcon(
                     icon = parsed.trailingIcon,
                     tint = textColor,
-                    size = if (compact) IconSize.sm else 13.dp
+                    size = if (compact) IconSize.sm else IconSize.md
                 )
             }
         }
@@ -432,6 +434,7 @@ fun SepiaChip(
             if (parsed.cleanText.isNotEmpty()) {
                 BasicText(
                     text = parsed.cleanText,
+                    modifier = if (contentDescription != null) Modifier.clearAndSetSemantics {} else Modifier,
                     maxLines = 1,
                     softWrap = false,
                     overflow = TextOverflow.Ellipsis,

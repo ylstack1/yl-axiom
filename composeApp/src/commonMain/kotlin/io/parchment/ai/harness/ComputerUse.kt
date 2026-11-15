@@ -4,6 +4,10 @@ import io.parchment.ai.platform.ComputerAction
 import io.parchment.ai.platform.ComputerControl
 import io.parchment.ai.platform.ComputerScreenshot
 import io.parchment.ai.platform.PlatformWorkspace
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.IO
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
@@ -39,20 +43,22 @@ internal object ComputerUse {
         ComputerAction(action, x, y, text("text"), text("keys").trim(), (number("amount") ?: 3).coerceIn(-20, 20))
     }
 
-    fun perform(argumentsJson: String, isCancelled: () -> Boolean): ComputerOutcome {
+    suspend fun perform(argumentsJson: String, isCancelled: () -> Boolean): ComputerOutcome {
         val action = parseAction(argumentsJson).getOrElse { return ComputerOutcome("Error: ${it.message}", isError = true) }
         if (!control.isAvailable) return ComputerOutcome("Error: Computer control is not available. On Android, turn on Parchment in Accessibility settings.", isError = true)
         if (isCancelled()) return ComputerOutcome("The run stopped before the action ran.")
         // Let the approval card or overlay leave the screen and the user's own tap finish settling first.
-        Thread.sleep(SETTLE_MS)
+        delay(SETTLE_MS)
         if (isCancelled()) return ComputerOutcome("The run stopped before the action ran.")
         var done = "Screenshot taken."
         if (action.action != "screenshot") {
-            done = control.act(action).getOrElse { return ComputerOutcome("Error: ${it.message}", isError = true) }
-            Thread.sleep(SETTLE_MS)
+            done = withContext(Dispatchers.IO) { control.act(action) }
+                .getOrElse { return ComputerOutcome("Error: ${it.message}", isError = true) }
+            delay(SETTLE_MS)
         }
         if (isCancelled()) return ComputerOutcome("$done The run stopped before the next screenshot.")
-        val screenshot = control.screenshot().getOrElse { return ComputerOutcome("$done Error: The screen could not be captured: ${it.message}", isError = true) }
+        val screenshot = withContext(Dispatchers.IO) { control.screenshot() }
+            .getOrElse { return ComputerOutcome("$done Error: The screen could not be captured: ${it.message}", isError = true) }
         return ComputerOutcome("$done Screen is ${screenshot.width}x${screenshot.height}; use those coordinates.", screenshot = screenshot)
     }
 }

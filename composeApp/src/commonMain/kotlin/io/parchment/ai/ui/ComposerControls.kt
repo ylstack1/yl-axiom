@@ -45,10 +45,8 @@ import androidx.compose.ui.input.key.type
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.semantics.ProgressBarRangeInfo
-import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.progressBarRangeInfo
-import androidx.compose.ui.semantics.role
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.setProgress
 import androidx.compose.ui.semantics.stateDescription
@@ -115,16 +113,38 @@ private object AboveAnchor : PopupPositionProvider {
 
 /** A composer chip that opens its control above itself. */
 @Composable
-private fun PopoverChip(label: String, hint: String, selected: Boolean, content: @Composable ColumnScope.() -> Unit) {
+private fun PopoverChip(
+    label: String,
+    hint: String,
+    selected: Boolean,
+    contentDescription: String? = null,
+    content: @Composable ColumnScope.() -> Unit
+) {
     val p = LocalParchmentPalette.current
+    val win = LocalParchmentWindowSize.current
     var open by remember { mutableStateOf(false) }
+    val shape = RoundedCornerShape(Radius.r12)
+    val popWidth = (win.widthDp - Space.s16).coerceIn(220.dp, 290.dp * textGrowth())
     Box {
-        SepiaChip(label = label, hint = hint, selected = selected || open, onClick = { open = !open })
+        SepiaChip(
+            label = label,
+            hint = hint,
+            contentDescription = contentDescription,
+            selected = selected || open,
+            onClick = { open = !open }
+        )
         if (open) {
             Popup(popupPositionProvider = AboveAnchor, onDismissRequest = { open = false }, properties = PopupProperties(focusable = true)) {
                 Column(
-                    Modifier.width(290.dp).clip(RoundedCornerShape(Radius.r12)).background(p.cardBg)
-                        .border(LineWidth.hairline, p.border, RoundedCornerShape(Radius.r12)).padding(Space.s12),
+                    Modifier.width(popWidth).overlayShadow(shape).clip(shape).background(p.elevatedBg)
+                        .border(LineWidth.hairline, p.border, shape)
+                        .onPreviewKeyEvent { event ->
+                            if (event.type == KeyEventType.KeyDown && event.key == Key.Escape) {
+                                open = false
+                                true
+                            } else false
+                        }
+                        .padding(Space.s12),
                     verticalArrangement = Arrangement.spacedBy(Space.s10),
                     content = content
                 )
@@ -145,9 +165,8 @@ internal fun StepSlider(stepCount: Int, selected: Int, description: String, valu
     val insetPx = with(androidx.compose.ui.platform.LocalDensity.current) { 11.dp.toPx() }
     val last = stepCount - 1
     Canvas(
-        modifier.fillMaxWidth().height(32.dp).onSizeChanged { width = it.width.toFloat() }
+        modifier.fillMaxWidth().height(Space.s48).onSizeChanged { width = it.width.toFloat() }
             .semantics {
-                role = Role.DropdownList
                 contentDescription = description
                 stateDescription = valueText
                 progressBarRangeInfo = ProgressBarRangeInfo(selected.coerceAtLeast(0).toFloat(), 0f..last.toFloat(), steps = (stepCount - 2).coerceAtLeast(0))
@@ -234,7 +253,15 @@ internal fun ThinkingControl(chipLabel: String, value: String, onChange: (String
     val shown = THINKING_STOPS.getOrNull(index)?.label
         ?: THINKING_AUTOMATIC.firstOrNull { it.second == normalized }?.first
         ?: value.ifBlank { Strings.default }
-    PopoverChip(chipLabel, "How much the model thinks before it answers", normalized.isNotEmpty() && normalized != "none") {
+    val chipDescription = if (!chipLabel.contains(Strings.thinking, ignoreCase = true)) {
+        "${Strings.thinking}: $shown"
+    } else null
+    PopoverChip(
+        label = chipLabel,
+        hint = Strings.howMuchTheModelThinksBeforeItAnswers,
+        selected = normalized.isNotEmpty() && normalized != "none",
+        contentDescription = chipDescription
+    ) {
         PopoverHeading(Strings.thinking, shown)
         StepSlider(THINKING_STOPS.size, index, Strings.thinkingLevel, shown, { onChange(THINKING_STOPS[it].value) })
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
@@ -242,7 +269,7 @@ internal fun ThinkingControl(chipLabel: String, value: String, onChange: (String
             BasicText(Strings.moreThorough, style = p.uiLabelStyle)
         }
         ChoiceRow(THINKING_AUTOMATIC, normalized, onChange)
-        CustomValueField(if (index < 0 && THINKING_AUTOMATIC.none { it.second == normalized }) value else "", "Custom value", value, onChange)
+        CustomValueField(if (index < 0 && THINKING_AUTOMATIC.none { it.second == normalized }) value else "", Strings.customValue, value, onChange)
     }
 }
 

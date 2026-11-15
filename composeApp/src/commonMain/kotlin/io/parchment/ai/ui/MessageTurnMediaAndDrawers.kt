@@ -119,7 +119,7 @@ private fun AttachmentImageCard(
         if (bmp != null) {
             Image(
                 bitmap = bmp,
-                contentDescription = att.fileName,
+                contentDescription = null,
                 contentScale = ContentScale.Fit,
                 modifier = Modifier
                     .heightIn(max = 260.dp)
@@ -304,7 +304,7 @@ private fun GeneratedImageMediaCard(
         if (bmp != null) {
             Image(
                 bitmap = bmp,
-                contentDescription = media.revisedPrompt.ifBlank { "Generated Image" },
+                contentDescription = media.revisedPrompt.ifBlank { Strings.generatedImageTitle },
                 contentScale = ContentScale.Fit,
                 modifier = Modifier
                     .fillMaxWidth()

@@ -936,4 +936,12 @@ internal object Strings {
     val staged = "Staged"
     fun turnNumber(n: Int): String = "Turn #$n"
     fun linesCount(n: Int): String = "$n lines"
+    val undo = "Undo"
+    val chatTitle = "Chat title"
+    val generatedImageTitle = "Generated image"
+    val howMuchTheModelThinksBeforeItAnswers = "How much the model thinks before it answers"
+    fun deleteAllChatsForAssistant(chatsPlural: String, assistantName: String): String =
+        "Delete all $chatsPlural for '$assistantName'? The assistant and its system prompt stay. You can undo this for a few seconds afterwards."
+    val copyCode = "Copy code"
+    fun tokensUsedInConversation(used: String, limit: String): String = "$used of $limit tokens used"
 }

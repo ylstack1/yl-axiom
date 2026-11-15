@@ -57,7 +57,7 @@ Studied 2026-11 (iA Writer, Things, Linear, Raycast, Bear, Craft, Apple Design A
 
 Taken from the gallery (light and dark, phone and desktop, 100% and 200% text) and ranked by harm. Each item names the task that fixes it; remove it once fixed.
 
-All eight issues are fixed: columns, icons and the phone composer at large text; the disabled button in dark; Undo for deleted chats; a first run that leads to provider setup; a models list that explains itself; theme previews. Two smaller notes remain: at 200% text the phone shows only the start of the chat title, and Providers' middle column is mostly empty with few providers. Run a new audit after the next large UI change.
+All issues from the 2026-11 pass are fixed: columns, icons, the phone composer and phone chat title at large text; the disabled button in dark; Undo for deleted chats; a first run that leads to provider setup; a models list that explains itself; theme previews; and a compact horizontal provider bar when few providers are configured. Run a new audit after the next large UI change.
 
 Sources: [How we redesigned the Linear UI](https://linear.app/now/how-we-redesigned-the-linear-ui), [iA Writer vs Word](https://ia.net/topics/writer-vs-word), [Apple Design Awards](https://developer.apple.com/design/awards/).
 

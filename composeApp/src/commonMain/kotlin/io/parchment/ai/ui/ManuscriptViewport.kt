@@ -1384,7 +1384,7 @@ internal fun ManuscriptViewport(
                                 if (thumbBmp != null) {
                                     Image(
                                         bitmap = thumbBmp,
-                                        contentDescription = att.fileName,
+                                        contentDescription = null,
                                         contentScale = ContentScale.Crop,
                                         modifier = Modifier
                                             .size(34.dp)

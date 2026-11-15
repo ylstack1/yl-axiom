@@ -11,8 +11,12 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicText
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.key
@@ -75,12 +79,14 @@ internal fun DeleteConfirmDialog(
     onDismiss: () -> Unit,
     onConfirm: () -> Unit
 ) {
+    val cancelFocus = remember { FocusRequester() }
+    LaunchedEffect(request) { runCatching { cancelFocus.requestFocus() } }
     val (title, body, confirm) = when (request) {
         is DeleteConfirmRequest.SingleSession -> Triple(
             Strings.deleteChat2, Strings.deleteYouCanUndoThisFor(request.title), Strings.delete)
         is DeleteConfirmRequest.ClearAllSessions -> Triple(
             Strings.deleteAllChats,
-            "Delete all ${plural(request.count, "chat")} for '${request.assistantName}'? The assistant and its system prompt stay. You can undo this for a few seconds afterwards.",
+            Strings.deleteAllChatsForAssistant(plural(request.count, "chat"), request.assistantName),
             Strings.deleteAll)
         is DeleteConfirmRequest.ClearCurrentMessages -> Triple(
             Strings.clearMessages, Strings.clearAllMessagesIn(request.title), Strings.clear)
@@ -93,7 +99,7 @@ internal fun DeleteConfirmDialog(
                 SepiaToggleRow(title = Strings.askForConfirmationBeforeDeleting, checked = askBeforeDeleting, onCheckedChange = onAskBeforeDeletingChange)
             }
         ) {
-            SepiaButton(text = Strings.cancel, compact = true, style = SepiaButtonStyle.OUTLINE, onClick = onDismiss)
+            SepiaButton(text = Strings.cancel, modifier = Modifier.focusRequester(cancelFocus), compact = true, style = SepiaButtonStyle.OUTLINE, onClick = onDismiss)
             SepiaButton(text = confirm, compact = true, style = SepiaButtonStyle.DANGER, onClick = onConfirm)
         }
     }
@@ -108,6 +114,8 @@ internal fun RegenerateConfirmDialog(
     onDismiss: () -> Unit,
     onConfirm: () -> Unit
 ) {
+    val cancelFocus = remember { FocusRequester() }
+    LaunchedEffect(Unit) { runCatching { cancelFocus.requestFocus() } }
     ConfirmBackdrop(onDismiss) {
         SepiaConfirmationCard(
             title = Strings.regenerateReply,
@@ -116,7 +124,7 @@ internal fun RegenerateConfirmDialog(
                 SepiaToggleRow(title = Strings.askForConfirmationBeforeRegenerating, checked = askBeforeRegenerating, onCheckedChange = onAskBeforeRegeneratingChange)
             }
         ) {
-            SepiaButton(text = Strings.cancel, compact = true, style = SepiaButtonStyle.OUTLINE, onClick = onDismiss)
+            SepiaButton(text = Strings.cancel, modifier = Modifier.focusRequester(cancelFocus), compact = true, style = SepiaButtonStyle.OUTLINE, onClick = onDismiss)
             SepiaButton(text = Strings.regenerate, compact = true, style = SepiaButtonStyle.PRIMARY, onClick = onConfirm)
         }
     }

@@ -22,6 +22,7 @@ import android.view.WindowManager
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
 import android.view.accessibility.AccessibilityWindowInfo
+import android.widget.Button
 import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
@@ -145,6 +146,17 @@ class ParchmentAccessibilityService : AccessibilityService() {
         latch.await(1, TimeUnit.SECONDS)
     }
 
+    private fun reconcileOverlayAfterCapture() {
+        val restore = Runnable {
+            if (overlayScope == null || AppForeground.isAppVisible.value) return@Runnable
+            val next = ToolApprovalBroker.pendingRequests.value.firstOrNull()
+            if (next != null && next.requestId != dismissedRequestId) {
+                showOrUpdateOverlay(next)
+            }
+        }
+        if (Looper.myLooper() == Looper.getMainLooper()) restore.run() else mainHandler.post(restore)
+    }
+
     private fun showOrUpdateOverlay(request: ToolApprovalRequest) {
         if (currentOverlayRequestId == request.requestId && overlayView != null) return
         dismissOverlayImmediate()
@@ -181,6 +193,7 @@ class ParchmentAccessibilityService : AccessibilityService() {
         TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_DIP, value.toFloat(), resources.displayMetrics).toInt()
 
     private fun buildOverlayView(request: ToolApprovalRequest): View {
+        val paneTitleText = "${Strings.approval2("Parchment")} · ${request.toolName}"
         val root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             val pad = dp(14)
@@ -191,10 +204,13 @@ class ParchmentAccessibilityService : AccessibilityService() {
                 setStroke(dp(1).coerceAtLeast(1), 0xFFC9BCA6.toInt())
             }
             elevation = dp(6).toFloat()
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+                accessibilityPaneTitle = paneTitleText
+            }
         }
 
         val header = TextView(this).apply {
-            text = "${Strings.approval2("Parchment")} · ${request.toolName}"
+            text = paneTitleText
             setTextColor(0xFF231D16.toInt())
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
             setTypeface(typeface, Typeface.BOLD)
@@ -260,6 +276,12 @@ class ParchmentAccessibilityService : AccessibilityService() {
             }
             isClickable = true
             isFocusable = false
+            accessibilityDelegate = object : View.AccessibilityDelegate() {
+                override fun onInitializeAccessibilityNodeInfo(host: View, info: AccessibilityNodeInfo) {
+                    super.onInitializeAccessibilityNodeInfo(host, info)
+                    info.className = Button::class.java.name
+                }
+            }
             layoutParams = LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT,
                 LinearLayout.LayoutParams.WRAP_CONTENT
@@ -274,36 +296,40 @@ class ParchmentAccessibilityService : AccessibilityService() {
             return Result.failure(IllegalStateException("Screenshots require Android 11 or newer."))
         }
         ensureOverlayDismissedBeforeCapture()
-        val exec = obtainScreenshotExecutor()
-        var lastError = 0
-        repeat(SCREENSHOT_MAX_ATTEMPTS) { attempt ->
-            val done = CountDownLatch(1)
-            val image = AtomicReference<Bitmap?>()
-            val failureCode = AtomicInteger(0)
-            takeScreenshot(Display.DEFAULT_DISPLAY, exec, object : TakeScreenshotCallback {
-                override fun onSuccess(result: ScreenshotResult) {
-                    val buffer = result.hardwareBuffer
-                    try {
-                        image.set(Bitmap.wrapHardwareBuffer(buffer, result.colorSpace)?.copy(Bitmap.Config.ARGB_8888, false))
-                    } finally {
-                        buffer.close()
+        try {
+            val exec = obtainScreenshotExecutor()
+            var lastError = 0
+            repeat(SCREENSHOT_MAX_ATTEMPTS) { attempt ->
+                val done = CountDownLatch(1)
+                val image = AtomicReference<Bitmap?>()
+                val failureCode = AtomicInteger(0)
+                takeScreenshot(Display.DEFAULT_DISPLAY, exec, object : TakeScreenshotCallback {
+                    override fun onSuccess(result: ScreenshotResult) {
+                        val buffer = result.hardwareBuffer
+                        try {
+                            image.set(Bitmap.wrapHardwareBuffer(buffer, result.colorSpace)?.copy(Bitmap.Config.ARGB_8888, false))
+                        } finally {
+                            buffer.close()
+                            done.countDown()
+                        }
+                    }
+                    override fun onFailure(errorCode: Int) {
+                        failureCode.set(errorCode)
                         done.countDown()
                     }
+                })
+                val finished = done.await(TIMEOUT_SECONDS, TimeUnit.SECONDS)
+                image.get()?.let { return Result.success(it) }
+                lastError = if (!finished) -1 else failureCode.get()
+                if (lastError != ERROR_TAKE_SCREENSHOT_INTERVAL_TIME_SHORT || attempt == SCREENSHOT_MAX_ATTEMPTS - 1) {
+                    return Result.failure(IllegalStateException(screenshotErrorMessage(lastError)))
                 }
-                override fun onFailure(errorCode: Int) {
-                    failureCode.set(errorCode)
-                    done.countDown()
-                }
-            })
-            val finished = done.await(TIMEOUT_SECONDS, TimeUnit.SECONDS)
-            image.get()?.let { return Result.success(it) }
-            lastError = if (!finished) -1 else failureCode.get()
-            if (lastError != ERROR_TAKE_SCREENSHOT_INTERVAL_TIME_SHORT || attempt == SCREENSHOT_MAX_ATTEMPTS - 1) {
-                return Result.failure(IllegalStateException(screenshotErrorMessage(lastError)))
+                Thread.sleep(SCREENSHOT_RETRY_DELAY_MS)
             }
-            Thread.sleep(SCREENSHOT_RETRY_DELAY_MS)
+            return Result.failure(IllegalStateException(screenshotErrorMessage(lastError)))
+        } finally {
+            reconcileOverlayAfterCapture()
         }
-        return Result.failure(IllegalStateException(screenshotErrorMessage(lastError)))
     }
 
     private fun screenshotErrorMessage(code: Int): String = when (code) {
@@ -333,21 +359,34 @@ class ParchmentAccessibilityService : AccessibilityService() {
     fun swipe(fromX: Float, fromY: Float, toX: Float, toY: Float): Boolean =
         perform(stroke(Path().apply { moveTo(fromX, fromY); lineTo(toX, toY) }, 300))
 
+    private fun AccessibilityNodeInfo.acceptsTextInput(): Boolean =
+        isEditable || actionList.any { it.id == AccessibilityNodeInfo.ACTION_SET_TEXT }
+
     private fun findFocusedInput(): AccessibilityNodeInfo? {
-        rootInActiveWindow?.findFocus(AccessibilityNodeInfo.FOCUS_INPUT)?.let { return it }
+        val activeRoot = rootInActiveWindow
+        activeRoot?.findFocus(AccessibilityNodeInfo.FOCUS_INPUT)?.let { focused ->
+            if (focused.acceptsTextInput()) return focused
+            findEditableFocusedNode(focused, depth = 0)?.let { return it }
+        }
         val interactive = runCatching { windows }.getOrNull().orEmpty()
+        var fallbackFocused: AccessibilityNodeInfo? = null
         for (window in interactive) {
             if (window.type == AccessibilityWindowInfo.TYPE_ACCESSIBILITY_OVERLAY) continue
             val root = window.root ?: continue
-            root.findFocus(AccessibilityNodeInfo.FOCUS_INPUT)?.let { return it }
+            root.findFocus(AccessibilityNodeInfo.FOCUS_INPUT)?.let { focused ->
+                if (focused.acceptsTextInput()) return focused
+                findEditableFocusedNode(focused, depth = 0)?.let { return it }
+                if (fallbackFocused == null) fallbackFocused = focused
+            }
             findEditableFocusedNode(root, depth = 0)?.let { return it }
         }
-        return rootInActiveWindow?.let { findEditableFocusedNode(it, depth = 0) }
+        activeRoot?.let { findEditableFocusedNode(it, depth = 0)?.let { editable -> return editable } }
+        return fallbackFocused
     }
 
     private fun findEditableFocusedNode(node: AccessibilityNodeInfo, depth: Int): AccessibilityNodeInfo? {
         if (depth > 24) return null
-        if (node.isEditable && (node.isFocused || node.isAccessibilityFocused)) return node
+        if (node.acceptsTextInput() && (node.isFocused || node.isAccessibilityFocused)) return node
         for (i in 0 until node.childCount) {
             val child = node.getChild(i) ?: continue
             findEditableFocusedNode(child, depth + 1)?.let { return it }

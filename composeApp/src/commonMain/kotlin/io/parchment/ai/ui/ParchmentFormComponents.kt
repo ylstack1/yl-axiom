@@ -65,9 +65,12 @@ import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.input.pointer.PointerIcon
 import androidx.compose.ui.input.pointer.pointerHoverIcon
+import androidx.compose.ui.semantics.ProgressBarRangeInfo
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.hideFromAccessibility
+import androidx.compose.ui.semantics.progressBarRangeInfo
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.text
 import androidx.compose.ui.text.AnnotatedString
@@ -151,8 +154,9 @@ fun SepiaConfirmationCard(
             .widthIn(max = 420.dp)
             .fillMaxWidth(0.9f)
             .heightIn(max = win.heightDp * 0.9f)
+            .overlayShadow(shape)
             .clip(shape)
-            .background(p.cardBg)
+            .background(p.elevatedBg)
             .border(LineWidth.emphasis, p.border, shape)
             .blockTapThrough()
             .padding(18.dp),
@@ -162,7 +166,7 @@ fun SepiaConfirmationCard(
             Modifier.weight(1f, fill = false).verticalScroll(rememberScrollState()),
             verticalArrangement = Arrangement.spacedBy(Space.s12)
         ) {
-            BasicText(title, style = p.uiHeaderStyle.copy(fontSize = 17.sp))
+            BasicText(title, modifier = Modifier.semantics { heading() }, style = p.uiHeaderStyle.copy(fontSize = 17.sp))
             BasicText(body, style = p.uiBodyStyle.copy(color = p.narrationInk))
             options()
         }
@@ -372,11 +376,14 @@ fun SepiaTextField(
                         ),
                     contentAlignment = if (singleLine) Alignment.CenterStart else Alignment.TopStart
                 ) {
-                    if (label.isNotBlank()) {
-                        // Merges into the input's semantics, naming it without replacing its value.
-                        Box(Modifier.semantics { text = AnnotatedString(label) })
-                    }
                     val parsedPlaceholder = remember(placeholder) { parseKissLabelIcons(placeholder) }
+                    val semanticLabel = label.ifBlank {
+                        if (value.isNotEmpty()) parsedPlaceholder.cleanText else ""
+                    }
+                    if (semanticLabel.isNotBlank()) {
+                        // Merges into the input's semantics, naming it without replacing its value.
+                        Box(Modifier.semantics { text = AnnotatedString(semanticLabel) })
+                    }
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.spacedBy(7.dp),
@@ -569,12 +576,17 @@ fun SepiaToggleSwitch(
     modifier: Modifier = Modifier
 ) {
     val interactionSource = remember { MutableInteractionSource() }
+    val isPressed by interactionSource.collectIsPressedAsState()
     val isFocused by interactionSource.collectIsFocusedAsState()
+    var focusFromPointer by remember { mutableStateOf(false) }
+    LaunchedEffect(isPressed, isFocused) {
+        if (isPressed) focusFromPointer = true else if (!isFocused) focusFromPointer = false
+    }
     val focusColor = LocalParchmentPalette.current.accent
     Box(
         modifier.sizeIn(minWidth = 48.dp, minHeight = 48.dp)
             .pointerHoverIcon(PointerIcon.Hand)
-            .sepiaFocusRing(isFocused, focusColor)
+            .sepiaFocusRing(isFocused && !focusFromPointer, focusColor)
             .toggleable(
                 checked,
                 interactionSource = interactionSource,
@@ -647,13 +659,17 @@ fun SepiaToggleRow(
     )
     val shape = RoundedCornerShape(Radius.r8)
     val isFocused by interactionSource.collectIsFocusedAsState()
+    var focusFromPointer by remember { mutableStateOf(false) }
+    LaunchedEffect(isPressed, isFocused) {
+        if (isPressed) focusFromPointer = true else if (!isFocused) focusFromPointer = false
+    }
     Row(
         modifier = modifier
             .fillMaxWidth()
             .heightIn(min = Space.s48)
             .clip(shape)
             .background(rowBg)
-            .sepiaFocusRing(isFocused, p.accent)
+            .sepiaFocusRing(isFocused && !focusFromPointer, p.accent)
             .pointerHoverIcon(PointerIcon.Hand)
             .toggleable(
                 checked,
@@ -727,14 +743,16 @@ internal fun SepiaProgressBar(
     modifier: Modifier = Modifier
 ) {
     val p = LocalParchmentPalette.current
+    val clampedFraction = fraction.coerceIn(0f, 1f)
     val smoothFraction by animateFloatAsState(
-        targetValue = fraction.coerceIn(0.02f, 1f),
+        targetValue = clampedFraction.coerceAtLeast(0.02f),
         animationSpec = motionTween(Motion.MEDIUM)
     )
     Box(
         modifier = modifier
             .fillMaxWidth()
             .height(6.dp)
+            .semantics { progressBarRangeInfo = ProgressBarRangeInfo(clampedFraction, 0f..1f) }
             .clip(RoundedCornerShape(Radius.pill))
             .background(p.border.copy(alpha = 0.45f))
     ) {

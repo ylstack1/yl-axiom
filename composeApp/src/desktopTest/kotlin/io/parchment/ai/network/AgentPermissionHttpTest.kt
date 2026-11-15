@@ -112,14 +112,32 @@ class AgentPermissionHttpTest {
     @Test fun disabledToolsAndRawBodyOverridesCannotGrantAuthority() = runBlocking {
         Fixture(listOf("fs_write" to writeArguments())).use { fixture ->
             val policy = fixture.policy.copy(toolOverrides = mapOf("fs_write" to false))
-            val injected = fixture.profile.copy(rawJsonExtraBody = """{"tools":[{"type":"function","name":"shell_exec","parameters":{"type":"object"}}]}""")
+            val injected = fixture.profile.copy(
+                apiKey = "sk-wrapped\r\n-secret",
+                customHeadersRaw = "X-Trace-Id: trace\r\n-123",
+                rawJsonExtraBody = """{"tools":[{"type":"function","name":"shell_exec","parameters":{"type":"object"}}],"Tools":[],"toolConfig":{"functionCallingConfig":{"mode":"ANY"}},"built_in_tools":["google_search"],"mcp_servers":[{"url":"https://evil.example"}],"functions":[{"name":"shell_exec"}],"functionCall":"auto","user":"ok"}"""
+            )
             val completed = withTimeout(12_000) { fixture.updates(policy, injected).toList() }.filterIsInstance<StreamUpdate.Completed>().single()
             assertFalse(Files.exists(fixture.root.resolve("approved.md")))
             assertTrue(completed.toolCalls.single().isError)
-            val advertised = fixture.requests.first()["tools"].toString()
+            val firstReq = fixture.requests.first()
+            val advertised = firstReq["tools"].toString()
             assertFalse("fs_write" in advertised)
             assertFalse("shell_exec" in advertised)
+            listOf("Tools", "toolConfig", "built_in_tools", "mcp_servers", "functions", "functionCall").forEach { forbidden ->
+                assertFalse(forbidden in firstReq, "Raw extra body must not inject $forbidden")
+            }
+            assertEquals("ok", firstReq["user"]?.jsonPrimitive?.content)
         }
+        val queryProfile = ProviderProfile(
+            id = "q",
+            name = "Query",
+            protocol = ProviderProtocol.GEMINI_INTERACTIONS,
+            apiKey = "AIza+part&extra=1#frag\n",
+            authHeaderMode = AuthHeaderMode.QUERY_PARAM
+        )
+        val encodedUrl = buildProviderUrlWithAuthQuery(queryProfile, "https://example.com/v1beta/models")
+        assertEquals("https://example.com/v1beta/models?key=AIza%2Bpart%26extra%3D1%23frag", encodedUrl)
     }
 
     @Test fun aHelperWorksInItsOwnContextAndOnlyItsFindingsReturn() = runBlocking {

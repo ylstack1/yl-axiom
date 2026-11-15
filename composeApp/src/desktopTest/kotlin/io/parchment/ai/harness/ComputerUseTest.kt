@@ -62,7 +62,7 @@ class ComputerUseTest {
         assertNotNull(AgentPermissionGate.denial(ToolAccessScope(subagentPolicy(allowed)), ComputerUse.TOOL_NAME, click))
     }
 
-    @Test fun badRequestsNeverReachTheComputer() {
+    @Test fun badRequestsNeverReachTheComputer() = runBlocking {
         listOf("""{"action":"format_disk"}""", """{"action":"click"}""", """{"action":"type"}""", """{"action":"key"}""", "[1]", """{"action":"type","text":"${"x".repeat(4001)}"}""").forEach {
             assertTrue(ComputerUse.perform(it) { false }.isError, it)
         }
@@ -70,20 +70,20 @@ class ComputerUseTest {
         assertEquals(0, fake.captures)
     }
 
-    @Test fun anActionIsFollowedByAFreshScreenshot() {
+    @Test fun anActionIsFollowedByAFreshScreenshot() = runBlocking {
         val outcome = ComputerUse.perform(click) { false }
         assertFalse(outcome.isError)
         assertEquals("click", fake.actions.single().action)
         assertEquals("SCREENBYTES", outcome.screenshot?.jpegBase64)
     }
 
-    @Test fun aStoppedRunTakesNoFurtherScreenshot() {
+    @Test fun aStoppedRunTakesNoFurtherScreenshot() = runBlocking {
         assertNull(ComputerUse.perform(click) { true }.screenshot)
         assertTrue(fake.actions.isEmpty())
         assertEquals(0, fake.captures)
     }
 
-    @Test fun settlesBeforeScreenshotAndBeforeAndAfterAction() {
+    @Test fun settlesBeforeScreenshotAndBeforeAndAfterAction() = runBlocking {
         val minSettleNs = 350_000_000L
         val shotStart = System.nanoTime()
         val shotOutcome = ComputerUse.perform("""{"action":"screenshot"}""") { false }
@@ -97,7 +97,7 @@ class ComputerUseTest {
         assertTrue(fake.captureAtNano - fake.actAtNano >= minSettleNs, "Post-action screenshot must wait for target UI reaction")
     }
 
-    @Test fun cancellingDuringPostApprovalSettleNeverActsOrCaptures() {
+    @Test fun cancellingDuringPostApprovalSettleNeverActsOrCaptures() = runBlocking {
         val checks = AtomicInteger(0)
         val outcome = ComputerUse.perform(click) { checks.incrementAndGet() >= 2 }
         assertNull(outcome.screenshot)
@@ -105,7 +105,18 @@ class ComputerUseTest {
         assertEquals(0, fake.captures)
     }
 
-    @Test fun unavailableControlSaysHowToEnableIt() {
+    @Test fun coroutineCancellationAbortsSettleImmediately() = runBlocking(Dispatchers.Default) {
+        val started = System.nanoTime()
+        val job = launch { ComputerUse.perform(click) { false } }
+        delay(30L)
+        job.cancelAndJoin()
+        val elapsedMs = (System.nanoTime() - started) / 1_000_000L
+        assertTrue(elapsedMs < 300L, "Settle delay should cancel promptly instead of blocking 400ms (took ${elapsedMs}ms)")
+        assertTrue(fake.actions.isEmpty())
+        assertEquals(0, fake.captures)
+    }
+
+    @Test fun unavailableControlSaysHowToEnableIt() = runBlocking {
         ComputerUse.control = FakeControl(isAvailable = false)
         assertTrue("Accessibility" in ComputerUse.perform("""{"action":"screenshot"}""") { false }.text)
     }

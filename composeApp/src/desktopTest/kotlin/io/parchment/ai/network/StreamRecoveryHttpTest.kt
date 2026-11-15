@@ -630,6 +630,28 @@ class StreamRecoveryHttpTest {
         }.exceptionOrNull()
         assertNotNull(eofError)
         assertTrue("Stream ended before" in eofError.message.orEmpty())
+
+        val plainOverflow = assertFailsWith<IllegalStateException> {
+            AiProviderEngine.readSseOrJsonFallback(
+                channel = ByteReadChannel("x".repeat(256).toByteArray()),
+                streamFinished = { true },
+                onSseEvent = { _, _ -> },
+                onPlainJsonFallback = { },
+                maxBufferedChars = 128
+            )
+        }
+        assertTrue("character limit" in plainOverflow.message.orEmpty())
+
+        val multilineOverflow = assertFailsWith<IllegalStateException> {
+            AiProviderEngine.readSseOrJsonFallback(
+                channel = ByteReadChannel(("data: [1,\n" + "data: ${"2,".repeat(80)}\n\n").toByteArray()),
+                streamFinished = { true },
+                onSseEvent = { _, _ -> },
+                onPlainJsonFallback = { },
+                maxBufferedChars = 128
+            )
+        }
+        assertTrue("character limit" in multilineOverflow.message.orEmpty())
     }
 
     @Test fun geminiInteractionsStatusUpdateHandlesIncompleteAndFailedStates() {

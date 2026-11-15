@@ -51,8 +51,14 @@ import androidx.compose.ui.input.key.type
 import androidx.compose.ui.input.pointer.PointerEventType
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.clearAndSetSemantics
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -129,6 +135,7 @@ internal fun DesktopBrowserTabBar(
                         .background(if (isSelected) p.cardBg else Color.Transparent)
                         .then(if (isSelected) Modifier.rubricMark(p.accent, verticalInset = 7.dp) else Modifier)
                         .kissClickable(pressScale = 0.98f, role = Role.Tab, selected = isSelected) { onSelectTab(tabId) }
+                        .then(if (isTabStreaming) Modifier.semantics { stateDescription = Strings.generatingReply } else Modifier)
                         .padding(horizontal = 11.dp, vertical = 7.dp),
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(7.dp)
@@ -206,6 +213,8 @@ internal fun MobileTabSwitcherModal(
     val win = LocalParchmentWindowSize.current
     val columns = if (isCompactScreen && win.isVeryNarrow) 1 else 2
     var tabFilterQuery by remember { mutableStateOf("") }
+    val initialFocus = remember { FocusRequester() }
+    LaunchedEffect(Unit) { runCatching { initialFocus.requestFocus() } }
     val sessionsById = remember(appState.sessions) { appState.sessions.associateBy { it.id } }
     val assistantsById = remember(appState.assistants) { appState.assistants.associateBy { it.id } }
     val profilesById = remember(appState.profiles) { appState.profiles.associateBy { it.id } }
@@ -296,6 +305,7 @@ internal fun MobileTabSwitcherModal(
                     SepiaButton(
                         text = "×",
                         contentDescription = Strings.closeTabOverview,
+                        modifier = if (openTabIds.size <= 3) Modifier.focusRequester(initialFocus) else Modifier,
                         compact = true,
                         style = SepiaButtonStyle.GHOST,
                         onClick = onCloseModal
@@ -310,7 +320,7 @@ internal fun MobileTabSwitcherModal(
                     placeholder = Strings.filterOpenTabsByTitle,
                     singleLine = true,
                     minHeight = 34.dp,
-                    modifier = Modifier.fillMaxWidth()
+                    modifier = Modifier.fillMaxWidth().focusRequester(initialFocus)
                 )
             }
 
@@ -355,6 +365,7 @@ internal fun MobileTabSwitcherModal(
                                             shape = RoundedCornerShape(Radius.r12)
                                         )
                                         .kissClickable(pressScale = 0.98f, role = Role.Tab, selected = isSel) { onSelectTab(tabId) }
+                                        .then(if (streamInfo != null) Modifier.semantics { stateDescription = Strings.generatingReply } else Modifier)
                                         .padding(Space.s10),
                                     verticalArrangement = Arrangement.SpaceBetween
                                 ) {
@@ -506,11 +517,216 @@ internal fun TopEditorialBar(
     val win = LocalParchmentWindowSize.current
     val activeModel = activeSession.modelOverride.ifBlank { activeProfile.defaultModel }
     val modelLabel = activeModel.ifBlank { Strings.selectModel }
+    val stackCompactActions = win.isCompact && LocalDensity.current.fontScale >= 1.35f
     var isEditingTitle by remember(activeSession.id) { mutableStateOf(false) }
     var titleBuffer by remember(activeSession.id) { mutableStateOf(activeSession.title) }
     LaunchedEffect(activeSession.id, activeSession.title, isEditingTitle) {
         if (!isEditingTitle) {
             titleBuffer = activeSession.title
+        }
+    }
+
+    val shortModelLabel = if (isCompactScreen && modelLabel.contains('/')) {
+        modelLabel.substringAfterLast('/')
+    } else {
+        modelLabel
+    }
+    val capsuleText = if (appState.preferences.showProviderInModelCapsule && !isCompactScreen) {
+        "$shortModelLabel on ${activeProfile.name}"
+    } else {
+        shortModelLabel
+    }
+    val popoverWidth = (win.widthDp - Space.s24).coerceIn(220.dp, 520.dp)
+    val hasChatNotes = activeSession.systemPrompt.isNotBlank() ||
+        activeSession.authorsNote.isNotBlank() ||
+        activeSession.storySummary.isNotBlank()
+
+    @Composable
+    fun modelCapsuleControl() {
+        Box {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(Space.s4),
+                modifier = Modifier
+                    .heightIn(min = 32.dp)
+                    .kissClickable(hoverScale = 1.01f) { onToggleQuickModelPopover() }
+                    .accessibilityLabel(if (showQuickModelPopover) Strings.closeModelPicker else Strings.chooseAModel)
+            ) {
+                BasicText(
+                    text = capsuleText,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    style = p.uiLabelStyle.copy(fontSize = 12.sp),
+                    modifier = Modifier.weight(1f, fill = false)
+                )
+                KissVectorIcon(
+                    icon = if (showQuickModelPopover) KissIcon.CHEVRON_UP else KissIcon.CHEVRON_DOWN,
+                    tint = p.mutedInk,
+                    size = IconSize.sm
+                )
+            }
+
+            // Quick inline searchable vertical model switcher rendered in a floating Popup
+            // so opening or closing it never shifts the chat viewport.
+            if (showQuickModelPopover) {
+                val totalModelsCount = remember(appState.profiles) {
+                    appState.profiles.sumOf { prof ->
+                        if (prof.savedModels.isNotEmpty()) prof.savedModels.size
+                        else if (prof.defaultModel.isNotBlank()) 1
+                        else 0
+                    }
+                }
+                val popoverShape = RoundedCornerShape(Radius.r10)
+                Popup(
+                    popupPositionProvider = QuickModelPopoverPosition,
+                    onDismissRequest = onDismissQuickModelPopover,
+                    properties = PopupProperties(focusable = true)
+                ) {
+                    Column(
+                        modifier = Modifier
+                            .width(popoverWidth)
+                            .overlayShadow(popoverShape)
+                            .clip(popoverShape)
+                            .background(p.elevatedBg)
+                            .border(LineWidth.hairline, p.border, popoverShape)
+                            .onPreviewKeyEvent { event ->
+                                if (event.type == KeyEventType.KeyDown && event.key == Key.Escape) {
+                                    onDismissQuickModelPopover()
+                                    true
+                                } else {
+                                    false
+                                }
+                            }
+                            .padding(11.dp),
+                        verticalArrangement = Arrangement.spacedBy(Space.s8)
+                    ) {
+                        @OptIn(ExperimentalLayoutApi::class)
+                        FlowRow(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalArrangement = Arrangement.spacedBy(Space.s6)
+                        ) {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(Space.s6),
+                                modifier = Modifier.padding(top = Space.s4)
+                            ) {
+                                KissVectorIcon(icon = KissIcon.CPU, tint = p.accent, size = 14.dp)
+                                BasicText(
+                                    text = Strings.chooseAModel,
+                                    style = p.uiLabelStyle.copy(color = p.primaryInk, fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                                )
+                                BasicText(
+                                    text = "($totalModelsCount)",
+                                    style = p.uiLabelStyle.copy(color = p.mutedInk, fontSize = 11.sp, fontFeatureSettings = "tnum")
+                                )
+                            }
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(Space.s4)
+                            ) {
+                                SepiaButton(
+                                    text = if (isCompactScreen) Strings.providers else Strings.manageProviders,
+                                    compact = true,
+                                    style = SepiaButtonStyle.GHOST,
+                                    onClick = {
+                                        onDismissQuickModelPopover()
+                                        onOpenSettings(SettingsCategory.PROVIDERS)
+                                    }
+                                )
+                                SepiaButton(
+                                    text = "×",
+                                    contentDescription = Strings.closeModelPicker,
+                                    compact = true,
+                                    style = SepiaButtonStyle.GHOST,
+                                    onClick = onDismissQuickModelPopover
+                                )
+                            }
+                        }
+                        SepiaSearchableModelPicker(
+                            profiles = appState.profiles,
+                            selectedProfileId = activeProfile.id,
+                            selectedModelId = activeModel,
+                            onSelectModel = { profId, modelId ->
+                                onSelectModelQuick(profId, modelId)
+                            },
+                            maxListHeight = 280.dp
+                        )
+                    }
+                }
+            }
+        }
+    }
+
+    @Composable
+    fun trailingBarActions() {
+        Row(
+            horizontalArrangement = Arrangement.spacedBy(Space.s6),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            if (win.isCompact && (openTabCount > 1 || backgroundStreamingCount > 0)) {
+                val tabBadgeShape = RoundedCornerShape(Radius.r6)
+                Box(
+                    modifier = Modifier
+                        .heightIn(min = 32.dp)
+                        .widthIn(min = 32.dp)
+                        .clip(tabBadgeShape)
+                        .background(if (backgroundStreamingCount > 0) p.accent.copy(alpha = 0.16f) else p.cardBg)
+                        .border(
+                            width = LineWidth.hairline,
+                            color = if (backgroundStreamingCount > 0) p.accent else p.border,
+                            shape = tabBadgeShape
+                        )
+                        .kissClickable { onOpenMobileTabSwitcher() }
+                        .accessibilityLabel(Strings.openTabs2(openTabCount))
+                        .padding(horizontal = Space.s6),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(3.dp)
+                    ) {
+                        if (backgroundStreamingCount > 0) {
+                            KissStreamingPulseDot(color = p.accent)
+                        }
+                        BasicText(
+                            text = openTabCount.toString(),
+                            style = p.uiLabelStyle.copy(
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.Bold,
+                                fontFeatureSettings = "tnum",
+                                color = if (backgroundStreamingCount > 0) p.accent else p.primaryInk
+                            )
+                        )
+                    }
+                }
+            }
+            if (chatArtifactsCount > 0 || showRightFilesSidebar) {
+                SepiaButton(
+                    text = "📁 $chatArtifactsCount",
+                    contentDescription = Strings.filesInThisChat(chatArtifactsCount),
+                    compact = true,
+                    tabularNums = true,
+                    style = if (showRightFilesSidebar) SepiaButtonStyle.OUTLINE else SepiaButtonStyle.GHOST,
+                    onClick = onToggleRightFilesSidebar
+                )
+            }
+            SepiaButton(
+                text = "✎",
+                contentDescription = Strings.chatNotes,
+                compact = true,
+                style = if (showSessionInspector || hasChatNotes) SepiaButtonStyle.OUTLINE else SepiaButtonStyle.GHOST,
+                onClick = onToggleSessionInspector
+            )
+            if (!win.isCompact) {
+                SepiaButton(
+                    text = "⚙",
+                    contentDescription = Strings.settings,
+                    compact = true,
+                    style = SepiaButtonStyle.GHOST,
+                    onClick = { onOpenSettings(null) }
+                )
+            }
         }
     }
 
@@ -539,7 +755,7 @@ internal fun TopEditorialBar(
                     onClick = onToggleSidebar
                 )
 
-                if (appState.preferences.showAssistantAvatarInTitleBar) {
+                if (appState.preferences.showAssistantAvatarInTitleBar && !stackCompactActions) {
                     SepiaAvatarCircle(
                         symbol = activeAssistant.iconEmoji,
                         selected = true,
@@ -557,6 +773,7 @@ internal fun TopEditorialBar(
                             SepiaTextField(
                                 value = titleBuffer,
                                 onValueChange = { titleBuffer = it },
+                                placeholder = Strings.chatTitle,
                                 minHeight = 30.dp,
                                 onEnterKeySend = { _, _ ->
                                     onRenameTopicInline(titleBuffer.trim())
@@ -580,16 +797,23 @@ internal fun TopEditorialBar(
                             verticalAlignment = Alignment.CenterVertically,
                             horizontalArrangement = Arrangement.spacedBy(5.dp)
                         ) {
-                            BasicText(
-                                text = activeSession.title,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis,
-                                style = p.uiHeaderStyle.copy(fontSize = 15.sp),
-                                modifier = Modifier.weight(1f, fill = false).kissClickable(hoverScale = 1.01f) {
-                                    titleBuffer = activeSession.title
-                                    isEditingTitle = true
-                                }.accessibilityLabel(Strings.editTitle(activeSession.title))
-                            )
+                            Box(
+                                modifier = Modifier
+                                    .weight(1f, fill = false)
+                                    .kissClickable(hoverScale = 1.01f) {
+                                        titleBuffer = activeSession.title
+                                        isEditingTitle = true
+                                    }
+                                    .accessibilityLabel(Strings.editTitle(activeSession.title))
+                            ) {
+                                BasicText(
+                                    text = activeSession.title,
+                                    maxLines = if (stackCompactActions) 2 else 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                    style = p.uiHeaderStyle.copy(fontSize = 15.sp),
+                                    modifier = Modifier.clearAndSetSemantics {}
+                                )
+                            }
                             if (!isCompactScreen && activeSession.messages.isNotEmpty()) {
                                 SepiaButton(
                                     text = "✦",
@@ -602,202 +826,29 @@ internal fun TopEditorialBar(
                             }
                         }
                     }
-
-                    val shortModelLabel = if (isCompactScreen && modelLabel.contains('/')) {
-                        modelLabel.substringAfterLast('/')
-                    } else {
-                        modelLabel
-                    }
-                    val capsuleText = if (appState.preferences.showProviderInModelCapsule && !isCompactScreen) {
-                        "$shortModelLabel on ${activeProfile.name}"
-                    } else {
-                        shortModelLabel
-                    }
-                    val popoverWidth = (win.widthDp - Space.s24).coerceIn(220.dp, 520.dp)
-                    Box {
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(Space.s4),
-                            modifier = Modifier
-                                .heightIn(min = 32.dp)
-                                .kissClickable(hoverScale = 1.01f) { onToggleQuickModelPopover() }
-                                .accessibilityLabel(if (showQuickModelPopover) Strings.closeModelPicker else Strings.chooseAModel)
-                        ) {
-                            BasicText(
-                                text = capsuleText,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis,
-                                style = p.uiLabelStyle.copy(fontSize = 12.sp),
-                                modifier = Modifier.weight(1f, fill = false)
-                            )
-                            KissVectorIcon(
-                                icon = if (showQuickModelPopover) KissIcon.CHEVRON_UP else KissIcon.CHEVRON_DOWN,
-                                tint = p.mutedInk,
-                                size = IconSize.sm
-                            )
-                        }
-
-                        // Quick inline searchable vertical model switcher rendered in a floating Popup
-                        // so opening or closing it never shifts the chat viewport.
-                        if (showQuickModelPopover) {
-                            val totalModelsCount = remember(appState.profiles) {
-                                appState.profiles.sumOf { prof ->
-                                    if (prof.savedModels.isNotEmpty()) prof.savedModels.size
-                                    else if (prof.defaultModel.isNotBlank()) 1
-                                    else 0
-                                }
-                            }
-                            Popup(
-                                popupPositionProvider = QuickModelPopoverPosition,
-                                onDismissRequest = onDismissQuickModelPopover,
-                                properties = PopupProperties(focusable = true)
-                            ) {
-                                Column(
-                                    modifier = Modifier
-                                        .width(popoverWidth)
-                                        .clip(RoundedCornerShape(Radius.r10))
-                                        .background(p.cardBg)
-                                        .border(1.dp, p.border, RoundedCornerShape(Radius.r10))
-                                        .onPreviewKeyEvent { event ->
-                                            if (event.type == KeyEventType.KeyDown && event.key == Key.Escape) {
-                                                onDismissQuickModelPopover()
-                                                true
-                                            } else {
-                                                false
-                                            }
-                                        }
-                                        .padding(11.dp),
-                                    verticalArrangement = Arrangement.spacedBy(Space.s8)
-                                ) {
-                                    @OptIn(ExperimentalLayoutApi::class)
-                                    FlowRow(
-                                        modifier = Modifier.fillMaxWidth(),
-                                        horizontalArrangement = Arrangement.SpaceBetween,
-                                        verticalArrangement = Arrangement.spacedBy(Space.s6)
-                                    ) {
-                                        Row(
-                                            verticalAlignment = Alignment.CenterVertically,
-                                            horizontalArrangement = Arrangement.spacedBy(Space.s6),
-                                            modifier = Modifier.padding(top = Space.s4)
-                                        ) {
-                                            KissVectorIcon(icon = KissIcon.CPU, tint = p.accent, size = 14.dp)
-                                            BasicText(
-                                                text = Strings.chooseAModel,
-                                                style = p.uiLabelStyle.copy(color = p.primaryInk, fontWeight = FontWeight.Bold, fontSize = 13.sp)
-                                            )
-                                            BasicText(
-                                                text = "($totalModelsCount)",
-                                                style = p.monoStyle.copy(color = p.mutedInk, fontSize = 11.sp, fontFeatureSettings = "tnum")
-                                            )
-                                        }
-                                        Row(
-                                            verticalAlignment = Alignment.CenterVertically,
-                                            horizontalArrangement = Arrangement.spacedBy(Space.s4)
-                                        ) {
-                                            SepiaButton(
-                                                text = if (isCompactScreen) Strings.providers else Strings.manageProviders,
-                                                compact = true,
-                                                style = SepiaButtonStyle.GHOST,
-                                                onClick = {
-                                                    onDismissQuickModelPopover()
-                                                    onOpenSettings(SettingsCategory.PROVIDERS)
-                                                }
-                                            )
-                                            SepiaButton(
-                                                text = "×",
-                                                contentDescription = Strings.closeModelPicker,
-                                                compact = true,
-                                                style = SepiaButtonStyle.GHOST,
-                                                onClick = onDismissQuickModelPopover
-                                            )
-                                        }
-                                    }
-                                    SepiaSearchableModelPicker(
-                                        profiles = appState.profiles,
-                                        selectedProfileId = activeProfile.id,
-                                        selectedModelId = activeModel,
-                                        onSelectModel = { profId, modelId ->
-                                            onSelectModelQuick(profId, modelId)
-                                        },
-                                        maxListHeight = 280.dp
-                                    )
-                                }
-                            }
-                        }
+                    if (!stackCompactActions) {
+                        modelCapsuleControl()
                     }
                 }
             }
 
-            Spacer(Modifier.width(Space.s6))
+            if (!stackCompactActions) {
+                Spacer(Modifier.width(Space.s6))
+                trailingBarActions()
+            }
+        }
 
-            Row(
-                horizontalArrangement = Arrangement.spacedBy(Space.s6),
-                verticalAlignment = Alignment.CenterVertically
+        if (stackCompactActions) {
+            @OptIn(ExperimentalLayoutApi::class)
+            FlowRow(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalArrangement = Arrangement.spacedBy(Space.s6)
             ) {
-                val hasChatNotes = activeSession.systemPrompt.isNotBlank() ||
-                    activeSession.authorsNote.isNotBlank() ||
-                    activeSession.storySummary.isNotBlank()
-                if (win.isCompact && (openTabCount > 1 || backgroundStreamingCount > 0)) {
-                    val tabBadgeShape = RoundedCornerShape(Radius.r6)
-                    Box(
-                        modifier = Modifier
-                            .heightIn(min = 27.dp)
-                            .widthIn(min = 27.dp)
-                            .clip(tabBadgeShape)
-                            .background(if (backgroundStreamingCount > 0) p.accent.copy(alpha = 0.16f) else p.cardBg)
-                            .border(
-                                width = LineWidth.hairline,
-                                color = if (backgroundStreamingCount > 0) p.accent else p.border,
-                                shape = tabBadgeShape
-                            )
-                            .kissClickable { onOpenMobileTabSwitcher() }
-                            .accessibilityLabel(Strings.openTabs2(openTabCount))
-                            .padding(horizontal = Space.s6),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(3.dp)
-                        ) {
-                            if (backgroundStreamingCount > 0) {
-                                KissStreamingPulseDot(color = p.accent)
-                            }
-                            BasicText(
-                                text = openTabCount.toString(),
-                                style = p.monoStyle.copy(
-                                    fontSize = 12.sp,
-                                    fontWeight = FontWeight.Bold,
-                                    color = if (backgroundStreamingCount > 0) p.accent else p.primaryInk
-                                )
-                            )
-                        }
-                    }
+                Box(modifier = Modifier.weight(1f, fill = false)) {
+                    modelCapsuleControl()
                 }
-                if (chatArtifactsCount > 0 || showRightFilesSidebar) {
-                    SepiaButton(
-                        text = "📁 $chatArtifactsCount",
-                        contentDescription = Strings.filesInThisChat(chatArtifactsCount),
-                        compact = true,
-                        style = if (showRightFilesSidebar) SepiaButtonStyle.OUTLINE else SepiaButtonStyle.GHOST,
-                        onClick = onToggleRightFilesSidebar
-                    )
-                }
-                SepiaButton(
-                    text = "✎",
-                    contentDescription = Strings.chatNotes,
-                    compact = true,
-                    style = if (showSessionInspector || hasChatNotes) SepiaButtonStyle.OUTLINE else SepiaButtonStyle.GHOST,
-                    onClick = onToggleSessionInspector
-                )
-                if (!win.isCompact) {
-                    SepiaButton(
-                        text = "⚙",
-                        contentDescription = Strings.settings,
-                        compact = true,
-                        style = SepiaButtonStyle.GHOST,
-                        onClick = { onOpenSettings(null) }
-                    )
-                }
+                trailingBarActions()
             }
         }
     }
@@ -836,10 +887,13 @@ internal fun ParchmentAttachmentViewerModal(
     @Suppress("DEPRECATION")
     val clipboard = LocalClipboardManager.current
     val scope = rememberCoroutineScope()
+    val closeFocus = remember { FocusRequester() }
+    LaunchedEffect(item) { runCatching { closeFocus.requestFocus() } }
 
     Box(
         modifier = Modifier
             .fillMaxSize()
+            .background(Scrim.dialog)
             .onPreviewKeyEvent { event ->
                 if (event.type == KeyEventType.KeyDown && event.key == Key.Escape) {
                     onClose()
@@ -867,7 +921,7 @@ internal fun ParchmentAttachmentViewerModal(
                         .fillMaxHeight(0.88f)
                         .overlayShadow(viewerShape)
                         .clip(viewerShape)
-                        .background(p.cardBg)
+                        .background(p.elevatedBg)
                         .border(LineWidth.hairline, p.border, viewerShape)
                         .blockTapThrough()
                         .padding(14.dp),
@@ -969,6 +1023,7 @@ internal fun ParchmentAttachmentViewerModal(
                             SepiaButton(
                                 text = "✕",
                                 contentDescription = Strings.close,
+                                modifier = Modifier.focusRequester(closeFocus),
                                 compact = true,
                                 style = SepiaButtonStyle.PRIMARY,
                                 onClick = onClose
@@ -1077,7 +1132,7 @@ internal fun ParchmentAttachmentViewerModal(
                         .fillMaxHeight(0.88f)
                         .overlayShadow(viewerShape)
                         .clip(viewerShape)
-                        .background(p.cardBg)
+                        .background(p.elevatedBg)
                         .border(LineWidth.hairline, p.border, viewerShape)
                         .blockTapThrough()
                         .padding(Space.s16),
@@ -1157,6 +1212,7 @@ internal fun ParchmentAttachmentViewerModal(
                             SepiaButton(
                                 text = "✕",
                                 contentDescription = Strings.close,
+                                modifier = Modifier.focusRequester(closeFocus),
                                 compact = true,
                                 style = SepiaButtonStyle.PRIMARY,
                                 onClick = onClose

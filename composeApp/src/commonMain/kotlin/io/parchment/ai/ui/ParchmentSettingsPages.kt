@@ -236,7 +236,12 @@ fun ParchmentSettingsScreen(
                                 ) {
                                     BasicText(
                                         text = matchCount.toString(),
-                                        style = p.monoStyle.copy(fontSize = 11.sp, color = p.accent, fontWeight = FontWeight.Bold)
+                                        style = p.uiLabelStyle.copy(
+                                            fontSize = 11.sp,
+                                            color = p.accent,
+                                            fontWeight = FontWeight.Bold,
+                                            fontFeatureSettings = "tnum"
+                                        )
                                     )
                                 }
                             }

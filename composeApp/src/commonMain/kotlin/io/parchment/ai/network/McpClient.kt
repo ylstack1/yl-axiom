@@ -50,13 +50,17 @@ internal interface McpTransport {
     suspend fun close()
 }
 
+private fun sanitizeHeaderValue(raw: String): String =
+    raw.trim().replace("\r", "").replace("\n", "")
+
 /** Streamable HTTP: one POST per message, answered with JSON or an event stream. */
-internal class HttpMcpTransport(private val url: String, private val bearerToken: String) : McpTransport {
+internal class HttpMcpTransport(url: String, bearerToken: String) : McpTransport {
+    private val cleanUrl = url.trim()
+    private val cleanToken = sanitizeHeaderValue(bearerToken)
     @Volatile override var protocolVersion = MCP_HANDSHAKE_VERSION
     @Volatile private var sessionId = ""
 
     init {
-        val cleanUrl = url.trim()
         val hasHttpScheme = cleanUrl.startsWith("http://", ignoreCase = true) ||
             cleanUrl.startsWith("https://", ignoreCase = true)
         if (!hasHttpScheme) {
@@ -86,28 +90,31 @@ internal class HttpMcpTransport(private val url: String, private val bearerToken
             throw McpException("MCP server URL must include a host.")
         }
         val loopback = target.host == "localhost" || target.host == "127.0.0.1" || target.host == "[::1]" || target.host == "::1"
-        if (scheme != "https" && !loopback && bearerToken.isNotBlank()) {
+        if (scheme != "https" && !loopback && cleanToken.isNotBlank()) {
             throw McpException("A token can be sent only over https or to this device.")
         }
     }
 
     private suspend fun post(message: JsonObject, onResponse: (suspend (JsonObject) -> Unit)?) {
         var finished = false
-        AiProviderEngine.httpClient.preparePost(url) {
+        AiProviderEngine.mcpHttpClient.preparePost(cleanUrl) {
             contentType(ContentType.Application.Json)
             header("Accept", "application/json, text/event-stream")
-            header("MCP-Protocol-Version", protocolVersion)
+            header("MCP-Protocol-Version", sanitizeHeaderValue(protocolVersion))
             (message["method"] as? JsonPrimitive)?.contentOrNull?.let { method ->
-                header("Mcp-Method", method)
+                header("Mcp-Method", sanitizeHeaderValue(method))
                 if (method == "tools/call") {
-                    ((message["params"] as? JsonObject)?.get("name") as? JsonPrimitive)?.contentOrNull?.let { header("Mcp-Name", it) }
+                    ((message["params"] as? JsonObject)?.get("name") as? JsonPrimitive)?.contentOrNull?.let {
+                        header("Mcp-Name", sanitizeHeaderValue(it))
+                    }
                 }
             }
-            if (bearerToken.isNotBlank()) header("Authorization", "Bearer $bearerToken")
-            if (sessionId.isNotEmpty()) header("Mcp-Session-Id", sessionId)
+            if (cleanToken.isNotBlank()) header("Authorization", "Bearer $cleanToken")
+            val activeSessionId = sanitizeHeaderValue(sessionId)
+            if (activeSessionId.isNotEmpty()) header("Mcp-Session-Id", activeSessionId)
             setBody(message.toString())
         }.execute { response ->
-            response.headers["Mcp-Session-Id"]?.takeIf { it.isNotBlank() }?.let { sessionId = it }
+            response.headers["Mcp-Session-Id"]?.let(::sanitizeHeaderValue)?.takeIf { it.isNotBlank() }?.let { sessionId = it }
             val status = response.status.value
             if (status == 404 && sessionId.isNotEmpty()) sessionId = ""
             if (onResponse == null) {
@@ -161,7 +168,7 @@ internal class ProcessMcpTransport(private val process: McpProcess) : McpTranspo
     private val lock = Mutex()
     private val writeLock = Mutex()
     private val waiting = mutableMapOf<String, CompletableDeferred<JsonObject>>()
-    private var ended = false
+    @Volatile private var ended = false
     override val isAlive: Boolean get() = !ended
 
     init {

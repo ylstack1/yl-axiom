@@ -51,6 +51,7 @@ import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -390,6 +391,7 @@ fun ParchmentApp(
 
                 // Register Android System Back Gesture / Back Button Navigation Stack
                 LaunchedEffect(
+                    showCommandPalette,
                     activeViewerItem,
                     pendingDeleteConfirmation,
                     pendingRegenerateConfirm,
@@ -404,6 +406,10 @@ fun ParchmentApp(
                 ) {
                     PlatformRuntime.registerBackHandler {
                         when {
+                            showCommandPalette -> {
+                                showCommandPalette = false
+                                true
+                            }
                             activeViewerItem != null -> {
                                 activeViewerItem = null
                                 true
@@ -513,6 +519,20 @@ fun ParchmentApp(
                             desktopWindowHeader(if (isSettingsOpen) Strings.settings else activeSession.title)
                         }
 
+                        val hasModalOverlay = showCommandPalette ||
+                            showMobileTabSwitcher ||
+                            pendingDeleteConfirmation != null ||
+                            pendingRegenerateConfirm != null ||
+                            activeViewerItem != null
+                        val hideMainViewportForDrawer = isCompactScreen &&
+                            !isSettingsOpen &&
+                            (showSidebar || showRightFilesSidebar)
+
+                        Column(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .then(if (hasModalOverlay) Modifier.clearAndSetSemantics {} else Modifier)
+                        ) {
                         // 1. Top bar, hidden while Settings is open so there is only one way back to the chat.
                         if (!isSettingsOpen) {
                             val bgStreamingCount = activeStreamsBySession.keys.count { it != activeSession.id }
@@ -677,7 +697,12 @@ fun ParchmentApp(
                                         }
                                         BasicText(
                                             text = "${currentOta.progressPercent}%",
-                                            style = p.monoStyle.copy(color = p.accent, fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                                            style = p.uiLabelStyle.copy(
+                                                color = p.accent,
+                                                fontWeight = FontWeight.Bold,
+                                                fontSize = 12.sp,
+                                                fontFeatureSettings = "tnum"
+                                            )
                                         )
                                     }
                                     SepiaProgressBar(fraction = currentOta.progressPercent / 100f)
@@ -749,6 +774,7 @@ fun ParchmentApp(
                             }
                             else -> {}
                         }
+                        } // Closes top chrome wrapper hidden from screen readers when a modal is open.
 
                         LaunchedEffect(bannerNotification, isVoiceListening) {
                             if (bannerNotification.isNotBlank() && !isVoiceListening) {
@@ -879,7 +905,14 @@ fun ParchmentApp(
                         }
 
                         Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
-                            Row(modifier = Modifier.fillMaxSize()) {
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxSize()
+                                    .then(
+                                        if (hasModalOverlay || hideMainViewportForDrawer) Modifier.clearAndSetSemantics {}
+                                        else Modifier
+                                    )
+                            ) {
                                 AnimatedVisibility(
                                     visible = !isCompactScreen && showSidebar && !isSettingsOpen,
                                     enter = motionSideExpandEnter(),
@@ -1412,7 +1445,14 @@ fun ParchmentApp(
                                     }
                                 }
 
-                                Row(modifier = Modifier.fillMaxHeight()) {
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxHeight()
+                                        .then(
+                                            if (hasModalOverlay || !showSidebar || isSettingsOpen) Modifier.clearAndSetSemantics {}
+                                            else Modifier
+                                        )
+                                ) {
                                     AnimatedVisibility(
                                         visible = showSidebar && !isSettingsOpen,
                                         enter = motionSideExpandEnter(),
@@ -1451,7 +1491,15 @@ fun ParchmentApp(
                                     }
                                 }
 
-                                Row(modifier = Modifier.fillMaxSize(), horizontalArrangement = Arrangement.End) {
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxSize()
+                                        .then(
+                                            if (hasModalOverlay || !showRightFilesSidebar || isSettingsOpen) Modifier.clearAndSetSemantics {}
+                                            else Modifier
+                                        ),
+                                    horizontalArrangement = Arrangement.End
+                                ) {
                                     AnimatedVisibility(
                                         visible = showRightFilesSidebar && !isSettingsOpen,
                                         enter = motionSideExpandEnter(),
@@ -1470,7 +1518,7 @@ fun ParchmentApp(
                                                 onInspectAttachment = ::openAttachmentInViewer,
                                                 onInspectGeneratedImage = { media ->
                                                     activeViewerItem = ActiveMediaViewerItem.ImageViewer(
-                                                        title = media.revisedPrompt.take(48).ifBlank { "Generated Image" },
+                                                        title = media.revisedPrompt.take(48).ifBlank { Strings.generatedImageTitle },
                                                         mimeType = media.mimeType.ifBlank { "image/png" },
                                                         localFilePath = media.localFilePath,
                                                         remoteUrl = media.remoteUrl
@@ -1566,7 +1614,7 @@ fun ParchmentApp(
                             FloatingNotification(
                                 message = bannerNotification,
                                 onDismiss = { bannerNotification = "" },
-                                actionLabel = if (pendingUndo != null) "Undo" else null,
+                                actionLabel = if (pendingUndo != null) Strings.undo else null,
                                 onAction = ::undoDelete,
                                 modifier = Modifier.align(Alignment.TopCenter).padding(horizontal = Space.s12, vertical = Space.s12)
                             )

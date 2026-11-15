@@ -81,13 +81,19 @@ fun SepiaContextGaugeRing(
     val gaugeInteraction = remember { MutableInteractionSource() }
     val gaugeHovered by gaugeInteraction.collectIsHoveredAsState()
     val isCostUnavailable = sessionCostLabel == "cost unavailable"
+    val gaugeStateSummary = remember(usedTokens, safeLimit, isUnlimited, isCostUnavailable) {
+        val usedStr = formatCompactTokens(usedTokens)
+        val limitStr = if (isUnlimited) "∞" else formatCompactTokens(safeLimit)
+        val usagePart = Strings.tokensUsedInConversation(usedStr, limitStr)
+        if (isCostUnavailable) "$usagePart, ${Strings.costUnavailable}" else usagePart
+    }
     Row(
         modifier = modifier
             .then(
                 if (onClick != null) Modifier.kissClickable(interactionSource = gaugeInteraction, onClick = onClick)
                 else Modifier.hoverable(gaugeInteraction)
             )
-            .then(if (isCostUnavailable) Modifier.semantics { stateDescription = Strings.costUnavailable } else Modifier)
+            .semantics { stateDescription = gaugeStateSummary }
             .clip(shape)
             .background(p.elevatedBg.copy(alpha = 0.6f))
             .border(LineWidth.hairline, p.border.copy(alpha = 0.65f), shape)

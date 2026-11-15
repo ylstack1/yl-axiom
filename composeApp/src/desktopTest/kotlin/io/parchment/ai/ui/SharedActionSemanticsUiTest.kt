@@ -242,4 +242,85 @@ class SharedActionSemanticsUiTest {
             assertEquals(true, swatch().config[SemanticsProperties.Selected])
         }
     }
+
+    @Test fun placeholderNamesNonEmptyInputWithoutDoublingWhenEmpty() {
+        val query = mutableStateOf("")
+        withScene(content = {
+            SepiaTextField(value = query.value, onValueChange = { query.value = it }, placeholder = "🔍 Search settings…")
+        }) { scene ->
+            fun input() = nodes(scene).single { it.config.contains(SemanticsActions.SetText) }
+            val emptyLabels = input().config.getOrNull(SemanticsProperties.Text).orEmpty().map { it.text }
+            assertEquals(listOf("Search settings…"), emptyLabels, "Empty field should expose placeholder once")
+            assertEquals("", input().config[SemanticsProperties.EditableText].text)
+
+            query.value = "theme"
+            settle(scene, 16_000_000L)
+            val filledLabels = input().config.getOrNull(SemanticsProperties.Text).orEmpty().map { it.text }
+            assertEquals(listOf("Search settings…"), filledLabels, "Filled field must keep its accessible name")
+            assertEquals("theme", input().config[SemanticsProperties.EditableText].text)
+            assertEquals("", description(input()))
+        }
+    }
+
+    @Test fun stepSliderExposesRangeSemanticsWithoutDropdownRoleAndMeetsTouchTarget() {
+        val stop = mutableStateOf(2)
+        withScene(content = {
+            StepSlider(6, stop.value, "Thinking level", "Medium", { stop.value = it })
+        }) { scene ->
+            val slider = nodes(scene).single { description(it) == "Thinking level" }
+            assertNull(slider.config.getOrNull(SemanticsProperties.Role), "Slider must not masquerade as a dropdown")
+            assertNotNull(slider.config.getOrNull(SemanticsProperties.ProgressBarRangeInfo))
+            assertTrue(slider.size.height >= 48, "Slider touch target must be at least 48dp")
+            assertTrue(slider.config[SemanticsActions.SetProgress].action!!.invoke(4f))
+            settle(scene, 16_000_000L)
+            assertEquals(4, stop.value)
+        }
+    }
+
+    @Test fun explicitDescriptionsAvoidDuplicateTextAndPhoneTitleFitsAtLargeFont() {
+        withScene(content = {
+            SepiaButton("📁 3", {}, compact = true, contentDescription = "Files in this chat: 3")
+            SepiaChip("🔧 Tools", false, {}, contentDescription = "Tools")
+            ThinkingControl("🧠 None", "none", {})
+        }) { scene ->
+            val files = nodes(scene).single { description(it) == "Files in this chat: 3" }
+            assertEquals("", text(files), "Button with explicit description must not also merge visible count")
+            val tools = nodes(scene).single { description(it) == "Tools" }
+            assertEquals("", text(tools), "Chip with explicit description must not announce Tools twice")
+            val thinking = nodes(scene).single { description(it) == "Thinking: Off" }
+            assertEquals("", text(thinking), "Thinking chip must announce 'Thinking: Off', not bare 'None'")
+        }
+
+        val state = createDefaultAppState()
+        val session = state.sessions.first().copy(title = "Fix chat export on long titles")
+        withScene(width = 390, height = 220, fontScale = 2f, content = {
+            TopEditorialBar(
+                appState = state,
+                activeSession = session,
+                activeAssistant = state.assistants.first(),
+                activeProfile = state.profiles.first(),
+                isCompactScreen = true,
+                showSidebar = false,
+                showSessionInspector = false,
+                showRightFilesSidebar = false,
+                chatArtifactsCount = 2,
+                showQuickModelPopover = false,
+                openTabCount = 3,
+                backgroundStreamingCount = 0,
+                onOpenMobileTabSwitcher = {},
+                onNewChatTab = {},
+                onToggleSidebar = {},
+                onToggleSessionInspector = {},
+                onToggleQuickModelPopover = {},
+                onSelectModelQuick = { _, _ -> },
+                onRenameTopicInline = {},
+                onRegenerateTitleAi = {},
+                onOpenSettings = {}
+            )
+        }) { scene ->
+            val titleNode = nodes(scene).single { description(it) == "Edit title: Fix chat export on long titles" }
+            assertEquals("", text(titleNode), "Title trigger must not read the title twice")
+            assertTrue(titleNode.boundsInRoot.width >= 240f, "At 200% text on a phone, title must span the top row (${titleNode.boundsInRoot.width}px)")
+        }
+    }
 }

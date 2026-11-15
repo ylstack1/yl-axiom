@@ -184,6 +184,12 @@ object AiProviderEngine {
         }
     }
 
+    internal val mcpHttpClient by lazy {
+        httpClient.config {
+            followRedirects = false
+        }
+    }
+
     /**
      * Streams or polls a generation turn across Gemini Interactions API, OpenAI Responses API,
      * or Anthropic Messages API, including multi-step local workspace tool loops and
@@ -565,8 +571,9 @@ object AiProviderEngine {
         channel: ByteReadChannel,
         streamFinished: () -> Boolean,
         onSseEvent: suspend (eventType: String, data: String) -> Unit,
-        onPlainJsonFallback: suspend (fullJson: String) -> Unit
-    ) = readProviderSseOrJsonFallback(channel, streamFinished, onSseEvent, onPlainJsonFallback)
+        onPlainJsonFallback: suspend (fullJson: String) -> Unit,
+        maxBufferedChars: Int = DEFAULT_MAX_SSE_BUFFER_CHARS
+    ) = readProviderSseOrJsonFallback(channel, streamFinished, onSseEvent, onPlainJsonFallback, maxBufferedChars)
 
     internal data class RawWebCitation(
         val url: String,

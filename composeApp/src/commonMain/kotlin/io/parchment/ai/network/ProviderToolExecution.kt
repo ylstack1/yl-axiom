@@ -73,7 +73,7 @@ private suspend fun runComputerTool(permit: ToolExecutionPermit, callId: String,
     val job = currentCoroutineContext()[kotlinx.coroutines.Job]
     // Yield the UI coroutine once so Compose begins removing the approval card before the settle timer starts.
     yield()
-    val outcome = withContext(Dispatchers.IO) { ComputerUse.perform(argumentsJson) { job?.isActive == false || permit.isRevoked() } }
+    val outcome = ComputerUse.perform(argumentsJson) { job?.isActive == false || permit.isRevoked() }
     currentCoroutineContext().ensureActive()
     return record(outcome.text, outcome.isError, outcome.screenshot?.jpegBase64.orEmpty())
 }

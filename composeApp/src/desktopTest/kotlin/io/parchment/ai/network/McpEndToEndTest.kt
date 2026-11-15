@@ -390,4 +390,43 @@ for line in sys.stdin:
             }
         }
     }
+
+    @Test
+    fun httpMcpSanitizesPaddedTokenAndRefusesRedirects() = runBlocking {
+        val redirectedTargetHit = AtomicInteger(0)
+        val redirectServer = HttpServer.create(InetSocketAddress("127.0.0.1", 0), 0).apply {
+            createContext("/target") { ex ->
+                redirectedTargetHit.incrementAndGet()
+                ex.sendResponseHeaders(200, -1)
+                ex.close()
+            }
+            createContext("/mcp") { ex ->
+                ex.responseHeaders.set("Location", "http://127.0.0.1:${address.port}/target")
+                ex.sendResponseHeaders(303, -1)
+                ex.close()
+            }
+            start()
+        }
+        try {
+            val err = assertFailsWith<McpException> {
+                McpClient(
+                    HttpMcpTransport("  http://127.0.0.1:${redirectServer.address.port}/mcp  ", "  tok\r\n-1  ")
+                ).connect()
+            }
+            assertTrue("303" in err.message.orEmpty(), err.message)
+            assertEquals(0, redirectedTargetHit.get(), "MCP transport must not follow redirects with credentials")
+        } finally {
+            redirectServer.stop(0)
+        }
+
+        HttpMcp(stateless = false).use { mcp ->
+            val client = McpClient(HttpMcpTransport("  ${mcp.url}  ", "  local\r\n-secret  "))
+            try {
+                client.connect()
+                assertEquals("Bearer local-secret", mcp.requests.first().second["authorization"])
+            } finally {
+                client.close()
+            }
+        }
+    }
 }

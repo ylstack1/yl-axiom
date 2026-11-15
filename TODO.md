@@ -4,8 +4,8 @@ Updated 2026-11-15. AGENTS.md owns workflow; MEMORY holds contracts. Task IDs st
 
 ## Current status
 
-- **Source:** 2026-11-15 (`v2.2.0` post-release fixes): Android `computer_use` post-approval settle, off-screen `TYPE_ACCESSIBILITY_OVERLAY` per-action approval card, in-process `LongDecodeForegroundService` sync/heartbeats, Android screenshot/gesture/input fixes, chat-session `TODO.md` / global `memory/AGENT.md`, and `MobileTabSwitcherModal` `Scrim.subtle` + `overlayShadow` + `elevatedBg` parity with `CommandPalette`.
-- **Last verified:** 2026-11-15, `verify.py affected`: 487 desktop tests passed (3m38s).
+- **Source:** 2026-11-15: Screen-reader & UI polish (filled-field placeholder naming, modal/drawer accessibility isolation, `CommandPalette` selection/Back parity, Slider range semantics, deduped button/chip/title labels, 200%-text phone title row, compact horizontal Providers bar) plus protocol/harness hardening (query-key URL encoding, raw-body tool-key guard, bounded SSE/fallback buffers, non-redirecting MCP HTTP, cancellable `computer_use` settle, Android WebView/Compose focused-input lookup & post-capture overlay restore).
+- **Last verified:** 2026-11-15, `verify.py affected` (492 desktop tests, 2m33s), `verify.py android` (1m05s), `verify.py test SharedActionSemanticsUiTest UiGalleryTest` (14 tests, 2m49s), and `verify.py perf` (1520 ms title).
 - **Next action:** Re-test Android `computer_use` on device and check `13.6 Screen readers` when the user tests NVDA and TalkBack.
 
 ## Open tasks

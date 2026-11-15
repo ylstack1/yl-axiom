@@ -112,15 +112,16 @@ internal fun CommandPalette(commands: List<PaletteCommand>, onDismiss: () -> Uni
             if (matches.isEmpty()) {
                 BasicText(Strings.nothingMatches, style = p.uiLabelStyle, modifier = Modifier.padding(Space.s8))
             }
+            val win = LocalParchmentWindowSize.current
             matches.forEachIndexed { index, command ->
                 val isSelected = index == selected
                 Row(
                     Modifier
                         .fillMaxWidth()
-                        .heightIn(min = 36.dp)
+                        .heightIn(min = if (win.isCompact) Space.s48 else 40.dp)
                         .clip(RoundedCornerShape(Radius.r8))
                         .background(if (isSelected) p.accent.copy(alpha = 0.12f) else Color.Transparent)
-                        .kissClickable(role = Role.Button, pressScale = 0.99f, hoverScale = 1f, onClick = { selected = index; runSelected() })
+                        .kissClickable(role = Role.Button, selected = isSelected, pressScale = 0.99f, hoverScale = 1f, onClick = { selected = index; runSelected() })
                         .padding(horizontal = Space.s10, vertical = Space.s6),
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(Space.s12)

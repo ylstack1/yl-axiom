@@ -2,6 +2,7 @@ package io.parchment.ai.network
 
 import io.ktor.client.request.HttpRequestBuilder
 import io.ktor.client.request.header
+import io.ktor.http.encodeURLParameter
 import io.parchment.ai.model.AuthHeaderMode
 import io.parchment.ai.model.CUSTOM_DIALECT_ANTHROPIC
 import io.parchment.ai.model.CUSTOM_DIALECT_GEMINI
@@ -43,7 +44,23 @@ private val VERSION_SUFFIX_REGEX = Regex(
     RegexOption.IGNORE_CASE
 )
 
-private val DISALLOWED_EXTRA_BODY_KEYS = setOf("tools", "tool_choice", "tool_config")
+private val DISALLOWED_EXTRA_BODY_KEYS = setOf(
+    "tools",
+    "tool_choice",
+    "toolchoice",
+    "tool_config",
+    "toolconfig",
+    "built_in_tools",
+    "builtintools",
+    "mcp_servers",
+    "mcpservers",
+    "functions",
+    "function_call",
+    "functioncall"
+)
+
+private fun sanitizeHeaderToken(raw: String): String =
+    raw.trim().replace("\r", "").replace("\n", "")
 
 /** Resolves the concrete wire dialect for a profile (Custom delegates to its explicit [ProviderProfile.customDialect]). */
 internal fun resolveProviderWireProtocol(profile: ProviderProfile): ProviderProtocol =
@@ -148,15 +165,16 @@ internal fun resolveProviderSmartEndpointUrl(
 }
 
 internal fun buildProviderUrlWithAuthQuery(profile: ProviderProfile, rawUrl: String): String {
-    if (profile.authHeaderMode == AuthHeaderMode.QUERY_PARAM && profile.apiKey.isNotBlank()) {
+    val key = sanitizeHeaderToken(profile.apiKey)
+    if (profile.authHeaderMode == AuthHeaderMode.QUERY_PARAM && key.isNotEmpty()) {
         val sep = if (rawUrl.contains("?")) "&" else "?"
-        return "$rawUrl${sep}key=${profile.apiKey.trim()}"
+        return "$rawUrl${sep}key=${key.encodeURLParameter()}"
     }
     return rawUrl
 }
 
 internal fun HttpRequestBuilder.applyProviderAuthAndCustomHeaders(profile: ProviderProfile) {
-    val key = profile.apiKey.trim()
+    val key = sanitizeHeaderToken(profile.apiKey)
     if (key.isNotEmpty()) {
         when (profile.authHeaderMode) {
             AuthHeaderMode.BEARER_ONLY -> header("Authorization", "Bearer $key")
@@ -169,9 +187,9 @@ internal fun HttpRequestBuilder.applyProviderAuthAndCustomHeaders(profile: Provi
         profile.customHeadersRaw.lines().forEach { line ->
             val trimmed = line.trim()
             if (trimmed.isNotEmpty() && !trimmed.startsWith("#") && trimmed.contains(":")) {
-                val k = trimmed.substringBefore(":").trim()
-                val v = trimmed.substringAfter(":").trim()
-                if (k.isNotEmpty()) {
+                val k = sanitizeHeaderToken(trimmed.substringBefore(":"))
+                val v = sanitizeHeaderToken(trimmed.substringAfter(":"))
+                if (k.isNotEmpty() && k.none { it.isWhitespace() }) {
                     header(k, v)
                 }
             }
@@ -228,7 +246,10 @@ internal fun mergeProviderRawJsonExtraBody(base: JsonObject, rawExtraJson: Strin
     if (trimmed.isEmpty()) return base
     val extraObj = runCatching { json.parseToJsonElement(trimmed).jsonObject }.getOrNull() ?: return base
     // Raw provider options cannot grant tools or replace the harness's execution authority.
-    return deepMergeProviderJsonObjects(base, JsonObject(extraObj.filterKeys { it !in DISALLOWED_EXTRA_BODY_KEYS }))
+    return deepMergeProviderJsonObjects(
+        base,
+        JsonObject(extraObj.filterKeys { it.lowercase() !in DISALLOWED_EXTRA_BODY_KEYS })
+    )
 }
 
 internal fun deepMergeProviderJsonObjects(target: JsonObject, overrideObj: JsonObject): JsonObject {

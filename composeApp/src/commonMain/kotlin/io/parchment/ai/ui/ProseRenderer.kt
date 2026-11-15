@@ -471,7 +471,7 @@ fun LiteraryProseRenderer(
                                         text = if (copiedCode) "✓" else "📋",
                                         compact = true,
                                         style = SepiaButtonStyle.GHOST,
-                                        contentDescription = if (copiedCode) Strings.copied else Strings.copy,
+                                        contentDescription = if (copiedCode) Strings.copied else Strings.copyCode,
                                         onClick = {
                                             clipboard.setText(AnnotatedString(block.code))
                                             copiedCode = true

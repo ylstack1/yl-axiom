@@ -564,6 +564,7 @@ private fun MessageTurnProseOrEditor(
             SepiaTextField(
                 value = editBuffer,
                 onValueChange = onEditBufferChange,
+                placeholder = Strings.editMessage,
                 singleLine = false,
                 minHeight = 120.dp,
                 modifier = Modifier.fillMaxWidth()

@@ -127,10 +127,11 @@ internal fun ProvidersSubpage(
 
     BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
         val isWide = maxWidth >= 680.dp
+        val useProviderColumn = isWide && appState.profiles.size > 6
 
         Row(modifier = Modifier.fillMaxSize()) {
-            // Middle Column (on Desktop): Provider List
-            if (isWide) {
+            // Middle Column (on Desktop with many providers): Provider List
+            if (useProviderColumn) {
                 Column(
                     modifier = Modifier
                         .textScaledWidth(235.dp)
@@ -148,7 +149,7 @@ internal fun ProvidersSubpage(
                     )
 
                     Column(
-                        modifier = Modifier.weight(1f).verticalScroll(rememberScrollState()),
+                        modifier = Modifier.weight(1f, fill = false).verticalScroll(rememberScrollState()),
                         verticalArrangement = Arrangement.spacedBy(Space.s6)
                     ) {
                         filteredProfiles.forEach { prof ->
@@ -392,6 +393,99 @@ internal fun ProvidersSubpage(
                         }
                         SepiaDivider()
                     }
+                } else if (!useProviderColumn && selectedModelForConfigSubpage == null) {
+                    @OptIn(ExperimentalLayoutApi::class)
+                    FlowRow(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(Space.s8),
+                        verticalArrangement = Arrangement.spacedBy(Space.s8)
+                    ) {
+                        appState.profiles.forEach { prof ->
+                            val isSel = prof.id == activeProfile.id
+                            val statusOn = prof.enabled && (prof.apiKey.isNotBlank() || prof.baseUrl != prof.protocol.defaultBaseUrl)
+                            val shape = RoundedCornerShape(Radius.r10)
+                            Row(
+                                modifier = Modifier
+                                    .heightIn(min = 42.dp)
+                                    .clip(shape)
+                                    .background(if (isSel) p.cardBg else p.sheetBg.copy(alpha = 0.45f))
+                                    .border(
+                                        width = if (isSel) LineWidth.selected else LineWidth.hairline,
+                                        color = if (isSel) p.accent else p.border,
+                                        shape = shape
+                                    )
+                                    .then(if (isSel) Modifier.rubricMark(p.accent, verticalInset = 8.dp) else Modifier)
+                                    .kissClickable(pressScale = 0.99f, hoverScale = 1.004f, role = Role.Tab, selected = isSel) {
+                                        onSelectProfile(prof.id)
+                                    }
+                                    .padding(horizontal = Space.s12, vertical = Space.s8),
+                                horizontalArrangement = Arrangement.spacedBy(Space.s8),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                ModelLabSvgIcon(
+                                    modelOrProvider = prof.defaultModel.ifBlank { prof.name },
+                                    tint = if (isSel) p.accent else p.narrationInk,
+                                    size = 14.dp,
+                                    fallbackProtocolName = prof.protocol.displayName
+                                )
+                                BasicText(
+                                    text = prof.name,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                    style = p.uiBodyStyle.copy(
+                                        fontWeight = if (isSel) FontWeight.SemiBold else FontWeight.Normal,
+                                        fontSize = 13.sp,
+                                        color = if (isSel) p.primaryInk else p.narrationInk
+                                    )
+                                )
+                                Box(
+                                    modifier = Modifier
+                                        .clip(RoundedCornerShape(Radius.r6))
+                                        .background(if (statusOn) p.success.copy(alpha = 0.14f) else p.accentSecondary.copy(alpha = 0.14f))
+                                        .padding(horizontal = Space.s6, vertical = Space.s2)
+                                ) {
+                                    BasicText(
+                                        text = if (statusOn) Strings.onLabel else Strings.off,
+                                        style = p.uiLabelStyle.copy(
+                                            fontSize = 11.sp,
+                                            fontWeight = FontWeight.Bold,
+                                            color = if (statusOn) p.success else p.accentSecondary
+                                        )
+                                    )
+                                }
+                            }
+                        }
+                        SepiaButton(
+                            text = Strings.addProvider,
+                            compact = true,
+                            style = SepiaButtonStyle.OUTLINE,
+                            onClick = { showAddProviderMenu = !showAddProviderMenu }
+                        )
+                    }
+                    AnimatedVisibility(
+                        visible = showAddProviderMenu,
+                        enter = motionExpandEnter(),
+                        exit = motionShrinkExit()
+                    ) {
+                        @OptIn(ExperimentalLayoutApi::class)
+                        FlowRow(
+                            horizontalArrangement = Arrangement.spacedBy(Space.s6),
+                            verticalArrangement = Arrangement.spacedBy(Space.s6)
+                        ) {
+                            ProviderProtocol.entries.forEach { proto ->
+                                SepiaButton(
+                                    text = "+ ${proto.displayName.substringBefore(" API")}",
+                                    compact = true,
+                                    style = SepiaButtonStyle.OUTLINE,
+                                    onClick = {
+                                        onAddProfile(proto)
+                                        showAddProviderMenu = false
+                                    }
+                                )
+                            }
+                        }
+                    }
+                    SepiaDivider()
                 }
                 // With a model's page open, show its token limits and pricing.
                 val configModelId = selectedModelForConfigSubpage

@@ -9,16 +9,19 @@ import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyEvent
 import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.semantics.SemanticsNode
+import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.semantics.getOrNull
 import androidx.compose.ui.unit.Density
 import io.parchment.ai.handleUnconsumedWindowKey
+import io.parchment.ai.platform.PlatformRuntime
 import io.parchment.ai.platform.PlatformStorage
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.serialization.encodeToString
 import java.util.concurrent.ConcurrentLinkedQueue
 import kotlin.coroutines.CoroutineContext
 import kotlin.test.Test
+import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
@@ -75,6 +78,33 @@ class KeyboardShortcutTest {
 
             pressInWindow(scene, shortcuts, Key.K, ctrl = true)
             assertTrue(paletteOpen(scene), "Ctrl+K must open the command palette when nothing has focus")
+            val openClickables = nodes(scene).filter { it.config.contains(SemanticsActions.OnClick) }
+            assertTrue(
+                openClickables.none { node ->
+                    node.config.getOrNull(SemanticsProperties.ContentDescription).orEmpty()
+                        .any { it == Strings.closeSidebar || it == Strings.openSidebar || it == Strings.chatNotes }
+                },
+                "Background chrome behind the command palette must be hidden from screen readers"
+            )
+            val selectedBeforeDown = openClickables.filter { it.config.getOrNull(SemanticsProperties.Selected) == true }
+            assertEquals(1, selectedBeforeDown.size, "Highlighted command palette row must expose selected semantics")
+            val firstSelectedText = selectedBeforeDown.single().config.getOrNull(SemanticsProperties.Text).orEmpty().first().text
+            pressInWindow(scene, shortcuts, Key.DirectionDown, ctrl = false)
+            val selectedAfterDown = nodes(scene).filter {
+                it.config.contains(SemanticsActions.OnClick) && it.config.getOrNull(SemanticsProperties.Selected) == true
+            }
+            assertEquals(1, selectedAfterDown.size)
+            assertFalse(
+                selectedAfterDown.single().config.getOrNull(SemanticsProperties.Text).orEmpty().any { it.text == firstSelectedText },
+                "Arrow down must advance command palette selected semantics"
+            )
+
+            assertTrue(PlatformRuntime.handleSystemBackPressed(), "System back must dismiss the command palette")
+            settle(scene)
+            assertFalse(paletteOpen(scene), "Back handler must close the palette")
+
+            pressInWindow(scene, shortcuts, Key.K, ctrl = true)
+            assertTrue(paletteOpen(scene))
 
             pressInWindow(scene, shortcuts, Key.Escape, ctrl = false)
             assertFalse(paletteOpen(scene), "Escape must still close the palette")

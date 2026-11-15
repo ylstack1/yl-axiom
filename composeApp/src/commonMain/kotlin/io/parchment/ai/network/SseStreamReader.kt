@@ -14,13 +14,15 @@ import kotlinx.coroutines.withTimeoutOrNull
 // SSE and plain-JSON fallback stream reader with background stall detection and adaptive line timeouts.
 
 private const val RETURN_GRACE_MS = 3_000L
+internal const val DEFAULT_MAX_SSE_BUFFER_CHARS = 64 * 1024 * 1024
 internal const val STREAM_CUT_WHILE_AWAY = "SSE stream timed out while the app was in the background."
 
 internal suspend fun readProviderSseOrJsonFallback(
     channel: ByteReadChannel,
     streamFinished: () -> Boolean,
     onSseEvent: suspend (eventType: String, data: String) -> Unit,
-    onPlainJsonFallback: suspend (fullJson: String) -> Unit
+    onPlainJsonFallback: suspend (fullJson: String) -> Unit,
+    maxBufferedChars: Int = DEFAULT_MAX_SSE_BUFFER_CHARS
 ) {
     var lastLineAt = PlatformRuntime.monotonicTimeMillis()
     var sawAnyData = false
@@ -36,6 +38,7 @@ internal suspend fun readProviderSseOrJsonFallback(
         try {
             var currentEvent = ""
             val dataLines = mutableListOf<String>()
+            var dataLinesChars = 0
             val rawFallbackBuffer = StringBuilder()
             var sawSseLine = false
             var sawSseComment = false
@@ -71,6 +74,7 @@ internal suspend fun readProviderSseOrJsonFallback(
                         if (dataLines.isNotEmpty()) {
                             val combined = dataLines.joinToString("\n")
                             dataLines.clear()
+                            dataLinesChars = 0
                             deliver(currentEvent, combined)
                         }
                         currentEvent = line.removePrefix("event:").trim()
@@ -83,6 +87,7 @@ internal suspend fun readProviderSseOrJsonFallback(
                             if (dataLines.isNotEmpty()) {
                                 deliver(currentEvent, dataLines.joinToString("\n"))
                                 dataLines.clear()
+                                dataLinesChars = 0
                             }
                             deliver(currentEvent, "[DONE]")
                             currentEvent = ""
@@ -92,19 +97,27 @@ internal suspend fun readProviderSseOrJsonFallback(
                             deliver(currentEvent, dataVal)
                             currentEvent = ""
                         } else {
+                            check(dataLinesChars.toLong() + dataVal.length.toLong() <= maxBufferedChars.toLong()) {
+                                "SSE event exceeded the $maxBufferedChars character limit."
+                            }
                             dataLines.add(dataVal)
+                            dataLinesChars += dataVal.length + 1
                         }
                     }
                     line.isBlank() -> {
                         if (dataLines.isNotEmpty()) {
                             val combinedData = dataLines.joinToString("\n")
                             dataLines.clear()
+                            dataLinesChars = 0
                             deliver(currentEvent, combinedData)
                             currentEvent = ""
                         }
                     }
                     else -> {
                         if (!sawSseLine) {
+                            check(rawFallbackBuffer.length.toLong() + line.length.toLong() + 1L <= maxBufferedChars.toLong()) {
+                                "Response body exceeded the $maxBufferedChars character limit."
+                            }
                             rawFallbackBuffer.appendLine(line)
                         }
                     }
