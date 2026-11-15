@@ -2,6 +2,32 @@
 
 What changed in each release, newest first. From 2.1.7 on, release-please writes these entries from commit messages that follow [Conventional Commits](https://www.conventionalcommits.org/) (`feat:` and `fix:` appear here and set the next version); edit wording in its release PR before merging it.
 
+## [2.2.0](https://github.com/baros4294/parchment/compare/v2.1.11...v2.2.0) (2026-11-15)
+
+
+### New
+
+* **design:** enforce accentSecondary contrast, unify tokens, fix breakdown colors, and align icon grid ([dc7995d](https://github.com/baros4294/parchment/commit/dc7995d9c420c232be9d4519c0ae34bb39bd5416))
+* **motion,ux:** unify transition specs in DesignTokens, honor LocalReduceMotion everywhere, and add calm loading states ([700c605](https://github.com/baros4294/parchment/commit/700c6053fcdc4030cf5a8ee90d6bb40476b97c15))
+* **ux,a11y:** add slash/at keyboard nav, Escape dismissal, focus rings, and accessible labels ([069e70a](https://github.com/baros4294/parchment/commit/069e70a40c3297bbe7877250db6d66d45dd8e441))
+* **ux,perf:** fix string typos, preserve numeric input drafts, and virtualize modal/sidebar lists ([c5c0b8f](https://github.com/baros4294/parchment/commit/c5c0b8f10f00b7f22a0a53a4e5cbcbd610b9d3f8))
+
+
+### Fixes
+
+* **streams,persistence:** preserve stop phase, join pacer on cancel, and wake urgent disk writes ([6a81f64](https://github.com/baros4294/parchment/commit/6a81f64f0375387112305c06aba433a80f0382dc))
+* **viewport:** pause auto-follow on drag or wheel scroll and reserve async media/peek bounds ([20579e4](https://github.com/baros4294/parchment/commit/20579e4ffe0a32eaa6e54f8322dc89166ad5ace1))
+
+
+### Faster and lighter
+
+* **memory,io:** bound icon caches, offload UI-thread disk/codec I/O, and fix initial scroll layout race ([55ab542](https://github.com/baros4294/parchment/commit/55ab54237573cdffcc91e96c6b236d6f126d3a0a))
+* **memory,startup:** eliminate dummy stub-node lists, defer startup discovery/TTS, and tighten image cache ([f1b2a34](https://github.com/baros4294/parchment/commit/f1b2a34d5c2d88cbbd94aa3074a094fba401b434))
+* **network,tokenizer:** cache variant/tool BPE counts, coalesce utility/MCP calls, and trim history allocations ([778ea5f](https://github.com/baros4294/parchment/commit/778ea5f67e9284ddcd3ab531dc64617d83d178fa))
+* **prose:** flatten inline style builders, eliminate line-split lists, and scan code-fence increments ([0602d6c](https://github.com/baros4294/parchment/commit/0602d6cca3cff15451a9495ef7bef83d78ccaab4))
+* **renderers:** cache prepared SVG draw items/paths and coalesce LaTeX math spans ([00c7c90](https://github.com/baros4294/parchment/commit/00c7c904e99486f9cb407269941b7c65c5d9d064))
+* **ui:** memoize sidebarFingerprint per session, stabilize composer callbacks, remove animateContentSize jump, and avoid streaming BPE ([07e3387](https://github.com/baros4294/parchment/commit/07e3387d71703e0c62c386b15612c49789443c15))
+
 ## [2.1.11](https://github.com/baros4294/parchment/compare/v2.1.10...v2.1.11) (2026-11-15)
 
 
