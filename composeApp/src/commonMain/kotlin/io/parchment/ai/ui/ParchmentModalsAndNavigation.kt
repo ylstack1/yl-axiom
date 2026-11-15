@@ -232,6 +232,7 @@ internal fun MobileTabSwitcherModal(
     Box(
         modifier = Modifier
             .fillMaxSize()
+            .background(Scrim.subtle)
             .dismissOnOutsideTap(onCloseModal),
         contentAlignment = if (isCompactScreen) Alignment.BottomCenter else Alignment.Center
     ) {
@@ -244,9 +245,10 @@ internal fun MobileTabSwitcherModal(
             modifier = Modifier
                 .then(if (isCompactScreen) Modifier.fillMaxWidth() else Modifier.widthIn(max = 860.dp).fillMaxWidth(0.92f))
                 .heightIn(max = win.heightDp * if (isCompactScreen) 0.84f else 0.80f)
+                .overlayShadow(sheetShape)
                 .clip(sheetShape)
-                .background(p.canvasBg)
-                .border(1.dp, p.border, sheetShape)
+                .background(p.elevatedBg)
+                .border(LineWidth.hairline, p.border, sheetShape)
                 .onPreviewKeyEvent { event ->
                     if (event.type == KeyEventType.KeyDown && event.key == Key.Escape) {
                         onCloseModal()

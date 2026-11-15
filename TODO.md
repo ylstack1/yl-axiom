@@ -4,8 +4,8 @@ Updated 2026-11-15. AGENTS.md owns workflow; MEMORY holds contracts. Task IDs st
 
 ## Current status
 
-- **Source:** 2026-11-15 (`v2.2.0` post-release fixes): Android `computer_use` post-approval settle, off-screen `TYPE_ACCESSIBILITY_OVERLAY` per-action approval card, in-process `LongDecodeForegroundService` sync/heartbeats, and Android screenshot/gesture/input fixes; `todo_write` moved to chat session (`chats/<id>/TODO.md` + turn `goalTracker`) and `agent_memory` moved to on-demand global `memory/AGENT.md` instead of project workspace files.
-- **Last verified:** 2026-11-15, `verify.py affected`: 486 desktop tests + Android compile passed (4m08s).
+- **Source:** 2026-11-15 (`v2.2.0` post-release fixes): Android `computer_use` post-approval settle, off-screen `TYPE_ACCESSIBILITY_OVERLAY` per-action approval card, in-process `LongDecodeForegroundService` sync/heartbeats, Android screenshot/gesture/input fixes, chat-session `TODO.md` / global `memory/AGENT.md`, and `MobileTabSwitcherModal` `Scrim.subtle` + `overlayShadow` + `elevatedBg` parity with `CommandPalette`.
+- **Last verified:** 2026-11-15, `verify.py affected`: 487 desktop tests passed (3m38s).
 - **Next action:** Re-test Android `computer_use` on device and check `13.6 Screen readers` when the user tests NVDA and TalkBack.
 
 ## Open tasks

@@ -21,6 +21,7 @@ import androidx.compose.ui.InternalComposeUiApi
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyEvent
 import androidx.compose.ui.input.key.KeyEventType
@@ -53,7 +54,9 @@ import io.parchment.ai.model.ThemeConfig
 import io.parchment.ai.model.TurnTextLayout
 import io.parchment.ai.protocol.ContextWindowBreakdown
 import io.parchment.ai.strings.Strings
+import java.io.ByteArrayInputStream
 import java.net.InetSocketAddress
+import javax.imageio.ImageIO
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
@@ -1238,6 +1241,99 @@ class UiBehaviorRegressionTest {
             assertTrue(visibleFiles in 1..30, "Expected LazyColumn virtualization, but composed $visibleFiles files")
             assertTrue(nodes(scene).any { text(it).contains(Strings.staged) })
             assertTrue(nodes(scene).any { text(it).contains(Strings.linesCount(2)) })
+        }
+    }
+
+    @Test
+    fun tabSwitcherModalMatchesCommandPaletteScrimAndSurfaceContrast() {
+        val sessions = listOf("tab-1", "tab-2").map { id ->
+            ChatSession(id = id, title = "New Chat", createdAt = 1L, updatedAt = 1L, profileId = "p1", assistantId = "a1")
+        }
+        val state = AppStateSnapshot(
+            sessions = sessions,
+            profiles = listOf(ProviderProfile(id = "p1", name = "P", protocol = ProviderProtocol.OPENAI_RESPONSES)),
+            activeProfileId = "p1",
+            assistants = listOf(AssistantAgent(id = "a1", name = "Writer")),
+            activeAssistantId = "a1"
+        )
+        fun renderPng(
+            width: Int,
+            height: Int,
+            theme: ThemeConfig,
+            content: @androidx.compose.runtime.Composable () -> Unit,
+            inspect: (ImageComposeScene, java.awt.image.BufferedImage) -> Unit
+        ) {
+            val scene = ImageComposeScene(width, height, density = Density(1f), coroutineContext = Dispatchers.Unconfined)
+            try {
+                scene.setContent {
+                    CompositionLocalProvider(LocalParchmentWindowSize provides ParchmentWindowSize(width.dp, height.dp)) {
+                        ProvideParchmentTheme(theme) {
+                            Box(Modifier.fillMaxSize().background(LocalParchmentPalette.current.canvasBg)) {
+                                content()
+                            }
+                        }
+                    }
+                }
+                Snapshot.sendApplyNotifications()
+                val png = scene.render(16_000_000L).use { requireNotNull(it.encodeToData()).bytes }
+                inspect(scene, ImageIO.read(ByteArrayInputStream(png)))
+            } finally {
+                scene.close()
+            }
+        }
+
+        val themes = listOf(ThemeConfig(), ThemeConfig.PRESETS.first { it.name == "Lapis at Night" })
+        for (theme in themes) {
+            val palette = buildPaletteFromConfig(theme)
+            var paletteBackdropRgb = 0
+            renderPng(
+                width = 960,
+                height = 640,
+                theme = theme,
+                content = { CommandPalette(commands = listOf(PaletteCommand("New chat") {}), onDismiss = {}) }
+            ) { _, img ->
+                paletteBackdropRgb = img.getRGB(10, 10)
+            }
+            assertNotEquals(
+                palette.canvasBg.toArgb(),
+                paletteBackdropRgb,
+                "${theme.name}: CommandPalette must darken its canvas backdrop"
+            )
+
+            for (compact in listOf(false, true)) {
+                val (w, h) = if (compact) 390 to 844 else 960 to 640
+                renderPng(
+                    width = w,
+                    height = h,
+                    theme = theme,
+                    content = {
+                        MobileTabSwitcherModal(
+                            appState = state,
+                            openTabIds = sessions.map { it.id },
+                            activeSessionId = "tab-1",
+                            activeStreamsBySession = emptyMap(),
+                            isCompactScreen = compact,
+                            onSelectTab = {},
+                            onCloseTab = {},
+                            onNewTab = {},
+                            onCloseModal = {}
+                        )
+                    }
+                ) { scene, img ->
+                    assertEquals(
+                        paletteBackdropRgb,
+                        img.getRGB(10, 10),
+                        "${theme.name} compact=$compact: tab menu backdrop must match CommandPalette scrim"
+                    )
+                    val header = nodes(scene).first { text(it).startsWith(Strings.openTabs(2)) }.boundsInRoot
+                    val sheetSurfaceRgb = img.getRGB(header.left.toInt() + 4, header.top.toInt() - 8)
+                    assertEquals(
+                        palette.elevatedBg.toArgb(),
+                        sheetSurfaceRgb,
+                        "${theme.name} compact=$compact: tab menu sheet must use elevatedBg like CommandPalette"
+                    )
+                }
+            }
         }
     }
 }
