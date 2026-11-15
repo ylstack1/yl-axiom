@@ -4,7 +4,6 @@ import androidx.compose.animation.AnimatedVisibility
 import io.parchment.ai.strings.Strings
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsHoveredAsState
 import androidx.compose.foundation.interaction.collectIsPressedAsState
@@ -45,8 +44,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.semantics.Role
-import androidx.compose.ui.semantics.selected
-import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
@@ -163,8 +160,7 @@ internal fun ProvidersSubpage(
                                     .clip(shape)
                                     .background(if (isSel) p.cardBg else Color.Transparent)
                                     .border(LineWidth.hairline, if (isSel) p.border else Color.Transparent, shape)
-                                    .clickable(role = Role.Button) { onSelectProfile(prof.id) }
-                                    .semantics { selected = isSel }
+                                    .kissClickable(pressScale = 0.99f, hoverScale = 1.004f, role = Role.Button, selected = isSel) { onSelectProfile(prof.id) }
                                     .padding(horizontal = Space.s10, vertical = Space.s8),
                                 horizontalArrangement = Arrangement.SpaceBetween,
                                 verticalAlignment = Alignment.CenterVertically

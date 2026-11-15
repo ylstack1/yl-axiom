@@ -3,7 +3,6 @@ package io.parchment.ai.ui
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -448,7 +447,9 @@ private fun ToolExecutionCard(
                 .fillMaxWidth()
                 .then(
                     if (canExpandTool) {
-                        Modifier.clickable(
+                        Modifier.kissClickable(
+                            pressScale = 0.99f,
+                            hoverScale = 1.004f,
                             role = Role.Button,
                             onClickLabel = if (isToolResultExpanded) Strings.collapseToolResult else Strings.expandToolResult
                         ) { isToolResultExpanded = !isToolResultExpanded }

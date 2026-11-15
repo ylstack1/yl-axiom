@@ -17,9 +17,14 @@ import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshots.Snapshot
 import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.ImageComposeScene
+import androidx.compose.ui.InternalComposeUiApi
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.input.key.KeyEvent
+import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.pointer.PointerEventType
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.semantics.SemanticsNode
 import androidx.compose.ui.semantics.SemanticsProperties
@@ -33,6 +38,7 @@ import com.sun.net.httpserver.HttpServer
 import io.parchment.ai.model.AppStateSnapshot
 import io.parchment.ai.model.AssistantAgent
 import io.parchment.ai.model.ChatSession
+import io.parchment.ai.model.ContextFragment
 import io.parchment.ai.model.GeneratedMediaItem
 import io.parchment.ai.model.MediaKind
 import io.parchment.ai.model.MessageNode
@@ -57,7 +63,7 @@ import kotlin.test.assertNull
 import kotlin.test.assertTrue
 import kotlinx.coroutines.Dispatchers
 
-@OptIn(ExperimentalComposeUiApi::class)
+@OptIn(ExperimentalComposeUiApi::class, InternalComposeUiApi::class)
 class UiBehaviorRegressionTest {
     private fun nodes(scene: ImageComposeScene): List<SemanticsNode> {
         fun flatten(node: SemanticsNode): List<SemanticsNode> = listOf(node) + node.children.flatMap(::flatten)
@@ -750,6 +756,223 @@ class UiBehaviorRegressionTest {
             frameNanos += 16_000_000L
             settle(scene, frameNanos)
             assertTrue(nodes(scene).none { text(it) == "ReducedMotionRevealed" }, "ExitTransition.None must finish well before Motion.QUICK (32ms < 110ms)")
+        }
+    }
+
+    @Test
+    fun composerPopupsNavigateByKeyboardAndDismissOnEscape() {
+        val prof = ProviderProfile(
+            id = "p-kb",
+            name = "KB Provider",
+            protocol = ProviderProtocol.OPENAI_RESPONSES,
+            defaultModel = "gpt-5"
+        )
+        val asst = AssistantAgent(id = "a-kb", name = "Planner")
+        val lore = ContextFragment(id = "lore-alice", title = "Alice", content = "Detective in the archive")
+        val session = ChatSession(
+            id = "s-kb",
+            title = "Keyboard Nav",
+            createdAt = 1L,
+            updatedAt = 1L,
+            profileId = prof.id,
+            assistantId = asst.id,
+            fragments = listOf(lore)
+        )
+        val appState = AppStateSnapshot(
+            assistants = listOf(asst),
+            profiles = listOf(prof),
+            sessions = listOf(session),
+            activeSessionId = session.id
+        )
+        var userPromptInput by mutableStateOf("/")
+        var compactCalls = 0
+        var sendCalls = 0
+        var frameNanos = 0L
+
+        fun sendKey(scene: ImageComposeScene, key: Key) {
+            scene.sendKeyEvent(KeyEvent(key, KeyEventType.KeyDown))
+            scene.sendKeyEvent(KeyEvent(key, KeyEventType.KeyUp))
+            Snapshot.sendApplyNotifications()
+            frameNanos += 16_000_000L
+            settle(scene, frameNanos)
+            repeat(6) {
+                frameNanos += 80_000_000L
+                settle(scene, frameNanos)
+            }
+        }
+
+        withUiScene(
+            width = 900,
+            height = 560,
+            content = {
+                ManuscriptViewport(
+                    appState = appState,
+                    activeSession = session,
+                    activeAssistant = asst,
+                    activeProfile = prof,
+                    preferences = PreferencesConfig(),
+                    showSessionInspector = false,
+                    onToggleSessionInspector = {},
+                    isStreaming = false,
+                    isCurrentlyThinkingPhase = false,
+                    streamingTargetNodeId = "",
+                    streamingStatus = "",
+                    streamingInteractionId = "",
+                    queuedPrompts = emptyList(),
+                    onRemoveQueuedPrompt = {},
+                    onSteerQueuedPromptNow = {},
+                    userPromptInput = userPromptInput,
+                    onUserPromptChange = { userPromptInput = it },
+                    assistantPrefillInput = "",
+                    onAssistantPrefillChange = {},
+                    showPrefillBox = false,
+                    onTogglePrefillBox = {},
+                    showComposerToolsDrawer = false,
+                    onComposerToolsDrawerChange = {},
+                    isGoalModeEnabled = false,
+                    onToggleGoalMode = {},
+                    isLiveVoiceMode = false,
+                    isVoiceListening = false,
+                    onToggleLiveVoiceMode = {},
+                    onTriggerVoiceInput = {},
+                    pendingAttachments = emptyList(),
+                    onAddAttachment = {},
+                    onPasteClipboardMedia = { false },
+                    onRequestClearCurrentChat = {},
+                    onRemoveAttachment = {},
+                    onInspectAttachment = {},
+                    onInspectGeneratedImage = {},
+                    onExportChatMarkdown = {},
+                    onOpenProviderSettings = {},
+                    onSend = { sendCalls++ },
+                    onSendGuidedDirection = {},
+                    onSteerNow = {},
+                    onQueuePrompt = {},
+                    onImpersonateDraft = {},
+                    onAutoSummarizeStory = {},
+                    onCompactContext = { compactCalls++ },
+                    onRewindToNode = {},
+                    onForkSessionFromNode = {},
+                    onStopStream = {},
+                    onUpdateSession = {},
+                    onUpdateProfile = {},
+                    onRegenerateNode = {},
+                    onContinueAssistantNode = {}
+                )
+            }
+        ) { scene ->
+            frameNanos += 120_000_000L
+            settle(scene, frameNanos)
+            val composer = nodes(scene).single { it.config.contains(SemanticsActions.SetText) }
+            assertTrue(composer.config[SemanticsActions.RequestFocus].action!!.invoke())
+            frameNanos += 16_000_000L
+            settle(scene, frameNanos)
+
+            assertTrue(nodes(scene).any { text(it).contains("/compact") }, "Slash popup should list /compact")
+            // Index 0 = /goal, 1 = /btw, 2 = /compact -> DirectionDown x 2 + Enter executes /compact without calling onSend.
+            sendKey(scene, Key.DirectionDown)
+            sendKey(scene, Key.DirectionDown)
+            val highlightedSlash = nodes(scene).firstOrNull { text(it).contains("/compact") && it.config.contains(SemanticsActions.OnClick) }
+            assertNotNull(highlightedSlash, "Highlighted /compact row must expose click semantics")
+            assertEquals(true, highlightedSlash.config[SemanticsProperties.Selected], "DirectionDown x2 should select /compact")
+            sendKey(scene, Key.Enter)
+            assertEquals(1, compactCalls, "Enter must execute the keyboard-selected slash command")
+            assertEquals(0, sendCalls, "Executing a slash suggestion must not trigger onSend")
+            assertEquals("", userPromptInput)
+
+            // Typing `/co` opens suggestions; Escape dismisses without erasing text; further edits re-open.
+            userPromptInput = "/co"
+            Snapshot.sendApplyNotifications()
+            frameNanos += 120_000_000L
+            settle(scene, frameNanos)
+            assertTrue(nodes(scene).any { text(it).contains("/compact") })
+            sendKey(scene, Key.Escape)
+            assertTrue(nodes(scene).none { text(it).contains("/compact") }, "Escape should dismiss slash popup")
+            assertEquals("/co", userPromptInput, "Escape must keep typed prefix")
+
+            userPromptInput = "/com"
+            Snapshot.sendApplyNotifications()
+            frameNanos += 120_000_000L
+            settle(scene, frameNanos)
+            assertTrue(nodes(scene).any { text(it).contains("/compact") }, "Further typing must reopen slash suggestions")
+
+            // `@` mention navigation: index 0 = @file, 1 = @mount, 2 = @Alice -> DirectionDown x 2 + Tab inserts `@Alice `.
+            userPromptInput = "Check @"
+            Snapshot.sendApplyNotifications()
+            frameNanos += 120_000_000L
+            settle(scene, frameNanos)
+            assertTrue(nodes(scene).any { text(it).contains("@Alice") })
+            sendKey(scene, Key.DirectionDown)
+            sendKey(scene, Key.DirectionDown)
+            sendKey(scene, Key.Tab)
+            assertEquals("Check @Alice ", userPromptInput, "Tab must complete the keyboard-selected @mention")
+        }
+    }
+
+    @Test
+    fun modalsEscapeAndFormChoicesKeepAccessibleSemantics() {
+        var dismissCalls = 0
+        var copied by mutableStateOf(false)
+        var selectedChoice by mutableStateOf(false)
+        var frameNanos = 0L
+
+        withUiScene(
+            width = 520,
+            height = 420,
+            content = {
+                Column(Modifier.fillMaxSize()) {
+                    SepiaChoiceRow(
+                        label = "Strict Wire Mode",
+                        selected = selectedChoice,
+                        onClick = { selectedChoice = true }
+                    )
+                    RawWirePreviewBlock(
+                        title = "Request JSON",
+                        rawText = """{"model":"gpt-5"}""",
+                        isCopied = copied,
+                        onCopy = { copied = true }
+                    )
+                    DeleteConfirmDialog(
+                        request = DeleteConfirmRequest.ClearCurrentMessages("Session"),
+                        askBeforeDeleting = true,
+                        onAskBeforeDeletingChange = {},
+                        onDismiss = { dismissCalls++ },
+                        onConfirm = {}
+                    )
+                }
+            }
+        ) { scene ->
+            frameNanos += 32_000_000L
+            settle(scene, frameNanos)
+
+            val choice = nodes(scene).single {
+                it.config.getOrNull(SemanticsProperties.Role) == Role.RadioButton &&
+                    text(it).contains("Strict Wire Mode")
+            }
+            assertEquals(false, choice.config[SemanticsProperties.Selected])
+            assertTrue(choice.config[SemanticsActions.RequestFocus].action!!.invoke())
+            frameNanos += 32_000_000L
+            settle(scene, frameNanos)
+            assertEquals(true, nodes(scene).single { text(it).contains("Strict Wire Mode") }.config[SemanticsProperties.Focused])
+
+            val copyBtn = nodes(scene).single { description(it) == Strings.copy }
+            click(copyBtn)
+            frameNanos += 16_000_000L
+            settle(scene, frameNanos)
+            assertTrue(nodes(scene).any { description(it) == Strings.copied }, "Copied state must update accessibility label")
+
+            val dialogBtn = nodes(scene).last {
+                it.config.contains(SemanticsActions.OnClick) && it.config.contains(SemanticsActions.RequestFocus)
+            }
+            assertTrue(dialogBtn.config[SemanticsActions.RequestFocus].action!!.invoke())
+            frameNanos += 16_000_000L
+            settle(scene, frameNanos)
+            scene.sendKeyEvent(KeyEvent(Key.Escape, KeyEventType.KeyDown))
+            scene.sendKeyEvent(KeyEvent(Key.Escape, KeyEventType.KeyUp))
+            Snapshot.sendApplyNotifications()
+            frameNanos += 16_000_000L
+            settle(scene, frameNanos)
+            assertEquals(1, dismissCalls, "Escape inside dialog must dismiss DeleteConfirmDialog")
         }
     }
 }

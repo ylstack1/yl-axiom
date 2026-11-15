@@ -8,7 +8,6 @@ import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsDraggedAsState
@@ -53,8 +52,17 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.isAltPressed
+import androidx.compose.ui.input.key.isCtrlPressed
+import androidx.compose.ui.input.key.isMetaPressed
+import androidx.compose.ui.input.key.isShiftPressed
 import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
+import androidx.compose.ui.layout.onPlaced
+import androidx.compose.ui.layout.positionInParent
 import androidx.compose.ui.input.pointer.PointerEventType
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
@@ -418,7 +426,25 @@ internal fun ManuscriptViewport(
     }
 
     Column(
-        modifier = Modifier.fillMaxSize(),
+        modifier = Modifier
+            .fillMaxSize()
+            .onPreviewKeyEvent { event ->
+                if (event.type == KeyEventType.KeyDown && event.key == Key.Escape) {
+                    when {
+                        showContextBreakdownPopover -> {
+                            showContextBreakdownPopover = false
+                            true
+                        }
+                        showMinimapTreeModal -> {
+                            showMinimapTreeModal = false
+                            true
+                        }
+                        else -> false
+                    }
+                } else {
+                    false
+                }
+            },
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
         // Chat notes and memory, opened from Notes in the top bar.
@@ -1095,7 +1121,7 @@ internal fun ManuscriptViewport(
                             .clip(RoundedCornerShape(Radius.r8))
                             .background(p.sheetBg.copy(alpha = 0.78f))
                             .border(LineWidth.hairline, p.border.copy(alpha = 0.65f), RoundedCornerShape(Radius.r8))
-                            .clickable(role = Role.Button, onClickLabel = if (statusExpanded) Strings.collapseStatus else Strings.expandStatus) { statusExpanded = !statusExpanded }
+                            .kissClickable(pressScale = 0.99f, hoverScale = 1.004f, role = Role.Button, onClickLabel = if (statusExpanded) Strings.collapseStatus else Strings.expandStatus) { statusExpanded = !statusExpanded }
                             .padding(horizontal = Space.s10, vertical = Space.s6),
                         verticalArrangement = Arrangement.spacedBy(3.dp)
                     ) {
@@ -1360,7 +1386,7 @@ internal fun ManuscriptViewport(
                                     .clip(RoundedCornerShape(Radius.r8))
                                     .background(p.cardBg)
                                     .border(LineWidth.hairline, p.accent.copy(alpha = 0.7f), RoundedCornerShape(Radius.r8))
-                                    .clickable(role = Role.Button, onClickLabel = Strings.openAttachment) { onInspectAttachment(att) }
+                                    .kissClickable(pressScale = 0.99f, hoverScale = 1.004f, role = Role.Button, onClickLabel = Strings.openAttachment) { onInspectAttachment(att) }
                                     .padding(horizontal = Space.s6, vertical = Space.s4),
                                 verticalAlignment = Alignment.CenterVertically,
                                 horizontalArrangement = Arrangement.spacedBy(Space.s6)
@@ -1432,8 +1458,57 @@ internal fun ManuscriptViewport(
                         }
                     }
                 }
+                var dismissedSlashInput by remember { mutableStateOf<String?>(null) }
+                var selectedSlashIndex by remember { mutableStateOf(0) }
+                val slashPopupVisible = matchingSlashCommands.isNotEmpty() && dismissedSlashInput != userPromptInput
+                val activeSlashIndex = if (matchingSlashCommands.isEmpty()) 0 else selectedSlashIndex.coerceIn(0, matchingSlashCommands.lastIndex)
+                LaunchedEffect(trimmedSlashPrefix, slashPopupVisible) {
+                    if (!slashPopupVisible) {
+                        selectedSlashIndex = 0
+                    } else if (selectedSlashIndex >= matchingSlashCommands.size) {
+                        selectedSlashIndex = 0
+                    }
+                }
+                fun executeSlashSpec(spec: SlashCommandSpec) {
+                    dismissedSlashInput = null
+                    if (spec.takesArgument) {
+                        onUserPromptChange("${spec.command} ")
+                    } else {
+                        // Commands without an argument run on a single tap.
+                        onUserPromptChange("")
+                        when (spec.command) {
+                            "/compact" -> onCompactContext()
+                            "/summarize" -> onAutoSummarizeStory()
+                            "/clear" -> onRequestClearCurrentChat()
+                            "/continue" -> {
+                                val lastAsst = activeSession.messages.indexOfLast { it.role == MessageRole.ASSISTANT }
+                                if (lastAsst >= 0) onContinueAssistantNode(lastAsst)
+                            }
+                            "/rewind" -> {
+                                if (activeSession.messages.isNotEmpty()) {
+                                    onRewindToNode(activeSession.messages.lastIndex)
+                                }
+                            }
+                        }
+                    }
+                }
+                val slashScrollState = rememberScrollState()
+                val slashRowBounds = remember { mutableMapOf<Int, Pair<Int, Int>>() }
+                LaunchedEffect(slashPopupVisible, activeSlashIndex) {
+                    if (slashPopupVisible) {
+                        val (top, height) = slashRowBounds[activeSlashIndex] ?: return@LaunchedEffect
+                        val viewport = slashScrollState.viewportSize
+                        if (viewport > 0) {
+                            if (activeSlashIndex == 0 || top < slashScrollState.value) {
+                                slashScrollState.scrollTo(if (activeSlashIndex == 0) 0 else top)
+                            } else if (top + height > slashScrollState.value + viewport) {
+                                slashScrollState.scrollTo((top + height - viewport).coerceAtLeast(0))
+                            }
+                        }
+                    }
+                }
                 AnimatedVisibility(
-                    visible = matchingSlashCommands.isNotEmpty(),
+                    visible = slashPopupVisible,
                     enter = motionExpandEnter(),
                     exit = motionShrinkExit()
                 ) {
@@ -1444,80 +1519,84 @@ internal fun ManuscriptViewport(
                             .clip(RoundedCornerShape(Radius.r10))
                             .background(p.sheetBg.copy(alpha = 0.82f))
                             .border(LineWidth.hairline, p.border.copy(alpha = 0.55f), RoundedCornerShape(Radius.r10))
-                            .verticalScroll(rememberScrollState())
+                            .verticalScroll(slashScrollState)
                             .padding(Space.s6),
                         verticalArrangement = Arrangement.spacedBy(3.dp)
                     ) {
-                        matchingSlashCommands.forEach { spec ->
-                            val isExact = trimmedSlashPrefix.equals(spec.command, ignoreCase = true)
-                            val rowInteraction = remember { MutableInteractionSource() }
-                            val isHovered by rowInteraction.collectIsHoveredAsState()
-                            val isPressed by rowInteraction.collectIsPressedAsState()
-                            val parsedCmdIcon = remember(spec.label) {
-                                parseKissLabelIcons(spec.label).leadingIcon ?: KissIcon.SPARKLES
-                            }
-                            Row(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .clip(RoundedCornerShape(Radius.r8))
-                                    .background(
-                                        when {
-                                            isExact || isPressed -> p.accent.copy(alpha = 0.14f)
-                                            isHovered -> p.accent.copy(alpha = 0.08f)
-                                            else -> p.cardBg.copy(alpha = 0.72f)
-                                        }
-                                    )
-                                    .border(
-                                        width = LineWidth.hairline,
-                                        color = if (isExact || isHovered) p.accent.copy(alpha = 0.55f) else Color.Transparent,
-                                        shape = RoundedCornerShape(Radius.r8)
-                                    )
-                                    .kissClickable(
-                                        pressScale = 0.99f,
-                                        hoverScale = 1.004f,
-                                        interactionSource = rowInteraction,
-                                        onClick = {
-                                            if (spec.takesArgument) {
-                                                onUserPromptChange("${spec.command} ")
-                                            } else {
-                                                // Commands without an argument run on a single tap.
-                                                onUserPromptChange("")
-                                                when (spec.command) {
-                                                    "/compact" -> onCompactContext()
-                                                    "/summarize" -> onAutoSummarizeStory()
-                                                    "/clear" -> onRequestClearCurrentChat()
-                                                    "/continue" -> {
-                                                        val lastAsst = activeSession.messages.indexOfLast { it.role == MessageRole.ASSISTANT }
-                                                        if (lastAsst >= 0) onContinueAssistantNode(lastAsst)
-                                                    }
-                                                    "/rewind" -> {
-                                                        if (activeSession.messages.isNotEmpty()) {
-                                                            onRewindToNode(activeSession.messages.lastIndex)
-                                                        }
-                                                    }
-                                                }
-                                            }
-                                        }
-                                    )
-                                    .padding(horizontal = Space.s10, vertical = 7.dp),
-                                horizontalArrangement = Arrangement.SpaceBetween,
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
+                        matchingSlashCommands.forEachIndexed { idx, spec ->
+                            key(spec.command) {
+                                val isExact = trimmedSlashPrefix.equals(spec.command, ignoreCase = true)
+                                val isKeyboardSelected = idx == activeSlashIndex
+                                val rowInteraction = remember { MutableInteractionSource() }
+                                val isHovered by rowInteraction.collectIsHoveredAsState()
+                                val isPressed by rowInteraction.collectIsPressedAsState()
+                                val parsedCmdIcon = remember(spec.label) {
+                                    parseKissLabelIcons(spec.label).leadingIcon ?: KissIcon.SPARKLES
+                                }
                                 Row(
-                                    modifier = Modifier.weight(1f).padding(end = Space.s8),
-                                    horizontalArrangement = Arrangement.spacedBy(Space.s8),
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .onPlaced { coords ->
+                                            slashRowBounds[idx] = coords.positionInParent().y.toInt() to coords.size.height
+                                        }
+                                        .clip(RoundedCornerShape(Radius.r8))
+                                        .background(
+                                            when {
+                                                isExact || isKeyboardSelected || isPressed -> p.accent.copy(alpha = 0.14f)
+                                                isHovered -> p.accent.copy(alpha = 0.08f)
+                                                else -> p.cardBg.copy(alpha = 0.72f)
+                                            }
+                                        )
+                                        .border(
+                                            width = LineWidth.hairline,
+                                            color = if (isExact || isKeyboardSelected || isHovered) p.accent.copy(alpha = 0.55f) else Color.Transparent,
+                                            shape = RoundedCornerShape(Radius.r8)
+                                        )
+                                        .kissClickable(
+                                            pressScale = 0.99f,
+                                            hoverScale = 1.004f,
+                                            interactionSource = rowInteraction,
+                                            selected = isKeyboardSelected,
+                                            onClick = { executeSlashSpec(spec) }
+                                        )
+                                        .padding(horizontal = Space.s10, vertical = 7.dp),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
                                     verticalAlignment = Alignment.CenterVertically
                                 ) {
-                                    KissVectorIcon(
-                                        icon = parsedCmdIcon,
-                                        tint = p.accent,
-                                        size = IconSize.md
-                                    )
-                                    if (win.isCompact) {
-                                        Column(
-                                            modifier = Modifier.weight(1f),
-                                            verticalArrangement = Arrangement.spacedBy(1.dp)
-                                        ) {
+                                    Row(
+                                        modifier = Modifier.weight(1f).padding(end = Space.s8),
+                                        horizontalArrangement = Arrangement.spacedBy(Space.s8),
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        KissVectorIcon(
+                                            icon = parsedCmdIcon,
+                                            tint = p.accent,
+                                            size = IconSize.md
+                                        )
+                                        if (win.isCompact) {
+                                            Column(
+                                                modifier = Modifier.weight(1f),
+                                                verticalArrangement = Arrangement.spacedBy(1.dp)
+                                            ) {
+                                                BasicText(
+                                                    text = spec.command,
+                                                    style = p.monoStyle.copy(
+                                                        color = p.accent,
+                                                        fontWeight = FontWeight.Bold,
+                                                        fontSize = 12.sp
+                                                    )
+                                                )
+                                                BasicText(
+                                                    text = spec.description,
+                                                    maxLines = 2,
+                                                    overflow = TextOverflow.Ellipsis,
+                                                    style = p.uiBodyStyle.copy(
+                                                        color = p.primaryInk,
+                                                        fontSize = 12.sp
+                                                    )
+                                                )
+                                            }
+                                        } else {
                                             BasicText(
                                                 text = spec.command,
                                                 style = p.monoStyle.copy(
@@ -1528,7 +1607,7 @@ internal fun ManuscriptViewport(
                                             )
                                             BasicText(
                                                 text = spec.description,
-                                                maxLines = 2,
+                                                maxLines = 1,
                                                 overflow = TextOverflow.Ellipsis,
                                                 style = p.uiBodyStyle.copy(
                                                     color = p.primaryInk,
@@ -1536,49 +1615,31 @@ internal fun ManuscriptViewport(
                                                 )
                                             )
                                         }
-                                    } else {
-                                        BasicText(
-                                            text = spec.command,
-                                            style = p.monoStyle.copy(
-                                                color = p.accent,
-                                                fontWeight = FontWeight.Bold,
-                                                fontSize = 12.sp
-                                            )
-                                        )
-                                        BasicText(
-                                            text = spec.description,
-                                            maxLines = 1,
-                                            overflow = TextOverflow.Ellipsis,
-                                            style = p.uiBodyStyle.copy(
-                                                color = p.primaryInk,
-                                                fontSize = 12.sp
-                                            )
-                                        )
                                     }
-                                }
-                                Box(
-                                    modifier = Modifier
-                                        .clip(RoundedCornerShape(Radius.r6))
-                                        .background(p.elevatedBg.copy(alpha = 0.7f))
-                                        .padding(horizontal = Space.s6, vertical = Space.s2)
-                                ) {
-                                    Row(
-                                        verticalAlignment = Alignment.CenterVertically,
-                                        horizontalArrangement = Arrangement.spacedBy(Space.s4)
+                                    Box(
+                                        modifier = Modifier
+                                            .clip(RoundedCornerShape(Radius.r6))
+                                            .background(p.elevatedBg.copy(alpha = 0.7f))
+                                            .padding(horizontal = Space.s6, vertical = Space.s2)
                                     ) {
-                                        KissVectorIcon(
-                                            icon = if (spec.takesArgument) KissIcon.ARROW_RIGHT else KissIcon.SEND_ENTER,
-                                            tint = p.narrationInk,
-                                            size = 10.dp
-                                        )
-                                        BasicText(
-                                            text = if (spec.takesArgument) "arg" else Strings.run,
-                                            style = p.monoStyle.copy(
-                                                fontSize = 11.sp,
-                                                color = p.narrationInk,
-                                                fontWeight = FontWeight.Medium
+                                        Row(
+                                            verticalAlignment = Alignment.CenterVertically,
+                                            horizontalArrangement = Arrangement.spacedBy(Space.s4)
+                                        ) {
+                                            KissVectorIcon(
+                                                icon = if (spec.takesArgument) KissIcon.ARROW_RIGHT else KissIcon.SEND_ENTER,
+                                                tint = p.narrationInk,
+                                                size = 10.dp
                                             )
-                                        )
+                                            BasicText(
+                                                text = if (spec.takesArgument) "arg" else Strings.run,
+                                                style = p.monoStyle.copy(
+                                                    fontSize = 11.sp,
+                                                    color = p.narrationInk,
+                                                    fontWeight = FontWeight.Medium
+                                                )
+                                            )
+                                        }
                                     }
                                 }
                             }
@@ -1617,7 +1678,14 @@ internal fun ManuscriptViewport(
                 val allLoreFragments = remember(appState.globalWorldBook, activeAssistant.fragments, activeSession.fragments) {
                     (appState.globalWorldBook + activeAssistant.fragments + activeSession.fragments).distinctBy { it.id }
                 }
-                val matchingAtItems = remember(activeAtQuery, workspaceFiles, historyAttachments, allLoreFragments) {
+                val matchingAtItems = remember(
+                    activeAtQuery,
+                    workspaceFiles,
+                    historyAttachments,
+                    allLoreFragments,
+                    userPromptInput,
+                    effectiveWorkspacePath
+                ) {
                     val q = activeAtQuery?.lowercase() ?: return@remember emptyList<Triple<String, String, () -> Unit>>()
                     val list = mutableListOf<Triple<String, String, () -> Unit>>()
                     fun replaceTrailingAt(replacement: String) {
@@ -1712,8 +1780,34 @@ internal fun ManuscriptViewport(
                         }
                     list
                 }
+                var dismissedAtInput by remember { mutableStateOf<String?>(null) }
+                var selectedAtIndex by remember { mutableStateOf(0) }
+                val atPopupVisible = matchingAtItems.isNotEmpty() && dismissedAtInput != userPromptInput
+                val activeAtIndex = if (matchingAtItems.isEmpty()) 0 else selectedAtIndex.coerceIn(0, matchingAtItems.lastIndex)
+                LaunchedEffect(activeAtQuery, atPopupVisible) {
+                    if (!atPopupVisible) {
+                        selectedAtIndex = 0
+                    } else if (selectedAtIndex >= matchingAtItems.size) {
+                        selectedAtIndex = 0
+                    }
+                }
+                val atScrollState = rememberScrollState()
+                val atRowBounds = remember { mutableMapOf<Int, Pair<Int, Int>>() }
+                LaunchedEffect(atPopupVisible, activeAtIndex) {
+                    if (atPopupVisible) {
+                        val (top, height) = atRowBounds[activeAtIndex] ?: return@LaunchedEffect
+                        val viewport = atScrollState.viewportSize
+                        if (viewport > 0) {
+                            if (activeAtIndex == 0 || top < atScrollState.value) {
+                                atScrollState.scrollTo(if (activeAtIndex == 0) 0 else top)
+                            } else if (top + height > atScrollState.value + viewport) {
+                                atScrollState.scrollTo((top + height - viewport).coerceAtLeast(0))
+                            }
+                        }
+                    }
+                }
                 AnimatedVisibility(
-                    visible = matchingAtItems.isNotEmpty(),
+                    visible = atPopupVisible,
                     enter = motionExpandEnter(),
                     exit = motionShrinkExit()
                 ) {
@@ -1724,61 +1818,91 @@ internal fun ManuscriptViewport(
                             .clip(RoundedCornerShape(Radius.r10))
                             .background(p.sheetBg.copy(alpha = 0.82f))
                             .border(LineWidth.hairline, p.border.copy(alpha = 0.55f), RoundedCornerShape(Radius.r10))
-                            .verticalScroll(rememberScrollState())
+                            .verticalScroll(atScrollState)
                             .padding(Space.s6),
                         verticalArrangement = Arrangement.spacedBy(3.dp)
                     ) {
-                        matchingAtItems.forEach { (badgeLabel, descText, action) ->
-                            val rowInteraction = remember { MutableInteractionSource() }
-                            val isHovered by rowInteraction.collectIsHoveredAsState()
-                            val isPressed by rowInteraction.collectIsPressedAsState()
-                            val parsedIcon = remember(badgeLabel) {
-                                parseKissLabelIcons(badgeLabel).leadingIcon ?: KissIcon.FILE_TEXT
-                            }
-                            val cleanBadge = remember(badgeLabel) {
-                                parseKissLabelIcons(badgeLabel).cleanText
-                            }
-                            Row(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .clip(RoundedCornerShape(Radius.r8))
-                                    .background(
-                                        when {
-                                            isPressed -> p.accent.copy(alpha = 0.14f)
-                                            isHovered -> p.accent.copy(alpha = 0.08f)
-                                            else -> p.cardBg.copy(alpha = 0.72f)
-                                        }
-                                    )
-                                    .border(
-                                        width = LineWidth.hairline,
-                                        color = if (isHovered) p.accent.copy(alpha = 0.55f) else Color.Transparent,
-                                        shape = RoundedCornerShape(Radius.r8)
-                                    )
-                                    .kissClickable(
-                                        pressScale = 0.99f,
-                                        hoverScale = 1.004f,
-                                        interactionSource = rowInteraction,
-                                        onClick = action
-                                    )
-                                    .padding(horizontal = Space.s10, vertical = 7.dp),
-                                horizontalArrangement = Arrangement.SpaceBetween,
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
+                        matchingAtItems.forEachIndexed { idx, (badgeLabel, descText, action) ->
+                            key(badgeLabel, descText) {
+                                val isKeyboardSelected = idx == activeAtIndex
+                                val rowInteraction = remember { MutableInteractionSource() }
+                                val isHovered by rowInteraction.collectIsHoveredAsState()
+                                val isPressed by rowInteraction.collectIsPressedAsState()
+                                val parsedIcon = remember(badgeLabel) {
+                                    parseKissLabelIcons(badgeLabel).leadingIcon ?: KissIcon.FILE_TEXT
+                                }
+                                val cleanBadge = remember(badgeLabel) {
+                                    parseKissLabelIcons(badgeLabel).cleanText
+                                }
                                 Row(
-                                    modifier = Modifier.weight(1f).padding(end = Space.s8),
-                                    horizontalArrangement = Arrangement.spacedBy(Space.s8),
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .onPlaced { coords ->
+                                            atRowBounds[idx] = coords.positionInParent().y.toInt() to coords.size.height
+                                        }
+                                        .clip(RoundedCornerShape(Radius.r8))
+                                        .background(
+                                            when {
+                                                isKeyboardSelected || isPressed -> p.accent.copy(alpha = 0.14f)
+                                                isHovered -> p.accent.copy(alpha = 0.08f)
+                                                else -> p.cardBg.copy(alpha = 0.72f)
+                                            }
+                                        )
+                                        .border(
+                                            width = LineWidth.hairline,
+                                            color = if (isKeyboardSelected || isHovered) p.accent.copy(alpha = 0.55f) else Color.Transparent,
+                                            shape = RoundedCornerShape(Radius.r8)
+                                        )
+                                        .kissClickable(
+                                            pressScale = 0.99f,
+                                            hoverScale = 1.004f,
+                                            interactionSource = rowInteraction,
+                                            selected = isKeyboardSelected,
+                                            onClick = {
+                                                dismissedAtInput = null
+                                                action()
+                                            }
+                                        )
+                                        .padding(horizontal = Space.s10, vertical = 7.dp),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
                                     verticalAlignment = Alignment.CenterVertically
                                 ) {
-                                    KissVectorIcon(
-                                        icon = parsedIcon,
-                                        tint = p.accent,
-                                        size = IconSize.md
-                                    )
-                                    if (win.isCompact) {
-                                        Column(
-                                            modifier = Modifier.weight(1f),
-                                            verticalArrangement = Arrangement.spacedBy(1.dp)
-                                        ) {
+                                    Row(
+                                        modifier = Modifier.weight(1f).padding(end = Space.s8),
+                                        horizontalArrangement = Arrangement.spacedBy(Space.s8),
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        KissVectorIcon(
+                                            icon = parsedIcon,
+                                            tint = p.accent,
+                                            size = IconSize.md
+                                        )
+                                        if (win.isCompact) {
+                                            Column(
+                                                modifier = Modifier.weight(1f),
+                                                verticalArrangement = Arrangement.spacedBy(1.dp)
+                                            ) {
+                                                BasicText(
+                                                    text = cleanBadge,
+                                                    maxLines = 1,
+                                                    overflow = TextOverflow.Ellipsis,
+                                                    style = p.monoStyle.copy(
+                                                        color = p.accent,
+                                                        fontWeight = FontWeight.Bold,
+                                                        fontSize = 12.sp
+                                                    )
+                                                )
+                                                BasicText(
+                                                    text = descText,
+                                                    maxLines = 2,
+                                                    overflow = TextOverflow.Ellipsis,
+                                                    style = p.uiBodyStyle.copy(
+                                                        color = p.narrationInk,
+                                                        fontSize = 11.sp
+                                                    )
+                                                )
+                                            }
+                                        } else {
                                             BasicText(
                                                 text = cleanBadge,
                                                 maxLines = 1,
@@ -1791,41 +1915,21 @@ internal fun ManuscriptViewport(
                                             )
                                             BasicText(
                                                 text = descText,
-                                                maxLines = 2,
+                                                maxLines = 1,
                                                 overflow = TextOverflow.Ellipsis,
                                                 style = p.uiBodyStyle.copy(
                                                     color = p.narrationInk,
-                                                    fontSize = 11.sp
+                                                    fontSize = 12.sp
                                                 )
                                             )
                                         }
-                                    } else {
-                                        BasicText(
-                                            text = cleanBadge,
-                                            maxLines = 1,
-                                            overflow = TextOverflow.Ellipsis,
-                                            style = p.monoStyle.copy(
-                                                color = p.accent,
-                                                fontWeight = FontWeight.Bold,
-                                                fontSize = 12.sp
-                                            )
-                                        )
-                                        BasicText(
-                                            text = descText,
-                                            maxLines = 1,
-                                            overflow = TextOverflow.Ellipsis,
-                                            style = p.uiBodyStyle.copy(
-                                                color = p.narrationInk,
-                                                fontSize = 12.sp
-                                            )
-                                        )
                                     }
+                                    KissVectorIcon(
+                                        icon = KissIcon.PLUS,
+                                        tint = p.mutedInk,
+                                        size = IconSize.sm
+                                    )
                                 }
-                                KissVectorIcon(
-                                    icon = KissIcon.PLUS,
-                                    tint = p.mutedInk,
-                                    size = IconSize.sm
-                                )
                             }
                         }
                     }
@@ -1849,6 +1953,55 @@ internal fun ManuscriptViewport(
                     minHeight = 40.dp,
                     maxHeight = 148.dp,
                     modifier = Modifier.fillMaxWidth(),
+                    onKeyNavigation = { keyEvent ->
+                        if (keyEvent.type != KeyEventType.KeyDown || keyEvent.isAltPressed) {
+                            false
+                        } else {
+                            val hasModifier = keyEvent.isCtrlPressed || keyEvent.isMetaPressed || keyEvent.isShiftPressed
+                            when {
+                                slashPopupVisible && !hasModifier -> when (keyEvent.key) {
+                                    Key.DirectionDown -> {
+                                        selectedSlashIndex = (activeSlashIndex + 1) % matchingSlashCommands.size
+                                        true
+                                    }
+                                    Key.DirectionUp -> {
+                                        selectedSlashIndex = (activeSlashIndex - 1 + matchingSlashCommands.size) % matchingSlashCommands.size
+                                        true
+                                    }
+                                    Key.Tab, Key.Enter, Key.NumPadEnter -> {
+                                        executeSlashSpec(matchingSlashCommands[activeSlashIndex])
+                                        true
+                                    }
+                                    Key.Escape -> {
+                                        dismissedSlashInput = userPromptInput
+                                        true
+                                    }
+                                    else -> false
+                                }
+                                atPopupVisible && !hasModifier -> when (keyEvent.key) {
+                                    Key.DirectionDown -> {
+                                        selectedAtIndex = (activeAtIndex + 1) % matchingAtItems.size
+                                        true
+                                    }
+                                    Key.DirectionUp -> {
+                                        selectedAtIndex = (activeAtIndex - 1 + matchingAtItems.size) % matchingAtItems.size
+                                        true
+                                    }
+                                    Key.Tab, Key.Enter, Key.NumPadEnter -> {
+                                        dismissedAtInput = null
+                                        matchingAtItems[activeAtIndex].third.invoke()
+                                        true
+                                    }
+                                    Key.Escape -> {
+                                        dismissedAtInput = userPromptInput
+                                        true
+                                    }
+                                    else -> false
+                                }
+                                else -> false
+                            }
+                        }
+                    },
                     onEnterKeySend = if (!PlatformRuntime.isAndroid) {
                         { isCtrlOrMeta, isShift ->
                             val shouldTrigger = when (preferences.sendShortcut) {

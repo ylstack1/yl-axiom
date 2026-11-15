@@ -145,6 +145,7 @@ fun Modifier.kissClickable(
     interactionSource: MutableInteractionSource = remember { MutableInteractionSource() },
     role: Role? = Role.Button,
     selected: Boolean? = null,
+    onClickLabel: String? = null,
     onClick: () -> Unit
 ): Modifier {
     val haptics = LocalHapticFeedback.current
@@ -193,6 +194,7 @@ fun Modifier.kissClickable(
             interactionSource = interactionSource,
             indication = null,
             enabled = enabled,
+            onClickLabel = onClickLabel,
             role = role,
             onClick = {
                 runCatching {

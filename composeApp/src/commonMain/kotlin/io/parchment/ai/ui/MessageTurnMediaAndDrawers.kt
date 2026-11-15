@@ -4,7 +4,6 @@ import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -113,7 +112,7 @@ private fun AttachmentImageCard(
             .clip(RoundedCornerShape(Radius.r10))
             .background(p.cardBg)
             .border(LineWidth.hairline, p.border, RoundedCornerShape(Radius.r10))
-            .clickable(role = Role.Button, onClickLabel = Strings.openAttachment) { onInspectAttachment(att) }
+            .kissClickable(pressScale = 0.99f, hoverScale = 1.004f, role = Role.Button, onClickLabel = Strings.openAttachment) { onInspectAttachment(att) }
             .padding(Space.s8),
         verticalArrangement = Arrangement.spacedBy(Space.s6)
     ) {
@@ -204,7 +203,7 @@ private fun AttachmentFileChip(
             .clip(RoundedCornerShape(Radius.r8))
             .background(p.cardBg)
             .border(LineWidth.hairline, p.border, RoundedCornerShape(Radius.r8))
-            .clickable(role = Role.Button, onClickLabel = Strings.openAttachment) { onInspectAttachment(att) }
+            .kissClickable(pressScale = 0.99f, hoverScale = 1.004f, role = Role.Button, onClickLabel = Strings.openAttachment) { onInspectAttachment(att) }
             .padding(horizontal = Space.s10, vertical = 7.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(7.dp)
@@ -311,7 +310,7 @@ private fun GeneratedImageMediaCard(
                     .fillMaxWidth()
                     .heightIn(max = 520.dp)
                     .clip(RoundedCornerShape(Radius.r6))
-                    .clickable(role = Role.Button) {
+                    .kissClickable(pressScale = 0.99f, hoverScale = 1.004f, role = Role.Button, onClickLabel = Strings.openAttachment) {
                         onInspectGeneratedImage(media)
                     }
             )
@@ -531,7 +530,7 @@ private fun WebSourceCitationCard(
                 color = if (isSelectedLine) p.accent else p.border,
                 shape = RoundedCornerShape(Radius.r8)
             )
-            .clickable(role = Role.Button) {
+            .kissClickable(pressScale = 0.99f, hoverScale = 1.004f, role = Role.Button, onClickLabel = Strings.openSource) {
                 if (firstGroundedLine.isNotBlank()) {
                     onHighlightLineChange(if (isSelectedLine) "" else firstGroundedLine)
                 } else {
@@ -695,7 +694,7 @@ internal fun TurnRawWireDrawer(
 }
 
 @Composable
-private fun RawWirePreviewBlock(
+internal fun RawWirePreviewBlock(
     title: String,
     rawText: String,
     isCopied: Boolean,
@@ -710,6 +709,7 @@ private fun RawWirePreviewBlock(
         BasicText(text = title, style = p.uiLabelStyle.copy(fontWeight = FontWeight.Bold))
         SepiaButton(
             text = if (isCopied) "✓" else "📋",
+            contentDescription = if (isCopied) Strings.copied else Strings.copy,
             compact = true,
             style = SepiaButtonStyle.GHOST,
             onClick = onCopy

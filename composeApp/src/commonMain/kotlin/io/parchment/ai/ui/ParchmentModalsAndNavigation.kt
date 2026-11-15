@@ -43,6 +43,11 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.onPreviewKeyEvent
+import androidx.compose.ui.input.key.type
 import androidx.compose.ui.input.pointer.PointerEventType
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
@@ -148,9 +153,10 @@ internal fun DesktopBrowserTabBar(
                     }
                     Box(
                         modifier = Modifier
-                            .size(16.dp)
+                            .size(22.dp)
                             .clip(CircleShape)
-                            .kissClickable { onCloseTab(tabId) },
+                            .kissClickable { onCloseTab(tabId) }
+                            .accessibilityLabel("${Strings.close} $primaryTitle"),
                         contentAlignment = Alignment.Center
                     ) {
                         KissVectorIcon(
@@ -237,6 +243,14 @@ internal fun MobileTabSwitcherModal(
                 .clip(sheetShape)
                 .background(p.canvasBg)
                 .border(1.dp, p.border, sheetShape)
+                .onPreviewKeyEvent { event ->
+                    if (event.type == KeyEventType.KeyDown && event.key == Key.Escape) {
+                        onCloseModal()
+                        true
+                    } else {
+                        false
+                    }
+                }
                 .blockTapThrough()
                 .padding(14.dp),
             verticalArrangement = Arrangement.spacedBy(Space.s10)
@@ -367,9 +381,10 @@ internal fun MobileTabSwitcherModal(
                                             }
                                             Box(
                                                 modifier = Modifier
-                                                    .size(20.dp)
+                                                    .size(32.dp)
                                                     .clip(CircleShape)
-                                                    .kissClickable { onCloseTab(tabId) },
+                                                    .kissClickable { onCloseTab(tabId) }
+                                                    .accessibilityLabel("${Strings.close} ${sess.title.ifBlank { Strings.newChat2 }}"),
                                                 contentAlignment = Alignment.Center
                                             ) {
                                                 KissVectorIcon(icon = KissIcon.CLOSE, tint = p.mutedInk, size = 11.dp)
@@ -597,7 +612,10 @@ internal fun TopEditorialBar(
                         Row(
                             verticalAlignment = Alignment.CenterVertically,
                             horizontalArrangement = Arrangement.spacedBy(Space.s4),
-                            modifier = Modifier.kissClickable(hoverScale = 1.01f) { onToggleQuickModelPopover() }
+                            modifier = Modifier
+                                .heightIn(min = 32.dp)
+                                .kissClickable(hoverScale = 1.01f) { onToggleQuickModelPopover() }
+                                .accessibilityLabel(if (showQuickModelPopover) Strings.closeModelPicker else Strings.chooseAModel)
                         ) {
                             BasicText(
                                 text = capsuleText,
@@ -634,6 +652,14 @@ internal fun TopEditorialBar(
                                         .clip(RoundedCornerShape(Radius.r10))
                                         .background(p.cardBg)
                                         .border(1.dp, p.border, RoundedCornerShape(Radius.r10))
+                                        .onPreviewKeyEvent { event ->
+                                            if (event.type == KeyEventType.KeyDown && event.key == Key.Escape) {
+                                                onDismissQuickModelPopover()
+                                                true
+                                            } else {
+                                                false
+                                            }
+                                        }
                                         .padding(11.dp),
                                     verticalArrangement = Arrangement.spacedBy(Space.s8)
                                 ) {
@@ -808,6 +834,14 @@ internal fun ParchmentAttachmentViewerModal(
     Box(
         modifier = Modifier
             .fillMaxSize()
+            .onPreviewKeyEvent { event ->
+                if (event.type == KeyEventType.KeyDown && event.key == Key.Escape) {
+                    onClose()
+                    true
+                } else {
+                    false
+                }
+            }
             .dismissOnOutsideTap(onClose),
         contentAlignment = Alignment.Center
     ) {

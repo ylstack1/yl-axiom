@@ -102,6 +102,7 @@ internal fun MessageTurnActionFooter(
             if (!win.isCompact || isLatestTurn || showMoreActions) {
                 SepiaButton(
                     text = if (copiedBadge == "txt") "✓" else "📋",
+                    contentDescription = if (copiedBadge == "txt") Strings.copied else Strings.copy,
                     compact = true,
                     style = SepiaButtonStyle.GHOST,
                     onClick = {
@@ -233,6 +234,7 @@ internal fun MessageTurnActionFooter(
                 if (node.variants.size > 1) {
                     SepiaButton(
                         text = "🗑 ${node.activeVariantIndex + 1}/${node.variants.size}",
+                        contentDescription = "${Strings.deleteMessage} (${node.activeVariantIndex + 1}/${node.variants.size})",
                         compact = true,
                         style = SepiaButtonStyle.GHOST,
                         onClick = onDeleteCurrentVariant

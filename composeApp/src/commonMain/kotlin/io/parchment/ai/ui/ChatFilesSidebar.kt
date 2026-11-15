@@ -3,7 +3,6 @@ package io.parchment.ai.ui
 import androidx.compose.foundation.background
 import io.parchment.ai.strings.Strings
 import androidx.compose.foundation.border
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -402,7 +401,7 @@ internal fun ParchmentRightFilesSidebar(
                                         .clip(RoundedCornerShape(Radius.r8))
                                         .background(p.cardBg)
                                         .border(LineWidth.hairline, p.accent.copy(alpha = 0.65f), RoundedCornerShape(Radius.r8))
-                                        .clickable(role = Role.Button) {
+                                        .kissClickable(pressScale = 0.99f, hoverScale = 1.004f, role = Role.Button, onClickLabel = Strings.openAttachment) {
                                             val wsRoot = activeSession.workspacePath
                                             val fullLocalPath = if (wsRoot.isNotBlank()) {
                                                 "${wsRoot.trimEnd('/', '\\')}/${item.filePath.trimStart('/', '\\')}"
@@ -493,7 +492,7 @@ internal fun ParchmentRightFilesSidebar(
                                         .clip(RoundedCornerShape(Radius.r8))
                                         .background(p.cardBg)
                                         .border(LineWidth.hairline, p.accent.copy(alpha = 0.65f), RoundedCornerShape(Radius.r8))
-                                        .clickable(role = Role.Button) {
+                                        .kissClickable(pressScale = 0.99f, hoverScale = 1.004f, role = Role.Button, onClickLabel = Strings.openAttachment) {
                                             if (isVideo) {
                                                 val target = media.localFilePath.ifBlank { media.remoteUrl }
                                                 if (target.isNotBlank()) PlatformStorage.openOrPlayMedia(target)
@@ -565,7 +564,7 @@ internal fun ParchmentRightFilesSidebar(
                                         .clip(RoundedCornerShape(Radius.r8))
                                         .background(p.cardBg)
                                         .border(LineWidth.hairline, p.accent.copy(alpha = 0.65f), RoundedCornerShape(Radius.r8))
-                                        .clickable(role = Role.Button) {
+                                        .kissClickable(pressScale = 0.99f, hoverScale = 1.004f, role = Role.Button, onClickLabel = Strings.openAttachment) {
                                             onInspectAttachment(
                                                 PromptAttachment(
                                                     id = "ai-code-${item.turnNumber}-${item.fileName}",
@@ -680,7 +679,7 @@ internal fun ParchmentRightFilesSidebar(
                                 .clip(RoundedCornerShape(Radius.r8))
                                 .background(p.cardBg)
                                 .border(LineWidth.hairline, p.border, RoundedCornerShape(Radius.r8))
-                                .clickable(role = Role.Button, onClickLabel = Strings.openAttachment) { onInspectAttachment(att) }
+                                .kissClickable(pressScale = 0.99f, hoverScale = 1.004f, role = Role.Button, onClickLabel = Strings.openAttachment) { onInspectAttachment(att) }
                                 .padding(Space.s10),
                             verticalArrangement = Arrangement.spacedBy(5.dp)
                         ) {
@@ -778,7 +777,7 @@ internal fun ParchmentRightFilesSidebar(
                                 .clip(RoundedCornerShape(Radius.r8))
                                 .background(p.cardBg)
                                 .border(LineWidth.hairline, p.border, RoundedCornerShape(Radius.r8))
-                                .clickable(role = Role.Button, onClickLabel = Strings.openSource) { openWebLink(src.url) }
+                                .kissClickable(pressScale = 0.99f, hoverScale = 1.004f, role = Role.Button, onClickLabel = Strings.openSource) { openWebLink(src.url) }
                                 .padding(Space.s10),
                             verticalArrangement = Arrangement.spacedBy(Space.s4)
                         ) {

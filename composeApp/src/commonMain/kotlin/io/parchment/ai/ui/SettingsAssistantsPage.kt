@@ -4,7 +4,6 @@ import androidx.compose.animation.AnimatedVisibility
 import io.parchment.ai.strings.Strings
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
@@ -28,9 +27,12 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.onPreviewKeyEvent
+import androidx.compose.ui.input.key.type
 import androidx.compose.ui.semantics.Role
-import androidx.compose.ui.semantics.selected
-import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -61,6 +63,14 @@ internal fun AssistantsSubpage(
     Column(
         modifier = Modifier
             .fillMaxSize()
+            .onPreviewKeyEvent { event ->
+                if (editingAssistantId != null && event.type == KeyEventType.KeyDown && event.key == Key.Escape) {
+                    editingAssistantId = null
+                    true
+                } else {
+                    false
+                }
+            }
             .verticalScroll(rememberScrollState())
             .padding(if (win.isCompact) 12.dp else 20.dp),
         verticalArrangement = Arrangement.spacedBy(14.dp)
@@ -359,8 +369,7 @@ internal fun AssistantsSubpage(
                     .clip(shape)
                     .background(p.cardBg)
                     .border(if (isSelected) 1.dp else LineWidth.hairline, if (isSelected) p.accent else p.border.copy(alpha = 0.75f), shape)
-                    .clickable(role = Role.Button, onClickLabel = Strings.editAssistant) { editingAssistantId = asst.id }
-                    .semantics { selected = isSelected }
+                    .kissClickable(pressScale = 0.99f, hoverScale = 1.004f, role = Role.Button, selected = isSelected, onClickLabel = Strings.editAssistant) { editingAssistantId = asst.id }
                     .padding(Space.s16),
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
