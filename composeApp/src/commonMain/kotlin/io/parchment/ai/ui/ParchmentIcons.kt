@@ -683,7 +683,7 @@ internal fun parseSvgPathNormalized(dStr: String): Path {
 fun ModelLabSvgIcon(
     modelOrProvider: String,
     tint: Color,
-    size: Dp = 15.dp,
+    size: Dp = IconSize.lg,
     fallbackProtocolName: String = "",
     modifier: Modifier = Modifier
 ) {

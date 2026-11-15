@@ -24,6 +24,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.shadow
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Shape
 import io.parchment.ai.platform.PlatformRuntime
 import androidx.compose.ui.platform.LocalDensity
@@ -82,6 +83,27 @@ object IconSize {
 /** Shadow depth. Only things that float above the page (notifications, menus) cast one; everything else is flat. */
 object Elevation {
     val overlay = 8.dp
+}
+
+/** Backdrop scrims layered behind modal dialogs, slide-over drawers, and quick popovers. */
+object Scrim {
+    val subtle = Color.Black.copy(alpha = 0.18f)
+    val drawer = Color.Black.copy(alpha = 0.34f)
+    val dialog = Color.Black.copy(alpha = 0.42f)
+}
+
+/** Muted categorical chart and storage bar accents reused across context and backup visuals. */
+object CategoryColor {
+    val sage = Color(0xFF4A7C59)
+    val slate = Color(0xFF3D6B8E)
+    val ochre = Color(0xFF9B5B34)
+    val brass = Color(0xFFB5892E)
+}
+
+/** Legibility alphas applied on top of [ParchmentPalette.mutedInk] so disabled/hint text stays >= 3.0:1. */
+object Alpha {
+    const val disabledInk = 0.88f
+    const val placeholder = 0.88f
 }
 
 /**

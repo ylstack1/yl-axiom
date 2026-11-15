@@ -74,7 +74,7 @@ internal fun CommandPalette(commands: List<PaletteCommand>, onDismiss: () -> Uni
     }
 
     Box(
-        Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.18f)).dismissOnOutsideTap(onDismiss),
+        Modifier.fillMaxSize().background(Scrim.subtle).dismissOnOutsideTap(onDismiss),
         contentAlignment = Alignment.TopCenter
     ) {
         val shape = RoundedCornerShape(Radius.r12)

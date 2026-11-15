@@ -394,7 +394,7 @@ fun SepiaTextField(
                                     text = parsedPlaceholder.cleanText,
                                     maxLines = if (singleLine) 1 else 2,
                                     overflow = TextOverflow.Ellipsis,
-                                    style = textStyle.copy(color = p.mutedInk.copy(alpha = 0.6f))
+                                    style = textStyle.copy(color = p.mutedInk.copy(alpha = Alpha.placeholder))
                                 )
                             }
                             innerTextField()
@@ -440,7 +440,7 @@ fun SepiaSectionCard(
                             KissVectorIcon(
                                 icon = parsedTitle.leadingIcon,
                                 tint = p.accent,
-                                size = 15.dp
+                                size = IconSize.lg
                             )
                         }
                         BasicText(
@@ -618,7 +618,7 @@ private fun SepiaToggleTrack(checked: Boolean) {
                 }
                 .size(18.dp)
                 .clip(CircleShape)
-                .background(Color(0xFFFAF6EB))
+                .background(WARM_FILL_INK)
         )
     }
 }

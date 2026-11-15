@@ -404,7 +404,7 @@ private fun MessageTurnHeader(
                     ModelLabSvgIcon(
                         modelOrProvider = activeVar.modelUsed.ifBlank { providerName },
                         tint = p.mutedInk,
-                        size = 13.dp,
+                        size = IconSize.md,
                         fallbackProtocolName = providerName
                     )
                 }
@@ -493,7 +493,11 @@ private fun MessageTurnHeader(
                 )
                 BasicText(
                     text = "${node.activeVariantIndex + 1}/${node.variants.size}",
-                    style = p.uiLabelStyle.copy(color = p.accentSecondary, fontWeight = FontWeight.SemiBold)
+                    style = p.uiLabelStyle.copy(
+                        color = p.accentSecondary,
+                        fontWeight = FontWeight.SemiBold,
+                        fontFeatureSettings = "tnum"
+                    )
                 )
                 SepiaButton(
                     text = "→",

@@ -287,7 +287,7 @@ internal fun ParchmentRightFilesSidebar(
                 horizontalArrangement = Arrangement.spacedBy(7.dp),
                 modifier = Modifier.weight(1f)
             ) {
-                KissVectorIcon(icon = KissIcon.FOLDER, tint = p.accent, size = 15.dp)
+                KissVectorIcon(icon = KissIcon.FOLDER, tint = p.accent, size = IconSize.lg)
                 BasicText(
                     text = Strings.chatFilesSources(totalCount),
                     maxLines = 1,

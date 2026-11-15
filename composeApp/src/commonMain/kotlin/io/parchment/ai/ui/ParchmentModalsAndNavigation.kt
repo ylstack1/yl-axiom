@@ -387,7 +387,7 @@ internal fun MobileTabSwitcherModal(
                                                     .accessibilityLabel("${Strings.close} ${sess.title.ifBlank { Strings.newChat2 }}"),
                                                 contentAlignment = Alignment.Center
                                             ) {
-                                                KissVectorIcon(icon = KissIcon.CLOSE, tint = p.mutedInk, size = 11.dp)
+                                                KissVectorIcon(icon = KissIcon.CLOSE, tint = p.mutedInk, size = IconSize.sm)
                                             }
                                         }
                                         Column(verticalArrangement = Arrangement.spacedBy(Space.s2)) {
@@ -627,7 +627,7 @@ internal fun TopEditorialBar(
                             KissVectorIcon(
                                 icon = if (showQuickModelPopover) KissIcon.CHEVRON_UP else KissIcon.CHEVRON_DOWN,
                                 tint = p.mutedInk,
-                                size = 11.dp
+                                size = IconSize.sm
                             )
                         }
 
@@ -681,7 +681,7 @@ internal fun TopEditorialBar(
                                             )
                                             BasicText(
                                                 text = "($totalModelsCount)",
-                                                style = p.monoStyle.copy(color = p.mutedInk, fontSize = 11.sp)
+                                                style = p.monoStyle.copy(color = p.mutedInk, fontSize = 11.sp, fontFeatureSettings = "tnum")
                                             )
                                         }
                                         Row(
@@ -881,7 +881,7 @@ internal fun ParchmentAttachmentViewerModal(
                                 verticalAlignment = Alignment.CenterVertically,
                                 horizontalArrangement = Arrangement.spacedBy(Space.s6)
                             ) {
-                                KissVectorIcon(icon = KissIcon.IMAGE, tint = p.accent, size = 15.dp)
+                                KissVectorIcon(icon = KissIcon.IMAGE, tint = p.accent, size = IconSize.lg)
                                 BasicText(
                                     text = item.title,
                                     maxLines = 2,
@@ -918,6 +918,7 @@ internal fun ParchmentAttachmentViewerModal(
                                 text = "${(scale * 100).toInt()}%",
                                 compact = true,
                                 style = SepiaButtonStyle.GHOST,
+                                tabularNums = true,
                                 onClick = {
                                     scale = 1f
                                     offsetX = 0f
@@ -1086,7 +1087,7 @@ internal fun ParchmentAttachmentViewerModal(
                                 verticalAlignment = Alignment.CenterVertically,
                                 horizontalArrangement = Arrangement.spacedBy(Space.s6)
                             ) {
-                                KissVectorIcon(icon = KissIcon.FILE_TEXT, tint = p.accent, size = 15.dp)
+                                KissVectorIcon(icon = KissIcon.FILE_TEXT, tint = p.accent, size = IconSize.lg)
                                 BasicText(
                                     text = item.title,
                                     maxLines = 2,
@@ -1198,6 +1199,47 @@ internal fun ParchmentAttachmentViewerModal(
 // Opened by clicking `SepiaContextGaugeRing` in the Composer footer.
 // Displays unified `o200k_base` token counts across 7 context categories + Free Space + 1-tap actions.
 // ============================================================================================
+internal data class ContextCategorySlice(
+    val label: String,
+    val tokens: Int,
+    val color: Color,
+    val isFreeSpace: Boolean = false
+)
+
+internal fun buildContextCategorySlices(
+    breakdown: ContextWindowBreakdown,
+    p: ParchmentPalette
+): List<ContextCategorySlice> {
+    val colSystem = p.accent
+    val colLorebook = p.accentSecondary
+    val colWorkspace = CategoryColor.sage
+    val colFiles = CategoryColor.slate
+    val colHistory = CategoryColor.ochre
+    val colDraft = CategoryColor.brass
+    val colFree = p.border.copy(alpha = 0.55f)
+
+    val historyLabel = buildString {
+        append(Strings.chatHistoryActive(breakdown.activeTurnsCount))
+        if (breakdown.mutedTurnsCount > 0) append(", ${breakdown.mutedTurnsCount} left out")
+        append(")")
+    }
+
+    return listOf(
+        ContextCategorySlice("System & Persona Prompt", breakdown.systemAndPersonaTokens, colSystem),
+        ContextCategorySlice(Strings.lorebookStoryMemory, breakdown.lorebookAndMemoryTokens, colLorebook),
+        ContextCategorySlice(Strings.workspaceToolSchemas, breakdown.workspaceAndToolsTokens, colWorkspace),
+        ContextCategorySlice(Strings.uploadedFiles(breakdown.uploadedFilesCount), breakdown.uploadedFilesTokens, colFiles),
+        ContextCategorySlice(historyLabel, breakdown.chatHistoryTokens, colHistory),
+        ContextCategorySlice(Strings.currentComposerDraft, breakdown.composerDraftTokens, colDraft),
+        ContextCategorySlice(
+            label = Strings.freeSpaceRemaining,
+            tokens = breakdown.freeSpaceTokens,
+            color = colFree,
+            isFreeSpace = true
+        )
+    )
+}
+
 @Composable
 internal fun ContextWindowBreakdownPopover(
     breakdown: ContextWindowBreakdown,
@@ -1218,41 +1260,7 @@ internal fun ContextWindowBreakdownPopover(
     val safeLimit = if (isUnlimited) maxOf(breakdown.totalUsedTokens, 128_000) else breakdown.contextLimitTokens
     val pctInt = ((breakdown.totalUsedTokens.toDouble() / safeLimit.toDouble()) * 1000.0).toInt() / 10.0
 
-    val colSystem = p.accent
-    val colLorebook = p.accentSecondary
-    val colWorkspace = Color(0xFF4A7C59)
-    val colFiles = Color(0xFF3D6B8E)
-    val colHistory = Color(0xFF9B5B34)
-    val colDraft = Color(0xFFB5892E)
-    val colFree = p.border.copy(alpha = 0.55f)
-
-    data class CategorySlice(
-        val label: String,
-        val tokens: Int,
-        val color: Color,
-        val isFreeSpace: Boolean = false
-    )
-
-    val historyLabel = buildString {
-        append(Strings.chatHistoryActive(breakdown.activeTurnsCount))
-        if (breakdown.mutedTurnsCount > 0) append(", ${breakdown.mutedTurnsCount} left out")
-        append(")")
-    }
-
-    val slices = listOf(
-        CategorySlice("System & Persona Prompt", breakdown.systemAndPersonaTokens, colSystem),
-        CategorySlice(Strings.lorebookStoryMemory, breakdown.lorebookAndMemoryTokens, colLorebook),
-        CategorySlice(Strings.workspaceToolSchemas, breakdown.workspaceAndToolsTokens, colWorkspace),
-        CategorySlice(Strings.uploadedFiles(breakdown.uploadedFilesCount), breakdown.uploadedFilesTokens, colFiles),
-        CategorySlice(historyLabel, breakdown.chatHistoryTokens, colHistory),
-        CategorySlice(Strings.currentComposerDraft, breakdown.composerDraftTokens, colDraft),
-        CategorySlice(
-            label = Strings.freeSpaceRemaining,
-            tokens = breakdown.freeSpaceTokens,
-            color = colFree,
-            isFreeSpace = true
-        )
-    )
+    val slices = remember(breakdown, p) { buildContextCategorySlices(breakdown, p) }
 
     Column(
         modifier = modifier
@@ -1279,7 +1287,7 @@ internal fun ContextWindowBreakdownPopover(
                     ?: if (sessionTotalCostUsd > 0.0) Strings.session2(formatUsdCost(sessionTotalCostUsd)) else ""
                 BasicText(
                     text = Strings.o200kBaseTokUsed(breakdown.totalUsedTokens, limitText, pctInt, costSuffix),
-                    style = p.monoStyle.copy(fontSize = 11.sp, color = p.mutedInk)
+                    style = p.monoStyle.copy(fontSize = 11.sp, color = p.mutedInk, fontFeatureSettings = "tnum")
                 )
             }
             SepiaButton(
@@ -1334,7 +1342,7 @@ internal fun ContextWindowBreakdownPopover(
                             modifier = Modifier
                                 .size(8.dp)
                                 .clip(CircleShape)
-                                .background(if (slice.isFreeSpace) p.accentSecondary else slice.color)
+                                .background(slice.color)
                         )
                         BasicText(
                             text = slice.label,
@@ -1343,7 +1351,7 @@ internal fun ContextWindowBreakdownPopover(
                             style = p.uiBodyStyle.copy(
                                 fontSize = 12.sp,
                                 fontWeight = if (slice.isFreeSpace || slice.tokens > 0) FontWeight.SemiBold else FontWeight.Normal,
-                                color = if (slice.isFreeSpace) p.accent else if (slice.tokens > 0) p.primaryInk else p.mutedInk
+                                color = if (slice.isFreeSpace) p.narrationInk else if (slice.tokens > 0) p.primaryInk else p.mutedInk
                             )
                         )
                     }
@@ -1351,8 +1359,9 @@ internal fun ContextWindowBreakdownPopover(
                         text = Strings.tokens2(formatCompactTokens(slice.tokens), slicePct),
                         style = p.monoStyle.copy(
                             fontSize = 11.sp,
+                            fontFeatureSettings = "tnum",
                             fontWeight = if (slice.isFreeSpace || slice.tokens > 0) FontWeight.SemiBold else FontWeight.Normal,
-                            color = if (slice.isFreeSpace) p.accent else if (slice.tokens > 0) p.narrationInk else p.mutedInk
+                            color = if (slice.isFreeSpace) p.narrationInk else if (slice.tokens > 0) p.narrationInk else p.mutedInk
                         )
                     )
                 }

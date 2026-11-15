@@ -239,7 +239,8 @@ fun SepiaButton(
     compact: Boolean = false,
     wrapText: Boolean = false,
     contentDescription: String? = null,
-    hint: String? = contentDescription
+    hint: String? = contentDescription,
+    tabularNums: Boolean = false
 ) {
     val p = LocalParchmentPalette.current
     val interactionSource = remember { MutableInteractionSource() }
@@ -274,12 +275,12 @@ fun SepiaButton(
         SepiaButtonStyle.PRIMARY, SepiaButtonStyle.DANGER -> if (enabled) onFillInk(baseBg) else p.mutedInk
         SepiaButtonStyle.SECONDARY -> if (enabled) p.primaryInk else p.mutedInk
         SepiaButtonStyle.OUTLINE -> when {
-            !enabled -> p.mutedInk.copy(alpha = 0.6f)
+            !enabled -> p.mutedInk.copy(alpha = Alpha.disabledInk)
             isPressed || isHovered -> p.accent
             else -> p.primaryInk
         }
         SepiaButtonStyle.GHOST -> when {
-            !enabled -> p.mutedInk.copy(alpha = 0.5f)
+            !enabled -> p.mutedInk.copy(alpha = Alpha.disabledInk)
             isPressed || isHovered -> p.accent
             else -> p.narrationInk
         }
@@ -356,6 +357,7 @@ fun SepiaButton(
                     style = p.uiBodyStyle.copy(
                         color = textColor,
                         fontSize = fontSize,
+                        fontFeatureSettings = if (tabularNums) "tnum" else null,
                         fontWeight = if (style == SepiaButtonStyle.PRIMARY || style == SepiaButtonStyle.SECONDARY) {
                             FontWeight.SemiBold
                         } else {
@@ -424,7 +426,7 @@ fun SepiaChip(
                 KissVectorIcon(
                     icon = parsed.leadingIcon,
                     tint = txtCol,
-                    size = 13.dp
+                    size = IconSize.md
                 )
             }
             if (parsed.cleanText.isNotEmpty()) {

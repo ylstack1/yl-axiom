@@ -302,7 +302,7 @@ internal fun ProvidersSubpage(
                                         ModelLabSvgIcon(
                                             modelOrProvider = prof.defaultModel.ifBlank { prof.name },
                                             tint = if (isSel) p.accent else p.narrationInk,
-                                            size = 17.dp,
+                                            size = IconSize.lg,
                                             fallbackProtocolName = prof.protocol.displayName
                                         )
                                     }
@@ -319,7 +319,7 @@ internal fun ProvidersSubpage(
                                             text = "${prof.protocol.displayName.substringBefore(" API")} • $modelCountInfo",
                                             maxLines = 1,
                                             overflow = TextOverflow.Ellipsis,
-                                            style = p.uiLabelStyle.copy(fontSize = 11.sp, color = p.narrationInk)
+                                            style = p.uiLabelStyle.copy(fontSize = 11.sp, color = p.narrationInk, fontFeatureSettings = "tnum")
                                         )
                                     }
                                 }
@@ -342,7 +342,7 @@ internal fun ProvidersSubpage(
                                             )
                                         )
                                     }
-                                    KissVectorIcon(icon = KissIcon.CHEVRON_RIGHT, tint = p.mutedInk, size = 15.dp)
+                                    KissVectorIcon(icon = KissIcon.CHEVRON_RIGHT, tint = p.mutedInk, size = IconSize.lg)
                                 }
                             }
                         }
@@ -476,7 +476,7 @@ internal fun ProvidersSubpage(
                                 ModelLabSvgIcon(
                                     modelOrProvider = activeProfile.defaultModel.ifBlank { activeProfile.name },
                                     tint = p.accent,
-                                    size = 17.dp,
+                                    size = IconSize.lg,
                                     fallbackProtocolName = activeProfile.protocol.displayName
                                 )
                                 BasicText(
@@ -486,7 +486,7 @@ internal fun ProvidersSubpage(
                                 KissVectorIcon(
                                     icon = KissIcon.EDIT,
                                     tint = p.mutedInk,
-                                    size = 13.dp
+                                    size = IconSize.md
                                 )
                             }
                         }
@@ -668,7 +668,7 @@ internal fun ProvidersSubpage(
                         ) {
                             BasicText(
                                 text = "${activeProfile.savedModels.size}",
-                                style = p.uiLabelStyle.copy(fontWeight = FontWeight.Bold)
+                                style = p.uiLabelStyle.copy(fontWeight = FontWeight.Bold, fontFeatureSettings = "tnum")
                             )
                         }
                     }

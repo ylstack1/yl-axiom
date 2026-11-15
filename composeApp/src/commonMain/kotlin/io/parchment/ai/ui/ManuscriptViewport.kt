@@ -661,7 +661,7 @@ internal fun ManuscriptViewport(
                             if (isVoiceListening || isStreaming || isLiveVoiceMode) {
                                 KissStreamingPulseDot(color = p.accent)
                             } else {
-                                KissVectorIcon(icon = KissIcon.VOLUME_ON, tint = p.accent, size = 13.dp)
+                                KissVectorIcon(icon = KissIcon.VOLUME_ON, tint = p.accent, size = IconSize.md)
                             }
                             val liveStatusLabel = when {
                                 isVoiceListening -> Strings.listening
@@ -724,7 +724,7 @@ internal fun ManuscriptViewport(
                                         verticalAlignment = Alignment.CenterVertically,
                                         horizontalArrangement = Arrangement.spacedBy(Space.s4)
                                     ) {
-                                        KissVectorIcon(icon = KissIcon.PLAY, tint = p.accent, size = 11.dp)
+                                        KissVectorIcon(icon = KissIcon.PLAY, tint = p.accent, size = IconSize.sm)
                                         BasicText(
                                             text = Strings.continueLabel,
                                             style = p.uiLabelStyle.copy(color = p.primaryInk, fontWeight = FontWeight.Medium, fontSize = 11.sp)
@@ -748,7 +748,7 @@ internal fun ManuscriptViewport(
                                     verticalAlignment = Alignment.CenterVertically,
                                     horizontalArrangement = Arrangement.spacedBy(Space.s4)
                                 ) {
-                                    KissVectorIcon(icon = KissIcon.STOP, tint = p.danger, size = 11.dp)
+                                    KissVectorIcon(icon = KissIcon.STOP, tint = p.danger, size = IconSize.sm)
                                     BasicText(
                                         text = Strings.stop2,
                                         style = p.uiLabelStyle.copy(color = p.danger, fontWeight = FontWeight.SemiBold, fontSize = 11.sp)
@@ -1151,7 +1151,7 @@ internal fun ManuscriptViewport(
                                 KissVectorIcon(
                                     icon = if (statusExpanded) KissIcon.CHEVRON_UP else KissIcon.CHEVRON_DOWN,
                                     tint = p.mutedInk,
-                                    size = 11.dp
+                                    size = IconSize.sm
                                 )
                             }
                         }

@@ -219,7 +219,7 @@ private fun LiveAgentPeekContent(livePeekInfo: LiveAgentPeekInfo) {
                     KissVectorIcon(
                         icon = resolveToolKissIcon(livePeekInfo.toolName),
                         tint = p.accent,
-                        size = 13.dp
+                        size = IconSize.md
                     )
                 }
                 BasicText(
@@ -359,7 +359,7 @@ private fun ReasoningThoughtStepBlock(
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(5.dp)
         ) {
-            KissVectorIcon(icon = KissIcon.SPARKLES, tint = p.accent, size = 11.dp)
+            KissVectorIcon(icon = KissIcon.SPARKLES, tint = p.accent, size = IconSize.sm)
             BasicText(
                 text = Strings.thought(stepNumber),
                 style = p.uiLabelStyle.copy(color = p.accent, fontWeight = FontWeight.SemiBold, fontSize = 11.sp)
@@ -469,7 +469,7 @@ private fun ToolExecutionCard(
                     KissVectorIcon(
                         icon = toolIcon,
                         tint = if (tc.isError) p.danger else p.accentSecondary,
-                        size = 13.dp
+                        size = IconSize.md
                     )
                 }
                 BasicText(

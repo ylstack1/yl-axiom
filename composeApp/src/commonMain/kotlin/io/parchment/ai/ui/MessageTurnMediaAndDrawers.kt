@@ -412,7 +412,7 @@ private fun PlayableGeneratedMediaCard(
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(Space.s6)
         ) {
-            KissVectorIcon(icon = icon, tint = p.accent, size = 15.dp)
+            KissVectorIcon(icon = icon, tint = p.accent, size = IconSize.lg)
             BasicText(
                 text = title,
                 style = p.uiHeaderStyle.copy(fontSize = 15.sp, color = p.accent)

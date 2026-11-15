@@ -42,7 +42,6 @@ import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyEvent
 import androidx.compose.ui.input.key.KeyEventType
@@ -1407,7 +1406,7 @@ fun ParchmentApp(
                                         Box(
                                             modifier = Modifier
                                                 .fillMaxSize()
-                                                .background(Color.Black.copy(alpha = 0.34f))
+                                                .background(Scrim.drawer)
                                                 .dismissOnOutsideTap { showSidebar = false }
                                         )
                                     }
@@ -1446,7 +1445,7 @@ fun ParchmentApp(
                                         Box(
                                             modifier = Modifier
                                                 .fillMaxSize()
-                                                .background(Color.Black.copy(alpha = 0.34f))
+                                                .background(Scrim.drawer)
                                                 .dismissOnOutsideTap { showRightFilesSidebar = false }
                                         )
                                     }

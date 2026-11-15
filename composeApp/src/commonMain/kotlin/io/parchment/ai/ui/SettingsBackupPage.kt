@@ -32,7 +32,6 @@ import kotlinx.coroutines.withContext
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -228,8 +227,8 @@ internal fun BackupAndOtaSubpage(
                         if (catBytes > 0L) {
                             val col = when (cat) {
                                 io.parchment.ai.model.StorageFileCategory.CHAT_SESSION -> p.accent
-                                io.parchment.ai.model.StorageFileCategory.UPLOADED_MEDIA -> Color(0xFF3D6B8E)
-                                io.parchment.ai.model.StorageFileCategory.GENERATED_MEDIA -> Color(0xFF4A7C59)
+                                io.parchment.ai.model.StorageFileCategory.UPLOADED_MEDIA -> CategoryColor.slate
+                                io.parchment.ai.model.StorageFileCategory.GENERATED_MEDIA -> CategoryColor.sage
                                 io.parchment.ai.model.StorageFileCategory.SETTINGS_AND_BACKUPS -> p.accentSecondary
                                 io.parchment.ai.model.StorageFileCategory.OTA_AND_TEMP -> p.mutedInk
                             }
@@ -517,7 +516,7 @@ internal fun BackupAndOtaSubpage(
                         val totalMb = (otaState.totalBytes / (1024.0 * 1024.0) * 10).toInt() / 10.0
                         BasicText(
                             text = Strings.downloadingMbMb(otaState.release.assetName, downMb, totalMb, otaState.progressPercent),
-                            style = p.uiBodyStyle.copy(color = p.accent, fontWeight = FontWeight.SemiBold)
+                            style = p.uiBodyStyle.copy(color = p.accent, fontWeight = FontWeight.SemiBold, fontFeatureSettings = "tnum")
                         )
                         SepiaProgressBar(fraction = otaState.progressPercent / 100f)
                     }

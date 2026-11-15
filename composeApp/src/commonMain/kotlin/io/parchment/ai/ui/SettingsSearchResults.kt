@@ -317,7 +317,7 @@ internal fun GlobalSettingsSearchResultsSubpage(
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(Space.s8)
         ) {
-            KissVectorIcon(icon = KissIcon.SEARCH, tint = p.accent, size = 17.dp)
+            KissVectorIcon(icon = KissIcon.SEARCH, tint = p.accent, size = IconSize.lg)
             BasicText(
                 text = Strings.settingsSearchResultsFor(searchQuery),
                 style = p.uiHeaderStyle.copy(fontSize = 18.sp)
@@ -868,7 +868,7 @@ internal fun GlobalSettingsSearchResultsSubpage(
                                     KissVectorIcon(
                                         icon = if (isCurrent) KissIcon.SPARKLES else KissIcon.CPU,
                                         tint = if (isCurrent) p.accent else p.mutedInk,
-                                        size = 13.dp
+                                        size = IconSize.md
                                     )
                                     BasicText(
                                         text = modelId,

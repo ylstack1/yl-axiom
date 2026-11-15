@@ -62,7 +62,7 @@ data class ParchmentPalette(
 }
 
 private const val READABLE_TEXT_CONTRAST = 4.5f
-private val WARM_FILL_INK = Color(0xFFFAF6EB)
+internal val WARM_FILL_INK = Color(0xFFFAF6EB)
 
 /** WCAG contrast ratio between two opaque colors. */
 fun contrastRatio(first: Color, second: Color): Float {
@@ -126,9 +126,9 @@ fun buildPaletteFromConfig(config: ThemeConfig): ParchmentPalette {
     val narrationInk = parseHexColor(config.narrationInkHex, Color(0xFF5C4938))
     val readableSurfaces = listOf(canvasBg, sheetBg, cardBg, elevatedBg)
     val mutedInk = readableInk(parseHexColor(config.mutedInkHex, Color(0xFF826F5C)), readableSurfaces)
-    // The accent also colors text (selected tabs, links), so it gets the same readability nudge as muted text.
+    // The accents also color text (selected tabs, links, badges), so both get the same readability nudge as muted text.
     val accent = readableInk(parseHexColor(config.accentHex, Color(0xFF9E4730)), readableSurfaces)
-    val accentSecondary = parseHexColor(config.accentSecondaryHex, Color(0xFFB57C2E))
+    val accentSecondary = readableInk(parseHexColor(config.accentSecondaryHex, Color(0xFFB57C2E)), readableSurfaces)
     val danger = readableInk(parseHexColor(config.dangerHex, Color(0xFFA62B2B)), readableSurfaces)
     val success = readableInk(Color(0xFF2E7D32), readableSurfaces)
 

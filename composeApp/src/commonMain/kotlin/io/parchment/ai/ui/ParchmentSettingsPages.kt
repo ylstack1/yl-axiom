@@ -217,7 +217,7 @@ fun ParchmentSettingsScreen(
                                 KissVectorIcon(
                                     icon = catIcon,
                                     tint = if (isSelected || isHovered || isPressed || isHighlightedBySearch) p.accent else p.mutedInk,
-                                    size = 15.dp
+                                    size = IconSize.lg
                                 )
                                 BasicText(
                                     text = cat.label,
@@ -385,7 +385,7 @@ fun ParchmentSettingsScreen(
                                 val catIcon = remember(openedCat.icon) {
                                     parseKissLabelIcons(openedCat.icon).leadingIcon ?: KissIcon.SETTINGS
                                 }
-                                KissVectorIcon(icon = catIcon, tint = p.accent, size = 15.dp)
+                                KissVectorIcon(icon = catIcon, tint = p.accent, size = IconSize.lg)
                                 BasicText(
                                     text = openedCat.label,
                                     maxLines = 1,
@@ -398,7 +398,7 @@ fun ParchmentSettingsScreen(
                                 verticalAlignment = Alignment.CenterVertically,
                                 horizontalArrangement = Arrangement.spacedBy(Space.s8)
                             ) {
-                                KissVectorIcon(icon = KissIcon.SETTINGS, tint = p.accent, size = 17.dp)
+                                KissVectorIcon(icon = KissIcon.SETTINGS, tint = p.accent, size = IconSize.lg)
                                 BasicText(
                                     text = Strings.settings,
                                     style = p.uiHeaderStyle.copy(fontSize = 18.sp)
@@ -523,7 +523,7 @@ fun ParchmentSettingsScreen(
                                                 .border(LineWidth.hairline, p.accent.copy(alpha = 0.45f), RoundedCornerShape(Radius.r8)),
                                             contentAlignment = Alignment.Center
                                         ) {
-                                            KissVectorIcon(icon = catIcon, tint = p.accent, size = 17.dp)
+                                            KissVectorIcon(icon = catIcon, tint = p.accent, size = IconSize.lg)
                                         }
                                         Column(
                                             modifier = Modifier.weight(1f),
@@ -544,7 +544,7 @@ fun ParchmentSettingsScreen(
                                     KissVectorIcon(
                                         icon = KissIcon.CHEVRON_RIGHT,
                                         tint = p.mutedInk,
-                                        size = 15.dp
+                                        size = IconSize.lg
                                     )
                                 }
                             }

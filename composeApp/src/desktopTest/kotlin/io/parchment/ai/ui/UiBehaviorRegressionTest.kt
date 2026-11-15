@@ -20,6 +20,7 @@ import androidx.compose.ui.ImageComposeScene
 import androidx.compose.ui.InternalComposeUiApi
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyEvent
 import androidx.compose.ui.input.key.KeyEventType
@@ -48,7 +49,9 @@ import io.parchment.ai.model.PreferencesConfig
 import io.parchment.ai.model.PromptAttachment
 import io.parchment.ai.model.ProviderProfile
 import io.parchment.ai.model.ProviderProtocol
+import io.parchment.ai.model.ThemeConfig
 import io.parchment.ai.model.TurnTextLayout
+import io.parchment.ai.protocol.ContextWindowBreakdown
 import io.parchment.ai.strings.Strings
 import java.net.InetSocketAddress
 import java.util.concurrent.CountDownLatch
@@ -58,6 +61,7 @@ import java.util.concurrent.atomic.AtomicInteger
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
+import kotlin.test.assertNotEquals
 import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
@@ -973,6 +977,81 @@ class UiBehaviorRegressionTest {
             frameNanos += 16_000_000L
             settle(scene, frameNanos)
             assertEquals(1, dismissCalls, "Escape inside dialog must dismiss DeleteConfirmDialog")
+        }
+    }
+
+    @Test
+    fun disabledAndPlaceholderAlphasKeepLegibleContrastAcrossAllPresets() {
+        fun compositeOver(fg: Color, bg: Color): Color {
+            val a = fg.alpha
+            return Color(
+                red = fg.red * a + bg.red * (1f - a),
+                green = fg.green * a + bg.green * (1f - a),
+                blue = fg.blue * a + bg.blue * (1f - a),
+                alpha = 1f
+            )
+        }
+        ThemeConfig.PRESETS.forEach { preset ->
+            val p = buildPaletteFromConfig(preset)
+            val surfaces = listOf(p.canvasBg, p.sheetBg, p.cardBg, p.elevatedBg)
+            listOf(Alpha.disabledInk, Alpha.placeholder).forEach { alpha ->
+                val ink = p.mutedInk.copy(alpha = alpha)
+                surfaces.forEach { bg ->
+                    val ratio = contrastRatio(compositeOver(ink, bg), bg)
+                    assertTrue(
+                        ratio >= 3.0f,
+                        "${preset.name}: mutedInk*$alpha over $bg contrast=$ratio (< 3.0)"
+                    )
+                }
+            }
+        }
+    }
+
+    @Test
+    fun contextBreakdownLegendMatchesFreeSpaceColorWithoutCollision() {
+        val breakdown = ContextWindowBreakdown(
+            systemAndPersonaTokens = 2_000,
+            lorebookAndMemoryTokens = 1_500,
+            workspaceAndToolsTokens = 800,
+            uploadedFilesTokens = 1_200,
+            uploadedFilesCount = 2,
+            chatHistoryTokens = 4_500,
+            activeTurnsCount = 6,
+            mutedTurnsCount = 1,
+            composerDraftTokens = 300,
+            contextLimitTokens = 32_000
+        )
+        ThemeConfig.PRESETS.forEach { preset ->
+            val p = buildPaletteFromConfig(preset)
+            val slices = buildContextCategorySlices(breakdown, p)
+            val freeSlice = slices.single { it.isFreeSpace }
+            val loreSlice = slices.single { it.label == Strings.lorebookStoryMemory }
+            assertEquals(p.border.copy(alpha = 0.55f), freeSlice.color)
+            assertNotEquals(
+                loreSlice.color,
+                freeSlice.color,
+                "${preset.name}: Free Space swatch must not collide with Lorebook accentSecondary"
+            )
+        }
+        withUiScene(
+            width = 480,
+            height = 560,
+            content = {
+                ContextWindowBreakdownPopover(
+                    breakdown = breakdown,
+                    sessionTotalCostUsd = 0.0,
+                    isStreaming = false,
+                    canCompact = false,
+                    canSummarize = false,
+                    onCompactContext = {},
+                    onSummarizeStory = {},
+                    onOpenPricingSettings = {},
+                    onClose = {}
+                )
+            }
+        ) { scene ->
+            assertTrue(nodes(scene).any { text(it).contains(Strings.freeSpaceRemaining) })
+            assertTrue(nodes(scene).any { text(it).contains(Strings.lorebookStoryMemory) })
         }
     }
 }

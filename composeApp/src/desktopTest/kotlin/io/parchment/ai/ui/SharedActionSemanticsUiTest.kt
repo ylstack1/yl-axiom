@@ -187,13 +187,19 @@ class SharedActionSemanticsUiTest {
     }
 
     @Test fun everyThemeKeepsTextAndFilledActionsReadable() {
-        val washedOut = ThemeConfig(name = "Custom", mutedInkHex = "#EDE3CC", dangerHex = "#F4ECD8")
+        val washedOut = ThemeConfig(
+            name = "Custom",
+            mutedInkHex = "#EDE3CC",
+            dangerHex = "#F4ECD8",
+            accentSecondaryHex = "#F0DFB0"
+        )
         (ThemeConfig.PRESETS + washedOut).forEach { config ->
             val palette = buildPaletteFromConfig(config)
             val surfaces = listOf(palette.canvasBg, palette.sheetBg, palette.cardBg, palette.elevatedBg)
             mapOf(
                 "primary" to palette.primaryInk, "narration" to palette.narrationInk, "muted" to palette.mutedInk,
-                "danger" to palette.danger, "success" to palette.success, "accent" to palette.accent
+                "danger" to palette.danger, "success" to palette.success, "accent" to palette.accent,
+                "accentSecondary" to palette.accentSecondary
             ).forEach { (name, ink) ->
                 surfaces.forEach { surface ->
                     assertTrue(contrastRatio(ink, surface) >= 4.5f, "${config.name}: $name on $surface = ${contrastRatio(ink, surface)}")

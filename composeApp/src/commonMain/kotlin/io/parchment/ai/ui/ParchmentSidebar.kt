@@ -283,7 +283,7 @@ internal fun ParchmentSidebar(
                     val hdrIcon = remember(activeAssistant.iconEmoji) {
                         parseKissLabelIcons(activeAssistant.iconEmoji).leadingIcon ?: KissIcon.SPARKLES
                     }
-                    KissVectorIcon(icon = hdrIcon, tint = p.accent, size = 13.dp)
+                    KissVectorIcon(icon = hdrIcon, tint = p.accent, size = IconSize.md)
                     BasicText(
                         text = if (historySearch.inProgress) Strings.searchingFullHistory else "${activeAssistant.name} (${assistantTopics.size})",
                         maxLines = 1,
@@ -344,7 +344,7 @@ internal fun ParchmentSidebar(
                                 horizontalArrangement = Arrangement.spacedBy(Space.s4)
                             ) {
                                 if (sess.isPinned) {
-                                    KissVectorIcon(icon = KissIcon.PIN, tint = p.accent, size = 11.dp)
+                                    KissVectorIcon(icon = KissIcon.PIN, tint = p.accent, size = IconSize.sm)
                                 }
                                 BasicText(
                                     text = sess.title,
