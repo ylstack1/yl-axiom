@@ -168,4 +168,62 @@ class RendererBoundsTest {
             assertEquals(3, counter.count(buffer))
         }
     }
+
+    @Test fun boundedStylePreservesNestedFormattingAndSpanIsolation() {
+        val sample = styleLiteraryParagraph(
+            raw = "**unclosed *italic** then *outside* and [site *name*](https://example.com/a_(b))",
+            palette = palette,
+            indentChars = 0
+        )
+        assertEquals("unclosed *italic then outside and site name", sample.text)
+        assertEquals(1, sample.getLinkAnnotations(0, sample.length).size)
+        assertEquals(
+            "https://example.com/a_(b)",
+            (sample.getLinkAnnotations(0, sample.length).single().item as? androidx.compose.ui.text.LinkAnnotation.Url)?.url
+        )
+
+        val escapedAndCode = styleLiteraryParagraph(
+            raw = """\*\*lit\*\* and ``  a `b`  `` and _word_snake_case_ and **bold $50 to $100**""",
+            palette = palette,
+            indentChars = 1
+        )
+        assertEquals("  **lit** and a `b` and word_snake_case and bold \$50 to \$100", escapedAndCode.text)
+        assertTrue(escapedAndCode.spanStyles.any { it.item.background == palette.accent.copy(alpha = 0.12f) })
+
+        val dialogue = styleLiteraryParagraph(
+            raw = "\"Wait **now** *please*\" and _lead_",
+            palette = palette,
+            indentChars = 1
+        )
+        assertEquals("  \"Wait now please\" and lead", dialogue.text)
+        val dialogueSpans = dialogue.spanStyles.count { it.item.color == palette.dialogueInk }
+        assertEquals(1, dialogueSpans)
+    }
+
+    @Test fun parseProseBlocksHandlesEdgeCasesWithoutLineSplitRegressions() {
+        val markdown = listOf(
+            "##### Deep Heading",
+            "> quote 1\n> quote 2",
+            "```py\n\n\nprint(1)\n\n```\r\n",
+            "  - [ ] todo  ",
+            "- ",
+            "  1. subitem",
+            "$$ x + y $$",
+            "\\[\na + b\n\\]"
+        ).joinToString("\n\n")
+        val blocks = parseProseBlocks(markdown, enableMath = true)
+        assertEquals(
+            listOf(
+                ProseBlock.Heading(4, "# Deep Heading"),
+                ProseBlock.BlockQuote("quote 1\nquote 2"),
+                ProseBlock.CodeFence("py", "print(1)\n"),
+                ProseBlock.Paragraph("   ☐ todo"),
+                ProseBlock.Paragraph("•"),
+                ProseBlock.Paragraph("   1. subitem"),
+                ProseBlock.MathBlock(" x + y "),
+                ProseBlock.MathBlock("a + b")
+            ),
+            blocks
+        )
+    }
 }
