@@ -4,18 +4,11 @@ Updated 2026-11-15. AGENTS.md owns workflow; MEMORY holds contracts. Task IDs st
 
 ## Current status
 
-- **Source:** 2026-11-15: 17.1–17.6 complete and verified (usage/charges/SSE, UI/UX virtualization & masking, Compose hot paths & draft debounce, sequential catalog & true-LRU normalized media cache & lazy fonts & IO attachments, platform/harness/OTA/Android service hardening, perf/gallery verification).
-- **Last verified:** 2026-11-15, `verify.py affected`: 454 desktop tests passed + Android compile (2m15s); `verify.py test UiGalleryTest`: 4 tests passed (1m45s); `verify.py perf`: desktop title 1407 ms, window 1257 ms, idle private RAM 269.1 MB (22 MB live Java heap / 32 MB committed at `-Xms32m`; native runtime+Skiko accounts for remaining commit above 250 MB target), app image 124.8 MB, 0 missing ProGuard services.
-- **Next action:** Commit and push v2.1.10 changes when requested (only `13.6 Screen readers` and paused `RectList` upstream Compose issue remain).
+- **Source:** 2026-11-15: `v2.1.10` released (`17.1`–`17.6` completed and archived in CHANGELOG.md and git history).
+- **Last verified:** 2026-11-15, `verify.py final` (pre-PR #16): 454 desktop tests passed + signed Android build (6m16s); `UiGalleryTest`: 4 tests passed (1m45s); `verify.py perf`: desktop title 1407 ms, window 1257 ms, idle private RAM 269.1 MB (22 MB live / 32 MB committed heap at `-Xms32m`), app image 124.8 MB, `apk_mb=4.3`, 0 missing ProGuard services.
+- **Next action:** Verify `v2.1.10` OTA/device behavior and `13.6 Screen readers`; revisit the paused `RectList` issue on Compose Multiplatform updates.
 
 ## Open tasks
-
-- [x] **17.1 Usage, cache, image cost & stream protocol fixes:** fixed omitted cache/proto3 fields, `/images/generations` & video usage capture, OpenRouter 1h/image rates, HTTP 413 fail-fast, SSE `:` keepalives & terminal status handling.
-- [x] **17.2 UI/UX correctness fixes:** reset & guard `Test`/`Fetch` state per profile, masked API key `PasswordVisualTransformation` in `SepiaTextField`/`SettingsProvidersPage`, virtualized `LazyColumn` model list, fresh `DesktopBrowserTabBar` session lookup, mid-edit `titleBuffer` preservation, and `Popup` quick model picker without viewport shift.
-- [x] **17.3 Compose hot-path & frame performance:** O(1) estimated draft breakdown + 180ms BPE debounce, `graphicsLayer` alpha & lazy `editBuffer` (`MessageTurnItem`/`Footer`), theme-keyed `SvgSceneRenderer`, auto-follow & `StreamStatusThrottle` coalescing, debounced/shutdown-flushed drafts, and zero-alloc `sidebarFingerprint`/`vaultCountKey` (`ParchmentProtocolAndHarnessTest`, `Batch17HotPathUiTest`).
-- [x] **17.4 RAM budget (< 250 MB), storage & I/O efficiency:** sequential `ModelsDevClient` catalog parse & `Dispatchers.IO`, synchronized `ProviderModelDiscovery`, true-LRU normalized `BoundedImageCache` + `Dispatchers.IO` UI decode, canonicalized/lazy desktop fonts (`ParchmentTheme`), zero-AST settings check & `workspaceEdit` scanner invalidation, `Dispatchers.IO` binary attachments (`PlatformSharedHelpersTest`, `WorkspaceAndMediaBehaviorTest`, `ParchmentProtocolAndHarnessTest`).
-- [x] **17.5 Platform, harness & recovery audit:** early-stop & synchronized `WorkspaceTreeScanner`, 8-LRU/clock-safe `WorkspaceContextCache`, zero-alloc trickle `TailRetainingInputStream`, strict HTTP/host validation in `HttpMcpTransport`, daemon-timeout/redirect/Long-safe `PublicWebTransport`, lazy shutdown `WindowsPowerLease`, IO-timeout/cancellable `OtaUpdateEngine` (`checkForUpdatesFromBase`), and Android `ACTION_UPDATE`/null-intent guards (`McpEndToEndTest`, `OtaUpdateEngineHttpTest`, `PublicWebTransportTest`, `ChatArchiveImportTest`, `PlatformSharedHelpersTest`).
-- [x] **17.6 Final performance, gallery & release verification:** ran `verify.py perf` (`desktop_title_ms=1407`, `desktop_window_ms=1257`, `desktop_idle_private_mb=269.1` with 22 MB live / 32 MB committed heap, `apk_mb=4.3`), `UiGalleryTest` (4 passed), ProGuard `META-INF/services` check (`[]`), `affected` (454 passed + Android compile), and cleaned `TODO.md` / `MEMORY.md`.
 
 ### For the user
 
