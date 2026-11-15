@@ -250,8 +250,23 @@ internal class SnapshotFileStorage(
         for (id in ids) {
             val loaded = runCatching {
                 val folder = File(chats, id)
-                val candidates = listOf(File(folder, "chat.json"), File(folder, "chat.json.tmp"), File(folder, "chat.prev.json"),
-                    File(chats, "$id.json"), File(chats, "$id.json.tmp"))
+                val primary = File(folder, "chat.json")
+                val legacy = File(chats, "$id.json")
+                // Fast path: healthy chats with no pending legacy file validate in a single read/parse pass.
+                if (!legacy.isFile) {
+                    val fastRaw = read(primary)
+                    if (fastRaw != null) {
+                        val parsed = runCatching { json.decodeFromString<ChatSession>(fastRaw) }.getOrNull()
+                        if (parsed != null &&
+                            parsed.id.isNotBlank() &&
+                            parsed.id.trim().replace(unsafeSessionCharacters, "_") == id
+                        ) {
+                            return@runCatching fastRaw
+                        }
+                    }
+                }
+                val candidates = listOf(primary, File(folder, "chat.json.tmp"), File(folder, "chat.prev.json"),
+                    legacy, File(chats, "$id.json.tmp"))
                 val actualId = candidates.firstNotNullOfOrNull { candidate ->
                     read(candidate)?.let { raw -> runCatching { json.decodeFromString<ChatIdentity>(raw).id }.getOrNull() }
                         ?.takeIf { it.isNotBlank() && it.trim().replace(unsafeSessionCharacters, "_") == id }

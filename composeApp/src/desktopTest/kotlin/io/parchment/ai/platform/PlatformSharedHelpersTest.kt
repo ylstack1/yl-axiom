@@ -474,4 +474,23 @@ class PlatformSharedHelpersTest {
             roots.forEach { it.deleteRecursively() }
         }
     }
+
+    @Test
+    fun workspaceScannerBoundsMaxTreeEntriesInCachedAndUncachedModes() {
+        val root = Files.createTempDirectory("parchment-tree-bound-").toFile()
+        try {
+            for (i in 1..20) {
+                File(root, "f-${i.toString().padStart(2, '0')}.txt").writeText("needle $i\n")
+            }
+            val cachedBounded = WorkspaceTreeScanner(desktopConfig().copy(maxTreeEntries = 5))
+            val listed = cachedBounded.list(root.absolutePath, "", recursive = true).getOrThrow().lines()
+            assertEquals(5, listed.size, "Expected recursive list to obey maxTreeEntries=5: $listed")
+
+            val uncachedBounded = WorkspaceTreeScanner(androidConfig().copy(maxTreeEntries = 4))
+            val searched = uncachedBounded.search(root.absolutePath, "needle", "").getOrThrow().lines()
+            assertEquals(4, searched.size, "Expected uncached search to obey maxTreeEntries=4: $searched")
+        } finally {
+            root.deleteRecursively()
+        }
+    }
 }

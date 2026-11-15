@@ -17,8 +17,11 @@ internal data class WorkspaceScanConfig(
     val maxSearchHits: Int,
     val maxSearchLineChars: Int,
     val parallelSearch: Boolean,
-    val filterSearchByRelPath: Boolean
+    val filterSearchByRelPath: Boolean,
+    val maxTreeEntries: Int = DEFAULT_MAX_TREE_ENTRIES
 )
+
+private const val DEFAULT_MAX_TREE_ENTRIES = 25_000
 
 /** Shared sandboxed workspace directory listing, glob matching, and text search with optional tree caching. */
 internal class WorkspaceTreeScanner(
@@ -113,7 +116,7 @@ internal class WorkspaceTreeScanner(
         val sourceEntries = if (config.useTreeCache) {
             getOrBuildRootTree(rootFile)
         } else {
-            walkEntries(rootFile, rootPath).toList()
+            walkEntries(rootFile, rootPath).take(config.maxTreeEntries.coerceAtLeast(1)).toList()
         }
         val candidates = sourceEntries.filter { entry ->
             !entry.isDirectory &&
@@ -126,12 +129,14 @@ internal class WorkspaceTreeScanner(
 
         val hitCount = AtomicInteger(0)
         val matches = if (config.parallelSearch) {
-            candidates.parallelStream()
+            val perFileHits = candidates.parallelStream()
                 .map { entry -> searchSingleFile(entry, rootPath, query, regex, hitCount) }
-                .filter { it != null }
                 .collect(Collectors.toList())
-                .filterNotNull()
-                .flatten()
+            buildList {
+                for (hits in perFileHits) {
+                    if (hits != null) addAll(hits)
+                }
+            }
         } else {
             buildList {
                 for (entry in candidates) {
@@ -198,7 +203,7 @@ internal class WorkspaceTreeScanner(
                 return inside.entries
             }
             val rootPath = rootFile.toPath().normalize()
-            val built = walkEntries(rootFile, rootPath).toList()
+            val built = walkEntries(rootFile, rootPath).take(config.maxTreeEntries.coerceAtLeast(1)).toList()
             cachedTree = CachedWorkspaceTree(canonPath, freshNow, built)
             return built
         }

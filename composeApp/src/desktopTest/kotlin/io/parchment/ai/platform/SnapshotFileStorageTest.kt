@@ -129,10 +129,19 @@ class SnapshotFileStorageTest {
     }
 
     @Test
-    fun sanitizedImportedIdsRemainLoadableAndCannotCollide() = withStorage { _, storage ->
+    fun sanitizedImportedIdsRemainLoadableAndCannotCollide() = withStorage { root, storage ->
         val original = chat("imported:chat", "imported content")
+        val regularPrev = chat("normal-chat", "previous content")
+        val regular = chat("normal-chat", "regular content")
         storage.saveChat("imported:chat", original)
-        assertEquals(listOf(original), storage.loadAllChats())
+        storage.saveChat("normal-chat", regularPrev)
+        storage.saveChat("normal-chat", regular)
+        assertEquals(setOf(original, regular), storage.loadAllChats().toSet())
+
+        // Single-pass fast path in chats() must still recover cleanly via chat.prev.json when primary chat.json is corrupt
+        File(root, "chats/normal-chat/chat.json").writeText("{corrupt")
+        assertEquals(setOf(original, regularPrev), storage.loadAllChats().toSet())
+
         assertFailsWith<IOException> { storage.saveChat("imported/chat", chat("imported/chat", "collision")) }
         assertEquals(original, storage.loadChat("imported:chat"))
     }

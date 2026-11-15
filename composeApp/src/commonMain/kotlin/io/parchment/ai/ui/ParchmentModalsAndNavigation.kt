@@ -744,7 +744,7 @@ internal fun TopEditorialBar(
                             .clip(tabBadgeShape)
                             .background(if (backgroundStreamingCount > 0) p.accent.copy(alpha = 0.16f) else p.cardBg)
                             .border(
-                                width = if (backgroundStreamingCount > 0) 1.dp else 1.dp,
+                                width = LineWidth.hairline,
                                 color = if (backgroundStreamingCount > 0) p.accent else p.border,
                                 shape = tabBadgeShape
                             )

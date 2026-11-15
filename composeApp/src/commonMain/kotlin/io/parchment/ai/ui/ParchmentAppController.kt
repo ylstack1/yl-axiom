@@ -1159,11 +1159,6 @@ internal class ParchmentAppController(
             } else {
                 newVariants.lastIndex
             }
-            val baseList = if (prefs.deleteMessagesBelowWhenRegenerating) {
-                sess.messages.subList(0, nodeIndex + 1)
-            } else {
-                sess.messages
-            }
             updateSessionById(sess.id, immediate = true) { s ->
                 val sliced = if (prefs.deleteMessagesBelowWhenRegenerating) {
                     s.messages.take(nodeIndex + 1)

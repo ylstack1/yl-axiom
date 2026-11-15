@@ -543,23 +543,37 @@ internal fun dehydrateChatSessionToCompactStub(session: ChatSession): ChatSessio
     val lastPreviewText = lastNode.activeVariant.content.take(
         if (lastNode.pinned) maxOf(140, PIN_PREVIEW_CHARS) else 140
     )
+    var hasAttachments = false
+    var hasMedia = false
+    for (msg in session.messages) {
+        for (v in msg.variants) {
+            if (!hasAttachments && v.attachments.isNotEmpty()) hasAttachments = true
+            if (!hasMedia && v.mediaItems.isNotEmpty()) hasMedia = true
+            if (hasAttachments && hasMedia) break
+        }
+        if (hasAttachments && hasMedia) break
+    }
     // Preserve only localFilePath references so Storage Manager orphan detection knows which media files belong to this chat
-    val refAttachments = session.messages
-        .asSequence()
-        .flatMap { it.variants.asSequence() }
-        .flatMap { it.attachments.asSequence() }
-        .filter { it.localFilePath.isNotBlank() }
-        .map { PromptAttachment(id = "", fileName = "", mimeType = "", localFilePath = it.localFilePath) }
-        .distinctBy { it.localFilePath }
-        .toList()
-    val refMedia = session.messages
-        .asSequence()
-        .flatMap { it.variants.asSequence() }
-        .flatMap { it.mediaItems.asSequence() }
-        .filter { it.localFilePath.isNotBlank() }
-        .map { GeneratedMediaItem(id = "", kind = io.parchment.ai.model.MediaKind.IMAGE, mimeType = "", localFilePath = it.localFilePath) }
-        .distinctBy { it.localFilePath }
-        .toList()
+    val refAttachments = if (!hasAttachments) emptyList() else {
+        session.messages
+            .asSequence()
+            .flatMap { it.variants.asSequence() }
+            .flatMap { it.attachments.asSequence() }
+            .filter { it.localFilePath.isNotBlank() }
+            .map { PromptAttachment(id = "", fileName = "", mimeType = "", localFilePath = it.localFilePath) }
+            .distinctBy { it.localFilePath }
+            .toList()
+    }
+    val refMedia = if (!hasMedia) emptyList() else {
+        session.messages
+            .asSequence()
+            .flatMap { it.variants.asSequence() }
+            .flatMap { it.mediaItems.asSequence() }
+            .filter { it.localFilePath.isNotBlank() }
+            .map { GeneratedMediaItem(id = "", kind = io.parchment.ai.model.MediaKind.IMAGE, mimeType = "", localFilePath = it.localFilePath) }
+            .distinctBy { it.localFilePath }
+            .toList()
+    }
     val stubLastNode = MessageNode(
         id = lastNode.id,
         role = lastNode.role,

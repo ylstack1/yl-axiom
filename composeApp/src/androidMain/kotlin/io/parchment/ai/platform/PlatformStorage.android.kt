@@ -79,10 +79,14 @@ actual object PlatformStorage {
     actual fun loadImageBitmapFromFile(filePath: String): ImageBitmap? =
         imageCache.getOrLoad(filePath, ::resolveLocalMediaFile, ::decodeSampledBitmap)
 
+    private const val MAX_ENCODED_IMAGE_BYTES = 128L * 1024L * 1024L
+
     private fun decodeSampledBitmap(file: File): ImageBitmap? {
+        if (file.length() !in 1..MAX_ENCODED_IMAGE_BYTES) return null
         // Decode bounds first and downsample large 2K/4K images for UI display to minimize RAM.
         val boundsOpts = BitmapFactory.Options().apply { inJustDecodeBounds = true }
         BitmapFactory.decodeFile(file.absolutePath, boundsOpts)
+        if (boundsOpts.outWidth <= 0 || boundsOpts.outHeight <= 0) return null
         val maxDim = 1600
         var sampleSize = 1
         while ((boundsOpts.outWidth / sampleSize) > maxDim || (boundsOpts.outHeight / sampleSize) > maxDim) {
