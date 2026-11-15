@@ -113,14 +113,18 @@ internal data class Affine2D(
     val tx: Float = 0f,
     val ty: Float = 0f
 ) {
-    fun preConcat(other: Affine2D): Affine2D = Affine2D(
-        a = a * other.a + c * other.b,
-        b = b * other.a + d * other.b,
-        c = a * other.c + c * other.d,
-        d = b * other.c + d * other.d,
-        tx = a * other.tx + c * other.ty + tx,
-        ty = b * other.tx + d * other.ty + ty
-    )
+    fun preConcat(other: Affine2D): Affine2D {
+        if (other === IDENTITY_TRANSFORM) return this
+        if (this === IDENTITY_TRANSFORM) return other
+        return Affine2D(
+            a = a * other.a + c * other.b,
+            b = b * other.a + d * other.b,
+            c = a * other.c + c * other.d,
+            d = b * other.c + d * other.d,
+            tx = a * other.tx + c * other.ty + tx,
+            ty = b * other.tx + d * other.ty + ty
+        )
+    }
 
     fun mapX(x: Float, y: Float): Float = a * x + c * y + tx
     fun mapY(x: Float, y: Float): Float = b * x + d * y + ty
@@ -131,24 +135,26 @@ internal data class Affine2D(
         return ((sx + sy) * 0.5f).coerceAtLeast(0.001f)
     }
 
-    fun toComposeMatrix(viewMinX: Float, viewMinY: Float, viewScale: Float, offsetX: Float, offsetY: Float): Matrix {
+    fun fillComposeMatrix(
+        target: Matrix,
+        viewMinX: Float,
+        viewMinY: Float,
+        viewScale: Float,
+        offsetX: Float,
+        offsetY: Float
+    ) {
         // Total transform: first apply SVG local affine, then shift by (-viewMinX, -viewMinY), then scale by viewScale and offset
-        val totalA = a * viewScale
-        val totalB = b * viewScale
-        val totalC = c * viewScale
-        val totalD = d * viewScale
-        val totalTx = (tx - viewMinX) * viewScale + offsetX
-        val totalTy = (ty - viewMinY) * viewScale + offsetY
-        return Matrix().apply {
-            values[Matrix.ScaleX] = totalA
-            values[Matrix.SkewY] = totalB
-            values[Matrix.SkewX] = totalC
-            values[Matrix.ScaleY] = totalD
-            values[Matrix.TranslateX] = totalTx
-            values[Matrix.TranslateY] = totalTy
-        }
+        val m = target.values
+        m[Matrix.ScaleX] = a * viewScale
+        m[Matrix.SkewY] = b * viewScale
+        m[Matrix.SkewX] = c * viewScale
+        m[Matrix.ScaleY] = d * viewScale
+        m[Matrix.TranslateX] = (tx - viewMinX) * viewScale + offsetX
+        m[Matrix.TranslateY] = (ty - viewMinY) * viewScale + offsetY
     }
 }
+
+private val IDENTITY_TRANSFORM = Affine2D()
 
 internal data class SvgRenderItem(
     val path: Path,
@@ -156,12 +162,168 @@ internal data class SvgRenderItem(
     val transform: Affine2D
 )
 
+private class PreparedSvgItem(
+    val path: Path,
+    val hasFill: Boolean,
+    val fillColor: Color,
+    val fillBrush: Brush?,
+    val hasStroke: Boolean,
+    val strokeColor: Color,
+    val strokeBrush: Brush?,
+    val strokeStyle: Stroke?
+)
+
+private class PreparedSvgCache(private val scene: SvgSceneDocument) {
+    private var widthPx: Float = -1f
+    private var heightPx: Float = -1f
+    private var prepared: List<PreparedSvgItem> = emptyList()
+    private val matrixScratch = Matrix()
+
+    fun getOrPrepare(w: Float, h: Float): List<PreparedSvgItem> {
+        if (w == widthPx && h == heightPx) return prepared
+
+        val scaleX = w / scene.width.coerceAtLeast(1f)
+        val scaleY = h / scene.height.coerceAtLeast(1f)
+        val s = min(scaleX, scaleY)
+        val drawW = scene.width * s
+        val drawH = scene.height * s
+        val padX = (w - drawW) * 0.5f
+        val padY = (h - drawH) * 0.5f
+
+        val prev = prepared
+        val items = ArrayList<PreparedSvgItem>(scene.drawItems.size)
+        var reuseIdx = 0
+
+        for (item in scene.drawItems) {
+            val totalAlpha = item.style.opacity.coerceIn(0f, 1f)
+            if (totalAlpha <= 0.001f) continue
+
+            val fillAlpha = (totalAlpha * item.style.fillOpacity).coerceIn(0f, 1f)
+            val strokeAlpha = (totalAlpha * item.style.strokeOpacity).coerceIn(0f, 1f)
+            val avgScale = item.transform.avgScale()
+            val effStrokeWidth = item.style.strokeWidth * avgScale * s
+            val needsStroke = strokeAlpha > 0.001f && effStrokeWidth > 0.05f && item.style.stroke !is SvgPaintSpec.None
+            val needsFill = fillAlpha > 0.001f && item.style.fill !is SvgPaintSpec.None
+            if (!needsFill && !needsStroke) continue
+
+            val transformedPath = if (reuseIdx < prev.size) {
+                prev[reuseIdx++].path.apply { reset() }
+            } else {
+                Path()
+            }.apply {
+                fillType = item.style.fillRule
+                addPath(item.path)
+                item.transform.fillComposeMatrix(matrixScratch, scene.minX, scene.minY, s, padX, padY)
+                transform(matrixScratch)
+            }
+
+            val needsBounds = (needsFill && item.style.fill is SvgPaintSpec.GradientRef) ||
+                (needsStroke && item.style.stroke is SvgPaintSpec.GradientRef)
+            val bounds = if (needsBounds) transformedPath.getBounds() else androidx.compose.ui.geometry.Rect.Zero
+
+            var hasFill = false
+            var fillColor = Color.Transparent
+            var fillBrush: Brush? = null
+            if (needsFill) {
+                when (val fillSpec = item.style.fill) {
+                    is SvgPaintSpec.Solid -> {
+                        val col = if (fillAlpha >= 0.9999f) fillSpec.color else fillSpec.color.copy(
+                            alpha = (fillSpec.color.alpha * fillAlpha).coerceIn(0f, 1f)
+                        )
+                        if (col.alpha > 0.001f) {
+                            hasFill = true
+                            fillColor = col
+                        }
+                    }
+                    is SvgPaintSpec.GradientRef -> {
+                        val brush = scene.gradients[fillSpec.id]?.toComposeBrush(
+                            bounds, item.transform, avgScale, scene.minX, scene.minY, s, padX, padY, fillAlpha
+                        )
+                        if (brush != null) {
+                            hasFill = true
+                            fillBrush = brush
+                        }
+                    }
+                    is SvgPaintSpec.None -> {}
+                }
+            }
+
+            var hasStroke = false
+            var strokeColor = Color.Transparent
+            var strokeBrush: Brush? = null
+            var strokeStyle: Stroke? = null
+            if (needsStroke) {
+                val dashEffect = item.style.strokeDashArray?.let { rawDashes ->
+                    val scaledLen = if (rawDashes.size % 2 == 1) rawDashes.size * 2 else rawDashes.size
+                    if (scaledLen >= 2) {
+                        val dashScale = avgScale * s
+                        val scaledDashes = FloatArray(scaledLen) { idx ->
+                            (rawDashes[idx % rawDashes.size] * dashScale).coerceAtLeast(1f)
+                        }
+                        PathEffect.dashPathEffect(scaledDashes, 0f)
+                    } else null
+                }
+                val candidateStyle = Stroke(
+                    width = effStrokeWidth,
+                    cap = item.style.strokeCap,
+                    join = item.style.strokeJoin,
+                    pathEffect = dashEffect
+                )
+                when (val strokeSpec = item.style.stroke) {
+                    is SvgPaintSpec.Solid -> {
+                        val col = if (strokeAlpha >= 0.9999f) strokeSpec.color else strokeSpec.color.copy(
+                            alpha = (strokeSpec.color.alpha * strokeAlpha).coerceIn(0f, 1f)
+                        )
+                        if (col.alpha > 0.001f) {
+                            hasStroke = true
+                            strokeColor = col
+                            strokeStyle = candidateStyle
+                        }
+                    }
+                    is SvgPaintSpec.GradientRef -> {
+                        val brush = scene.gradients[strokeSpec.id]?.toComposeBrush(
+                            bounds, item.transform, avgScale, scene.minX, scene.minY, s, padX, padY, strokeAlpha
+                        )
+                        if (brush != null) {
+                            hasStroke = true
+                            strokeBrush = brush
+                            strokeStyle = candidateStyle
+                        }
+                    }
+                    is SvgPaintSpec.None -> {}
+                }
+            }
+
+            if (hasFill || hasStroke) {
+                items.add(
+                    PreparedSvgItem(
+                        path = transformedPath,
+                        hasFill = hasFill,
+                        fillColor = fillColor,
+                        fillBrush = fillBrush,
+                        hasStroke = hasStroke,
+                        strokeColor = strokeColor,
+                        strokeBrush = strokeBrush,
+                        strokeStyle = strokeStyle
+                    )
+                )
+            }
+        }
+
+        widthPx = w
+        heightPx = h
+        prepared = items
+        return items
+    }
+}
+
 @Composable
 internal fun InlineSvgArtifactPreview(rawSvg: String) {
     val p = LocalParchmentPalette.current
     val scene = remember(rawSvg, p.primaryInk) {
         runCatching { parseSvgSceneDocument(rawSvg, p.primaryInk) }.getOrNull()
     }
+    val preparedCache = remember(scene) { scene?.let(::PreparedSvgCache) }
 
     Box(
         modifier = Modifier
@@ -171,7 +333,7 @@ internal fun InlineSvgArtifactPreview(rawSvg: String) {
             .padding(Space.s12),
         contentAlignment = Alignment.Center
     ) {
-        if (scene == null || scene.drawItems.isEmpty()) {
+        if (scene == null || preparedCache == null || scene.drawItems.isEmpty()) {
             BasicText(
                 text = Strings.svgSourceReadyTapSave,
                 style = p.uiLabelStyle
@@ -186,77 +348,24 @@ internal fun InlineSvgArtifactPreview(rawSvg: String) {
                     .clip(RoundedCornerShape(Radius.r8))
                     .then(if (canvasBg != Color.Transparent) Modifier.background(canvasBg) else Modifier)
             ) {
-                val scaleX = size.width / scene.width.coerceAtLeast(1f)
-                val scaleY = size.height / scene.height.coerceAtLeast(1f)
-                val s = min(scaleX, scaleY)
-                val drawW = scene.width * s
-                val drawH = scene.height * s
-                val padX = (size.width - drawW) * 0.5f
-                val padY = (size.height - drawH) * 0.5f
-
-                for (item in scene.drawItems) {
-                    val totalAlpha = item.style.opacity.coerceIn(0f, 1f)
-                    if (totalAlpha <= 0.001f) continue
-
-                    val transformedPath = Path().apply {
-                        fillType = item.style.fillRule
-                        addPath(item.path)
-                        transform(item.transform.toComposeMatrix(scene.minX, scene.minY, s, padX, padY))
-                    }
-                    val bounds = transformedPath.getBounds()
-
-                    // 1. Draw Fill
-                    val fillAlpha = (totalAlpha * item.style.fillOpacity).coerceIn(0f, 1f)
-                    if (fillAlpha > 0.001f) {
-                        when (val fillSpec = item.style.fill) {
-                            is SvgPaintSpec.Solid -> {
-                                val col = fillSpec.color.copy(alpha = (fillSpec.color.alpha * fillAlpha).coerceIn(0f, 1f))
-                                if (col.alpha > 0.001f) {
-                                    drawPath(path = transformedPath, color = col)
-                                }
-                            }
-                            is SvgPaintSpec.GradientRef -> {
-                                val grad = scene.gradients[fillSpec.id]
-                                val brush = grad?.toComposeBrush(bounds, item.transform, scene.minX, scene.minY, s, padX, padY, fillAlpha)
-                                if (brush != null) {
-                                    drawPath(path = transformedPath, brush = brush)
-                                }
-                            }
-                            is SvgPaintSpec.None -> {}
+                val items = preparedCache.getOrPrepare(size.width, size.height)
+                for (i in 0 until items.size) {
+                    val item = items[i]
+                    if (item.hasFill) {
+                        val fBrush = item.fillBrush
+                        if (fBrush != null) {
+                            drawPath(path = item.path, brush = fBrush)
+                        } else {
+                            drawPath(path = item.path, color = item.fillColor)
                         }
                     }
-
-                    // 2. Draw Stroke
-                    val strokeAlpha = (totalAlpha * item.style.strokeOpacity).coerceIn(0f, 1f)
-                    val effStrokeWidth = item.style.strokeWidth * item.transform.avgScale() * s
-                    if (strokeAlpha > 0.001f && effStrokeWidth > 0.05f && item.style.stroke !is SvgPaintSpec.None) {
-                        val dashEffect = item.style.strokeDashArray?.let { rawDashes ->
-                            val scaledDashes = FloatArray(if (rawDashes.size % 2 == 1) rawDashes.size * 2 else rawDashes.size) { idx ->
-                                (rawDashes[idx % rawDashes.size] * item.transform.avgScale() * s).coerceAtLeast(1f)
-                            }
-                            if (scaledDashes.size >= 2) PathEffect.dashPathEffect(scaledDashes, 0f) else null
-                        }
-                        val strokeDrawStyle = Stroke(
-                            width = effStrokeWidth,
-                            cap = item.style.strokeCap,
-                            join = item.style.strokeJoin,
-                            pathEffect = dashEffect
-                        )
-                        when (val strokeSpec = item.style.stroke) {
-                            is SvgPaintSpec.Solid -> {
-                                val col = strokeSpec.color.copy(alpha = (strokeSpec.color.alpha * strokeAlpha).coerceIn(0f, 1f))
-                                if (col.alpha > 0.001f) {
-                                    drawPath(path = transformedPath, color = col, style = strokeDrawStyle)
-                                }
-                            }
-                            is SvgPaintSpec.GradientRef -> {
-                                val grad = scene.gradients[strokeSpec.id]
-                                val brush = grad?.toComposeBrush(bounds, item.transform, scene.minX, scene.minY, s, padX, padY, strokeAlpha)
-                                if (brush != null) {
-                                    drawPath(path = transformedPath, brush = brush, style = strokeDrawStyle)
-                                }
-                            }
-                            is SvgPaintSpec.None -> {}
+                    val sStyle = item.strokeStyle
+                    if (item.hasStroke && sStyle != null) {
+                        val sBrush = item.strokeBrush
+                        if (sBrush != null) {
+                            drawPath(path = item.path, brush = sBrush, style = sStyle)
+                        } else {
+                            drawPath(path = item.path, color = item.strokeColor, style = sStyle)
                         }
                     }
                 }
@@ -268,6 +377,7 @@ internal fun InlineSvgArtifactPreview(rawSvg: String) {
 private fun SvgGradientDef.toComposeBrush(
     bounds: androidx.compose.ui.geometry.Rect,
     transform: Affine2D,
+    avgTransformScale: Float,
     viewMinX: Float,
     viewMinY: Float,
     viewScale: Float,
@@ -276,9 +386,10 @@ private fun SvgGradientDef.toComposeBrush(
     alphaMultiplier: Float
 ): Brush? {
     if (stops.isEmpty()) return null
-    val colorStops = stops.map { (frac, col) ->
+    val colorStops = Array(stops.size) { idx ->
+        val (frac, col) = stops[idx]
         frac.coerceIn(0f, 1f) to col.copy(alpha = (col.alpha * alphaMultiplier).coerceIn(0f, 1f))
-    }.toTypedArray()
+    }
 
     return when (this) {
         is SvgGradientDef.Linear -> {
@@ -325,7 +436,7 @@ private fun SvgGradientDef.toComposeBrush(
             val radiusPx = if (isObjectBoundingBox) {
                 (r * max(bounds.width, bounds.height)).coerceAtLeast(1f)
             } else {
-                (r * transform.avgScale() * viewScale).coerceAtLeast(1f)
+                (r * avgTransformScale * viewScale).coerceAtLeast(1f)
             }
             if (colorStops.size == 1) {
                 Brush.radialGradient(listOf(colorStops[0].second, colorStops[0].second))
@@ -350,8 +461,13 @@ private val SVG_TRANSFORM_FN_REGEX = Regex("""(?<![a-zA-Z])([a-zA-Z]++)\s*+\(([^
 private val SVG_NUMBER_TOKEN_REGEX = Regex("""[-+]?(?:\d+\.?\d*|\.\d+)(?:[eE][-+]?\d+)?""")
 
 private fun stripSvgComments(raw: String): String {
+    val first = raw.indexOf("<!--")
+    if (first == -1) return raw
     val out = StringBuilder(raw.length)
-    var cursor = 0
+    out.append(raw, 0, first)
+    val closeFirst = raw.indexOf("-->", first + 4)
+    if (closeFirst == -1) return out.toString()
+    var cursor = closeFirst + 3
     while (true) {
         val open = raw.indexOf("<!--", cursor)
         if (open == -1) return out.append(raw, cursor, raw.length).toString()
@@ -428,7 +544,7 @@ internal fun parseSvgSceneDocument(rawSvg: String, defaultCurrentColor: Color = 
     val tagStack = ArrayDeque<String>()
 
     styleStack.addLast(SvgInheritedStyle(fill = SvgPaintSpec.Solid(Color.Black)))
-    transformStack.addLast(Affine2D())
+    transformStack.addLast(IDENTITY_TRANSFORM)
 
     var insideDefsDepth = 0
     var activeGradientTag: String? = null
@@ -493,7 +609,7 @@ internal fun parseSvgSceneDocument(rawSvg: String, defaultCurrentColor: Color = 
         if (rawTagName == "svg") {
             val vb = attrs["viewbox"] ?: attrs["viewBox"]
             if (!vb.isNullOrBlank()) {
-                val parts = vb.trim().split(Regex("[\\s,]+")).mapNotNull { it.toFloatOrNull() }
+                val parts = vb.trim().split(SVG_WS_COMMA_REGEX).mapNotNull { it.toFloatOrNull() }
                 if (parts.size >= 4) {
                     minX = parts[0]
                     minY = parts[1]
@@ -512,7 +628,7 @@ internal fun parseSvgSceneDocument(rawSvg: String, defaultCurrentColor: Color = 
         val parentStyle = styleStack.last()
         val parentTransform = transformStack.last()
         val currentStyle = resolveChildSvgStyle(parentStyle, attrs, defaultCurrentColor)
-        val localTransform = attrs["transform"]?.let { parseSvgTransform(it) } ?: Affine2D()
+        val localTransform = attrs["transform"]?.let { parseSvgTransform(it) } ?: IDENTITY_TRANSFORM
         val currentTransform = parentTransform.preConcat(localTransform)
 
         val shapePath: Path? = when (rawTagName) {
@@ -832,7 +948,7 @@ private fun parseSvgLength(raw: String?, defaultVal: Float, containerSpan: Float
 }
 
 internal fun parseSvgTransform(raw: String): Affine2D {
-    var result = Affine2D()
+    var result = IDENTITY_TRANSFORM
     val fnRegex = SVG_TRANSFORM_FN_REGEX
     for (m in fnRegex.findAll(raw)) {
         val fn = m.groupValues[1].lowercase()
@@ -873,9 +989,9 @@ internal fun parseSvgTransform(raw: String): Affine2D {
             "matrix" -> {
                 if (args.size >= 6) {
                     Affine2D(a = args[0], b = args[1], c = args[2], d = args[3], tx = args[4], ty = args[5])
-                } else Affine2D()
+                } else IDENTITY_TRANSFORM
             }
-            else -> Affine2D()
+            else -> IDENTITY_TRANSFORM
         }
         result = result.preConcat(step)
     }

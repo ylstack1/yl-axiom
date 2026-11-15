@@ -226,4 +226,44 @@ class RendererBoundsTest {
             blocks
         )
     }
+
+    @Test fun latexAndSvgOptimizationsPreserveFormattingAndGeometry() {
+        val inline = LatexMathRenderer.formatInlineLatexToAnnotatedString(
+            "  xyz^{ab} + \\mathbb{R} - \\sqrt[3]{k_i}  ",
+            palette
+        )
+        assertEquals("xyzab + ℝ − 3√(ki)", inline.text)
+        // Outer base style + coalesced italic "xyz" + italic "ab" + italic "k" + italic "i" (NOT 1 span per letter)
+        val italicSpans = inline.spanStyles.filter { it.item.fontStyle == androidx.compose.ui.text.font.FontStyle.Italic }
+        assertTrue(italicSpans.any { inline.text.substring(it.start, it.end) == "xyz" })
+        assertTrue(italicSpans.any { inline.text.substring(it.start, it.end) == "ab" })
+        assertTrue(
+            inline.spanStyles.any {
+                it.item.baselineShift == androidx.compose.ui.text.style.BaselineShift.Superscript &&
+                    inline.text.substring(it.start, it.end) == "3"
+            }
+        )
+
+        val displayNodes = LatexMathRenderer.parseDisplayMathNodes("\\frac{alpha + 1}{beta - 2}", palette)
+        assertEquals(1, displayNodes.size)
+        val frac = displayNodes.single() as LatexMathRenderer.DisplayMathNode.StackedFraction
+        assertEquals("alpha + 1", frac.numerator.text)
+        assertEquals("beta − 2", frac.denominator.text)
+
+        val svg = """
+            <svg viewBox="0, 0 120 80">
+              <defs>
+                <linearGradient id="g"><stop offset="0%" stop-color="#112233"/><stop offset="100%" stop-color="#445566"/></linearGradient>
+              </defs>
+              <g transform="translate(10, 5)">
+                <rect x="0" y="0" width="40" height="20" fill="url(#g)" stroke="#000000" stroke-dasharray="3,2"/>
+              </g>
+            </svg>
+        """.trimIndent()
+        val scene = assertNotNull(parseSvgSceneDocument(svg, Color.Black))
+        assertEquals(120f, scene.width)
+        assertEquals(80f, scene.height)
+        assertEquals(1, scene.drawItems.size)
+        assertTrue(scene.gradients.containsKey("g"))
+    }
 }
