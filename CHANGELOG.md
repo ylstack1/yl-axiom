@@ -2,6 +2,13 @@
 
 What changed in each release, newest first. From 2.1.7 on, release-please writes these entries from commit messages that follow [Conventional Commits](https://www.conventionalcommits.org/) (`feat:` and `fix:` appear here and set the next version); edit wording in its release PR before merging it.
 
+## [2.2.2](https://github.com/baros4294/parchment/compare/v2.2.1...v2.2.2) (2026-11-15)
+
+
+### Fixes
+
+* **ui:** add scrim and elevated surface contrast to tab switcher modal ([b1c93f5](https://github.com/baros4294/parchment/commit/b1c93f5ff121ce4a988cd5f74a37e87adfc4f0c6))
+
 ## [2.2.1](https://github.com/baros4294/parchment/compare/v2.2.0...v2.2.1) (2026-11-15)
 
 
