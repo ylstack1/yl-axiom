@@ -62,6 +62,18 @@ actual object PlatformStorage {
     actual fun deleteAppStorageFile(fullPath: String): Boolean =
         AppStorageInventory.deleteFile(fullPath, AndroidPlatformHost.resolveStorageDir()) { imageCache.remove(it) }
 
+    actual fun writeSessionTodoMarkdown(sessionId: String, markdown: String, storageRootOverride: String): Result<String> =
+        AppAgentStorage.writeSessionTodo(AndroidPlatformHost::resolveStorageDir, sessionId, markdown, storageRootOverride)
+
+    actual fun hasGlobalAgentMemory(storageRootOverride: String): Boolean =
+        AppAgentStorage.hasGlobalMemory(AndroidPlatformHost::resolveStorageDir, storageRootOverride)
+
+    actual fun readGlobalAgentMemory(maxLines: Int, storageRootOverride: String): Result<String> =
+        AppAgentStorage.readGlobalMemory(AndroidPlatformHost::resolveStorageDir, maxLines, storageRootOverride)
+
+    actual fun writeGlobalAgentMemory(content: String, storageRootOverride: String): Result<String> =
+        AppAgentStorage.writeGlobalMemory(AndroidPlatformHost::resolveStorageDir, content, storageRootOverride)
+
     internal fun resolveLocalMediaFile(filePath: String): File? = mediaStore.resolve(filePath)
 
     actual fun saveGeneratedMediaFile(fileName: String, bytes: ByteArray, sessionId: String): String =

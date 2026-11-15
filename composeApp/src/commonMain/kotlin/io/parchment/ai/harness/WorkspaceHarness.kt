@@ -7,6 +7,7 @@ import io.parchment.ai.model.ToolApprovalMode
 import io.parchment.ai.model.ToolCallRecord
 import io.parchment.ai.model.WorkspaceMode
 import io.parchment.ai.platform.PlatformRuntime
+import io.parchment.ai.platform.PlatformStorage
 import io.parchment.ai.platform.PlatformWorkspace
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
@@ -76,12 +77,16 @@ object WorkspaceHarness {
     )
 
     /**
-     * Auto-discovers AGENTS.md, CLAUDE.md, PARCHMENT.md, and PARCHMENT_MEMORY.md in the workspace root.
+     * Auto-discovers read-only AGENTS.md, CLAUDE.md, and PARCHMENT.md in the workspace root.
      * Cached in memory with a 10s TTL (and invalidated immediately on workspace writes) so UI frame rendering
      * and `o200k_base` context breakdown never block on synchronous disk I/O.
      */
     fun discoverWorkspaceContextFiles(workspaceRoot: String): String =
         WorkspaceContextCache.discoverContextFiles(workspaceRoot)
+
+    /** Auto-discovers Parchment's global `memory/AGENT.md` when created in application storage. */
+    fun discoverGlobalAgentMemory(appStorageRoot: String = ""): String =
+        WorkspaceContextCache.discoverGlobalMemory(appStorageRoot)
 
     /**
      * Formats active workspace & utility tools for Google Gemini Interactions API (`/v1beta/interactions`)
@@ -200,7 +205,7 @@ object WorkspaceHarness {
                 val cmd = strArg("command").trim()
                 if (cmd.isNotEmpty()) "Running shell_exec\n$ $cmd" else "Running shell_exec"
             }
-            "todo_write" -> "Updating task checklist"
+            "todo_write" -> "Updating chat task checklist"
             "goal_complete" -> "Verifying & completing goal"
             "ask_user" -> "Waiting for your answer"
             "skill_load" -> "Loading skill ${strArg("name")}"
@@ -212,7 +217,7 @@ object WorkspaceHarness {
                 "key" -> "Pressing ${strArg("keys")}"
                 else -> "Using the computer"
             }
-            "agent_memory" -> "Updating PARCHMENT_MEMORY.md (${strArg("action").ifBlank { "read" }})"
+            "agent_memory" -> "Accessing global memory/AGENT.md (${strArg("action").ifBlank { "read" }})"
             "dice_roll" -> "Rolling ${strArg("expression").ifBlank { "1d20" }}"
             else -> "Executing $toolName"
         }
@@ -234,6 +239,8 @@ object WorkspaceHarness {
         goalModeActive: Boolean = false,
         accessScope: ToolAccessScope? = null,
         permit: ToolExecutionPermit? = null,
+        sessionId: String = "",
+        appStorageRoot: String = "",
         isCancelled: () -> Boolean = { false }
     ): ToolCallRecord {
         val toolStartMs = PlatformRuntime.monotonicTimeMillis()
@@ -283,10 +290,10 @@ object WorkspaceHarness {
                         appendLine("- $mark (${t.id}) ${t.content}")
                     }
                 }.trim()
-                if (mode == WorkspaceMode.READ_WRITE && workspaceRoot.isNotBlank()) {
-                    PlatformWorkspace.workspaceWrite(workspaceRoot, "PARCHMENT_TODO.md", mdSummary).getOrThrow()
+                if (sessionId.isNotBlank()) {
+                    PlatformStorage.writeSessionTodoMarkdown(sessionId, mdSummary, appStorageRoot).getOrThrow()
                 }
-                "Updated Todo Checklist ($done/${parsed.size} completed, $active in_progress, $pending pending).\n$mdSummary"
+                "Updated Chat Todo Checklist ($done/${parsed.size} completed, $active in_progress, $pending pending).\n$mdSummary"
             }
             "skill_load" -> discoverSkills(workspaceRoot).find { it.name == strArg("name") }
                 ?.let { PlatformWorkspace.workspaceRead(workspaceRoot, it.path, startLine = 1, maxLines = WorkspaceContextCache.SKILL_MAX_LINES) }
@@ -365,23 +372,23 @@ object WorkspaceHarness {
                 val action = strArg("action", "read").lowercase()
                 val content = strArg("content", "")
                 when (action) {
-                    "read" -> PlatformWorkspace.workspaceRead(workspaceRoot, "PARCHMENT_MEMORY.md", 1, 500)
-                        .recover { "(PARCHMENT_MEMORY.md does not exist yet.)" }
+                    "read" -> PlatformStorage.readGlobalAgentMemory(maxLines = 500, storageRootOverride = appStorageRoot)
+                        .recover { "(memory/AGENT.md does not exist yet.)" }
                     "append" -> {
-                        if (mode != WorkspaceMode.READ_WRITE) {
-                            Result.failure(IllegalStateException("Switch to Agent R/W mode to update PARCHMENT_MEMORY.md."))
+                        if (mode == WorkspaceMode.READ_ONLY) {
+                            Result.failure(IllegalStateException("Workspace is in Read-Only mode. Memory writes are disabled."))
+                        } else if (PlatformStorage.hasGlobalAgentMemory(appStorageRoot)) {
+                            val storageRoot = appStorageRoot.ifBlank { PlatformStorage.getAppStorageDirectoryPath() }
+                            PlatformWorkspace.workspaceAppend(storageRoot, "memory/AGENT.md", "\n\n$content")
                         } else {
-                            // Append without a read-modify-write cycle. Reading the file back would route
-                            // through workspaceRead, which caps at 10k lines / 250k chars and truncates
-                            // over-long lines, silently destroying any memory file past those limits.
-                            PlatformWorkspace.workspaceAppend(workspaceRoot, "PARCHMENT_MEMORY.md", "\n\n$content")
+                            PlatformStorage.writeGlobalAgentMemory(content, storageRootOverride = appStorageRoot)
                         }
                     }
                     "overwrite" -> {
-                        if (mode != WorkspaceMode.READ_WRITE) {
-                            Result.failure(IllegalStateException("Switch to Agent R/W mode to update PARCHMENT_MEMORY.md."))
+                        if (mode == WorkspaceMode.READ_ONLY) {
+                            Result.failure(IllegalStateException("Workspace is in Read-Only mode. Memory writes are disabled."))
                         } else {
-                            PlatformWorkspace.workspaceWrite(workspaceRoot, "PARCHMENT_MEMORY.md", content)
+                            PlatformStorage.writeGlobalAgentMemory(content, storageRootOverride = appStorageRoot)
                         }
                     }
                     else -> Result.failure(IllegalArgumentException("Unknown agent_memory action '$action'."))
@@ -405,7 +412,7 @@ object WorkspaceHarness {
             else -> Result.failure(IllegalArgumentException("Unknown workspace tool '$toolName'."))
         }
 
-        if (toolName in listOf("fs_write", "fs_edit", "fs_multi_edit", "fs_move", "fs_delete", "agent_memory", "shell_exec", "todo_write")) {
+        if (toolName in listOf("fs_write", "fs_edit", "fs_multi_edit", "fs_move", "fs_delete", "agent_memory", "shell_exec")) {
             invalidateWorkspaceCache(workspaceRoot)
         }
 

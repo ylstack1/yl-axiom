@@ -23,8 +23,10 @@ class ForegroundStallTest {
 
     private fun leaveAndReturn() {
         AppForeground.markLeft()
+        assertFalse(AppForeground.isAppVisible.value)
         Thread.sleep(50)
         AppForeground.markResumed()
+        assertTrue(AppForeground.isAppVisible.value)
     }
 
     @Test fun aConnectionCutWhileAwayIsDroppedSoonAfterReturning() = runBlocking<Unit> {

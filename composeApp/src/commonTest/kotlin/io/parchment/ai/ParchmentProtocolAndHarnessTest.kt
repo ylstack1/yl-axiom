@@ -160,7 +160,9 @@ class ParchmentProtocolAndHarnessTest {
 
     @Test
     fun testBuiltInWorkspaceAgentHarnessTools() {
-        val tempRoot = "${PlatformStorage.getAppStorageDirectoryPath()}/test-workspace-${PlatformRuntime.currentTimeMillis()}"
+        val stamp = PlatformRuntime.currentTimeMillis()
+        val tempRoot = "${PlatformStorage.getAppStorageDirectoryPath()}/test-workspace-$stamp"
+        val tempAppStorage = "${PlatformStorage.getAppStorageDirectoryPath()}/test-app-storage-$stamp"
         try {
             // Write a file in READ_WRITE mode
             val writeCall = WorkspaceHarness.executeToolCall(
@@ -232,12 +234,54 @@ class ParchmentProtocolAndHarnessTest {
             assertTrue(dupEdit.isError)
             assertTrue(dupEdit.resultText.contains("lines 1, 3"), "fs_edit must report exact matching line numbers (1, 3): ${dupEdit.resultText}")
 
+            // Verify todo_write stores TODO.md in the open chat session folder, NEVER in the project workspace
+            val sessionTodoCall = WorkspaceHarness.executeToolCall(
+                workspaceRoot = tempRoot,
+                mode = WorkspaceMode.READ_WRITE,
+                callId = "call_session_todo",
+                toolName = "todo_write",
+                sessionId = "session-open-42",
+                appStorageRoot = tempAppStorage,
+                argumentsJson = """{"goal":"Keep repo clean","todos":[{"id":"1","content":"Store in session","status":"in_progress"}]}"""
+            )
+            assertFalse(sessionTodoCall.isError, "session todo_write failed: ${sessionTodoCall.resultText}")
+            val leakedProjectTodo = WorkspaceHarness.executeToolCall(
+                workspaceRoot = tempRoot,
+                mode = WorkspaceMode.READ_ONLY,
+                callId = "call_check_no_project_todo",
+                toolName = "fs_read",
+                argumentsJson = """{"path":"PARCHMENT_TODO.md"}"""
+            )
+            assertTrue(leakedProjectTodo.isError, "todo_write must never write PARCHMENT_TODO.md into workspaceRoot")
+            val storedSessionTodo = WorkspaceHarness.executeToolCall(
+                workspaceRoot = tempAppStorage,
+                mode = WorkspaceMode.READ_ONLY,
+                callId = "call_read_session_todo",
+                toolName = "fs_read",
+                argumentsJson = """{"path":"chats/session-open-42/TODO.md"}"""
+            )
+            assertFalse(storedSessionTodo.isError, "Expected session TODO in chats/session-open-42/TODO.md: ${storedSessionTodo.resultText}")
+            assertTrue(storedSessionTodo.resultText.contains("Store in session"))
+
+            // Verify agent_memory is lazy until needed/requested and writes global memory/AGENT.md, NEVER workspaceRoot
+            val memInitial = WorkspaceHarness.executeToolCall(
+                workspaceRoot = tempRoot,
+                mode = WorkspaceMode.READ_ONLY,
+                callId = "call_mem_0",
+                toolName = "agent_memory",
+                appStorageRoot = tempAppStorage,
+                argumentsJson = """{"action":"read"}"""
+            )
+            assertFalse(PlatformStorage.hasGlobalAgentMemory(tempAppStorage))
+            assertTrue(memInitial.resultText.contains("memory/AGENT.md does not exist yet"))
+
             // Verify agent_memory append preserves blank lines without injecting 'N:' line numbers
             WorkspaceHarness.executeToolCall(
                 workspaceRoot = tempRoot,
                 mode = WorkspaceMode.READ_WRITE,
                 callId = "call_mem_1",
                 toolName = "agent_memory",
+                appStorageRoot = tempAppStorage,
                 argumentsJson = """{"action":"overwrite","content":"Rule 1\n\nRule 2"}"""
             )
             WorkspaceHarness.executeToolCall(
@@ -245,6 +289,7 @@ class ParchmentProtocolAndHarnessTest {
                 mode = WorkspaceMode.READ_WRITE,
                 callId = "call_mem_2",
                 toolName = "agent_memory",
+                appStorageRoot = tempAppStorage,
                 argumentsJson = """{"action":"append","content":"Rule 3"}"""
             )
             val memRead = WorkspaceHarness.executeToolCall(
@@ -252,19 +297,27 @@ class ParchmentProtocolAndHarnessTest {
                 mode = WorkspaceMode.READ_ONLY,
                 callId = "call_mem_3",
                 toolName = "agent_memory",
+                appStorageRoot = tempAppStorage,
                 argumentsJson = """{"action":"read"}"""
             )
+            assertTrue(PlatformStorage.hasGlobalAgentMemory(tempAppStorage))
             assertFalse(memRead.resultText.contains("2: 2:"), "agent_memory append must not corrupt blank lines with line prefixes: ${memRead.resultText}")
             assertTrue(memRead.resultText.contains("Rule 3"))
-        } finally {
-            // Never call wipeAllLocalData() in tests; only clean up the isolated test file
-            WorkspaceHarness.executeToolCall(
+            val leakedProjectMem = WorkspaceHarness.executeToolCall(
                 workspaceRoot = tempRoot,
-                mode = WorkspaceMode.READ_WRITE,
-                callId = "call_cleanup",
-                toolName = "fs_write",
-                argumentsJson = """{"path":"chapter1.md","content":""}"""
+                mode = WorkspaceMode.READ_ONLY,
+                callId = "call_check_no_project_mem",
+                toolName = "fs_read",
+                argumentsJson = """{"path":"PARCHMENT_MEMORY.md"}"""
             )
+            assertTrue(leakedProjectMem.isError, "agent_memory must never write PARCHMENT_MEMORY.md into workspaceRoot")
+            val discoveredGlobal = WorkspaceHarness.discoverGlobalAgentMemory(tempAppStorage)
+            assertTrue(discoveredGlobal.contains("memory/AGENT.md") && discoveredGlobal.contains("Rule 3"))
+        } finally {
+            // Never call wipeAllLocalData() in tests; only clean up the isolated test files
+            PlatformStorage.deleteAppStorageFile("$tempRoot/chapter1.md")
+            PlatformStorage.deleteAppStorageFile("$tempAppStorage/chats/session-open-42/TODO.md")
+            PlatformStorage.deleteAppStorageFile("$tempAppStorage/memory/AGENT.md")
         }
     }
 

@@ -18,11 +18,15 @@ class ComputerUseTest {
     private class FakeControl(override val isAvailable: Boolean = true) : ComputerControl {
         val actions = Collections.synchronizedList(mutableListOf<ComputerAction>())
         var captures = 0
+        @Volatile var actAtNano = 0L
+        @Volatile var captureAtNano = 0L
         override fun screenshot(): Result<ComputerScreenshot> {
+            captureAtNano = System.nanoTime()
             captures++
             return Result.success(ComputerScreenshot("SCREENBYTES", 1280, 720))
         }
         override fun act(action: ComputerAction): Result<String> {
+            actAtNano = System.nanoTime()
             actions += action
             return Result.success("Done: ${action.action}.")
         }
@@ -75,6 +79,29 @@ class ComputerUseTest {
 
     @Test fun aStoppedRunTakesNoFurtherScreenshot() {
         assertNull(ComputerUse.perform(click) { true }.screenshot)
+        assertTrue(fake.actions.isEmpty())
+        assertEquals(0, fake.captures)
+    }
+
+    @Test fun settlesBeforeScreenshotAndBeforeAndAfterAction() {
+        val minSettleNs = 350_000_000L
+        val shotStart = System.nanoTime()
+        val shotOutcome = ComputerUse.perform("""{"action":"screenshot"}""") { false }
+        assertFalse(shotOutcome.isError)
+        assertTrue(fake.captureAtNano - shotStart >= minSettleNs, "Screenshot must wait for approval UI to clear")
+
+        val clickStart = System.nanoTime()
+        val clickOutcome = ComputerUse.perform(click) { false }
+        assertFalse(clickOutcome.isError)
+        assertTrue(fake.actAtNano - clickStart >= minSettleNs, "Gesture must wait for approval UI and touch up to settle")
+        assertTrue(fake.captureAtNano - fake.actAtNano >= minSettleNs, "Post-action screenshot must wait for target UI reaction")
+    }
+
+    @Test fun cancellingDuringPostApprovalSettleNeverActsOrCaptures() {
+        val checks = AtomicInteger(0)
+        val outcome = ComputerUse.perform(click) { checks.incrementAndGet() >= 2 }
+        assertNull(outcome.screenshot)
+        assertTrue(fake.actions.isEmpty(), "Cancelled or revoked approval must not dispatch the gesture")
         assertEquals(0, fake.captures)
     }
 

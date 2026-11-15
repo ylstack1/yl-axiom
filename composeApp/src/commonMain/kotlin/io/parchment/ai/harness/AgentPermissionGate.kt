@@ -33,7 +33,7 @@ object AgentPermissionGate {
         if (name == "agent_memory") {
             val action = (arguments["action"] as? JsonPrimitive)?.contentOrNull ?: "read"
             if (action.lowercase() !in setOf("read", "append", "overwrite")) return "Unknown agent_memory action '$action'."
-            if (action.lowercase() != "read" && policy.workspaceMode != WorkspaceMode.READ_WRITE) return "Workspace is in Read-Only mode. Memory writes are disabled."
+            if (action.lowercase() != "read" && policy.workspaceMode == WorkspaceMode.READ_ONLY) return "Workspace is in Read-Only mode. Memory writes are disabled."
         }
         if (name in setOf("web_search", "web_fetch") && !policy.webAccess) return "Web access is disabled by the current policy."
         if (name == ComputerUse.TOOL_NAME && !policy.computerAccess) return "Computer control is turned off for this chat."
@@ -49,8 +49,7 @@ object AgentPermissionGate {
             ((json.parseToJsonElement(argumentsJson) as? JsonObject)?.get("action") as? JsonPrimitive)?.contentOrNull
         }.getOrNull() ?: "read"
         val changesFiles = name in setOf("fs_write", "fs_edit", "fs_multi_edit", "fs_move", "fs_delete", "shell_exec") ||
-            (name == "agent_memory" && action.lowercase() != "read") ||
-            (name == "todo_write" && scope.policy.hasWorkspace && scope.policy.workspaceMode == WorkspaceMode.READ_WRITE)
+            (name == "agent_memory" && action.lowercase() != "read")
         val changesState = name in setOf("todo_write", "goal_complete")
         val usesWeb = name in setOf("web_search", "web_fetch")
         val external = WorkspaceHarness.isMcpToolName(name) // What another app's tool does cannot be known from here.

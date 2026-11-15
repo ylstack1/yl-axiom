@@ -27,6 +27,7 @@ import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.yield
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonPrimitive
@@ -70,6 +71,8 @@ private suspend fun runComputerTool(permit: ToolExecutionPermit, callId: String,
     fun record(text: String, isError: Boolean, image: String = "") = ToolCallRecord(id = callId, name = name, argumentsJson = argumentsJson, resultText = text, isError = isError, screenshotJpegBase64 = image)
     permit.claim(permit.scope, name, argumentsJson)?.let { return record("Error: $it", true) }
     val job = currentCoroutineContext()[kotlinx.coroutines.Job]
+    // Yield the UI coroutine once so Compose begins removing the approval card before the settle timer starts.
+    yield()
     val outcome = withContext(Dispatchers.IO) { ComputerUse.perform(argumentsJson) { job?.isActive == false || permit.isRevoked() } }
     currentCoroutineContext().ensureActive()
     return record(outcome.text, outcome.isError, outcome.screenshot?.jpegBase64.orEmpty())
@@ -165,6 +168,7 @@ private suspend fun AiProviderEngine.executeWorkspaceToolWithLiveProgress(
         return record.copy(isRunning = false, durationMs = (clock() - startMs).coerceAtLeast(1L),
             thoughtSignature = thoughtSignature, precedingThinking = precedingThinking)
     }
+    val chatSessionId = currentCoroutineContext()[AgentToolRunContext]?.broker?.chatId.orEmpty()
     // The blocking tool runs in `async(Dispatchers.IO)`, which never calls `emit()`; `liveChannel` is read on the
     // caller's coroutine. Emitting from another context would break Flow's context rule and throw.
     return kotlinx.coroutines.coroutineScope {
@@ -181,6 +185,7 @@ private suspend fun AiProviderEngine.executeWorkspaceToolWithLiveProgress(
                     argumentsJson = argumentsJson,
                     accessScope = permit.scope,
                     permit = permit,
+                    sessionId = chatSessionId,
                     isCancelled = { !workerJob.isActive || permit.isRevoked() },
                     onOutputDelta = { partial ->
                         liveChannel.trySend(partial)
@@ -291,6 +296,7 @@ internal suspend fun AiProviderEngine.executeWorkspaceToolBatchWithLiveProgress(
             )
         }
 
+        val chatSessionId = currentCoroutineContext()[AgentToolRunContext]?.broker?.chatId.orEmpty()
         val rawCompleted = kotlinx.coroutines.coroutineScope {
             calls.mapIndexed { idx, (callId, fnName, argsJson) ->
                 val work = activity?.let { RunActivityContext(it, requireNotNull(batch).branches[idx]) }
@@ -312,6 +318,7 @@ internal suspend fun AiProviderEngine.executeWorkspaceToolBatchWithLiveProgress(
                             argumentsJson = argsJson,
                             accessScope = (authorization as ToolAuthorization.Allowed).permit.scope,
                             permit = authorization.permit,
+                            sessionId = chatSessionId,
                             isCancelled = { !workerJob.isActive || authorization.permit.isRevoked() }
                         )
                         raw.copy(

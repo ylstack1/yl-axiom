@@ -42,6 +42,10 @@ internal object ComputerUse {
     fun perform(argumentsJson: String, isCancelled: () -> Boolean): ComputerOutcome {
         val action = parseAction(argumentsJson).getOrElse { return ComputerOutcome("Error: ${it.message}", isError = true) }
         if (!control.isAvailable) return ComputerOutcome("Error: Computer control is not available. On Android, turn on Parchment in Accessibility settings.", isError = true)
+        if (isCancelled()) return ComputerOutcome("The run stopped before the action ran.")
+        // Let the approval card or overlay leave the screen and the user's own tap finish settling first.
+        Thread.sleep(SETTLE_MS)
+        if (isCancelled()) return ComputerOutcome("The run stopped before the action ran.")
         var done = "Screenshot taken."
         if (action.action != "screenshot") {
             done = control.act(action).getOrElse { return ComputerOutcome("Error: ${it.message}", isError = true) }

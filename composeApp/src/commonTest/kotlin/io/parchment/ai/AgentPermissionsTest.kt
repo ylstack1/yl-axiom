@@ -77,10 +77,14 @@ class AgentPermissionsTest {
 
     @Test fun indirectWritesRequirePermissionAndApproval() {
         val rw = ToolAccessScope(AgentPermissionPolicy(workspacePath = "unused", workspaceMode = WorkspaceMode.READ_WRITE))
-        assertTrue(AgentPermissionGate.effect(rw, "todo_write", "{}").requiresApproval)
+        val todoEffect = AgentPermissionGate.effect(rw, "todo_write", "{}")
+        assertTrue(todoEffect.requiresApproval)
+        assertFalse(todoEffect.changesFiles, "todo_write updates chat session state, never project workspace files")
         assertTrue(AgentPermissionGate.effect(rw, "agent_memory", """{"action":"append"}""").changesFiles)
         assertFalse(AgentPermissionGate.effect(rw, "agent_memory", """{"action":"read"}""").requiresApproval)
         assertNotNull(AgentPermissionGate.denial(rw.copy(policy = rw.policy.copy(workspaceMode = WorkspaceMode.READ_ONLY)), "agent_memory", """{"action":"overwrite"}"""))
+        val webOnly = ToolAccessScope(AgentPermissionPolicy(webAccess = true))
+        assertNull(AgentPermissionGate.denial(webOnly, "agent_memory", """{"action":"append","content":"note"}"""))
         assertTrue(WorkspaceHarness.executeToolCall("unused", WorkspaceMode.READ_WRITE, "ask", "todo_write", "{}", accessScope = rw).isError)
     }
 }

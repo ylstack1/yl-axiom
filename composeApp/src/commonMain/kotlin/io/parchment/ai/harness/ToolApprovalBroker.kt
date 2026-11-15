@@ -85,6 +85,12 @@ class ToolApprovalBroker(
     /** Call synchronously from policy/path edits so even an Off→On change invalidates old grants. */
     fun invalidate() { revision.update { it + 1L } }
 
+    private fun publishRequestsLocked() {
+        val currentRequests = pending.values.map { it.request }
+        requestsState.value = currentRequests
+        updateActiveBroker(this, currentRequests)
+    }
+
     private fun reconcileLocked(): ToolAccessScope? {
         val current = currentScope()
         if (current != observedScope || observedRevision != revision.value) {
@@ -93,7 +99,7 @@ class ToolApprovalBroker(
             denials.clear()
             pending.values.forEach { it.answer.complete(ToolApprovalDecision.DENY) }
             pending.clear()
-            requestsState.value = emptyList()
+            publishRequestsLocked()
             clearQuestionsLocked()
             observedScope = current
             observedRevision = revision.value
@@ -143,7 +149,7 @@ class ToolApprovalBroker(
         denials.clear()
         pending.values.forEach { it.answer.complete(ToolApprovalDecision.STOP) }
         pending.clear()
-        requestsState.value = emptyList()
+        publishRequestsLocked()
         clearQuestionsLocked()
     }
 
@@ -164,7 +170,7 @@ class ToolApprovalBroker(
             val waiting = Pending(request, CompletableDeferred())
             approval = waiting
             pending[request.requestId] = waiting
-            requestsState.value = pending.values.map { it.request }
+            publishRequestsLocked()
             null
         }
         if (immediate != null) return immediate
@@ -195,7 +201,7 @@ class ToolApprovalBroker(
             withContext(NonCancellable) {
                 mutex.withLock {
                     pending.remove(waiting.request.requestId)
-                    requestsState.value = pending.values.map { it.request }
+                    publishRequestsLocked()
                 }
             }
         }
@@ -229,6 +235,28 @@ class ToolApprovalBroker(
 
     internal fun isPermitRevoked(permit: ToolExecutionPermit): Boolean =
         closed.value || revision.value != permit.policyRevision || currentScope() != permit.scope
+
+    companion object {
+        private val activeLock = Any()
+        private val activeEntries = LinkedHashMap<ToolApprovalBroker, List<ToolApprovalRequest>>()
+        private val pendingRequestsState = MutableStateFlow<List<ToolApprovalRequest>>(emptyList())
+        /** Pending requests across active runs in this process, for out-of-activity system surfaces. */
+        val pendingRequests: StateFlow<List<ToolApprovalRequest>> = pendingRequestsState.asStateFlow()
+
+        private fun updateActiveBroker(broker: ToolApprovalBroker, requests: List<ToolApprovalRequest>) {
+            synchronized(activeLock) {
+                if (requests.isEmpty()) activeEntries.remove(broker) else activeEntries[broker] = requests
+                pendingRequestsState.value = activeEntries.values.flatten()
+            }
+        }
+
+        suspend fun respondPending(requestId: String, decision: ToolApprovalDecision): Boolean {
+            val target = synchronized(activeLock) {
+                activeEntries.entries.firstOrNull { (_, list) -> list.any { it.requestId == requestId } }?.key
+            } ?: return false
+            return target.respond(requestId, decision)
+        }
+    }
 }
 
 class AgentToolRunContext(val broker: ToolApprovalBroker?) : AbstractCoroutineContextElement(Key) {

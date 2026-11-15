@@ -1,11 +1,12 @@
 package io.parchment.ai.harness
 
 import io.parchment.ai.platform.PlatformRuntime
+import io.parchment.ai.platform.PlatformStorage
 import io.parchment.ai.platform.PlatformWorkspace
 
 /**
- * 10-second TTL cache for workspace instruction files (`AGENTS.md`, `CLAUDE.md`, `PARCHMENT.md`,
- * `PARCHMENT_MEMORY.md`) and `.parchment/.agents/.claude` SKILL.md manifests.
+ * 10-second TTL cache for read-only workspace instruction files (`AGENTS.md`, `CLAUDE.md`, `PARCHMENT.md`),
+ * Parchment's global `memory/AGENT.md`, and `.parchment/.agents/.claude` SKILL.md manifests.
  */
 internal object WorkspaceContextCache {
 
@@ -18,7 +19,13 @@ internal object WorkspaceContextCache {
         val skills: List<WorkspaceHarness.WorkspaceSkill> = emptyList()
     )
 
+    private data class CachedGlobalMemory(
+        val timestampMs: Long,
+        val content: String
+    )
+
     private val workspaceContextCache = mutableMapOf<String, CachedWorkspaceContext>()
+    private val globalMemoryCache = mutableMapOf<String, CachedGlobalMemory>()
     private const val WORKSPACE_CONTEXT_TTL_MS = 10_000L
     private const val MAX_CACHED_WORKSPACES = 8
     private const val SKILL_MAX_DESCRIPTION_CHARS = 1_024
@@ -33,6 +40,7 @@ internal object WorkspaceContextCache {
             } else {
                 workspaceContextCache.remove(workspaceRoot.trim())
             }
+            globalMemoryCache.clear()
         }
     }
 
@@ -87,7 +95,7 @@ internal object WorkspaceContextCache {
                 workspaceContextCache.remove(cleanRoot)
             }
         }
-        val candidates = listOf("AGENTS.md", "CLAUDE.md", "PARCHMENT.md", "PARCHMENT_MEMORY.md")
+        val candidates = listOf("AGENTS.md", "CLAUDE.md", "PARCHMENT.md")
         val foundNames = mutableListOf<String>()
         val sb = StringBuilder()
         for (fileName in candidates) {
@@ -131,4 +139,33 @@ internal object WorkspaceContextCache {
 
     fun discoverContextFiles(workspaceRoot: String): String =
         if (workspaceRoot.isBlank()) "" else getOrLoad(workspaceRoot).combinedContent
+
+    fun discoverGlobalMemory(appStorageRoot: String = ""): String {
+        val key = appStorageRoot.trim()
+        val now = PlatformRuntime.currentTimeMillis()
+        synchronized(workspaceContextCache) {
+            val cached = globalMemoryCache[key]
+            if (cached != null && (now - cached.timestampMs) in 0L..WORKSPACE_CONTEXT_TTL_MS) {
+                return cached.content
+            }
+        }
+        val formatted = PlatformStorage.readGlobalAgentMemory(maxLines = 10_000, storageRootOverride = key)
+            .getOrNull()
+            ?.takeIf { numbered -> numbered.lines().drop(1).any { it.substringAfter(": ", "").isNotBlank() } }
+            ?.let { content ->
+                buildString {
+                    appendLine("#### Auto-Loaded Global Agent Memory: `memory/AGENT.md`")
+                    appendLine(content)
+                }.trim()
+            }
+            .orEmpty()
+        synchronized(workspaceContextCache) {
+            globalMemoryCache[key] = CachedGlobalMemory(now, formatted)
+            while (globalMemoryCache.size > MAX_CACHED_WORKSPACES) {
+                val eldest = globalMemoryCache.keys.firstOrNull() ?: break
+                globalMemoryCache.remove(eldest)
+            }
+        }
+        return formatted
+    }
 }

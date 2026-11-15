@@ -79,10 +79,18 @@ actual object PlatformRuntime {
         if (owners == 0) {
             foregroundKeepAliveRequested = false
             lastReportedDecodeSec = -1
-            runCatching { ctx.stopService(Intent(ctx, LongDecodeForegroundService::class.java)) }
+            if (!LongDecodeForegroundService.syncRunning(0, 0, status)) {
+                runCatching { ctx.stopService(Intent(ctx, LongDecodeForegroundService::class.java)) }
+            }
             return
         }
         ensureNotificationPermission(ctx)
+        // Reconcile an already-promoted service in-process so background heartbeats and approval
+        // transitions never call startForegroundService() while Parchment is off-screen.
+        if (LongDecodeForegroundService.syncRunning(owners, runnable, status)) {
+            foregroundKeepAliveRequested = true
+            return
+        }
         runCatching {
             val intent = Intent(ctx, LongDecodeForegroundService::class.java).apply {
                 putExtra(LongDecodeForegroundService.EXTRA_ACTION, LongDecodeForegroundService.ACTION_SYNC)
@@ -105,16 +113,7 @@ actual object PlatformRuntime {
     actual fun notifyLongDecodeProgress(modelName: String, outputTokens: Int, elapsedSeconds: Int) {
         if (!foregroundKeepAliveRequested || elapsedSeconds < 0 || elapsedSeconds == lastReportedDecodeSec) return
         lastReportedDecodeSec = elapsedSeconds
-        val ctx = AndroidPlatformHost.appContext ?: return
-        // Best-effort notification refresh only; background restrictions on progress ticks
-        // must not trigger spurious failure banners while syncKeepAwake owns service lifecycle errors.
-        runCatching {
-            val intent = Intent(ctx, LongDecodeForegroundService::class.java).apply {
-                putExtra(LongDecodeForegroundService.EXTRA_ACTION, LongDecodeForegroundService.ACTION_UPDATE)
-                putExtra(LongDecodeForegroundService.EXTRA_STATUS, "$modelName • +$outputTokens tok • ${elapsedSeconds}s")
-            }
-            ctx.startService(intent)
-        }
+        LongDecodeForegroundService.updateRunningProgress("$modelName • +$outputTokens tok • ${elapsedSeconds}s")
     }
 
     private fun ensureNotificationPermission(ctx: Context) {

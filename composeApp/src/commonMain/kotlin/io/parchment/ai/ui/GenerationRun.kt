@@ -119,7 +119,9 @@ internal fun GenerationHost.beginGeneration(
     )
 
     var owningJob: kotlinx.coroutines.Job? = null
-    val runStartedWithGoal = existingTargetVariant?.goalTracker != null || historyForCall.any { it.activeVariant.content.startsWith("/goal", true) }
+    val inheritedGoalTracker = existingTargetVariant?.goalTracker
+        ?: historyForCall.asReversed().firstNotNullOfOrNull { it.activeVariant.goalTracker }?.takeIf { !it.isCompleted }
+    val runStartedWithGoal = inheritedGoalTracker != null || historyForCall.any { it.activeVariant.content.startsWith("/goal", true) }
     val approvalBroker = ToolApprovalBroker(
         runId = identity.runId,
         chatId = sessionId,
@@ -158,7 +160,7 @@ internal fun GenerationHost.beginGeneration(
         var displayedThinkingLen = initialThinking.length
         var displayedStepThinkingLen = initialTrailingThinking.length
         val accumulatedTools = initialTools.toMutableList()
-        var latestGoalTracker: GoalTrackerState? = existingTargetVariant?.goalTracker
+        var latestGoalTracker: GoalTrackerState? = inheritedGoalTracker
         var accumulatedUsageRecords = existingTargetVariant?.apiUsageRecords.orEmpty()
         var latestTokenMetrics = existingTargetVariant?.tokenMetrics ?: io.parchment.ai.model.TokenMetrics()
         val accumulatedMedia = initialMedia.toMutableList()

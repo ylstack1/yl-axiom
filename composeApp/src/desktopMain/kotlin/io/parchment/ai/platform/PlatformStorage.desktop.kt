@@ -71,6 +71,18 @@ actual object PlatformStorage {
             beforeDelete = imageCache::remove
         )
 
+    actual fun writeSessionTodoMarkdown(sessionId: String, markdown: String, storageRootOverride: String): Result<String> =
+        AppAgentStorage.writeSessionTodo(DesktopPlatformHost::resolveStorageDir, sessionId, markdown, storageRootOverride)
+
+    actual fun hasGlobalAgentMemory(storageRootOverride: String): Boolean =
+        AppAgentStorage.hasGlobalMemory(DesktopPlatformHost::resolveStorageDir, storageRootOverride)
+
+    actual fun readGlobalAgentMemory(maxLines: Int, storageRootOverride: String): Result<String> =
+        AppAgentStorage.readGlobalMemory(DesktopPlatformHost::resolveStorageDir, maxLines, storageRootOverride)
+
+    actual fun writeGlobalAgentMemory(content: String, storageRootOverride: String): Result<String> =
+        AppAgentStorage.writeGlobalMemory(DesktopPlatformHost::resolveStorageDir, content, storageRootOverride)
+
     internal fun resolveLocalMediaFile(filePath: String): File? = mediaStore.resolve(filePath)
 
     actual fun saveGeneratedMediaFile(fileName: String, bytes: ByteArray, sessionId: String): String =

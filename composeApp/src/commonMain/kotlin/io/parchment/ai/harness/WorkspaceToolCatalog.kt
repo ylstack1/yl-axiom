@@ -328,7 +328,7 @@ internal object WorkspaceToolCatalog {
         ),
         WorkspaceHarness.ToolDefinition(
             name = "todo_write",
-            description = "Create or update the structured task checklist for multi-step or long-horizon goals. Always keep one current step 'in_progress' and mark steps 'completed' as you verify them.",
+            description = "Create or update this chat session's structured task checklist for multi-step or long-horizon goals (stored in the open chat session, never in project files). Always keep one current step 'in_progress' and mark steps 'completed' as you verify them.",
             requiresWritePermission = false,
             requiresWorkspaceFolder = false,
             parametersSchema = buildJsonObject {
@@ -385,7 +385,7 @@ internal object WorkspaceToolCatalog {
                     putJsonObject("x") { put("type", "integer") }
                     putJsonObject("y") { put("type", "integer") }
                     putJsonObject("text") { put("type", "string"); put("description", "Text to enter, for 'type'.") }
-                    putJsonObject("keys") { put("type", "string"); put("description", "For 'key', such as ctrl+c or enter. On Android: back, home or recents.") }
+                    putJsonObject("keys") { put("type", "string"); put("description", "For 'key', such as ctrl+c or enter. On Android: enter, back, home, recents or notifications.") }
                     putJsonObject("amount") { put("type", "integer"); put("description", "For 'scroll': positive scrolls down, negative up.") }
                 }
                 putJsonArray("required") { add(JsonPrimitive("action")) }
@@ -467,8 +467,9 @@ internal object WorkspaceToolCatalog {
         ),
         WorkspaceHarness.ToolDefinition(
             name = "agent_memory",
-            description = "Read or update persistent project/story memory (PARCHMENT_MEMORY.md in workspace) across sessions.",
+            description = "Read or update Parchment's persistent global agent memory (memory/AGENT.md) across sessions when needed or requested by the user.",
             requiresWritePermission = false,
+            requiresWorkspaceFolder = false,
             parametersSchema = buildJsonObject {
                 put("type", "object")
                 putJsonObject("properties") {
@@ -540,6 +541,7 @@ internal object WorkspaceToolCatalog {
                 if (!goalModeActive) {
                     tool.name == "web_search" || tool.name == "web_fetch" || tool.name == "calc_eval" ||
                         tool.name == "dice_roll" || tool.name == "ask_user" || tool.name == "agent_delegate" ||
+                        tool.name == "todo_write" || tool.name == "goal_complete" || tool.name == "agent_memory" ||
                         tool.name == ComputerUse.TOOL_NAME || isMcpToolName(tool.name)
                 } else {
                     !tool.requiresWorkspaceFolder

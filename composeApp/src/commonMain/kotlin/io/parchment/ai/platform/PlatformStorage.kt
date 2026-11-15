@@ -18,6 +18,10 @@ expect object PlatformStorage {
     fun wipeAllLocalData(): Boolean
     fun listAppStorageFiles(): List<StoredAppFileItem>
     fun deleteAppStorageFile(fullPath: String): Boolean
+    fun writeSessionTodoMarkdown(sessionId: String, markdown: String, storageRootOverride: String = ""): Result<String>
+    fun hasGlobalAgentMemory(storageRootOverride: String = ""): Boolean
+    fun readGlobalAgentMemory(maxLines: Int = 500, storageRootOverride: String = ""): Result<String>
+    fun writeGlobalAgentMemory(content: String, storageRootOverride: String = ""): Result<String>
 
     // Generated Image & Video Media Storage, Per-Chat Media Bundling, and Native Playback
     fun saveGeneratedMediaFile(fileName: String, bytes: ByteArray, sessionId: String = ""): String

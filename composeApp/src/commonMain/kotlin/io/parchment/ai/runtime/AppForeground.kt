@@ -12,10 +12,19 @@ import kotlinx.coroutines.flow.asStateFlow
 internal object AppForeground {
     private val resumedAtState = MutableStateFlow(0L)
     val resumedAt: StateFlow<Long> = resumedAtState.asStateFlow()
+    private val visibleState = MutableStateFlow(true)
+    val isAppVisible: StateFlow<Boolean> = visibleState.asStateFlow()
 
     @Volatile var leftAt: Long = 0L
         private set
 
-    fun markLeft() { leftAt = PlatformRuntime.monotonicTimeMillis() }
-    fun markResumed() { resumedAtState.value = PlatformRuntime.monotonicTimeMillis() }
+    fun markLeft() {
+        leftAt = PlatformRuntime.monotonicTimeMillis()
+        visibleState.value = false
+    }
+
+    fun markResumed() {
+        resumedAtState.value = PlatformRuntime.monotonicTimeMillis()
+        visibleState.value = true
+    }
 }

@@ -75,7 +75,7 @@ internal object AppStorageInventory {
         val lowerName = fileName.lowercase()
         return when {
             otaTempExtensions.any { lowerName.endsWith(it) } -> StorageFileCategory.OTA_AND_TEMP
-            lowerRel.startsWith("chats/") && lowerName.endsWith(".json") -> StorageFileCategory.CHAT_SESSION
+            lowerRel.startsWith("chats/") && (lowerName.endsWith(".json") || lowerName == "todo.md") -> StorageFileCategory.CHAT_SESSION
             (lowerRel.startsWith("media/") || lowerRel.contains("/media/")) && lowerName.startsWith("att-") ->
                 StorageFileCategory.UPLOADED_MEDIA
             lowerRel.startsWith("media/") || lowerRel.contains("/media/") ->

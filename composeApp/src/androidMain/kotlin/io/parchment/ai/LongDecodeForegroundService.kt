@@ -10,7 +10,9 @@ import android.content.Intent
 import android.content.pm.ServiceInfo
 import android.net.wifi.WifiManager
 import android.os.Build
+import android.os.Handler
 import android.os.IBinder
+import android.os.Looper
 import android.os.PowerManager
 
 /**
@@ -31,6 +33,7 @@ class LongDecodeForegroundService : Service() {
 
     /** Live process owners, including runs waiting for people. */
     private var activeDecodeCount: Int = 0
+    private var isForegroundPromoted: Boolean = false
 
     override fun onCreate() {
         super.onCreate()
@@ -47,25 +50,16 @@ class LongDecodeForegroundService : Service() {
             return START_NOT_STICKY
         }
 
-        val action = intent?.getStringExtra(EXTRA_ACTION)
+        val action = intent.getStringExtra(EXTRA_ACTION)
         when (action) {
-            ACTION_UPDATE -> {
-                // Progress ticks must not bump the reference count or re-acquire locks.
-                if (activeDecodeCount > 0) {
-                    val status = intent?.getStringExtra(EXTRA_STATUS) ?: "Long decode active…"
-                    notifyOrStop(status)
-                } else stopSelf(startId)
-                return START_NOT_STICKY
-            }
-
             ACTION_SYNC -> {
-                activeDecodeCount = (intent?.getIntExtra(EXTRA_OWNERS, 0) ?: 0).coerceAtLeast(0)
-                val runnable = (intent?.getIntExtra(EXTRA_RUNNABLE, 0) ?: 0).coerceIn(0, activeDecodeCount)
+                activeDecodeCount = intent.getIntExtra(EXTRA_OWNERS, 0).coerceAtLeast(0)
+                val runnable = intent.getIntExtra(EXTRA_RUNNABLE, 0).coerceIn(0, activeDecodeCount)
                 if (activeDecodeCount == 0) {
                     shutdownForTimeout()
                     return START_NOT_STICKY
                 }
-                val statusText = intent?.getStringExtra(EXTRA_STATUS) ?: "Long decode active…"
+                val statusText = intent.getStringExtra(EXTRA_STATUS) ?: "Long decode active…"
                 // Promote before taking locks; failed promotion must not leave a hold behind.
                 if (notifyOrStop(statusText)) {
                     if (runnable > 0) acquireLocksIfNeeded() else releaseLocks()
@@ -90,7 +84,11 @@ class LongDecodeForegroundService : Service() {
     }
 
     private fun shutdownForTimeout() {
+        synchronized(instanceLock) {
+            if (runningInstance === this) runningInstance = null
+        }
         activeDecodeCount = 0
+        isForegroundPromoted = false
         releaseLocks()
         runCatching { stopForeground(STOP_FOREGROUND_REMOVE) }
         stopSelf()
@@ -109,6 +107,10 @@ class LongDecodeForegroundService : Service() {
     }
 
     override fun onDestroy() {
+        synchronized(instanceLock) {
+            if (runningInstance === this) runningInstance = null
+        }
+        isForegroundPromoted = false
         releaseLocks()
         super.onDestroy()
     }
@@ -117,16 +119,51 @@ class LongDecodeForegroundService : Service() {
 
     private fun notify(statusText: String) {
         val notification = buildNotification(statusText)
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
-            startForeground(
-                NOTIFICATION_ID,
-                notification,
-                ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE
-            )
+        if (!isForegroundPromoted) {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+                startForeground(
+                    NOTIFICATION_ID,
+                    notification,
+                    ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE
+                )
+            } else {
+                startForeground(NOTIFICATION_ID, notification)
+            }
+            isForegroundPromoted = true
+            synchronized(instanceLock) { runningInstance = this }
         } else {
-            startForeground(NOTIFICATION_ID, notification)
+            (getSystemService(Context.NOTIFICATION_SERVICE) as? NotificationManager)?.notify(NOTIFICATION_ID, notification)
         }
         refreshNotificationNotice(this, clearRecoveredFailure = true)
+    }
+
+    private fun applySyncOnMain(owners: Int, runnable: Int, statusText: String) {
+        if (!isForegroundPromoted) return
+        val normalizedOwners = owners.coerceAtLeast(0)
+        if (normalizedOwners == 0) {
+            shutdownForTimeout()
+            return
+        }
+        synchronized(instanceLock) {
+            if (runningInstance !== this) return
+        }
+        activeDecodeCount = normalizedOwners
+        runCatching {
+            (getSystemService(Context.NOTIFICATION_SERVICE) as? NotificationManager)
+                ?.notify(NOTIFICATION_ID, buildNotification(statusText))
+        }
+        if (runnable.coerceIn(0, activeDecodeCount) > 0) acquireLocksIfNeeded() else releaseLocks()
+    }
+
+    private fun applyProgressOnMain(statusText: String) {
+        if (!isForegroundPromoted || activeDecodeCount <= 0) return
+        synchronized(instanceLock) {
+            if (runningInstance !== this) return
+        }
+        runCatching {
+            (getSystemService(Context.NOTIFICATION_SERVICE) as? NotificationManager)
+                ?.notify(NOTIFICATION_ID, buildNotification(statusText))
+        }
     }
 
     private fun notifyOrStop(statusText: String): Boolean =
@@ -197,7 +234,9 @@ class LongDecodeForegroundService : Service() {
             @Suppress("DEPRECATION")
             Notification.Builder(this)
         }
-        val launchIntent = packageManager.getLaunchIntentForPackage(packageName)
+        val launchIntent = packageManager.getLaunchIntentForPackage(packageName)?.apply {
+            addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP)
+        }
         if (launchIntent != null) {
             builder.setContentIntent(
                 PendingIntent.getActivity(
@@ -217,6 +256,29 @@ class LongDecodeForegroundService : Service() {
     }
 
     companion object {
+        private val instanceLock = Any()
+        @Volatile private var runningInstance: LongDecodeForegroundService? = null
+        private val mainHandler = Handler(Looper.getMainLooper())
+
+        /** Updates an already-promoted foreground service in-process without calling startForegroundService from background. */
+        fun syncRunning(owners: Int, runnable: Int, statusText: String): Boolean {
+            val target = synchronized(instanceLock) {
+                val current = runningInstance ?: return false
+                if (owners <= 0) runningInstance = null
+                current
+            }
+            if (Looper.myLooper() == Looper.getMainLooper()) target.applySyncOnMain(owners, runnable, statusText)
+            else mainHandler.post { target.applySyncOnMain(owners, runnable, statusText) }
+            return true
+        }
+
+        fun updateRunningProgress(statusText: String): Boolean {
+            val target = synchronized(instanceLock) { runningInstance } ?: return false
+            if (Looper.myLooper() == Looper.getMainLooper()) target.applyProgressOnMain(statusText)
+            else mainHandler.post { target.applyProgressOnMain(statusText) }
+            return true
+        }
+
         private val noticeState = kotlinx.coroutines.flow.MutableStateFlow("")
         val executionNotice: kotlinx.coroutines.flow.StateFlow<String> = noticeState
         private const val CPU_LEASE_MS = 60_000L
@@ -258,6 +320,5 @@ class LongDecodeForegroundService : Service() {
         const val EXTRA_OWNERS = "extra_owners"
         const val EXTRA_RUNNABLE = "extra_runnable"
         const val ACTION_SYNC = "SYNC"
-        const val ACTION_UPDATE = "UPDATE"
     }
 }

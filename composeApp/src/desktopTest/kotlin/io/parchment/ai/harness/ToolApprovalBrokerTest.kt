@@ -108,4 +108,36 @@ class ToolApprovalBrokerTest {
         cancelling.cancelAndJoin()
         assertTrue(secondBroker.requests.value.isEmpty())
     }
+
+    @Test fun processPendingRegistryRoutesPerActionApprovalsAndClearsCleanly() = runBlocking {
+        val computerScope = ToolAccessScope(AgentPermissionPolicy(approvalMode = ToolApprovalMode.NEVER, computerAccess = true))
+        val computerBroker = ToolApprovalBroker("comp-run", "comp-chat", { computerScope })
+        val fileBroker = ToolApprovalBroker("file-run", "file-chat", { policy })
+        val click = """{"action":"click","x":82,"y":276}"""
+        try {
+            val compWait = async { computerBroker.authorize("c1", ComputerUse.TOOL_NAME, click) }
+            val fileWait = async { fileBroker.authorize("f1", "fs_read", arguments) }
+            val compReq = withTimeout(2000) { computerBroker.requests.first { it.isNotEmpty() }.single() }
+            val fileReq = withTimeout(2000) { fileBroker.requests.first { it.isNotEmpty() }.single() }
+            assertTrue(ToolApprovalBroker.pendingRequests.value.map { it.requestId }.containsAll(listOf(compReq.requestId, fileReq.requestId)))
+
+            assertTrue(ToolApprovalBroker.respondPending(compReq.requestId, ToolApprovalDecision.ALLOW_EXACT_ACTION_FOR_RUN))
+            assertIs<ToolAuthorization.Allowed>(compWait.await())
+            assertFalse(ToolApprovalBroker.pendingRequests.value.any { it.requestId == compReq.requestId })
+            assertTrue(ToolApprovalBroker.pendingRequests.value.any { it.requestId == fileReq.requestId })
+
+            // computer_use must still demand fresh explicit approval on the very next call.
+            val compAgain = async { computerBroker.authorize("c2", ComputerUse.TOOL_NAME, click) }
+            val compReq2 = withTimeout(2000) { ToolApprovalBroker.pendingRequests.first { list -> list.any { it.callId == "c2" } }.first { it.callId == "c2" } }
+            assertTrue(ToolApprovalBroker.respondPending(compReq2.requestId, ToolApprovalDecision.DENY))
+            assertIs<ToolAuthorization.Denied>(compAgain.await())
+
+            assertTrue(ToolApprovalBroker.respondPending(fileReq.requestId, ToolApprovalDecision.ALLOW_ONCE))
+            assertIs<ToolAuthorization.Allowed>(fileWait.await())
+        } finally {
+            computerBroker.close()
+            fileBroker.close()
+        }
+        assertTrue(ToolApprovalBroker.pendingRequests.value.none { it.runId in setOf("comp-run", "file-run") })
+    }
 }
