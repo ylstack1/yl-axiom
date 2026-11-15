@@ -19,35 +19,71 @@ import io.parchment.ai.platform.PlatformRuntime
 
 // The history and system prompt each provider request is built from.
 
+private val INLINE_ERROR_PREFIXES = listOf(
+    "**[Provider Error:",
+    "**[Stream Error:",
+    "*[Stream paused/interrupted",
+    "*[Stream interrupted",
+    "*[Interrupted:"
+)
+
+private val INLINE_ERROR_SUFFIXES = listOf(
+    AiProviderEngine.OUTPUT_LIMIT_NOTICE,
+    "\n\n*[Stream paused/interrupted:",
+    "\n\n*[Stream interrupted",
+    "\n\n*[Interrupted:"
+)
+
+private fun collapseWhitespaceBounded(raw: String, maxChars: Int): String {
+    if (raw.isEmpty() || maxChars <= 0) return ""
+    var i = 0
+    val n = raw.length
+    while (i < n && raw[i].isWhitespace()) i++
+    if (i == n) return ""
+    val sb = StringBuilder(minOf(maxChars, n - i))
+    var pendingSpace = false
+    while (i < n && sb.length < maxChars) {
+        val ch = raw[i++]
+        if (ch.isWhitespace()) {
+            pendingSpace = true
+        } else {
+            if (pendingSpace) {
+                sb.append(' ')
+                if (sb.length >= maxChars) break
+                pendingSpace = false
+            }
+            sb.append(ch)
+        }
+    }
+    return sb.toString()
+}
+
 /**
  * Strips UI-only inline error banners and mid-stream interruption footers from assistant prose
  * so they are never sent back to LLM providers as part of conversation history or continuation prefixes.
  */
 fun AiProviderEngine.stripInlineErrorNotices(raw: String): String {
-    if (raw.isBlank()) return ""
-    val trimmedStart = raw.trimStart()
-    if (trimmedStart.startsWith("**[Provider Error:") ||
-        trimmedStart.startsWith("**[Stream Error:") ||
-        trimmedStart.startsWith("*[Stream paused/interrupted") ||
-        trimmedStart.startsWith("*[Stream interrupted") ||
-        trimmedStart.startsWith("*[Interrupted:")
-    ) {
-        return ""
-    }
-    var cleaned = raw
-    val suffixes = listOf(
-        OUTPUT_LIMIT_NOTICE,
-        "\n\n*[Stream paused/interrupted:",
-        "\n\n*[Stream interrupted",
-        "\n\n*[Interrupted:"
-    )
-    for (marker in suffixes) {
-        val idx = cleaned.indexOf(marker)
-        if (idx >= 0) {
-            cleaned = cleaned.substring(0, idx)
+    val len = raw.length
+    if (len == 0) return ""
+    var firstNonWs = 0
+    while (firstNonWs < len && raw[firstNonWs].isWhitespace()) firstNonWs++
+    if (firstNonWs == len) return ""
+    for (prefix in INLINE_ERROR_PREFIXES) {
+        if (raw.startsWith(prefix, startIndex = firstNonWs)) {
+            return ""
         }
     }
-    return cleaned.trimEnd()
+    var endIdx = len
+    for (marker in INLINE_ERROR_SUFFIXES) {
+        val idx = raw.indexOf(marker)
+        if (idx in 0 until endIdx) {
+            endIdx = idx
+        }
+    }
+    while (endIdx > 0 && raw[endIdx - 1].isWhitespace()) {
+        endIdx--
+    }
+    return if (endIdx == len) raw else raw.substring(0, endIdx)
 }
 
 internal fun AiProviderEngine.hasMeaningfulAssistantContext(v: MessageVariant): Boolean {
@@ -136,17 +172,41 @@ internal fun AiProviderEngine.buildEffectiveHistoryAndPrefix(
     }
 }
 
+private fun ChatSession.triggeredKeywordFragments(recentTurns: List<Pair<MessageRole, String>>): List<ContextFragment> {
+    val cardEmbedded = activeCard?.embeddedFragments
+    if (fragments.isEmpty() && cardEmbedded.isNullOrEmpty()) return emptyList()
+    val windowStart = (recentTurns.size - 8).coerceAtLeast(0)
+    fun matchesWindow(frag: ContextFragment): Boolean {
+        if (frag.mode != FragmentActivationMode.KEYWORD) return false
+        for (rawKw in frag.keywords) {
+            val kw = rawKw.trim()
+            if (kw.isEmpty()) continue
+            for (idx in windowStart until recentTurns.size) {
+                if (recentTurns[idx].second.contains(kw, ignoreCase = true)) return true
+            }
+            if ('\n' in kw) {
+                val joined = recentTurns.subList(windowStart, recentTurns.size).joinToString("\n") { it.second }
+                if (joined.contains(kw, ignoreCase = true)) return true
+            }
+        }
+        return false
+    }
+    val out = mutableListOf<ContextFragment>()
+    for (frag in fragments) {
+        if (matchesWindow(frag)) out.add(frag)
+    }
+    if (cardEmbedded != null) {
+        for (frag in cardEmbedded) {
+            if (matchesWindow(frag)) out.add(frag)
+        }
+    }
+    return out
+}
+
 /**
  * Condenses the oldest 50% of active unmuted conversation turns into a compact Continuity Digest
  * while keeping the newest turns in full verbatim fidelity.
  */
-private fun ChatSession.triggeredKeywordFragments(recent: String): List<ContextFragment> {
-    return (fragments + activeCard?.embeddedFragments.orEmpty()).filter { frag ->
-        frag.mode == FragmentActivationMode.KEYWORD &&
-            frag.keywords.any { it.isNotBlank() && recent.contains(it.trim(), ignoreCase = true) }
-    }
-}
-
 internal fun AiProviderEngine.compactHistoryNodesOnOverflow(nodes: List<MessageNode>): List<MessageNode> {
     val activeIndices = nodes.mapIndexedNotNull { idx, n -> if (n.includedInContext) idx else null }
     if (activeIndices.size <= 4) return nodes
@@ -156,10 +216,7 @@ internal fun AiProviderEngine.compactHistoryNodesOnOverflow(nodes: List<MessageN
     for (idx in indicesToCompact) {
         val n = nodes[idx]
         val speaker = if (n.role == MessageRole.ASSISTANT) "Assistant" else "User"
-        val snippet = stripInlineErrorNotices(n.activeVariant.content)
-            .replace(Regex("\\s+"), " ")
-            .trim()
-            .take(260)
+        val snippet = collapseWhitespaceBounded(stripInlineErrorNotices(n.activeVariant.content), 260)
         if (snippet.isNotEmpty()) {
             digestLines.add("- $speaker: $snippet")
         }
@@ -219,7 +276,7 @@ internal fun AiProviderEngine.buildFoldedToolHistoryText(
     if (toolCalls.isNotEmpty()) {
         appendLine("[Completed ${toolCalls.size} workspace tool call(s):")
         for (tc in toolCalls.takeLast(12)) {
-            val snippet = tc.resultText.replace(Regex("\\s+"), " ").trim().take(180)
+            val snippet = collapseWhitespaceBounded(tc.resultText, 180)
             appendLine("- ${tc.name}(${tc.argumentsJson.take(80)}) -> $snippet")
         }
         appendLine("]")
@@ -341,8 +398,7 @@ internal fun AiProviderEngine.injectAuthorsNoteIntoHistory(
     }.trim()
 
     // Matches what is being sent: after a rewind or regenerate the saved chat holds later messages too.
-    val recentlySent = baseList.takeLast(8).joinToString("\n") { it.second }
-    val triggeredKnowledge = session.triggeredKeywordFragments(recentlySent)
+    val triggeredKnowledge = session.triggeredKeywordFragments(baseList)
         .joinToString("\n\n") { "#### ${it.title}\n${session.expandMacros(it.content.trim())}" }
     if ((combinedNote.isBlank() && triggeredKnowledge.isBlank()) || baseList.isEmpty()) return baseList
 

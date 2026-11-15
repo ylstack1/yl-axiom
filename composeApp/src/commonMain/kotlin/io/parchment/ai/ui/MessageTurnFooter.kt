@@ -309,10 +309,7 @@ private fun AssistantTurnUsageStats(
     val outProseTok = if (activeVar.content.isNotBlank()) countedProse.toLong() else m.outputTokens
     val toolPayloadTok = remember(activeVar.toolCalls, activeVar.isStreaming) {
         activeVar.toolCalls.sumOf { tc ->
-            val tcLive = activeVar.isStreaming || tc.isRunning
-            6 + O200kTokenizer.countTokens(tc.name) +
-                (if (tcLive) O200kTokenizer.estimateTokensFast(tc.argumentsJson) else O200kTokenizer.countTokens(tc.argumentsJson)) +
-                (if (tcLive) O200kTokenizer.estimateTokensFast(tc.resultText) else O200kTokenizer.countTokens(tc.resultText))
+            O200kTokenizer.countToolCallTokens(tc, isLiveOverride = activeVar.isStreaming)
         }
     }
     val thinkTokenKey = if (activeVar.isStreaming) activeVar.thinkingSummary.length / 64 else activeVar.thinkingSummary.hashCode()

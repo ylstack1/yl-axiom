@@ -30,12 +30,20 @@ import io.parchment.ai.runtime.runActivityFlow
 import io.parchment.ai.strings.Strings
 import kotlin.io.encoding.ExperimentalEncodingApi
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.IO
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flowOn
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
@@ -246,6 +254,31 @@ object AiProviderEngine {
      * - Numerator includes both `finalOutTokens` (prose + tool call arguments across all rounds) and `finalThinkTokens`.
      * - Denominator uses `activeDecodeDurationMs` (active token streaming bursts excluding TTFT wait and local tool execution time).
      */
+    private data class UtilityRequestKey(
+        val fastProfile: ProviderProfile,
+        val model: String,
+        val prompt: String,
+        val ownerSessionId: String,
+        val purpose: String
+    )
+
+    private class UtilityWaiter(
+        val ownerRunId: String,
+        val onUsage: suspend (ApiUsageRecord, TokenMetrics) -> Unit,
+        val result: CompletableDeferred<Result<String>> = CompletableDeferred()
+    )
+
+    private class InFlightUtilityCall(val primaryRunId: String) {
+        val stateLock = Mutex()
+        val waiters = mutableListOf<UtilityWaiter>()
+        var latestUsage: Pair<ApiUsageRecord, TokenMetrics>? = null
+        var job: Job? = null
+    }
+
+    private val utilityScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    private val inFlightUtilityLock = Mutex()
+    private val inFlightUtilityCalls = mutableMapOf<UtilityRequestKey, InFlightUtilityCall>()
+
     internal fun computeTurnTokenMetrics(
         reportedInputTokens: Long,
         reportedCachedTokens: Long,
@@ -264,20 +297,23 @@ object AiProviderEngine {
         hasReportedReasoning: Boolean = reportedReasoningTokens > 0L
     ): TokenMetrics {
         val finalInTokens = if (hasReportedInput) reportedInputTokens.coerceAtLeast(0L) else fallbackInputTokens.coerceAtLeast(0L)
-        val bpeThinkTokens = if (thinkingText.isNotEmpty()) {
-            O200kTokenizer.countTokens(thinkingText).coerceAtLeast(1)
-        } else 0
-        val bpeToolCallTokens = executedTools.sumOf { tc ->
-            O200kTokenizer.countTokens(tc.name).toLong() + O200kTokenizer.countTokens(tc.argumentsJson)
+        val finalThinkTokens = when {
+            hasReportedReasoning -> reportedReasoningTokens.coerceAtLeast(0L)
+            hasReportedOutput -> 0L
+            thinkingText.isNotEmpty() -> O200kTokenizer.countTokens(thinkingText).coerceAtLeast(1).toLong()
+            else -> 0L
         }
-        val bpeContentTokens = if (contentText.isNotEmpty()) {
-            O200kTokenizer.countTokens(contentText).coerceAtLeast(1)
-        } else 0
-
-        val finalThinkTokens = if (hasReportedReasoning) reportedReasoningTokens.coerceAtLeast(0L)
-        else if (hasReportedOutput) 0L else bpeThinkTokens.toLong()
-        val finalOutTokens = if (hasReportedOutput) reportedOutputTokens.coerceAtLeast(0L)
-        else saturatingTokenSum(bpeContentTokens.toLong(), bpeToolCallTokens)
+        val finalOutTokens = if (hasReportedOutput) {
+            reportedOutputTokens.coerceAtLeast(0L)
+        } else {
+            val bpeContentTokens = if (contentText.isNotEmpty()) {
+                O200kTokenizer.countTokens(contentText).coerceAtLeast(1).toLong()
+            } else 0L
+            val rawCallTokens = executedTools.sumOf { tc ->
+                O200kTokenizer.countTokens(tc.name).toLong() + O200kTokenizer.countTokens(tc.argumentsJson)
+            }
+            saturatingTokenSum(bpeContentTokens, rawCallTokens)
+        }
         val totalGeneratedTokens = saturatingTokenSum(finalOutTokens, finalThinkTokens)
 
         val netLlmGenerationMs = (totalDurationMs - totalToolExecutionMs.coerceAtLeast(0L)).coerceAtLeast(250L)
@@ -315,59 +351,172 @@ object AiProviderEngine {
         purpose: String = "utility",
         onUsage: suspend (ApiUsageRecord, TokenMetrics) -> Unit = { _, _ -> }
     ): Result<String> = withContext(Dispatchers.IO + AgentToolRunContext(null)) {
-        runCatching {
-            val cleanModel = model.trim().ifBlank { profile.defaultModel.trim() }
-            require(cleanModel.isNotBlank()) { "No model selected for utility generation." }
-            val tempSession = ChatSession(
-                id = "util-temp",
-                title = "Utility",
-                createdAt = 0L,
-                updatedAt = 0L,
-                profileId = profile.id,
-                modelOverride = cleanModel,
-                permissionOverrides = AgentPermissionOverrides(toolsEnabled = false)
-            )
-            val userNode = MessageNode(
-                id = "util-node",
-                role = MessageRole.USER,
-                variants = listOf(MessageVariant(id = "util-var", content = prompt))
-            )
-            val fastProfile = profile.copy(
-                thinkingEffort = "low",
-                maxOutputTokens = maxOutputTokens,
-                enableWebSearch = false,
-                enableCodeExecution = false,
-                enableUrlContext = false,
-                enableImageGeneration = false,
-                enableVideoGeneration = false,
-                useBackgroundLongDecode = false
-            )
-            val sb = StringBuilder()
-            var streamErr: String? = null
-            var completed = false
-            streamGeneration(
-                profile = fastProfile,
-                session = tempSession,
-                historyNodes = listOf(userNode),
-                usageOwnerSessionId = ownerSessionId,
-                usageOwnerRunId = ownerRunId,
-                usagePurpose = purpose
-            ).collect { upd ->
-                when (upd) {
-                    is StreamUpdate.ContentDelta -> sb.append(upd.delta)
-                    is StreamUpdate.Completed -> { completed = true; sb.clear(); sb.append(upd.fullContent) }
-                    is StreamUpdate.UsageUpdated -> onUsage(upd.record, upd.metrics)
-                    is StreamUpdate.Error -> streamErr = upd.message
-                    else -> {}
+        val cleanModel = model.trim().ifBlank { profile.defaultModel.trim() }
+        if (cleanModel.isBlank()) {
+            return@withContext Result.failure(IllegalArgumentException("No model selected for utility generation."))
+        }
+        val fastProfile = profile.copy(
+            thinkingEffort = "low",
+            maxOutputTokens = maxOutputTokens,
+            enableWebSearch = false,
+            enableCodeExecution = false,
+            enableUrlContext = false,
+            enableImageGeneration = false,
+            enableVideoGeneration = false,
+            useBackgroundLongDecode = false
+        )
+        val key = UtilityRequestKey(
+            fastProfile = fastProfile,
+            model = cleanModel,
+            prompt = prompt,
+            ownerSessionId = ownerSessionId,
+            purpose = purpose
+        )
+        val waiter = UtilityWaiter(ownerRunId = ownerRunId, onUsage = onUsage)
+        var snapshotUsage: Pair<ApiUsageRecord, TokenMetrics>? = null
+        val (flight, isLeader) = inFlightUtilityLock.withLock {
+            val existing = inFlightUtilityCalls[key]
+            if (existing != null && existing.job?.isCompleted != true) {
+                existing.stateLock.withLock {
+                    existing.waiters.add(waiter)
+                    snapshotUsage = existing.latestUsage
+                }
+                existing to false
+            } else {
+                InFlightUtilityCall(primaryRunId = ownerRunId).also { created ->
+                    created.waiters.add(waiter)
+                    inFlightUtilityCalls[key] = created
+                } to true
+            }
+        }
+        if (isLeader) {
+            val job = utilityScope.launch(AgentToolRunContext(null)) {
+                var finishedOutcome: Result<String>? = null
+                try {
+                    val tempSession = ChatSession(
+                        id = "util-temp",
+                        title = "Utility",
+                        createdAt = 0L,
+                        updatedAt = 0L,
+                        profileId = profile.id,
+                        modelOverride = cleanModel,
+                        permissionOverrides = AgentPermissionOverrides(toolsEnabled = false)
+                    )
+                    val userNode = MessageNode(
+                        id = "util-node",
+                        role = MessageRole.USER,
+                        variants = listOf(MessageVariant(id = "util-var", content = prompt))
+                    )
+                    val sb = StringBuilder()
+                    var streamErr: String? = null
+                    var completed = false
+                    streamGeneration(
+                        profile = fastProfile,
+                        session = tempSession,
+                        historyNodes = listOf(userNode),
+                        usageOwnerSessionId = ownerSessionId,
+                        usageOwnerRunId = ownerRunId,
+                        usagePurpose = purpose
+                    ).collect { upd ->
+                        when (upd) {
+                            is StreamUpdate.ContentDelta -> sb.append(upd.delta)
+                            is StreamUpdate.Completed -> { completed = true; sb.clear(); sb.append(upd.fullContent) }
+                            is StreamUpdate.UsageUpdated -> {
+                                val snapshot = flight.stateLock.withLock {
+                                    flight.latestUsage = upd.record to upd.metrics
+                                    flight.waiters.toList()
+                                }
+                                for (w in snapshot) {
+                                    val attributed = if (w.ownerRunId == flight.primaryRunId || w.ownerRunId.isBlank()) {
+                                        upd.record
+                                    } else {
+                                        upd.record.copy(ownerRunId = w.ownerRunId)
+                                    }
+                                    try {
+                                        w.onUsage(attributed, upd.metrics)
+                                    } catch (cancelled: CancellationException) {
+                                        val emptyAfter = flight.stateLock.withLock {
+                                            flight.waiters.remove(w)
+                                            flight.waiters.isEmpty()
+                                        }
+                                        w.result.completeExceptionally(cancelled)
+                                        if (emptyAfter) throw cancelled
+                                    }
+                                }
+                            }
+                            is StreamUpdate.Error -> streamErr = upd.message
+                            else -> {}
+                        }
+                    }
+                    val finalStr = sb.toString().trim().removeSurrounding("\"").removeSurrounding("'").trim()
+                    if (!streamErr.isNullOrBlank()) {
+                        error(streamErr)
+                    }
+                    require(completed && finalStr.isNotBlank()) { "Utility response ended without a complete result." }
+                    finishedOutcome = Result.success(finalStr)
+                } catch (cancelled: CancellationException) {
+                    val remaining = withContext(NonCancellable) {
+                        inFlightUtilityLock.withLock {
+                            if (inFlightUtilityCalls[key] === flight) inFlightUtilityCalls.remove(key)
+                        }
+                        flight.stateLock.withLock {
+                            val copy = flight.waiters.toList()
+                            flight.waiters.clear()
+                            copy
+                        }
+                    }
+                    remaining.forEach { it.result.completeExceptionally(cancelled) }
+                    throw cancelled
+                } catch (err: Throwable) {
+                    finishedOutcome = Result.failure(err)
+                } finally {
+                    val outcome = finishedOutcome
+                    if (outcome != null) {
+                        val remaining = withContext(NonCancellable) {
+                            inFlightUtilityLock.withLock {
+                                if (inFlightUtilityCalls[key] === flight) inFlightUtilityCalls.remove(key)
+                            }
+                            flight.stateLock.withLock {
+                                val copy = flight.waiters.toList()
+                                flight.waiters.clear()
+                                copy
+                            }
+                        }
+                        remaining.forEach { it.result.complete(outcome) }
+                    } else {
+                        withContext(NonCancellable) {
+                            inFlightUtilityLock.withLock {
+                                if (inFlightUtilityCalls[key] === flight) inFlightUtilityCalls.remove(key)
+                            }
+                        }
+                    }
                 }
             }
-            val finalStr = sb.toString().trim().removeSurrounding("\"").removeSurrounding("'").trim()
-            if (!streamErr.isNullOrBlank()) {
-                error(streamErr)
+            val shouldCancelEarly = flight.stateLock.withLock {
+                flight.job = job
+                flight.waiters.isEmpty()
             }
-            require(completed && finalStr.isNotBlank()) { "Utility response ended without a complete result." }
-            finalStr
-        }.onFailure { if (it is CancellationException) throw it }
+            if (shouldCancelEarly) job.cancel()
+        } else if (snapshotUsage != null) {
+            val (rec, met) = snapshotUsage!!
+            val attributed = if (ownerRunId == flight.primaryRunId || ownerRunId.isBlank()) rec else rec.copy(ownerRunId = ownerRunId)
+            onUsage(attributed, met)
+        }
+        try {
+            waiter.result.await()
+        } finally {
+            withContext(NonCancellable) {
+                val shouldCancel = flight.stateLock.withLock {
+                    flight.waiters.remove(waiter) && flight.waiters.isEmpty()
+                }
+                if (shouldCancel) {
+                    inFlightUtilityLock.withLock {
+                        if (inFlightUtilityCalls[key] === flight) inFlightUtilityCalls.remove(key)
+                    }
+                    flight.job?.cancel()
+                }
+            }
+        }
     }
 
     internal fun resolveWireProtocol(profile: ProviderProfile): ProviderProtocol =

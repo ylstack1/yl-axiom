@@ -15,6 +15,7 @@ import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.IO
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
@@ -231,6 +232,71 @@ private const val MCP_MAX_TOOLS = 256
 internal class McpClient(private val transport: McpTransport) {
     private var nextId = 0L
     private var stateless = false
+    private val opScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    @kotlin.concurrent.Volatile private var connected = false
+    private val connectOp = CoalescedOp(opScope) { performConnect() }
+    private val listToolsOp = CoalescedOp(opScope) { fetchTools() }
+
+    private class CoalescedOp<T>(
+        private val scope: CoroutineScope,
+        private val block: suspend () -> T
+    ) {
+        private class ActiveRun<T> {
+            val deferred = CompletableDeferred<T>()
+            var waiters = 0
+            var job: Job? = null
+        }
+
+        private val lock = Mutex()
+        private var active: ActiveRun<T>? = null
+
+        suspend fun run(): T {
+            val (run, isLeader) = lock.withLock {
+                val current = active
+                if (current != null && current.deferred.isActive) {
+                    current.waiters++
+                    current to false
+                } else {
+                    ActiveRun<T>().also {
+                        it.waiters = 1
+                        active = it
+                    } to true
+                }
+            }
+            if (isLeader) {
+                val job = scope.launch {
+                    val outcome = runCatching { block() }
+                    lock.withLock {
+                        if (active === run) active = null
+                    }
+                    outcome.fold(
+                        onSuccess = { run.deferred.complete(it) },
+                        onFailure = { run.deferred.completeExceptionally(it) }
+                    )
+                }
+                lock.withLock {
+                    if (run.waiters <= 0) {
+                        if (active === run) active = null
+                        job.cancel()
+                    } else {
+                        run.job = job
+                    }
+                }
+            }
+            return try {
+                run.deferred.await()
+            } finally {
+                withContext(NonCancellable) {
+                    lock.withLock {
+                        if (--run.waiters <= 0 && run.deferred.isActive) {
+                            if (active === run) active = null
+                            run.job?.cancel()
+                        }
+                    }
+                }
+            }
+        }
+    }
 
     private fun message(method: String, params: JsonObject, id: Long?): JsonObject = buildJsonObject {
         put("jsonrpc", "2.0")
@@ -265,6 +331,12 @@ internal class McpClient(private val transport: McpTransport) {
     }
 
     suspend fun connect() {
+        if (connected) return
+        connectOp.run()
+    }
+
+    private suspend fun performConnect() {
+        if (connected) return
         val response = exchange("initialize", buildJsonObject {
             put("protocolVersion", MCP_HANDSHAKE_VERSION)
             put("capabilities", JsonObject(emptyMap()))
@@ -278,6 +350,7 @@ internal class McpClient(private val transport: McpTransport) {
                 // A 2026 server has no handshake, so listing tools is what proves it is usable.
                 stateless = true
                 transport.protocolVersion = MCP_STATELESS_VERSION
+                connected = true
                 return
             }
             val msg = (errObj["message"] as? JsonPrimitive)?.contentOrNull?.takeIf { it.isNotBlank() } ?: errObj.toString()
@@ -287,9 +360,12 @@ internal class McpClient(private val transport: McpTransport) {
         if (version !in MCP_HANDSHAKE_VERSIONS) throw McpException("This server uses an unsupported protocol version ($version).")
         transport.protocolVersion = version
         transport.notify(message("notifications/initialized", JsonObject(emptyMap()), null))
+        connected = true
     }
 
-    suspend fun listTools(): List<McpToolInfo> {
+    suspend fun listTools(): List<McpToolInfo> = listToolsOp.run()
+
+    private suspend fun fetchTools(): List<McpToolInfo> {
         val tools = mutableListOf<McpToolInfo>()
         var cursor: String? = null
         val seenCursors = hashSetOf<String>()
@@ -319,7 +395,11 @@ internal class McpClient(private val transport: McpTransport) {
 
     val isAlive: Boolean get() = transport.isAlive
 
-    suspend fun close() = transport.close()
+    suspend fun close() {
+        connected = false
+        opScope.cancel()
+        transport.close()
+    }
 }
 
 private fun JsonObject.text(key: String): String = (this[key] as? JsonPrimitive)?.contentOrNull.orEmpty()

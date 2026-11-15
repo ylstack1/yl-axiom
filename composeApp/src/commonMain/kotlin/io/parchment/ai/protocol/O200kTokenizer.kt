@@ -77,8 +77,71 @@ object O200kTokenizer {
 
     private val WHITESPACE_RUN_REGEX = Regex("\\s+")
 
-    private val tokenCache = object : LinkedHashMap<Int, Int>(256, 0.75f, true) {
-        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<Int, Int>?): Boolean = size > 2048
+    private val tokenCache = object : LinkedHashMap<Long, Int>(256, 0.75f, true) {
+        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<Long, Int>?): Boolean = size > 2048
+    }
+
+    private data class CompletedToolTokenKey(
+        val id: String,
+        val nameHash: Long,
+        val argsHash: Long,
+        val resultHash: Long
+    )
+
+    private data class CompletedVariantTokenKey(
+        val id: String,
+        val contentHash: Long,
+        val thinkingHash: Long,
+        val attachmentsSignature: Long,
+        val toolsSignature: Long
+    )
+
+    private data class VariantTokenBreakdown(
+        val proseTokens: Int,
+        val attachmentsTokens: Int,
+        val thinkingTokens: Int,
+        val toolCallsTokens: Int
+    )
+
+    private val toolCallTokenCache = object : LinkedHashMap<CompletedToolTokenKey, Int>(256, 0.75f, true) {
+        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<CompletedToolTokenKey, Int>?): Boolean = size > 512
+    }
+
+    private val variantTokenCache = object : LinkedHashMap<CompletedVariantTokenKey, VariantTokenBreakdown>(256, 0.75f, true) {
+        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<CompletedVariantTokenKey, VariantTokenBreakdown>?): Boolean = size > 512
+    }
+
+    private fun textFingerprint64(text: String): Long {
+        if (text.isEmpty()) return 0L
+        val len = text.length
+        val edge = (text[0].code.toLong() shl 24) xor
+            (text[len ushr 1].code.toLong() shl 12) xor
+            text[len - 1].code.toLong()
+        return (text.hashCode().toLong() shl 32) xor ((len.toLong() shl 16) xor edge)
+    }
+
+    private fun attachmentsFingerprint64(attachments: List<PromptAttachment>): Long {
+        if (attachments.isEmpty()) return 0L
+        var acc = attachments.size.toLong() * 0x9E3779B97F4A7C15uL.toLong()
+        for (att in attachments) {
+            acc = acc * 31L + textFingerprint64(att.id)
+            acc = acc * 31L + textFingerprint64(att.fileName)
+            acc = acc * 31L + textFingerprint64(att.mimeType)
+            acc = acc * 31L + textFingerprint64(att.textContent)
+        }
+        return acc
+    }
+
+    private fun toolCallsFingerprint64(toolCalls: List<ToolCallRecord>): Long {
+        if (toolCalls.isEmpty()) return 0L
+        var acc = toolCalls.size.toLong() * 0x517CC1B727220A95L
+        for (tc in toolCalls) {
+            acc = acc * 31L + textFingerprint64(tc.id)
+            acc = acc * 31L + textFingerprint64(tc.name)
+            acc = acc * 31L + textFingerprint64(tc.argumentsJson)
+            acc = acc * 31L + textFingerprint64(tc.resultText)
+        }
+        return acc
     }
 
     // Ensure warmUp() pre-compiles O200kTokenizer regex off the UI thread during startup
@@ -101,7 +164,7 @@ object O200kTokenizer {
      */
     fun countTokens(text: String, cacheResult: Boolean = true): Int {
         if (text.isEmpty()) return 0
-        val cacheKey = text.hashCode() * 31 + text.length
+        val cacheKey = textFingerprint64(text)
         synchronized(tokenCache) {
             tokenCache[cacheKey]?.let { return it }
         }
@@ -199,6 +262,61 @@ object O200kTokenizer {
         }
     }
 
+    fun countToolCallTokens(tc: ToolCallRecord, isLiveOverride: Boolean = false): Int {
+        if (isLiveOverride || tc.isRunning) {
+            return 6 + countTokens(tc.name) +
+                estimateTokensFast(tc.argumentsJson) +
+                estimateTokensFast(tc.resultText)
+        }
+        val key = CompletedToolTokenKey(
+            id = tc.id,
+            nameHash = textFingerprint64(tc.name),
+            argsHash = textFingerprint64(tc.argumentsJson),
+            resultHash = textFingerprint64(tc.resultText)
+        )
+        synchronized(toolCallTokenCache) {
+            toolCallTokenCache[key]?.let { return it }
+        }
+        val computed = 6 + countTokens(tc.name) + countTokens(tc.argumentsJson) + countTokens(tc.resultText)
+        synchronized(toolCallTokenCache) {
+            toolCallTokenCache[key] = computed
+        }
+        return computed
+    }
+
+    private fun completedVariantTokenBreakdown(variant: MessageVariant): VariantTokenBreakdown {
+        val key = CompletedVariantTokenKey(
+            id = variant.id,
+            contentHash = textFingerprint64(variant.content),
+            thinkingHash = textFingerprint64(variant.thinkingSummary),
+            attachmentsSignature = attachmentsFingerprint64(variant.attachments),
+            toolsSignature = toolCallsFingerprint64(variant.toolCalls)
+        )
+        synchronized(variantTokenCache) {
+            variantTokenCache[key]?.let { return it }
+        }
+        val proseTokens = if (variant.content.isNotBlank()) countTokens(variant.content) else 0
+        var attachmentsTokens = 0
+        for (att in variant.attachments) {
+            attachmentsTokens += countAttachmentTokens(att)
+        }
+        val thinkingTokens = if (variant.thinkingSummary.isNotBlank()) countTokens(variant.thinkingSummary) else 0
+        var toolCallsTokens = 0
+        for (tc in variant.toolCalls) {
+            toolCallsTokens += countToolCallTokens(tc)
+        }
+        return VariantTokenBreakdown(
+            proseTokens = proseTokens,
+            attachmentsTokens = attachmentsTokens,
+            thinkingTokens = thinkingTokens,
+            toolCallsTokens = toolCallsTokens
+        ).also { breakdown ->
+            synchronized(variantTokenCache) {
+                variantTokenCache[key] = breakdown
+            }
+        }
+    }
+
     /**
      * Counts the exact `o200k_base` tokens for a single message turn (`MessageVariant`),
      * including its prose, attachments, tool calls, and reasoning summary.
@@ -208,23 +326,27 @@ object O200kTokenizer {
         variant: MessageVariant,
         includeReasoningAndTools: Boolean = true
     ): Int {
-        var total = 4 // ChatML / turn framing overhead (`<|start|>role\n...<|end|>`)
         val isLive = variant.isStreaming
+        if (!isLive && variant.toolCalls.none { it.isRunning }) {
+            val b = completedVariantTokenBreakdown(variant)
+            return 4 + b.proseTokens + b.attachmentsTokens +
+                if (role == MessageRole.ASSISTANT && includeReasoningAndTools) {
+                    b.thinkingTokens + b.toolCallsTokens
+                } else 0
+        }
+        var total = 4 // ChatML / turn framing overhead (`<|start|>role\n...<|end|>`)
         if (variant.content.isNotBlank()) {
-            total += if (isLive) estimateTokensFast(variant.content) else countTokens(variant.content)
+            total += estimateTokensFast(variant.content)
         }
         for (att in variant.attachments) {
             total += countAttachmentTokens(att)
         }
         if (role == MessageRole.ASSISTANT && includeReasoningAndTools) {
             if (variant.thinkingSummary.isNotBlank()) {
-                total += if (isLive) estimateTokensFast(variant.thinkingSummary) else countTokens(variant.thinkingSummary)
+                total += estimateTokensFast(variant.thinkingSummary)
             }
             for (tc in variant.toolCalls) {
-                val tcLive = isLive || tc.isRunning
-                total += 6 + countTokens(tc.name) +
-                    (if (tcLive) estimateTokensFast(tc.argumentsJson) else countTokens(tc.argumentsJson)) +
-                    (if (tcLive) estimateTokensFast(tc.resultText) else countTokens(tc.resultText))
+                total += countToolCallTokens(tc, isLiveOverride = true)
             }
         }
         return total
@@ -320,26 +442,37 @@ object O200kTokenizer {
             activeTurnsCount++
             val v = node.activeVariant
             val isLive = v.isStreaming
-            var turnProseAndTools = 4
-            if (v.content.isNotBlank()) {
-                turnProseAndTools += if (isLive) estimateTokensFast(v.content) else countTokens(v.content)
-            }
-            if (node.role == MessageRole.ASSISTANT) {
-                for (tc in v.toolCalls) {
-                    val tcLive = isLive || tc.isRunning
-                    turnProseAndTools += 6 + countTokens(tc.name) +
-                        (if (tcLive) estimateTokensFast(tc.argumentsJson) else countTokens(tc.argumentsJson)) +
-                        (if (tcLive) estimateTokensFast(tc.resultText) else countTokens(tc.resultText))
+            if (!isLive && v.toolCalls.none { it.isRunning }) {
+                val b = completedVariantTokenBreakdown(v)
+                var turnProseAndTools = 4 + b.proseTokens
+                if (node.role == MessageRole.ASSISTANT) {
+                    turnProseAndTools += b.toolCallsTokens
+                    if (v.content.isBlank() || node == effectiveMessages.lastOrNull()) {
+                        turnProseAndTools += b.thinkingTokens
+                    }
                 }
-                if ((v.content.isBlank() || isLive || node == effectiveMessages.lastOrNull()) && v.thinkingSummary.isNotBlank()) {
-                    turnProseAndTools += if (isLive) estimateTokensFast(v.thinkingSummary) else countTokens(v.thinkingSummary)
+                chatHistoryTokens += turnProseAndTools
+                uploadedFilesCount += v.attachments.size
+                uploadedFilesTokens += b.attachmentsTokens
+            } else {
+                var turnProseAndTools = 4
+                if (v.content.isNotBlank()) {
+                    turnProseAndTools += if (isLive) estimateTokensFast(v.content) else countTokens(v.content)
                 }
-            }
-            chatHistoryTokens += turnProseAndTools
+                if (node.role == MessageRole.ASSISTANT) {
+                    for (tc in v.toolCalls) {
+                        turnProseAndTools += countToolCallTokens(tc, isLiveOverride = isLive)
+                    }
+                    if ((v.content.isBlank() || isLive || node == effectiveMessages.lastOrNull()) && v.thinkingSummary.isNotBlank()) {
+                        turnProseAndTools += if (isLive) estimateTokensFast(v.thinkingSummary) else countTokens(v.thinkingSummary)
+                    }
+                }
+                chatHistoryTokens += turnProseAndTools
 
-            for (att in v.attachments) {
-                uploadedFilesCount++
-                uploadedFilesTokens += countAttachmentTokens(att)
+                for (att in v.attachments) {
+                    uploadedFilesCount++
+                    uploadedFilesTokens += countAttachmentTokens(att)
+                }
             }
         }
 
