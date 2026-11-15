@@ -2,6 +2,13 @@
 
 What changed in each release, newest first. From 2.1.7 on, release-please writes these entries from commit messages that follow [Conventional Commits](https://www.conventionalcommits.org/) (`feat:` and `fix:` appear here and set the next version); edit wording in its release PR before merging it.
 
+## [2.2.1](https://github.com/baros4294/parchment/compare/v2.2.0...v2.2.1) (2026-11-15)
+
+
+### Fixes
+
+* **android,harness:** fix computer_use race/background approvals and isolate session TODO & global AGENT.md ([21e26f2](https://github.com/baros4294/parchment/commit/21e26f2ff373174b0f60e1600fd7bd8e73a13cc9))
+
 ## [2.2.0](https://github.com/baros4294/parchment/compare/v2.1.11...v2.2.0) (2026-11-15)
 
 
