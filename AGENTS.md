@@ -12,7 +12,7 @@ These rules bind every contributor, person or agent, in any tool. Nothing may de
 ## Work in bounded batches
 
 1. Before editing, state in a few lines: the defect, the files, the acceptance criteria and the check.
-2. Search first, then read only the defining code and its callers in **every** source set, including recursive and fallback calls. After changing a signature, search for callers again before compiling.
+2. Search first (`git grep -n`), then read only the defining code and its callers in **every** source set, including recursive and fallback calls. After changing a signature, search for callers again before compiling.
 3. Group edits that share a behavior and verification. Finish code and regressions, then review the whole diff once, before the first build.
 4. Add a regression only for a real failure mode. When a test could pass without the fix, prove it can fail.
 5. Don't grow a batch into a general audit. Log unrelated findings in TODO and continue.
@@ -33,7 +33,7 @@ A batch is done only when `affected` passes and TODO records it: tick what is ve
 
 Report in a few lines: what changed, what was verified, what wasn't. Never claim a check you did not run.
 
-Commit messages follow Conventional Commits (`feat:`, `fix:`, `perf:`, `docs:`, `chore:`, `ci:`, `refactor:`, `test:`): release-please builds the version and CHANGELOG from them. A push to `main` doesn't release; merging the release PR does.
+Commit messages follow Conventional Commits (`feat:`, `fix:`, `perf:`, `docs:`, `chore:`, `ci:`, `refactor:`, `test:`): `feat:`, `fix:` and `perf:` advance release-please and CHANGELOG (`docs:`/`chore:`/`ci:`/`refactor:`/`test:` are hidden and do not cut a release). A push to `main` doesn't release; merging the release PR does.
 
 ## Spend tokens carefully
 

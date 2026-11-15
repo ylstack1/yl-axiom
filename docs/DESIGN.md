@@ -31,7 +31,7 @@ Everything else lives in `ui/DesignTokens.kt`. New UI uses these names, not lite
 - **Corners:** 4, 6, 8, 10, 12 dp, 16 for bubbles, or fully round (`Radius`).
 - **Lines:** hairline 0.75 dp, emphasis 1, selected 1.5, focus ring 2 (`LineWidth`).
 - **Icons:** 10, 12, 14, 16, 20 dp (`IconSize`), even sizes only, so strokes land on whole pixels.
-- **Elevation:** flat, except things that float above the page (notifications, menus): one 8 dp shadow (`Elevation`).
+- **Elevation & overlays:** flat by default; floating overlays (`CommandPalette`, `MobileTabSwitcherModal`, menus, notifications) use `elevatedBg` with an 8 dp shadow (`Elevation`, `overlayShadow`) over a backdrop scrim (`Scrim.subtle`, `Scrim.drawer`, `Scrim.dialog`).
 - **Motion:** 110 ms leaving, 150 arriving, 180 travelling, 250 overlays leaving, springs without bounce for size changes (`Motion`). Always through `motionTween` and `motionSpring`, which turn instant under Reduce motion.
 - **Focus:** keyboard focus draws a 2 dp accent ring; focus from a click draws none.
 - **Text size:** fixed columns (`textScaledWidth`) and icons grow with the system text size, up to 1.6 times at 200%, so labels keep whole words. Short labels in tight places take one line with an ellipsis.
@@ -63,9 +63,9 @@ Sources: [How we redesigned the Linear UI](https://linear.app/now/how-we-redesig
 
 ## Icons
 
-`KissIconGlyphs.kt` holds one family on a 24-unit grid: live area 3 to 21, circles of radius 9, corners of radius 2.5, arrowheads 6 deep. Stroke weight follows icon size. Add new icons there, as paths, on the same grid.
+`ui/KissIconGlyphs.kt` (exposed via `ui/ParchmentIcons.kt`) holds one family on a 24-unit grid: live area 3 to 21, circles of radius 9, corners of radius 2.5, arrowheads 6 deep. Stroke weight follows icon size. Add new icons there, as paths, on the same grid.
 
-The app icon is one nib over a line of ink. `installer/parchment-icon.ico`, `resources/icon/parchment-icon.png` and the Android launcher use the same shape.
+The app icon is one nib over a line of ink. `installer/parchment-icon.ico`, `composeApp/src/commonMain/resources/icon/parchment-icon.png` and the Android launcher use the same shape.
 
 ## Windows
 
@@ -79,7 +79,7 @@ The window uses the native caption, so minimize, maximize, Snap Layouts and roun
 
 Write for a capable person who is not a developer. Say what a control does, not how it works.
 
-Interface text lives in `ui/Strings.kt`, one table for translation: a `val` for fixed text, a function for text with values (`Strings.clearedMessagesIn(title)`). Add new text there, not in a screen.
+Interface text lives in `strings/Strings.kt`, one table for translation: a `val` for fixed text, a function for text with values (`Strings.clearedMessagesIn(title)`). Add new text there, not in a screen.
 
 | Instead of | Say |
 |---|---|

@@ -70,6 +70,7 @@ There are no accounts, analytics or telemetry. Your chats, settings and keys sta
 | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | How the code is laid out and where to change what |
 | [docs/DESIGN.md](docs/DESIGN.md) | The visual design, tokens, icons and wording |
 | [docs/PERFORMANCE.md](docs/PERFORMANCE.md) | Speed, memory and size budgets, and how to measure them |
+| [docs/RELEASE_SIGNING.md](docs/RELEASE_SIGNING.md) | Private release keystore setup and CI signing secrets |
 | [MEMORY.md](MEMORY.md) | Contracts that must not break |
 | [TODO.md](TODO.md) | Current status, open work and known gaps |
 

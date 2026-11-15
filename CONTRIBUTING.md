@@ -5,7 +5,7 @@ Thanks for helping. This page covers the principles, the setup and how to land a
 ## Principles
 
 1. **Compose Foundation only.** UI uses `compose.runtime`, `compose.foundation` and `compose.ui`. No Material, Fluent, WebView or third-party widget kits.
-2. **Our own icons.** Icons are vector paths in `KissIconGlyphs.kt` on a 24-unit grid, never OS emoji. See [docs/DESIGN.md](docs/DESIGN.md).
+2. **Our own icons.** Icons are vector paths in `ui/KissIconGlyphs.kt` (exposed via `ui/ParchmentIcons.kt`) on a 24-unit grid, never OS emoji. See [docs/DESIGN.md](docs/DESIGN.md).
 3. **Nothing hardcoded about models or devices.** No model names, versions or vendor branches; read capabilities from the provider. Blank generation settings are omitted from requests, and `0` means unlimited.
 4. **Plain words.** Sentence case and no internal jargon on screen. DESIGN.md has the word list.
 5. **Fits every screen.** Check compact phone widths (under 600 dp) and wide desktop windows.
@@ -26,7 +26,7 @@ Run the desktop app with `.\gradlew.bat :composeApp:run`. Create an empty `compo
 
 ## Find your way
 
-[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) maps the source sets and packages and says where to change what. Read the matching section of [MEMORY.md](MEMORY.md) before changing storage, protocols or platform code.
+[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) maps every source set, package, file, runtime flow and test suite, with a lookup table for common changes. Read the matching section of [MEMORY.md](MEMORY.md) before changing storage, protocols or platform code, and search portably across desktop/Windows environments with `git grep -n`.
 
 ## Build and test
 
@@ -43,7 +43,7 @@ Run the desktop app with `.\gradlew.bat :composeApp:run`. Create an empty `compo
 | Start-up, memory and size | `python scripts/verify.py perf` (budgets in [docs/PERFORMANCE.md](docs/PERFORMANCE.md)) |
 | Final desktop, Android and package gate | `. .\scripts\load-private-signer.ps1`, then `python scripts/verify.py final` |
 
-Add `--dry-run` to see what a build command would run. Failures print compiler errors and failed tests, and full logs are in `.parchment-local/verification/`.
+Add `--dry-run` to see what a build command would run. Failures print compiler errors and failed tests, and full logs are in `.parchment-local/verification/`. Run `python -m unittest scripts/test_workflow_tools.py` after changing verification or quality scripts.
 
 `scripts/quality.py` enforces encoding, unused imports, dead code, file-size limits, banned patterns, documentation budgets, working links and tracked secrets. Don't raise a limit in `scripts/quality-baseline.json` to get a pass.
 
