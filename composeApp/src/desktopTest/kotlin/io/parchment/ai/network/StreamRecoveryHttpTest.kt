@@ -646,4 +646,100 @@ class StreamRecoveryHttpTest {
             assertTrue(update is StreamUpdate.Status && "upstream failure" in update.message, "Unexpected update: $update")
         }
     }
+
+    @Test fun geminiChain404FallbackStillCarriesOlderForeignReasoningHandoff() {
+        val history = listOf(
+            MessageNode("u1", MessageRole.USER, listOf(MessageVariant("uv1", content = "Start"))),
+            MessageNode(
+                "a1", MessageRole.ASSISTANT,
+                listOf(
+                    MessageVariant(
+                        "av1",
+                        content = "Claude answer",
+                        thinkingSummary = "Claude private reasoning plan",
+                        providerProtocol = ProviderProtocol.ANTHROPIC_MESSAGES,
+                        providerWireDialect = CUSTOM_DIALECT_ANTHROPIC,
+                        modelUsed = "claude-sonnet"
+                    )
+                )
+            ),
+            MessageNode("u2", MessageRole.USER, listOf(MessageVariant("uv2", content = "Switch to Gemini"))),
+            MessageNode(
+                "a2", MessageRole.ASSISTANT,
+                listOf(
+                    MessageVariant(
+                        "av2",
+                        content = "Gemini reply",
+                        providerInteractionId = "expired-chain-id",
+                        providerProtocol = ProviderProtocol.GEMINI_INTERACTIONS,
+                        providerWireDialect = CUSTOM_DIALECT_GEMINI,
+                        modelUsed = "fixture-model"
+                    )
+                )
+            ),
+            MessageNode("u3", MessageRole.USER, listOf(MessageVariant("uv3", content = "Continue")))
+        )
+        val expired404 = Reply("""{"error":{"message":"Interaction expired"}}""", status = 404, contentType = "application/json")
+        val okSse = sse("""{"event_type":"interaction.complete","interaction":{"id":"i-new","status":"completed","steps":[{"type":"model_output","content":[{"type":"text","text":"Recovered"}]}]}}""")
+        Server(listOf(expired404, Reply(okSse))).use { server ->
+            val chainedProfile = geminiProfile(server).copy(storeServerSide = true, useStatefulChaining = true)
+            val done = assertIs<StreamUpdate.Completed>(runUntilTerminalOrRetry(chainedProfile, history))
+            assertEquals("Recovered", done.fullContent)
+            assertEquals(2, server.requests.size)
+            assertTrue(AiProviderEngine.REASONING_HANDOFF_MARKER in server.requests[1], server.requests[1])
+            assertTrue("Claude private reasoning plan" in server.requests[1], server.requests[1])
+        }
+    }
+
+    @Test fun geminiBackgroundPollRetriesTransientHttp502WithoutResubmittingPost() {
+        val partialSse = sse(
+            """{"event_type":"interaction.start","interaction":{"id":"int-poll-1","status":"in_progress"}}""",
+            """{"event_type":"content.delta","index":0,"delta":{"type":"text","text":"Hello "}}"""
+        )
+        val poll502 = Reply("""{"error":{"message":"Bad Gateway"}}""", status = 502, contentType = "application/json")
+        val pollDone = """{"id":"int-poll-1","status":"completed","outputs":[{"type":"text","text":"Hello recovered"}]}"""
+        Server(listOf(Reply(partialSse), poll502, Reply(pollDone, contentType = "application/json"))).use { server ->
+            val stored = geminiProfile(server).copy(storeServerSide = true, useBackgroundLongDecode = true)
+            val done = assertIs<StreamUpdate.Completed>(runUntilTerminalOrRetry(stored))
+            assertEquals("Hello recovered", done.fullContent)
+            assertEquals(1, server.requestPaths.count { it == "/v1beta/interactions" }, server.requestPaths.toString())
+            assertEquals(2, server.requestPaths.count { it == "/v1beta/interactions/int-poll-1" }, server.requestPaths.toString())
+        }
+    }
+
+    @Test fun geminiBackgroundPollExhaustionStopsWithAcceptedJobInsteadOfResubmitting() {
+        val partialSse = sse("""{"event_type":"interaction.start","interaction":{"id":"int-stuck","status":"in_progress"}}""")
+        val poll502 = Reply("""{"error":{"message":"Bad Gateway"}}""", status = 502, contentType = "application/json")
+        val replies = listOf(Reply(partialSse)) + List(8) { poll502 }
+        Server(replies).use { server ->
+            val stored = geminiProfile(server).copy(
+                storeServerSide = true,
+                useBackgroundLongDecode = true,
+                useLegacyFallbackEndpoint = true
+            )
+            val allUpdates = runBlocking { withTimeout(20_000) { updates(stored).toList() } }
+            val err = assertIs<StreamUpdate.Error>(allUpdates.last())
+            assertTrue("int-stuck" in err.message, err.message)
+            assertEquals(1, server.requestPaths.count { it == "/v1beta/interactions" }, server.requestPaths.toString())
+            assertEquals(6, server.requestPaths.count { it == "/v1beta/interactions/int-stuck" }, server.requestPaths.toString())
+            assertTrue(server.requestPaths.none { "generateContent" in it }, server.requestPaths.toString())
+        }
+    }
+
+    @Test fun geminiNonRetryableSseStreamErrorFailsFastWithoutPollingOrFallback() {
+        val streamInvalid = sse(
+            """{"event_type":"interaction.start","interaction":{"id":"int-bad","status":"in_progress"}}""",
+            """{"event_type":"error","error":{"code":400,"status":"INVALID_ARGUMENT","message":"Invalid schema"}}"""
+        )
+        Server(listOf(Reply(streamInvalid))).use { server ->
+            val stored = geminiProfile(server).copy(
+                storeServerSide = true,
+                useBackgroundLongDecode = true,
+                useLegacyFallbackEndpoint = true
+            )
+            val err = assertIs<StreamUpdate.Error>(runUntilTerminalOrRetry(stored))
+            assertTrue("Invalid schema" in err.message, err.message)
+            assertEquals(listOf("/v1beta/interactions"), server.requestPaths)
+        }
+    }
 }

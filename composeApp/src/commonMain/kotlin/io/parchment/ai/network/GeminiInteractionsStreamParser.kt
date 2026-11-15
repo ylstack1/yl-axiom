@@ -12,6 +12,7 @@ import io.parchment.ai.network.AiProviderEngine.RawWebCitation
 import io.parchment.ai.protocol.isGeminiServerSideToolSignature
 import io.parchment.ai.protocol.sanitizeGeminiThoughtSignature
 import io.parchment.ai.strings.Strings
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.delay
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
@@ -22,6 +23,9 @@ import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 
 // Per-round SSE event parsing, background poll recovery, and completed object decoding for Gemini Interactions.
+
+/** Signals an explicit server-side `"status": "failed"` interaction event so callers skip extra poll lookups. */
+internal class TerminalInteractionFailedException(message: String) : RuntimeException(message)
 
 internal class GeminiInteractionsRoundParser(
     private val engine: AiProviderEngine,
@@ -131,7 +135,7 @@ internal class GeminiInteractionsRoundParser(
             "error" -> {
                 val errObj = evObj["error"] as? JsonObject
                 val msg = errObj?.get("message")?.jsonPrimitive?.contentOrNull ?: dataLine
-                error("Gemini Interactions Stream Error: $msg")
+                throw buildStreamOrJsonError("Gemini Interactions Stream Error", errObj, msg)
             }
             else -> {
                 val unknownStatus = interactionStatus.orEmpty()
@@ -144,15 +148,38 @@ internal class GeminiInteractionsRoundParser(
         }
     }
 
+    private fun isNonRetryableGeminiError(code: Int?, status: String): Boolean {
+        if (code != null && code in setOf(400, 401, 403, 404, 413, 422)) return true
+        return status.trim().uppercase() in setOf(
+            "INVALID_ARGUMENT", "PERMISSION_DENIED", "UNAUTHENTICATED",
+            "NOT_FOUND", "FAILED_PRECONDITION", "INVALID_REQUEST",
+            "SAFETY", "PROHIBITED_CONTENT"
+        )
+    }
+
+    private fun buildStreamOrJsonError(prefix: String, errObj: JsonObject?, msg: String): RuntimeException {
+        val code = errObj?.get("code")?.jsonPrimitive?.intOrNull
+        val errStatus = (errObj?.get("status") as? JsonPrimitive)?.contentOrNull.orEmpty()
+        val tag = errStatus.ifBlank { code?.toString().orEmpty() }
+        val formatted = if (tag.isNotBlank()) "$prefix ($tag): $msg" else "$prefix: $msg"
+        return if (isNonRetryableGeminiError(code, errStatus)) {
+            AiProviderEngine.NoRetryException(formatted)
+        } else {
+            IllegalStateException(formatted)
+        }
+    }
+
     private fun throwIfInteractionFailed(status: String, obj: JsonObject, fallbackDetail: String = "") {
         if (status == "failed" || status == "cancelled" || status == "expired") {
             val errObj = obj["error"] as? JsonObject
             val msg = (errObj?.get("message") as? JsonPrimitive)?.contentOrNull
                 ?: fallbackDetail.ifBlank { "status=$status" }
-            if (status == "cancelled" || status == "expired") {
+            val code = errObj?.get("code")?.jsonPrimitive?.intOrNull
+            val errStatus = (errObj?.get("status") as? JsonPrimitive)?.contentOrNull.orEmpty()
+            if (status == "cancelled" || status == "expired" || isNonRetryableGeminiError(code, errStatus)) {
                 throw AiProviderEngine.NoRetryException("Gemini Interactions $status: $msg")
             }
-            error("Gemini Interactions $status: $msg")
+            throw TerminalInteractionFailedException("Gemini Interactions $status: $msg")
         }
     }
 
@@ -162,23 +189,56 @@ internal class GeminiInteractionsRoundParser(
         requestJsonStr: String
     ) {
         var pollCount = 0
+        var transientErrors = 0
         var status = "in_progress"
         var interactionObj = JsonObject(emptyMap())
-        while ((status == "in_progress" || status == "queued" || status == "processing") && interactionIdToPoll.isNotBlank()) {
+        while ((status == "in_progress" || status == "queued" || status == "processing") &&
+            interactionIdToPoll.isNotBlank() &&
+            pollCount < AiProviderEngine.MAX_POLL_ITERATIONS
+        ) {
             pollCount++
             onStatus(Strings.backgroundPollRecoveryPoll(status, pollCount), interactionIdToPoll)
-            delay(2000L)
+            if (transientErrors == 0) delay(2000L)
             val pollUrl = engine.buildUrlWithAuthQuery(profile, "$pollBasePath/$interactionIdToPoll")
-            val pollResp = engine.httpClient.get(pollUrl) {
-                with(engine) { applyAuthAndCustomHeaders(profile) }
+            try {
+                val pollResp = engine.httpClient.get(pollUrl) {
+                    with(engine) { applyAuthAndCustomHeaders(profile) }
+                }
+                val pollText = pollResp.bodyAsText()
+                onRawWire(requestJsonStr, pollText)
+                if (!pollResp.status.isSuccess()) {
+                    error("Gemini Interactions Poll HTTP ${pollResp.status.value}: $pollText")
+                }
+                interactionObj = engine.json.parseToJsonElement(pollText).jsonObject
+                status = (interactionObj["status"] as? JsonPrimitive)?.contentOrNull ?: "completed"
+                transientErrors = 0
+            } catch (e: CancellationException) {
+                throw e
+            } catch (pollErr: Throwable) {
+                if (!engine.isTransientOrProxyTimeoutError(pollErr)) {
+                    throw AiProviderEngine.AcceptedJobException(
+                        "Gemini Interactions poll rejected for background job $interactionIdToPoll: ${pollErr.message ?: pollErr}",
+                        pollErr
+                    )
+                }
+                transientErrors++
+                if (transientErrors > AiProviderEngine.MAX_POLL_TRANSIENT_ERRORS) {
+                    throw AiProviderEngine.AcceptedJobException(
+                        "Gemini Interactions poll failed after $transientErrors attempts for job $interactionIdToPoll: ${pollErr.message ?: pollErr}",
+                        pollErr
+                    )
+                }
+                onStatus(
+                    "Poll error ($transientErrors/${AiProviderEngine.MAX_POLL_TRANSIENT_ERRORS}) — retrying status check…",
+                    interactionIdToPoll
+                )
+                delay((transientErrors * 500L).coerceAtMost(2_500L))
             }
-            val pollText = pollResp.bodyAsText()
-            onRawWire(requestJsonStr, pollText)
-            if (!pollResp.status.isSuccess()) {
-                error("Gemini Interactions Poll HTTP ${pollResp.status.value}: $pollText")
-            }
-            interactionObj = engine.json.parseToJsonElement(pollText).jsonObject
-            status = (interactionObj["status"] as? JsonPrimitive)?.contentOrNull ?: "completed"
+        }
+        if (status == "in_progress" || status == "queued" || status == "processing") {
+            throw AiProviderEngine.AcceptedJobException(
+                "Gemini Interactions background job $interactionIdToPoll did not finish within $pollCount polls."
+            )
         }
         throwIfInteractionFailed(status, interactionObj)
         if (interactionObj.isNotEmpty()) {
@@ -199,7 +259,7 @@ internal class GeminiInteractionsRoundParser(
         val errObj = rootObj["error"] as? JsonObject
         if (errObj != null) {
             val msg = (errObj["message"] as? JsonPrimitive)?.contentOrNull ?: fullBody
-            error("Gemini Interactions Error: $msg")
+            throw buildStreamOrJsonError("Gemini Interactions Error", errObj, msg)
         }
         val id = (rootObj["id"] as? JsonPrimitive)?.contentOrNull ?: ""
         if (id.isNotBlank()) {

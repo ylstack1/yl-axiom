@@ -4,9 +4,9 @@ Updated 2026-11-15. AGENTS.md owns workflow; MEMORY holds contracts. Task IDs st
 
 ## Current status
 
-- **Source:** 2026-11-15: `v2.1.10` released (`17.1`–`17.6` completed and archived in CHANGELOG.md and git history).
-- **Last verified:** 2026-11-15, `verify.py final` (pre-PR #16): 454 desktop tests passed + signed Android build (6m16s); `UiGalleryTest`: 4 tests passed (1m45s); `verify.py perf`: desktop title 1407 ms, window 1257 ms, idle private RAM 269.1 MB (22 MB live / 32 MB committed heap at `-Xms32m`), app image 124.8 MB, `apk_mb=4.3`, 0 missing ProGuard services.
-- **Next action:** Verify `v2.1.10` OTA/device behavior and `13.6 Screen readers`; revisit the paused `RectList` issue on Compose Multiplatform updates.
+- **Source:** 2026-11-15: reasoning handoff raised to `8_000` chars (head+tail), per-target dialect/model handoff & chain guards (`providerWireDialect`, step order, overflow/fallback/nudge/signatureless-tool fixes), and bounded transient-resilient Gemini polling with fast-fail non-retryable errors; `v2.1.10` released (`17.1`–`17.6` in CHANGELOG.md).
+- **Last verified:** 2026-11-15, `verify.py affected`: 462 desktop tests passed (2m35s); `v2.1.10` `verify.py final` (454 desktop tests + signed Android build 6m16s, `UiGalleryTest` 4/4 1m45s, `perf` 1407 ms title / 269.1 MB idle / 4.3 MB APK).
+- **Next action:** Check `13.6 Screen readers` when the user tests NVDA and TalkBack.
 
 ## Open tasks
 

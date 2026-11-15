@@ -92,6 +92,11 @@ internal class GenerationStreamAccumulator(
     private var lastRawResp = ""
     private var helperCount = 0
     private var reachedOutputLimit = false
+    private var activeWireDialect = engine.resolveWireDialect(profile)
+
+    fun markActiveWireDialect(wireDialect: String) {
+        if (wireDialect.isNotBlank()) activeWireDialect = wireDialect
+    }
 
     val hasNoFinalAnswer: Boolean
         get() = contentBuilder.toString().isBlank() && generatedMedia.isEmpty()
@@ -124,7 +129,8 @@ internal class GenerationStreamAccumulator(
         continuePrefix: String,
         protocol: ProviderProtocol,
         passTag: String,
-        forceVisibleThoughtSummary: Boolean = false
+        forceVisibleThoughtSummary: Boolean = false,
+        wireDialect: String = activeWireDialect
     ): Pair<List<MessageNode>, String> = engine.buildEffectiveHistoryAndPrefix(
         baseHistoryNodes = baseNodes,
         continuePrefix = continuePrefix,
@@ -136,7 +142,8 @@ internal class GenerationStreamAccumulator(
         protocol = protocol,
         model = model,
         passTag = passTag,
-        forceVisibleThoughtSummary = forceVisibleThoughtSummary
+        forceVisibleThoughtSummary = forceVisibleThoughtSummary,
+        wireDialect = wireDialect
     )
 
     suspend fun attachSubagentRunner() {
@@ -427,7 +434,8 @@ internal class GenerationStreamAccumulator(
                 metrics = rawMetrics,
                 rawRequest = lastRawReq,
                 rawResponse = lastRawResp,
-                apiUsageRecords = usageLedger.snapshots()
+                apiUsageRecords = usageLedger.snapshots(),
+                providerWireDialect = activeWireDialect
             )
         )
     }

@@ -1,6 +1,7 @@
 package io.parchment.ai.network
 
 import io.parchment.ai.harness.WorkspaceHarness
+import io.parchment.ai.model.CUSTOM_DIALECT_GEMINI
 import io.parchment.ai.model.ChatSession
 import io.parchment.ai.model.MessageNode
 import io.parchment.ai.model.MessageRole
@@ -102,7 +103,8 @@ internal fun AiProviderEngine.buildGeminiInteractionsTurnsArray(
     nodes: List<MessageNode>,
     session: ChatSession,
     continuePrefix: String,
-    foldHistoricalToolsToText: Boolean = false
+    foldHistoricalToolsToText: Boolean = false,
+    currentModel: String = ""
 ): JsonArray {
     val stepsList = mutableListOf<JsonObject>()
     val replayIds = ReplayToolCallIds()
@@ -121,7 +123,8 @@ internal fun AiProviderEngine.buildGeminiInteractionsTurnsArray(
                 text = text,
                 nodeVar = nodeVar,
                 isOlderAssistantTurn = idx < lastAssistantIdx,
-                foldHistoricalToolsToText = foldHistoricalToolsToText
+                foldHistoricalToolsToText = foldHistoricalToolsToText,
+                currentModel = currentModel
             )
         } else {
             appendMergedUserInteractionStep(stepsList, text, binaryAttachments)
@@ -210,11 +213,16 @@ private fun AiProviderEngine.appendAssistantInteractionSteps(
     text: String,
     nodeVar: io.parchment.ai.model.MessageVariant?,
     isOlderAssistantTurn: Boolean,
-    foldHistoricalToolsToText: Boolean
+    foldHistoricalToolsToText: Boolean,
+    currentModel: String = ""
 ) {
     val cleanText = stripInlineErrorNotices(text)
-    val isForeignProtocol = nodeVar?.providerProtocol != null &&
-        nodeVar.providerProtocol != ProviderProtocol.GEMINI_INTERACTIONS
+    val isForeignProtocol = nodeVar != null && !isNativeReasoningCompatible(
+        variant = nodeVar,
+        targetProtocol = ProviderProtocol.GEMINI_INTERACTIONS,
+        targetWireDialect = CUSTOM_DIALECT_GEMINI,
+        currentModel = currentModel
+    )
     val rawSig = if (isForeignProtocol) "" else nodeVar?.thinkingSignature.orEmpty()
     val sig = sanitizeGeminiThoughtSignature(rawSig, forFunctionCall = false)
     val thinkSummary = nodeVar?.thinkingSummary.orEmpty()

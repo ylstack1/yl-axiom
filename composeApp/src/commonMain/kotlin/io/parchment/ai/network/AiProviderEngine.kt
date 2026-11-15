@@ -78,7 +78,8 @@ sealed class StreamUpdate {
         val metrics: TokenMetrics,
         val rawRequest: String,
         val rawResponse: String,
-        val apiUsageRecords: List<ApiUsageRecord> = emptyList()
+        val apiUsageRecords: List<ApiUsageRecord> = emptyList(),
+        val providerWireDialect: String = ""
     ) : StreamUpdate()
     data class Error(val message: String, val rawDetails: String = "") : StreamUpdate()
 }
@@ -109,7 +110,9 @@ object AiProviderEngine {
     internal const val REASONING_HANDOFF_MARKER = "[Prior reasoning summary]"
 
     /** Upper bound on carried reasoning text per historical turn (keeps context lean). */
-    internal const val MAX_REASONING_HANDOFF_CHARS = 2000
+    internal const val MAX_REASONING_HANDOFF_CHARS = 8_000
+    internal const val MAX_POLL_ITERATIONS = 450
+    internal const val MAX_POLL_TRANSIENT_ERRORS = 5
     internal const val LEGACY_FALLBACK_PRIMARY_MAX_RETRIES = 2
     internal const val LEGACY_FALLBACK_PRIMARY_WAIT_SECONDS = 3
     internal val discoveredModelModalities = mutableMapOf<String, List<String>>()
@@ -369,6 +372,9 @@ object AiProviderEngine {
 
     internal fun resolveWireProtocol(profile: ProviderProfile): ProviderProtocol =
         resolveProviderWireProtocol(profile)
+
+    internal fun resolveWireDialect(profile: ProviderProfile): String =
+        resolveProviderWireDialect(profile)
 
     internal fun isCustomDialectUnresolved(profile: ProviderProfile): Boolean =
         isProviderCustomDialectUnresolved(profile)

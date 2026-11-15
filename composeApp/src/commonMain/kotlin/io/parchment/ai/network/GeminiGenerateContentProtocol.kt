@@ -18,6 +18,7 @@ import io.parchment.ai.protocol.isGeminiServerSideToolSignature
 import io.parchment.ai.protocol.sanitizeGeminiThoughtSignature
 import io.parchment.ai.model.turnTextLayout
 import io.parchment.ai.model.AgentPermissionResolver
+import io.parchment.ai.model.CUSTOM_DIALECT_GEMINI
 import io.parchment.ai.model.ChatSession
 import io.parchment.ai.model.GeneratedMediaItem
 import io.parchment.ai.model.GoalTrackerState
@@ -128,7 +129,7 @@ internal suspend fun AiProviderEngine.executeGeminiGenerateContentLoop(
                 }
 
                 val baseContents = withBinaryAttachmentIo(activeNodes) {
-                    buildGeminiGenerateContentContents(activeNodes, session, continuePrefix, foldHistoricalToolsOnRetry)
+                    buildGeminiGenerateContentContents(activeNodes, session, continuePrefix, foldHistoricalToolsOnRetry, currentModel = model)
                 }
                 put("contents", JsonArray(baseContents + extraLoopContentTurns))
 
@@ -571,7 +572,8 @@ internal fun AiProviderEngine.buildGeminiGenerateContentContents(
     activeNodes: List<MessageNode>,
     session: ChatSession,
     continuePrefix: String,
-    foldHistoricalToolsToText: Boolean = false
+    foldHistoricalToolsToText: Boolean = false,
+    currentModel: String = ""
 ): MutableList<JsonObject> {
     val turns = injectAuthorsNoteIntoHistory(activeNodes, session)
     val rollingContents = mutableListOf<JsonObject>()
@@ -639,8 +641,12 @@ internal fun AiProviderEngine.buildGeminiGenerateContentContents(
 
         if (role == MessageRole.ASSISTANT) {
             val cleanText = stripInlineErrorNotices(text)
-            val isForeignProtocol = nodeVar?.providerProtocol != null &&
-                nodeVar.providerProtocol != ProviderProtocol.GEMINI_INTERACTIONS
+            val isForeignProtocol = nodeVar != null && !isNativeReasoningCompatible(
+                variant = nodeVar,
+                targetProtocol = ProviderProtocol.GEMINI_INTERACTIONS,
+                targetWireDialect = CUSTOM_DIALECT_GEMINI,
+                currentModel = currentModel
+            )
             val rawSavedSig = if (isForeignProtocol) "" else nodeVar?.thinkingSignature.orEmpty()
             val savedSig = sanitizeGeminiThoughtSignature(rawSavedSig, forFunctionCall = false)
             val thinkSummary = nodeVar?.thinkingSummary.orEmpty()
@@ -657,8 +663,8 @@ internal fun AiProviderEngine.buildGeminiGenerateContentContents(
                     listOf(buildJsonObject { put("text", foldedText) })
                 )
             } else {
-                val handoffCarriesReasoning = isForeignProtocol && cleanText.contains(REASONING_HANDOFF_MARKER)
-                if (toolCalls.isEmpty() && thinkSummary.isNotBlank() && !handoffCarriesReasoning) {
+                val handoffCarriesReasoning = cleanText.contains(REASONING_HANDOFF_MARKER)
+                if (toolCalls.isEmpty() && thinkSummary.isNotBlank() && !handoffCarriesReasoning && !isForeignProtocol) {
                     val thoughtPart = if (savedSig.isNotBlank()) {
                         buildJsonObject {
                             put("thought", true)
@@ -689,7 +695,7 @@ internal fun AiProviderEngine.buildGeminiGenerateContentContents(
                         val cleanBatchSig = if (isForeignProtocol) "" else sanitizeGeminiThoughtSignature(batch.thoughtSignature, forFunctionCall = true)
                         val effSig = cleanBatchSig.ifBlank { "skip_thought_signature_validator" }
                         val modelStepParts = mutableListOf<JsonObject>()
-                        if (batch.precedingThinking.isNotBlank() && !isForeignProtocol) {
+                        if (batch.precedingThinking.isNotBlank() && !isForeignProtocol && !handoffCarriesReasoning) {
                             modelStepParts.add(buildJsonObject {
                                 put("thought", true)
                                 put("text", batch.precedingThinking)

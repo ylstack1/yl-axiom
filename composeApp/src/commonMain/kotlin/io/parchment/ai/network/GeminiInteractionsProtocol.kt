@@ -12,6 +12,7 @@ import io.ktor.http.isSuccess
 import io.parchment.ai.harness.ToolAccessScope
 import io.parchment.ai.harness.WorkspaceHarness
 import io.parchment.ai.model.AgentPermissionResolver
+import io.parchment.ai.model.CUSTOM_DIALECT_GEMINI
 import io.parchment.ai.model.ChatSession
 import io.parchment.ai.model.GeneratedMediaItem
 import io.parchment.ai.model.GoalTrackerState
@@ -48,7 +49,7 @@ suspend fun AiProviderEngine.cancelBackgroundInteraction(profile: ProviderProfil
         defaultPathWithV1 = "/v1beta/interactions",
         defaultPathWithoutVersion = "/interactions"
     )
-    val url = buildUrlWithAuthQuery(profile, "${rawUrl.substringBefore("?").trimEnd('/')}/$interactionId/cancel")
+    val url = buildUrlWithAuthQuery(profile, "${rawUrl.substringBefore("?").trimEnd('#').trimEnd('/')}/$interactionId/cancel")
     val response = httpClient.post(url) {
         applyAuthAndCustomHeaders(profile)
         contentType(ContentType.Application.Json)
@@ -137,7 +138,12 @@ private class GeminiInteractionsSession(
     private val previousAssistantIdx = activeNodes.indexOfLast { it.role == MessageRole.ASSISTANT }
     private var currentPrevInteractionId = if (profile.useStatefulChaining && continuePrefix.isBlank() && previousAssistantIdx >= 0) {
         // Chaining omits local history, so a chain from another model would leave the new one with nothing.
-        engine.reusableProviderChainId(activeNodes[previousAssistantIdx].activeVariant, ProviderProtocol.GEMINI_INTERACTIONS, model)
+        engine.reusableProviderChainId(
+            activeNodes[previousAssistantIdx].activeVariant,
+            ProviderProtocol.GEMINI_INTERACTIONS,
+            model,
+            CUSTOM_DIALECT_GEMINI
+        )
     } else ""
     // ID minted during the active round; only promoted after a round settles so retries never poll a prior turn.
     private var currentRoundInteractionId = ""
@@ -298,7 +304,7 @@ private class GeminiInteractionsSession(
             activeNodes
         }
         val baseInputSteps = withBinaryAttachmentIo(sourceNodes) {
-            engine.buildGeminiInteractionsTurnsArray(sourceNodes, session, continuePrefix, foldHistoricalToolsOnRetry)
+            engine.buildGeminiInteractionsTurnsArray(sourceNodes, session, continuePrefix, foldHistoricalToolsOnRetry, currentModel = model)
         }
 
         // 3-Layer Rolling Context Compaction: prune verbose tool outputs older than 8 steps in-place in RAM
@@ -463,7 +469,12 @@ private class GeminiInteractionsSession(
             onStatus(Strings.statefulInteractionChainRejectedRetryingStep, "")
             return AttemptRecoveryAction.RETRY_ATTEMPT
         }
-        if (profile.keepsProviderState && profile.useBackgroundLongDecode && currentRoundInteractionId.isNotBlank() && engine.isTransientOrProxyTimeoutError(error)) {
+        if (error !is TerminalInteractionFailedException &&
+            profile.keepsProviderState &&
+            profile.useBackgroundLongDecode &&
+            currentRoundInteractionId.isNotBlank() &&
+            engine.isTransientOrProxyTimeoutError(error)
+        ) {
             round.pollUntilComplete(currentRoundInteractionId, pollBasePath, requestJsonStr)
             return AttemptRecoveryAction.BREAK_AFTER_POLL
         }

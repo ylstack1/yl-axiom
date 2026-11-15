@@ -16,6 +16,7 @@ import io.parchment.ai.harness.ToolAccessScope
 import io.parchment.ai.harness.WorkspaceHarness
 import io.parchment.ai.model.turnTextLayout
 import io.parchment.ai.model.AgentPermissionResolver
+import io.parchment.ai.model.CUSTOM_DIALECT_OPENAI_CHAT
 import io.parchment.ai.model.ChatSession
 import io.parchment.ai.model.GeneratedMediaItem
 import io.parchment.ai.model.GoalTrackerState
@@ -125,7 +126,8 @@ internal suspend fun AiProviderEngine.executeOpenAiChatCompletionsLoop(
                     continuePrefix = continuePrefix,
                     extraToolMessages = wireExtraToolMessages,
                     foldHistoricalToolsToText = foldHistoricalToolsOnRetry,
-                    stripReasoningContent = stripHistoricalReasoningContentOnRetry
+                    stripReasoningContent = stripHistoricalReasoningContentOnRetry,
+                    currentModel = model
                 )
             }
 
@@ -517,7 +519,8 @@ internal fun AiProviderEngine.buildOpenAiChatCompletionsMessages(
     continuePrefix: String,
     extraToolMessages: List<JsonObject> = emptyList(),
     foldHistoricalToolsToText: Boolean = false,
-    stripReasoningContent: Boolean = false
+    stripReasoningContent: Boolean = false,
+    currentModel: String = ""
 ): JsonArray {
     val turns = injectAuthorsNoteIntoHistory(activeNodes, session)
     val messages = mutableListOf<JsonObject>()
@@ -594,7 +597,17 @@ internal fun AiProviderEngine.buildOpenAiChatCompletionsMessages(
             val turnText = turnTextLayout(text, toolCalls)
             val finalText = stripInlineErrorNotices(turnText.finalText)
             val isOlderAssistantTurn = idx < lastAssistantIdx
-            val replayReasoning = !foldHistoricalToolsToText && !stripReasoningContent && nodeVar?.providerProtocol !in REASONING_FOREIGN_TO_CHAT
+            val isNativeCompatible = nodeVar == null || (
+                nodeVar.providerProtocol !in REASONING_FOREIGN_TO_CHAT &&
+                    !cleanText.contains(REASONING_HANDOFF_MARKER) &&
+                    isNativeReasoningCompatible(
+                        variant = nodeVar,
+                        targetProtocol = ProviderProtocol.OPENAI_RESPONSES,
+                        targetWireDialect = CUSTOM_DIALECT_OPENAI_CHAT,
+                        currentModel = currentModel
+                    )
+                )
+            val replayReasoning = !foldHistoricalToolsToText && !stripReasoningContent && isNativeCompatible
             if (foldHistoricalToolsToText && toolCalls.isNotEmpty()) {
                 val foldedText = buildFoldedToolHistoryText(toolCalls, thinkSummary, cleanText)
                 messages.add(buildJsonObject {

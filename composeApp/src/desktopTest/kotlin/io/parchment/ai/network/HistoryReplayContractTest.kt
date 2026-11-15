@@ -160,4 +160,181 @@ class HistoryReplayContractTest {
         assertNotNull(catalog["good-chat"])
         assertEquals(listOf("video"), catalog["video-gen"]?.outputModalities)
     }
+
+    @Test fun reasoningHandoffRaisesCapTo8kWithHeadAndTail() {
+        assertEquals(8_000, AiProviderEngine.MAX_REASONING_HANDOFF_CHARS)
+        val head = "OPENING_GOAL: " + "a".repeat(2_500)
+        val middle = "m".repeat(6_000)
+        val tail = "b".repeat(2_500) + " :FINAL_CONCLUSION"
+        val longSummary = "$head$middle$tail"
+
+        val handedOff = AiProviderEngine.applyCrossProviderReasoningHandoff(
+            history(MessageVariant(
+                id = "v",
+                content = "answer",
+                thinkingSummary = longSummary,
+                providerProtocol = ProviderProtocol.GEMINI_INTERACTIONS
+            )),
+            ProviderProtocol.ANTHROPIC_MESSAGES,
+            chainingActive = false
+        )
+        val content = handedOff[1].activeVariant.content
+        val clippedSummary = content
+            .removePrefix("${AiProviderEngine.REASONING_HANDOFF_MARKER}\n")
+            .removeSuffix("\n\nanswer")
+        assertTrue(clippedSummary.length in 7_500..AiProviderEngine.MAX_REASONING_HANDOFF_CHARS)
+        assertTrue(clippedSummary.startsWith("OPENING_GOAL: "), clippedSummary.take(40))
+        assertTrue(clippedSummary.contains("[...middle reasoning omitted...]"))
+        assertTrue(clippedSummary.endsWith(":FINAL_CONCLUSION"), clippedSummary.takeLast(40))
+
+        val midSized = "m".repeat(5_000)
+        val midHandedOff = AiProviderEngine.applyCrossProviderReasoningHandoff(
+            history(MessageVariant(
+                id = "v2",
+                content = "ok",
+                thinkingSummary = midSized,
+                providerProtocol = ProviderProtocol.GEMINI_INTERACTIONS
+            )),
+            ProviderProtocol.ANTHROPIC_MESSAGES,
+            chainingActive = false
+        )
+        assertTrue(midHandedOff[1].activeVariant.content.contains(midSized))
+    }
+
+    @Test fun crossProviderHandoffPreservesToolStepOrderAndAvoidsDoubleReasoning() {
+        val responsesToolTurn = MessageVariant(
+            id = "v-resp",
+            content = "Reading config. Done.",
+            thinkingSummary = "Check config first.",
+            trailingThinking = "Now wrap up.",
+            thinkingSignature = "gAAAAABenc_token==",
+            toolCalls = listOf(ToolCallRecord("c1", "fs_read", "{}", resultText = "cfg", precedingText = "Reading config. ")),
+            providerProtocol = ProviderProtocol.OPENAI_RESPONSES,
+            providerWireDialect = CUSTOM_DIALECT_OPENAI_RESPONSES,
+            modelUsed = "gpt-5"
+        )
+        val forChat = AiProviderEngine.applyCrossProviderReasoningHandoff(
+            history(responsesToolTurn),
+            currentProtocol = ProviderProtocol.OPENAI_RESPONSES,
+            chainingActive = false,
+            currentWireDialect = CUSTOM_DIALECT_OPENAI_CHAT,
+            currentModel = "deepseek-r1"
+        )
+        val chatMessages = AiProviderEngine.buildOpenAiChatCompletionsMessages(
+            activeNodes = forChat,
+            session = session,
+            systemInstruction = "",
+            continuePrefix = "",
+            currentModel = "deepseek-r1"
+        )
+        val firstAsst = chatMessages.first { it.field("role") == "assistant" }.jsonObject
+        val firstContent = firstAsst["content"]?.jsonPrimitive?.content.orEmpty()
+        assertTrue(firstContent.startsWith(AiProviderEngine.REASONING_HANDOFF_MARKER), firstContent)
+        assertTrue(firstContent.contains("Check config first."), firstContent)
+        assertTrue(firstContent.endsWith("Reading config. "), firstContent)
+        assertNotNull(firstAsst["tool_calls"])
+        assertEquals(emptyList(), chatReasoning(chatMessages), "Foreign Responses turn must not duplicate reasoning_content")
+
+        val finalAsst = chatMessages.last { it.field("role") == "assistant" }.jsonObject
+        assertEquals("Done.", finalAsst["content"]?.jsonPrimitive?.content)
+
+        // Reverse direction: Custom OpenAI Chat -> OpenAI Responses also hands off text & drops foreign-model blobs.
+        val chatTurn = responsesToolTurn.copy(
+            providerWireDialect = CUSTOM_DIALECT_OPENAI_CHAT,
+            thinkingSignature = "",
+            modelUsed = "gpt-chat"
+        )
+        val forResponses = AiProviderEngine.applyCrossProviderReasoningHandoff(
+            history(chatTurn),
+            currentProtocol = ProviderProtocol.OPENAI_RESPONSES,
+            chainingActive = false,
+            currentWireDialect = CUSTOM_DIALECT_OPENAI_RESPONSES,
+            currentModel = "gpt-5"
+        )
+        assertTrue(forResponses[1].activeVariant.content.contains(AiProviderEngine.REASONING_HANDOFF_MARKER))
+    }
+
+    @Test fun foldedHistoryAndNudgePassDoNotDuplicateReasoning() {
+        val foreignTurn = MessageVariant(
+            id = "v-anth",
+            content = "Done.",
+            thinkingSummary = "Think deeply first.",
+            toolCalls = listOf(tool("c1")),
+            providerProtocol = ProviderProtocol.ANTHROPIC_MESSAGES,
+            providerWireDialect = CUSTOM_DIALECT_ANTHROPIC
+        )
+        val handedOff = AiProviderEngine.applyCrossProviderReasoningHandoff(
+            history(foreignTurn),
+            ProviderProtocol.OPENAI_RESPONSES,
+            chainingActive = false,
+            currentWireDialect = CUSTOM_DIALECT_OPENAI_CHAT
+        )
+        val foldedWire = AiProviderEngine.buildOpenAiChatCompletionsMessages(
+            activeNodes = handedOff,
+            session = session,
+            systemInstruction = "",
+            continuePrefix = "",
+            foldHistoricalToolsToText = true
+        ).toString()
+        assertTrue(AiProviderEngine.REASONING_HANDOFF_MARKER in foldedWire, foldedWire)
+        assertFalse("[Completed reasoning:" in foldedWire, foldedWire)
+
+        val (nudgeNodes, _) = AiProviderEngine.buildEffectiveHistoryAndPrefix(
+            baseHistoryNodes = listOf(user()),
+            continuePrefix = "",
+            thinkingText = "Pure thinking narrative",
+            signatureText = "sig_gem_123",
+            executedTools = emptyList(),
+            generatedMedia = emptyList(),
+            protocol = ProviderProtocol.GEMINI_INTERACTIONS,
+            model = "gemini-pro",
+            passTag = "nudge-2",
+            forceVisibleThoughtSummary = true,
+            wireDialect = CUSTOM_DIALECT_GEMINI
+        )
+        val geminiWire = AiProviderEngine.buildGeminiInteractionsTurnsArray(nudgeNodes, session, "").map { it.jsonObject }
+        assertEquals(0, geminiWire.count { it.field("type") == "thought" }, geminiWire.toString())
+        assertTrue(
+            geminiWire.any { step ->
+                step["content"]?.jsonArray?.any { part ->
+                    part.field("text") == "[Completed internal reasoning:\nPure thinking narrative]"
+                } == true
+            },
+            geminiWire.toString()
+        )
+    }
+
+    @Test fun sameProtocolMissingSignatureToolTurnAndBlankModelChainGuards() {
+        val blankModelChain = MessageVariant(
+            id = "v-blank",
+            content = "x",
+            providerInteractionId = "int_blank",
+            providerProtocol = ProviderProtocol.GEMINI_INTERACTIONS,
+            providerWireDialect = CUSTOM_DIALECT_GEMINI,
+            modelUsed = ""
+        )
+        assertEquals(
+            "",
+            AiProviderEngine.reusableProviderChainId(blankModelChain, ProviderProtocol.GEMINI_INTERACTIONS, "gemini-pro", CUSTOM_DIALECT_GEMINI)
+        )
+
+        val unsignedAnthropicTool = MessageVariant(
+            id = "v-unsig",
+            content = "Result ok.",
+            thinkingSummary = "Reasoned before tool without signature.",
+            thinkingSignature = "",
+            toolCalls = listOf(tool("c1")),
+            providerProtocol = ProviderProtocol.ANTHROPIC_MESSAGES,
+            providerWireDialect = CUSTOM_DIALECT_ANTHROPIC,
+            modelUsed = "claude-sonnet"
+        )
+        val repaired = AiProviderEngine.applyCrossProviderReasoningHandoff(
+            history(unsignedAnthropicTool),
+            currentProtocol = ProviderProtocol.ANTHROPIC_MESSAGES,
+            chainingActive = false,
+            currentWireDialect = CUSTOM_DIALECT_ANTHROPIC,
+            currentModel = "claude-sonnet"
+        )
+        assertTrue(repaired[1].activeVariant.content.contains("Reasoned before tool without signature."))
+    }
 }

@@ -87,28 +87,31 @@ internal fun AiProviderEngine.buildEffectiveHistoryAndPrefix(
     protocol: ProviderProtocol,
     model: String,
     passTag: String,
-    forceVisibleThoughtSummary: Boolean = false
+    forceVisibleThoughtSummary: Boolean = false,
+    wireDialect: String = ""
 ): Pair<List<MessageNode>, String> {
     val sanitizedTools = executedTools.map { tc -> if (tc.wasCutOff()) tc.withInterruptedOutcome() else tc }
     val hasPriorTurnProgress = sanitizedTools.isNotEmpty() ||
         (continuePrefix.isBlank() && (thinkingText.isNotEmpty() || signatureText.isNotEmpty()))
     return if (hasPriorTurnProgress) {
+        val visibleThoughtInjected = forceVisibleThoughtSummary && continuePrefix.isBlank() && thinkingText.isNotBlank()
         val effectiveAssistantContent = when {
             sanitizedTools.isNotEmpty() && continuePrefix.isNotBlank() -> continuePrefix
-            forceVisibleThoughtSummary && continuePrefix.isBlank() && thinkingText.isNotBlank() -> {
-                "[Completed internal reasoning:\n$thinkingText]"
-            }
+            visibleThoughtInjected -> "[Completed internal reasoning:\n$thinkingText]"
             else -> ""
         }
+        // When pure-reasoning nudge already surfaces the thoughts in content, omit duplicate native thinking fields.
+        val suppressDuplicateNativeThinking = visibleThoughtInjected && sanitizedTools.isEmpty()
         val partialVar = MessageVariant(
             id = "var-in-progress-$passTag",
             content = effectiveAssistantContent,
-            thinkingSummary = thinkingText,
+            thinkingSummary = if (suppressDuplicateNativeThinking) "" else thinkingText,
             trailingThinking = if (sanitizedTools.isNotEmpty()) trailingThinkingText else "",
-            thinkingSignature = signatureText,
+            thinkingSignature = if (suppressDuplicateNativeThinking) "" else signatureText,
             toolCalls = sanitizedTools,
             mediaItems = generatedMedia,
             providerProtocol = protocol,
+            providerWireDialect = wireDialect,
             modelUsed = model
         )
         val partialAssistantNode = MessageNode(
@@ -210,7 +213,7 @@ internal fun AiProviderEngine.buildFoldedToolHistoryText(
     thinkingSummary: String,
     cleanText: String
 ): String = buildString {
-    if (thinkingSummary.isNotBlank()) {
+    if (thinkingSummary.isNotBlank() && !cleanText.contains(REASONING_HANDOFF_MARKER)) {
         appendLine("[Completed reasoning: ${thinkingSummary.take(600).trim()}]")
     }
     if (toolCalls.isNotEmpty()) {

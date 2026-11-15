@@ -1,6 +1,6 @@
 # Parchment Memory
 
-Updated 2026-11-11. Stable contracts only; read the section you need. AGENTS.md owns workflow, TODO progress.
+Updated 2026-11-15. Stable contracts only; read the section you need. AGENTS.md owns workflow, TODO progress.
 
 ## Standing decisions
 
@@ -25,9 +25,9 @@ Updated 2026-11-11. Stable contracts only; read the section you need. AGENTS.md 
 - AiProviderEngine holds shared state and streamGeneration; each protocol and concern (media, citations, reasoning, tools, discovery, history, errors) is a `network/` extension file.
 - Big three: GEMINI_INTERACTIONS, OPENAI_RESPONSES, ANTHROPIC_MESSAGES. CUSTOM needs an explicit dialect and verbatim URL, sends only its declared wire, never falls back; unresolved Custom blocks Send.
 - useStatefulChaining and storeServerSide default to false; storage, chaining and background execution are separate (Gemini background needs compatible storage). keepsProviderState drives `store`, polling and cancel.
-- Chains must match the producing model and protocol. Keep chronological call/result batches and closing prose; ToolCallRecord.startsToolStep separates sequential steps from parallel calls.
-- Stamp turns with resolveWireProtocol, not a Custom profile's stored protocol. Chat replays reasoning_content only within its family, closing prose included (DeepSeek 400s without it when tools are sent). History tool IDs go through ReplayToolCallIds.
-- Reasoning signatures are opaque and provider-specific: preserve, never translate. Cross-provider handoff uses up to 2000 chars of prior narrative. User, system and continuity instructions stay uncapped.
+- Chains require matching protocol, non-blank normalized model and stamped dialect. Keep chronological call/result batches and closing prose; ToolCallRecord.startsToolStep separates steps.
+- Stamp turns via resolveWireProtocol/resolveWireDialect (not Custom base). Native reasoning and reasoning_content replay only for matching dialect/model (else handoff shifts step text). ReplayToolCallIds owns tool IDs.
+- Reasoning signatures are opaque: preserve, never translate. Cross-provider handoff keeps 8000 chars (head + tail). User, system and continuity instructions stay uncapped.
 - Keep request beginnings stable: stale tool output compacts in batches of 8; keyword lore goes in the late note, not the system prompt.
 - Discover models and capabilities from live metadata and registries; no model-name, version or vendor branches.
 - AgentPermissionResolver owns defaults and overrides: null inherits; explicit Off, empty path or false revoke. New chats inherit; imports disable local tools, paths, web and Shell.
@@ -35,7 +35,7 @@ Updated 2026-11-11. Stable contracts only; read the section you need. AGENTS.md 
 - ToolApprovalBroker is run/chat scoped: exact previews, one-use permits, denial suppression, synchronous invalidation, memory-only grants.
 - Shell needs READ_WRITE plus explicit FULL_ACCESS and isn't OS-confined; web-tool controls don't limit its network. Cancel the owning worker, never kill globally.
 - WorkspacePathGuard checks real ancestors and rejects escaping links and junctions. PublicWebTransport binds to validated public DNS addresses and checks each redirect; provider transport is separate.
-- SSE closing without the finish signal or `[DONE]` is an interruption, not an answer. AcceptedJobException marks accepted work: poll it, never resubmit.
+- SSE closing without finish or `[DONE]` is interrupted. AcceptedJobException polls with bounded transient retries, never resubmits; non-retryable 4xx/policy SSE/JSON errors throw NoRetryException.
 - Utility requests mask inherited tool context, disable tools and goal loops, and propagate cancellation.
 - computer_use is off by default; every action needs approval, no run-wide grants. Screenshots stay out of chat state; only the newest is resent. Permits are claimed against permit.scope.
 - MCP tools are `mcp__<server>__<tool>` and need approval like file changes; imports drop local commands and disable the rest. Spec 2025-11-25 handshake, fallback 2026-07-28.

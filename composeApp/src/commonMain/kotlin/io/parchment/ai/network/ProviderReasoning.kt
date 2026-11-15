@@ -1,11 +1,16 @@
 package io.parchment.ai.network
 
+import io.parchment.ai.model.CUSTOM_DIALECT_ANTHROPIC
+import io.parchment.ai.model.CUSTOM_DIALECT_GEMINI
+import io.parchment.ai.model.CUSTOM_DIALECT_OPENAI_CHAT
+import io.parchment.ai.model.CUSTOM_DIALECT_OPENAI_RESPONSES
 import io.parchment.ai.model.MessageNode
 import io.parchment.ai.model.MessageRole
 import io.parchment.ai.model.MessageVariant
 import io.parchment.ai.model.ProviderProtocol
 import io.parchment.ai.protocol.isCompleteGeminiSignatureProtobuf
 import io.parchment.ai.protocol.isGeminiServerSideToolSignature
+import io.parchment.ai.protocol.sanitizeGeminiThoughtSignature
 
 // Opaque reasoning signatures and cross-provider reasoning handoff.
 
@@ -28,10 +33,74 @@ import io.parchment.ai.protocol.isGeminiServerSideToolSignature
  * Skipped entirely when server-side chaining is active: the provider already holds those steps,
  * so re-injecting them would duplicate context.
  */
+internal fun normalizeReasoningModelId(name: String): String = name.trim().removePrefix("models/")
+
+internal fun isSameReasoningModel(
+    savedModel: String,
+    currentModel: String,
+    allowBlank: Boolean = true
+): Boolean {
+    val s = normalizeReasoningModelId(savedModel)
+    val c = normalizeReasoningModelId(currentModel)
+    if (s.isBlank() || c.isBlank()) return allowBlank
+    return s.equals(c, ignoreCase = true)
+}
+
+/**
+ * True when [variant]'s native wire reasoning (`thinking`/`reasoning`/`thought`/`reasoning_content`
+ * and opaque signatures) matches [targetProtocol]/[targetWireDialect] and [currentModel], and has
+ * not already been rewritten into a plain-text [AiProviderEngine.REASONING_HANDOFF_MARKER] note.
+ */
+internal fun isNativeReasoningCompatible(
+    variant: MessageVariant,
+    targetProtocol: ProviderProtocol,
+    targetWireDialect: String = "",
+    currentModel: String = ""
+): Boolean {
+    if (variant.content.contains(AiProviderEngine.REASONING_HANDOFF_MARKER)) return false
+    if (!isSameReasoningModel(variant.modelUsed, currentModel, allowBlank = true)) return false
+    val targetDialect = targetWireDialect.trim().lowercase()
+    val bornDialect = variant.effectiveWireDialect()
+    if (targetDialect.isNotBlank() && bornDialect.isNotBlank()) {
+        return bornDialect == targetDialect
+    }
+    val bornProtocol = variant.providerProtocol ?: return true
+    return bornProtocol == targetProtocol
+}
+
+private fun AiProviderEngine.hasMissingNativeToolSignature(
+    variant: MessageVariant,
+    targetProtocol: ProviderProtocol,
+    targetWireDialect: String
+): Boolean {
+    if (variant.toolCalls.isEmpty() || variant.providerProtocol == null) return false
+    val resolvedDialect = targetWireDialect.trim().lowercase().ifBlank {
+        when (targetProtocol) {
+            ProviderProtocol.GEMINI_INTERACTIONS -> CUSTOM_DIALECT_GEMINI
+            ProviderProtocol.ANTHROPIC_MESSAGES -> CUSTOM_DIALECT_ANTHROPIC
+            else -> ""
+        }
+    }
+    return when (resolvedDialect) {
+        CUSTOM_DIALECT_GEMINI ->
+            sanitizeGeminiThoughtSignature(variant.thinkingSignature, forFunctionCall = false).isBlank() &&
+                variant.toolCalls.none { sanitizeGeminiThoughtSignature(it.thoughtSignature, forFunctionCall = true).isNotBlank() }
+        CUSTOM_DIALECT_ANTHROPIC ->
+            !isValidAnthropicSignature(variant.thinkingSignature, variant.providerProtocol, variant.modelUsed) &&
+                variant.toolCalls.none { isValidAnthropicSignature(it.thoughtSignature, variant.providerProtocol, variant.modelUsed) }
+        CUSTOM_DIALECT_OPENAI_RESPONSES ->
+            !isValidOpenAiEncryptedReasoning(variant.thinkingSignature, variant.providerProtocol, variant.modelUsed, savedWireDialect = variant.effectiveWireDialect()) &&
+                variant.toolCalls.none { isValidOpenAiEncryptedReasoning(it.thoughtSignature, variant.providerProtocol, variant.modelUsed, savedWireDialect = variant.effectiveWireDialect()) }
+        else -> false
+    }
+}
+
 internal fun AiProviderEngine.applyCrossProviderReasoningHandoff(
     nodes: List<MessageNode>,
     currentProtocol: ProviderProtocol,
-    chainingActive: Boolean
+    chainingActive: Boolean,
+    currentWireDialect: String = "",
+    currentModel: String = ""
 ): List<MessageNode> {
     if (chainingActive) return nodes
     var changed = false
@@ -40,39 +109,90 @@ internal fun AiProviderEngine.applyCrossProviderReasoningHandoff(
         val variant = node.activeVariant
         val summary = variant.thinkingSummary.trim()
         if (summary.isEmpty()) return@map node
-        val bornProtocol = variant.providerProtocol
-        if (bornProtocol == currentProtocol) return@map node
         if (variant.content.contains(REASONING_HANDOFF_MARKER)) return@map node
-        val handoff = buildString {
+        val nativeCompat = isNativeReasoningCompatible(variant, currentProtocol, currentWireDialect, currentModel)
+        val missingNativeSig = nativeCompat && hasMissingNativeToolSignature(variant, currentProtocol, currentWireDialect)
+        if (nativeCompat && !missingNativeSig) return@map node
+
+        val cleanBase = stripInlineErrorNotices(variant.content)
+        val hasTools = variant.toolCalls.isNotEmpty()
+        val handoffHeader = buildString {
             append(REASONING_HANDOFF_MARKER)
             append('\n')
-            append(summary.take(MAX_REASONING_HANDOFF_CHARS))
-            append("\n\n")
-            append(variant.content)
+            append(clipReasoningSummaryForHandoff(summary, MAX_REASONING_HANDOFF_CHARS))
+        }
+        val handoffPrefix = "$handoffHeader\n\n"
+        val handoffContent = when {
+            hasTools -> "$handoffPrefix$cleanBase"
+            cleanBase.isBlank() -> handoffHeader
+            else -> "$handoffPrefix$cleanBase"
+        }
+        // Shift the first tool step's precedingText by the same prefix so turnTextLayout preserves step order.
+        val updatedTools = if (hasTools) {
+            val first = variant.toolCalls.first()
+            listOf(first.copy(precedingText = "$handoffPrefix${first.precedingText}")) + variant.toolCalls.drop(1)
+        } else {
+            variant.toolCalls
         }
         val newVariants = node.variants.toMutableList()
         val idx = node.activeVariantIndex.coerceIn(0, (newVariants.size - 1).coerceAtLeast(0))
         if (idx !in newVariants.indices) return@map node
-        newVariants[idx] = variant.copy(content = handoff)
+        newVariants[idx] = variant.copy(content = handoffContent, toolCalls = updatedTools)
         changed = true
         node.copy(variants = newVariants)
     }
     return if (changed) out else nodes
 }
 
-/** A server-side chain is reusable only by the protocol and model that created it. */
+/**
+ * Keeps opening framing (~25%) and closing conclusions (~75%) when a foreign turn's reasoning
+ * summary exceeds [maxChars], deterministically so prompt-cache prefixes stay stable.
+ */
+internal fun clipReasoningSummaryForHandoff(
+    summary: String,
+    maxChars: Int = AiProviderEngine.MAX_REASONING_HANDOFF_CHARS
+): String {
+    if (summary.length <= maxChars) return summary
+    val omittedMarker = "\n\n[...middle reasoning omitted...]\n\n"
+    if (maxChars <= omittedMarker.length + 16) return summary.take(maxChars)
+    val budget = maxChars - omittedMarker.length
+    var headEnd = budget / 4
+    if (headEnd > 0 && summary[headEnd - 1].isHighSurrogate()) headEnd--
+    var tailStart = summary.length - (budget - headEnd)
+    if (tailStart < summary.length && summary[tailStart].isLowSurrogate()) tailStart++
+    val head = summary.substring(0, headEnd).trimEnd()
+    val tail = summary.substring(tailStart).trimStart()
+    if (head.isEmpty()) return tail.take(maxChars)
+    return "$head$omittedMarker$tail"
+}
+
+/** A server-side chain is reusable only by the protocol, wire dialect, and model that created it. */
 internal fun AiProviderEngine.reusableProviderChainId(
     previous: MessageVariant,
     protocol: ProviderProtocol,
-    model: String
+    model: String,
+    currentWireDialect: String = ""
 ): String {
-    fun normalized(name: String) = name.trim().removePrefix("models/")
-    val sameModel = previous.modelUsed.isBlank() || normalized(previous.modelUsed).equals(normalized(model), ignoreCase = true)
+    val targetDialect = currentWireDialect.trim().lowercase()
+    val prevDialect = previous.effectiveWireDialect()
+    if (targetDialect.isNotBlank() && prevDialect.isNotBlank() && targetDialect != prevDialect) return ""
+    val prevModel = normalizeReasoningModelId(previous.modelUsed)
+    val curModel = normalizeReasoningModelId(model)
+    val sameModel = (prevModel.isBlank() && curModel.isBlank()) ||
+        (prevModel.isNotBlank() && curModel.isNotBlank() && prevModel.equals(curModel, ignoreCase = true))
     return if (previous.providerProtocol == protocol && sameModel) previous.providerInteractionId else ""
 }
 
-internal fun AiProviderEngine.isValidOpenAiEncryptedReasoning(rawSig: String, savedProtocol: ProviderProtocol? = null): Boolean {
+internal fun AiProviderEngine.isValidOpenAiEncryptedReasoning(
+    rawSig: String,
+    savedProtocol: ProviderProtocol? = null,
+    savedModel: String = "",
+    currentModel: String = "",
+    savedWireDialect: String = ""
+): Boolean {
     if (savedProtocol != null && savedProtocol != ProviderProtocol.OPENAI_RESPONSES) return false
+    if (savedWireDialect.equals(CUSTOM_DIALECT_OPENAI_CHAT, ignoreCase = true)) return false
+    if (!isSameReasoningModel(savedModel, currentModel, allowBlank = true)) return false
     val trimmed = rawSig.trim()
     if (trimmed.isEmpty() || trimmed.contains(' ')) return false
     // Tokens end in normal base64 padding; padding mid-string means two tokens were glued together.
@@ -81,8 +201,14 @@ internal fun AiProviderEngine.isValidOpenAiEncryptedReasoning(rawSig: String, sa
     return true
 }
 
-internal fun AiProviderEngine.isValidAnthropicSignature(rawSig: String, savedProtocol: ProviderProtocol?): Boolean {
+internal fun AiProviderEngine.isValidAnthropicSignature(
+    rawSig: String,
+    savedProtocol: ProviderProtocol?,
+    savedModel: String = "",
+    currentModel: String = ""
+): Boolean {
     if (savedProtocol != null && savedProtocol != ProviderProtocol.ANTHROPIC_MESSAGES) return false
+    if (!isSameReasoningModel(savedModel, currentModel, allowBlank = true)) return false
     val trimmed = rawSig.trim()
     if (trimmed.isEmpty() || trimmed.startsWith("gAAAAAB")) return false
     val hasMidPadding = trimmed.indexOf('=') in 0 until trimmed.trimEnd('=').length

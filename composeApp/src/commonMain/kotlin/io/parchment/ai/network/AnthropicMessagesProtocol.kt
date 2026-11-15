@@ -204,7 +204,7 @@ internal suspend fun AiProviderEngine.executeAnthropicMessagesLoop(
 
                 // Messages array with strict user-first / alternating role validation & cache_control breakpoint
                 val coalescedBaseMessages = withBinaryAttachmentIo(activeNodes) {
-                    buildAnthropicBaseMessages(activeNodes, session, continuePrefix, foldHistoricalToolsOnRetry)
+                    buildAnthropicBaseMessages(activeNodes, session, continuePrefix, foldHistoricalToolsOnRetry, currentModel = model)
                 }
                 putJsonArray("messages") {
                     val lastMsgIdx = coalescedBaseMessages.size - 1
@@ -734,7 +734,8 @@ internal fun AiProviderEngine.buildAnthropicBaseMessages(
     activeNodes: List<MessageNode>,
     session: ChatSession,
     continuePrefix: String,
-    foldHistoricalToolsToText: Boolean = false
+    foldHistoricalToolsToText: Boolean = false,
+    currentModel: String = ""
 ): MutableList<Pair<String, MutableList<JsonObject>>> {
     val turnsWithAuthorsNote = injectAuthorsNoteIntoHistory(activeNodes, session)
     val coalescedBaseMessages = mutableListOf<Pair<String, MutableList<JsonObject>>>()
@@ -817,9 +818,10 @@ internal fun AiProviderEngine.buildAnthropicBaseMessages(
                     val assistantToolBlocks = mutableListOf<JsonObject>()
                     val batchSig = batch.thoughtSignature.trim()
                     val batchThinking = batch.precedingThinking
-                    if (batchSig.isNotBlank() &&
+                    if (!cleanText.contains(REASONING_HANDOFF_MARKER) &&
+                        batchSig.isNotBlank() &&
                         (batchThinking.isNotBlank() || batches.size == 1) &&
-                        isValidAnthropicSignature(batchSig, nodeVar?.providerProtocol)
+                        isValidAnthropicSignature(batchSig, nodeVar?.providerProtocol, nodeVar?.modelUsed.orEmpty(), currentModel)
                     ) {
                         assistantToolBlocks.add(buildJsonObject {
                             put("type", "thinking")
@@ -876,8 +878,9 @@ internal fun AiProviderEngine.buildAnthropicBaseMessages(
                 }
             } else {
                 val assistantBlocks = mutableListOf<JsonObject>()
-                if (thinkSig.isNotBlank() &&
-                    isValidAnthropicSignature(thinkSig, nodeVar?.providerProtocol)
+                if (!cleanText.contains(REASONING_HANDOFF_MARKER) &&
+                    thinkSig.isNotBlank() &&
+                    isValidAnthropicSignature(thinkSig, nodeVar?.providerProtocol, nodeVar?.modelUsed.orEmpty(), currentModel)
                 ) {
                     assistantBlocks.add(buildJsonObject {
                         put("type", "thinking")

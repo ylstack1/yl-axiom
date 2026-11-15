@@ -855,6 +855,7 @@ internal fun GenerationHost.beginGeneration(
                                         pendingBackgroundInteractionId = "",
                                         isStreaming = false,
                                         providerProtocol = AiProviderEngine.resolveWireProtocol(effectiveProfileForApi),
+                                        providerWireDialect = update.providerWireDialect.ifBlank { AiProviderEngine.resolveWireDialect(effectiveProfileForApi) },
                                         modelUsed = modelName,
                                         tokenMetrics = update.metrics,
                                         apiUsageRecords = update.apiUsageRecords,

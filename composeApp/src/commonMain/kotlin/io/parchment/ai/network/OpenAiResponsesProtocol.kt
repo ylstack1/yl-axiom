@@ -16,6 +16,7 @@ import io.parchment.ai.harness.ToolAccessScope
 import io.parchment.ai.harness.WorkspaceHarness
 import io.parchment.ai.model.turnTextLayout
 import io.parchment.ai.model.AgentPermissionResolver
+import io.parchment.ai.model.CUSTOM_DIALECT_OPENAI_RESPONSES
 import io.parchment.ai.model.ChatSession
 import io.parchment.ai.model.GeneratedMediaItem
 import io.parchment.ai.model.GoalTrackerState
@@ -78,7 +79,12 @@ internal suspend fun AiProviderEngine.executeOpenAiResponsesLoop(
 
     val previousAssistantIdx = activeNodes.indexOfLast { it.role == MessageRole.ASSISTANT }
     var currentPrevResponseId = if (profile.useStatefulChaining && continuePrefix.isBlank() && previousAssistantIdx >= 0) {
-        reusableProviderChainId(activeNodes[previousAssistantIdx].activeVariant, ProviderProtocol.OPENAI_RESPONSES, model)
+        reusableProviderChainId(
+            activeNodes[previousAssistantIdx].activeVariant,
+            ProviderProtocol.OPENAI_RESPONSES,
+            model,
+            CUSTOM_DIALECT_OPENAI_RESPONSES
+        )
     } else ""
 
     var pendingToolResults: List<ToolCallRecord> = emptyList()
@@ -144,7 +150,7 @@ internal suspend fun AiProviderEngine.executeOpenAiResponsesLoop(
                 activeNodes
             }
             val baseInputItems = withBinaryAttachmentIo(sourceNodes) {
-                buildOpenAiResponsesInputArray(sourceNodes, session, continuePrefix, foldHistoricalToolsOnRetry)
+                buildOpenAiResponsesInputArray(sourceNodes, session, continuePrefix, foldHistoricalToolsOnRetry, currentModel = model)
             }
 
             val compactedLoopItems = compactOpenAiResponsesExtraItems(extraResponsesLoopItems)
@@ -718,7 +724,8 @@ internal fun AiProviderEngine.buildOpenAiResponsesInputArray(
     nodes: List<MessageNode>,
     session: ChatSession,
     continuePrefix: String,
-    foldHistoricalToolsToText: Boolean = false
+    foldHistoricalToolsToText: Boolean = false,
+    currentModel: String = ""
 ): JsonArray {
     val items = mutableListOf<JsonObject>()
     val replayIds = ReplayToolCallIds()
@@ -814,7 +821,15 @@ internal fun AiProviderEngine.buildOpenAiResponsesInputArray(
                     for (batch in batches) {
                         val stepEnc = batch.thoughtSignature.trim()
                         val stepSummary = batch.precedingThinking
-                        if (isValidOpenAiEncryptedReasoning(stepEnc, nodeVar?.providerProtocol)) {
+                        if (!cleanText.contains(REASONING_HANDOFF_MARKER) &&
+                            isValidOpenAiEncryptedReasoning(
+                                rawSig = stepEnc,
+                                savedProtocol = nodeVar?.providerProtocol,
+                                savedModel = nodeVar?.modelUsed.orEmpty(),
+                                currentModel = currentModel,
+                                savedWireDialect = nodeVar?.effectiveWireDialect().orEmpty()
+                            )
+                        ) {
                             items.add(buildJsonObject {
                                 put("type", "reasoning")
                                 putJsonArray("summary") {

@@ -5,6 +5,9 @@ import io.ktor.client.request.header
 import io.parchment.ai.model.AuthHeaderMode
 import io.parchment.ai.model.CUSTOM_DIALECT_ANTHROPIC
 import io.parchment.ai.model.CUSTOM_DIALECT_GEMINI
+import io.parchment.ai.model.CUSTOM_DIALECT_OPENAI_CHAT
+import io.parchment.ai.model.CUSTOM_DIALECT_OPENAI_RESPONSES
+import io.parchment.ai.model.MessageVariant
 import io.parchment.ai.model.ProviderProfile
 import io.parchment.ai.model.ProviderProtocol
 import kotlinx.serialization.json.Json
@@ -43,14 +46,43 @@ private val VERSION_SUFFIX_REGEX = Regex(
 private val DISALLOWED_EXTRA_BODY_KEYS = setOf("tools", "tool_choice", "tool_config")
 
 /** Resolves the concrete wire dialect for a profile (Custom delegates to its explicit [ProviderProfile.customDialect]). */
-internal fun resolveProviderWireProtocol(profile: ProviderProfile): ProviderProtocol {
-    if (!profile.protocol.isCustomWire) return profile.protocol
-    return when (profile.customDialect.trim().lowercase()) {
-        "gemini_interactions", "gemini" -> ProviderProtocol.GEMINI_INTERACTIONS
-        "anthropic_messages", "anthropic" -> ProviderProtocol.ANTHROPIC_MESSAGES
-        "openai_responses", "responses" -> ProviderProtocol.OPENAI_RESPONSES
-        "openai_chat", "chat" -> ProviderProtocol.OPENAI_RESPONSES
+internal fun resolveProviderWireProtocol(profile: ProviderProfile): ProviderProtocol =
+    when (resolveProviderWireDialect(profile)) {
+        CUSTOM_DIALECT_GEMINI -> ProviderProtocol.GEMINI_INTERACTIONS
+        CUSTOM_DIALECT_ANTHROPIC -> ProviderProtocol.ANTHROPIC_MESSAGES
+        CUSTOM_DIALECT_OPENAI_RESPONSES, CUSTOM_DIALECT_OPENAI_CHAT -> ProviderProtocol.OPENAI_RESPONSES
         else -> ProviderProtocol.CUSTOM
+    }
+
+/** Resolves the concrete wire dialect (`openai_chat`, `openai_responses`, `anthropic_messages`, `gemini_interactions`). */
+internal fun resolveProviderWireDialect(profile: ProviderProfile): String {
+    if (profile.protocol.isCustomWire) {
+        return when (profile.customDialect.trim().lowercase()) {
+            "gemini_interactions", "gemini" -> CUSTOM_DIALECT_GEMINI
+            "anthropic_messages", "anthropic" -> CUSTOM_DIALECT_ANTHROPIC
+            "openai_responses", "responses" -> CUSTOM_DIALECT_OPENAI_RESPONSES
+            "openai_chat", "chat" -> CUSTOM_DIALECT_OPENAI_CHAT
+            else -> ""
+        }
+    }
+    return when (profile.protocol) {
+        ProviderProtocol.GEMINI_INTERACTIONS -> CUSTOM_DIALECT_GEMINI
+        ProviderProtocol.OPENAI_RESPONSES -> CUSTOM_DIALECT_OPENAI_RESPONSES
+        ProviderProtocol.ANTHROPIC_MESSAGES -> CUSTOM_DIALECT_ANTHROPIC
+        ProviderProtocol.CUSTOM -> ""
+    }
+}
+
+/**
+ * Returns the concrete wire dialect that produced this variant, or `""` when ambiguous
+ * (older saves stored both OpenAI Chat and OpenAI Responses under `OPENAI_RESPONSES`).
+ */
+internal fun MessageVariant.effectiveWireDialect(): String {
+    if (providerWireDialect.isNotBlank()) return providerWireDialect.trim().lowercase()
+    return when (providerProtocol) {
+        ProviderProtocol.GEMINI_INTERACTIONS -> CUSTOM_DIALECT_GEMINI
+        ProviderProtocol.ANTHROPIC_MESSAGES -> CUSTOM_DIALECT_ANTHROPIC
+        ProviderProtocol.OPENAI_RESPONSES, ProviderProtocol.CUSTOM, null -> ""
     }
 }
 

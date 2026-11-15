@@ -715,6 +715,7 @@ internal class ParchmentAppController(
             content = prefill,
             modelUsed = modelName,
             providerProtocol = AiProviderEngine.resolveWireProtocol(activeProfile),
+            providerWireDialect = AiProviderEngine.resolveWireDialect(activeProfile),
             isStreaming = true,
             createdAt = now + 1
         )
@@ -1101,6 +1102,7 @@ internal class ParchmentAppController(
                         content = "",
                         modelUsed = modelUsed,
                         providerProtocol = AiProviderEngine.resolveWireProtocol(curProf),
+                        providerWireDialect = AiProviderEngine.resolveWireDialect(curProf),
                         isStreaming = true,
                         createdAt = now
                     )
@@ -1122,6 +1124,7 @@ internal class ParchmentAppController(
                 content = "",
                 modelUsed = modelUsed,
                 providerProtocol = AiProviderEngine.resolveWireProtocol(curProf),
+                providerWireDialect = AiProviderEngine.resolveWireDialect(curProf),
                 isStreaming = true,
                 createdAt = now
             )

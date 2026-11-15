@@ -301,6 +301,8 @@ data class MessageVariant(
     val pendingBackgroundInteractionId: String = "",
     val isStreaming: Boolean = false,
     val providerProtocol: ProviderProtocol? = null,
+    /** Concrete wire dialect that minted this turn (`CUSTOM_DIALECT_*` or empty on legacy saves). */
+    val providerWireDialect: String = "",
     val modelUsed: String = "",
     val createdAt: Long = 0L,
     val tokenMetrics: TokenMetrics = TokenMetrics(),

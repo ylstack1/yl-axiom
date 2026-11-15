@@ -3,12 +3,12 @@ package io.parchment.ai.network
 import io.parchment.ai.harness.WorkspaceHarness
 import io.parchment.ai.model.AgentPermissionResolver
 import io.parchment.ai.model.ApiUsageRecord
+import io.parchment.ai.model.CUSTOM_DIALECT_GEMINI
 import io.parchment.ai.model.CUSTOM_DIALECT_OPENAI_CHAT
 import io.parchment.ai.model.ChatSession
 import io.parchment.ai.model.GeneratedMediaItem
 import io.parchment.ai.model.GoalTrackerState
 import io.parchment.ai.model.MessageNode
-import io.parchment.ai.model.MessageRole
 import io.parchment.ai.model.ProviderProfile
 import io.parchment.ai.model.ProviderProtocol
 import io.parchment.ai.model.TokenMetrics
@@ -96,31 +96,41 @@ internal class GenerationStreamSession(
         usagePurpose = usagePurpose
     )
 
-    private var activeBaseHistoryNodes: List<MessageNode> = emptyList()
+    private var workingHistoryNodes: List<MessageNode> = historyNodes
     private var currentContinuePrefix = cleanInitialPrefix
     private var retryAttempt = 0
     private var continuationPass = 0
     private var emptyAnswerNudgePass = 0
     private var emptyStreamRetryPass = 0
 
+    private fun effectiveTargetDialect(effectiveProfile: ProviderProfile, wireProtocol: ProviderProtocol): String {
+        if (wireProtocol == ProviderProtocol.OPENAI_RESPONSES) {
+            val explicitChat = effectiveProfile.protocol == ProviderProtocol.CUSTOM &&
+                effectiveProfile.customDialect.trim().lowercase() == CUSTOM_DIALECT_OPENAI_CHAT
+            if (explicitChat || (emptyAnswerNudgePass >= 3 && effectiveProfile.useLegacyFallbackEndpoint)) {
+                return CUSTOM_DIALECT_OPENAI_CHAT
+            }
+        }
+        return engine.resolveWireDialect(effectiveProfile)
+    }
+
+    // Prepare handoffs with chainingActive = false on the active target dialect so 404/fallback never drops prior turns.
+    private fun baseHistoryForTarget(
+        targetProtocol: ProviderProtocol,
+        targetDialect: String
+    ): List<MessageNode> = engine.applyCrossProviderReasoningHandoff(
+        nodes = workingHistoryNodes,
+        currentProtocol = targetProtocol,
+        chainingActive = false,
+        currentWireDialect = targetDialect,
+        currentModel = model
+    )
+
     suspend fun run() {
         state.attachSubagentRunner()
         circuitBreaker.goalState?.let { state.emitGoalProgress(it) }
 
         try {
-            val wireProtocol = engine.resolveWireProtocol(profile)
-            val sanitizedHistory = engine.sanitizeContextNodes(historyNodes)
-            val lastAssistant = sanitizedHistory.lastOrNull { it.role == MessageRole.ASSISTANT }
-            val willReusePriorChain = profile.useStatefulChaining &&
-                currentContinuePrefix.isBlank() &&
-                lastAssistant != null &&
-                engine.reusableProviderChainId(lastAssistant.activeVariant, wireProtocol, model).isNotBlank()
-            activeBaseHistoryNodes = engine.applyCrossProviderReasoningHandoff(
-                nodes = historyNodes,
-                currentProtocol = wireProtocol,
-                chainingActive = willReusePriorChain
-            )
-
             while (true) {
                 val passBefore = state.snapshotProgress()
 
@@ -132,17 +142,21 @@ internal class GenerationStreamSession(
                     emptyAnswerNudgePass >= 3 -> transportProfile.copy(thinkingEffort = "minimal")
                     else -> transportProfile
                 }
+                val passWireProtocol = engine.resolveWireProtocol(effectiveProfileForPass)
+                val passWireDialect = effectiveTargetDialect(effectiveProfileForPass, passWireProtocol)
+                state.markActiveWireDialect(passWireDialect)
 
                 // If continuing a turn that already accumulated thoughts or tool calls (either before clicking
                 // '→ Continue', during an automatic zero-answer nudge pass, or after a mid-stream network drop),
                 // synthesize the partial assistant turn in history so no protocol loses prior thoughts/signatures
                 // or re-executes completed tools.
                 val (effectiveHistoryNodes, effectiveContinuePrefix) = state.buildPassHistoryAndPrefix(
-                    baseNodes = activeBaseHistoryNodes,
+                    baseNodes = baseHistoryForTarget(passWireProtocol, passWireDialect),
                     continuePrefix = currentContinuePrefix,
-                    protocol = engine.resolveWireProtocol(effectiveProfileForPass),
+                    protocol = passWireProtocol,
                     passTag = "pass-$continuationPass-nudge-$emptyAnswerNudgePass",
-                    forceVisibleThoughtSummary = emptyAnswerNudgePass >= 2
+                    forceVisibleThoughtSummary = emptyAnswerNudgePass >= 2,
+                    wireDialect = passWireDialect
                 )
 
                 try {
@@ -219,9 +233,9 @@ internal class GenerationStreamSession(
 
         // Context overflow: when the provider reports the prompt is over the model's context window,
         // condense the oldest half of the active turns into a continuity digest and retry.
-        val unmutedCount = activeBaseHistoryNodes.count { it.includedInContext }
+        val unmutedCount = workingHistoryNodes.count { it.includedInContext }
         if (engine.isContextLengthExceededError(actualErr) && unmutedCount > 4) {
-            activeBaseHistoryNodes = engine.compactHistoryNodesOnOverflow(activeBaseHistoryNodes)
+            workingHistoryNodes = engine.compactHistoryNodesOnOverflow(workingHistoryNodes)
             state.emitStatus("Context window limit reached on endpoint — auto-compacting older turns & retrying…")
             return
         }
@@ -302,11 +316,13 @@ internal class GenerationStreamSession(
                 engine.shouldFallbackToLegacyProtocol(e, profile.useLegacyFallbackEndpoint)
             ) {
                 emitFallbackStatus("Primary /v1beta/interactions failed — falling back to :streamGenerateContent…", e)
+                state.markActiveWireDialect(CUSTOM_DIALECT_GEMINI)
                 val (fbNodes, fbPrefix) = state.buildPassHistoryAndPrefix(
-                    baseNodes = activeBaseHistoryNodes,
+                    baseNodes = baseHistoryForTarget(ProviderProtocol.GEMINI_INTERACTIONS, CUSTOM_DIALECT_GEMINI),
                     continuePrefix = state.currentContent(),
                     protocol = profile.protocol,
-                    passTag = "fallback-gemini-$continuationPass"
+                    passTag = "fallback-gemini-$continuationPass",
+                    wireDialect = CUSTOM_DIALECT_GEMINI
                 )
                 runLegacyGeminiGenerateContent(effectiveProfile, fbNodes, fbPrefix)
             } else {
@@ -418,11 +434,13 @@ internal class GenerationStreamSession(
                         throw e
                     }
                     emitFallbackStatus("Primary /v1/responses failed — falling back to /v1/chat/completions…", e)
+                    state.markActiveWireDialect(CUSTOM_DIALECT_OPENAI_CHAT)
                     val (fbNodes, fbPrefix) = state.buildPassHistoryAndPrefix(
-                        baseNodes = activeBaseHistoryNodes,
+                        baseNodes = baseHistoryForTarget(ProviderProtocol.OPENAI_RESPONSES, CUSTOM_DIALECT_OPENAI_CHAT),
                         continuePrefix = state.currentContent(),
                         protocol = profile.protocol,
-                        passTag = "fallback-openai-$continuationPass"
+                        passTag = "fallback-openai-$continuationPass",
+                        wireDialect = CUSTOM_DIALECT_OPENAI_CHAT
                     )
                     try {
                         runLegacyOpenAiChatCompletions(effectiveProfile, fbNodes, fbPrefix)
