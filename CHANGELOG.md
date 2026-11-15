@@ -2,6 +2,13 @@
 
 What changed in each release, newest first. From 2.1.7 on, release-please writes these entries from commit messages that follow [Conventional Commits](https://www.conventionalcommits.org/) (`feat:` and `fix:` appear here and set the next version); edit wording in its release PR before merging it.
 
+## [2.2.3](https://github.com/baros4294/parchment/compare/v2.2.2...v2.2.3) (2026-11-15)
+
+
+### Fixes
+
+* **ui,harness:** harden screen-reader semantics, responsive layouts, and transport/computer_use safety ([82f3052](https://github.com/baros4294/parchment/commit/82f3052e7c0592b5699ebe8f670628f6d526d33b))
+
 ## [2.2.2](https://github.com/baros4294/parchment/compare/v2.2.1...v2.2.2) (2026-11-15)
 
 
