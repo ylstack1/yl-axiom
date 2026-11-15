@@ -142,23 +142,19 @@ fun ParchmentApp(
         }
 
         // Load the chat being switched to in full and shrink inactive ones back to stubs, to keep memory low.
-        LaunchedEffect(appState.activeSessionId) {
+        LaunchedEffect(appState.activeSessionId, tabRebalanceTick) {
             val current = appState
             val target = current.sessions.find { it.id == current.activeSessionId }
-            if (target != null && target.isCompactStub) {
-                val keepHydrated = activeStreamsBySession.keys
-                val rebalanced = withContext(Dispatchers.Default) {
-                    ensureActiveSessionHydratedAndDehydrateOthers(current, keepHydrated)
-                }
+            val hadStubTarget = target?.isCompactStub == true
+            val keepHydrated = activeStreamsBySession.keys
+            val rebalanced = withContext(Dispatchers.Default) {
+                ensureActiveSessionHydratedAndDehydrateOthers(current, keepHydrated)
+            }
+            if (rebalanced !== current) {
                 appState = mergeLoadedSessions(appState, current, rebalanced)
-                if (appState.sessions.find { it.id == appState.activeSessionId }?.isCompactStub == true) {
-                    bannerNotification = Strings.chatHistoryIsUnavailableRestoreIts
-                }
-            } else {
-                val rebalanced = ensureActiveSessionHydratedAndDehydrateOthers(current, activeStreamsBySession.keys)
-                if (rebalanced !== current) {
-                    appState = rebalanced
-                }
+            }
+            if (hadStubTarget && appState.sessions.find { it.id == appState.activeSessionId }?.isCompactStub == true) {
+                bannerNotification = Strings.chatHistoryIsUnavailableRestoreIts
             }
         }
 
@@ -254,6 +250,7 @@ fun ParchmentApp(
             val hasCredentialsOrCustomProxy = activeProfile.apiKey.isNotBlank() ||
                 activeProfile.baseUrl.trimEnd('/') != activeProfile.protocol.defaultBaseUrl.trimEnd('/')
             if (activeProfile.autoFetchModels && hasCredentialsOrCustomProxy && activeProfile.savedModels.isEmpty()) {
+                withFrameNanos { }
                 AiProviderEngine.fetchAvailableModels(activeProfile).onSuccess { fetched ->
                     if (fetched.isNotEmpty()) {
                         val existingModel = activeProfile.defaultModel.trim()
@@ -301,6 +298,7 @@ fun ParchmentApp(
                             )
                         }
                     }
+                    withFrameNanos { }
                     ModelsDevClient.fetchModelSpec(currentEffectiveModel).onSuccess { spec ->
                         updateProfileById(activeProfile.id) {
                             val mergedSpec = if (savedCustom != null) {
@@ -1583,10 +1581,11 @@ internal fun sidebarFingerprint(state: AppStateSnapshot): Any {
         h1 = mixSidebar64(h1, titleHash)
         h1 = mixSidebar64(h1, s.updatedAt)
         h1 = mixSidebar64(h1, asstHash)
-        h1 = mixSidebar64(h1, (s.messages.size.toLong() shl 2) or flags)
+        val msgCount = s.displayMessageCount.toLong()
+        h1 = mixSidebar64(h1, (msgCount shl 2) or flags)
         h2 = mixSidebar64(h2, s.updatedAt xor idHash xor ((i + 1).toLong() shl 40))
         h2 = mixSidebar64(h2, titleHash xor (asstHash.rotateLeft(13)))
-        h2 = mixSidebar64(h2, (flags shl 32) or s.messages.size.toLong())
+        h2 = mixSidebar64(h2, (flags shl 32) or msgCount)
         val msgs = s.messages
         for (j in msgs.indices) {
             val node = msgs[j]

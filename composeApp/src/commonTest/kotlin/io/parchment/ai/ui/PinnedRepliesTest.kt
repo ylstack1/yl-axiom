@@ -31,7 +31,8 @@ class PinnedRepliesTest {
         assertEquals(pinnedReplies(listOf(full)), pinnedReplies(listOf(stub)))
         assertEquals("r1", pinnedReplies(listOf(stub)).single().nodeId)
         assertTrue(pinnedReplies(listOf(stub)).single().preview.startsWith("Pinned answer with code"))
-        assertEquals(full.messages.size, stub.messages.size)
+        assertEquals(full.messages.size, stub.displayMessageCount)
+        assertEquals(2, stub.messages.size)
         assertEquals(stub.messages.size, stub.messages.map { it.id }.toSet().size)
     }
 

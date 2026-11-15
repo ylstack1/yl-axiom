@@ -124,6 +124,8 @@ internal class ParchmentAppController(
 
     var showMobileTabSwitcher by mutableStateOf(false)
 
+    var tabRebalanceTick by mutableStateOf(0)
+
     var bannerNotification by processState.notice
 
     // Chats just deleted, kept until the notice offering Undo goes away.
@@ -1277,6 +1279,29 @@ internal class ParchmentAppController(
         )
     }
 
+    private fun dehydrateBackedInactiveSessionsNow() {
+        val current = appState
+        val activeId = current.activeSessionId
+        var anyChanged = false
+        val updatedSessions = current.sessions.map { s ->
+            if (s.id != activeId &&
+                s.id !in activeStreamsBySession &&
+                !s.isCompactStub &&
+                s.messages.isNotEmpty() &&
+                appDiskWriter.pendingFullSession(s.id) != null
+            ) {
+                anyChanged = true
+                dehydrateChatSessionToCompactStub(s)
+            } else {
+                s
+            }
+        }
+        if (anyChanged) {
+            appState = current.copy(sessions = updatedSessions)
+        }
+        tabRebalanceTick++
+    }
+
     fun createNewTopicForAssistant(assistant: AssistantAgent, openInNewTab: Boolean = true) {
         flushPendingDraftForActiveSession()
         // Reuse an open, untouched "New Chat" tab for this assistant instead of adding another blank one.
@@ -1295,6 +1320,7 @@ internal class ParchmentAppController(
                 ),
                 immediateFlush = true
             )
+            dehydrateBackedInactiveSessionsNow()
             isSettingsOpen = false
             showMobileTabSwitcher = false
             return
@@ -1320,6 +1346,7 @@ internal class ParchmentAppController(
             ),
             immediateFlush = true
         )
+        dehydrateBackedInactiveSessionsNow()
     }
 
     fun switchToTab(sessionId: String) {
@@ -1337,6 +1364,7 @@ internal class ParchmentAppController(
             ),
             immediateFlush = true
         )
+        dehydrateBackedInactiveSessionsNow()
         // Switching tabs must not silently discard the user's settings context.
         showMobileTabSwitcher = false
     }
@@ -1363,6 +1391,7 @@ internal class ParchmentAppController(
                 ),
                 immediateFlush = true
             )
+            dehydrateBackedInactiveSessionsNow()
         }
     }
 

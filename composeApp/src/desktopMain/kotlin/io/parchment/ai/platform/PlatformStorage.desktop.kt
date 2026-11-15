@@ -17,7 +17,7 @@ internal fun isDesktopExecutableName(name: String): Boolean =
 
 actual object PlatformStorage {
     private val imageCache = BoundedImageCache {
-        if (PlatformRuntime.isLowMemoryDevice) 3 to 48L * 1024L * 1024L else 6 to 128L * 1024L * 1024L
+        if (PlatformRuntime.isLowMemoryDevice) 3 to 32L * 1024L * 1024L else 4 to 64L * 1024L * 1024L
     }
 
     private val snapshotStorage = SnapshotFileStorage(DesktopPlatformHost::resolveStorageDir)
@@ -31,8 +31,18 @@ actual object PlatformStorage {
     actual fun isReadableLocalFile(filePath: String): Boolean =
         File(filePath).let { it.isFile && it.canRead() && it.length() > 0L }
 
-    private fun chatsDir(): File = File(DesktopPlatformHost.resolveStorageDir(), "chats").also {
-        if (!it.exists()) it.mkdirs()
+    @Volatile
+    private var cachedChatsDirPair: Pair<File, File>? = null
+
+    private fun chatsDir(): File {
+        val root = DesktopPlatformHost.resolveStorageDir()
+        cachedChatsDirPair?.let { (cachedRoot, cachedDir) ->
+            if (cachedRoot == root && cachedDir.exists()) return cachedDir
+        }
+        return File(root, "chats").also {
+            if (!it.exists()) it.mkdirs()
+            cachedChatsDirPair = root to it
+        }
     }
 
     actual fun getChatsStorageDirectoryPath(): String = chatsDir().absolutePath

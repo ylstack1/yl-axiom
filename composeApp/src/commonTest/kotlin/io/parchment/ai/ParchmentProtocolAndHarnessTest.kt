@@ -1384,8 +1384,9 @@ class ParchmentProtocolAndHarnessTest {
 
         val stub = io.parchment.ai.ui.dehydrateChatSessionToCompactStub(fullSession)
         assertTrue(stub.isCompactStub)
-        assertEquals(2, stub.messages.size, "Dehydrated stub must preserve exact message count for sidebar badges")
-        assertTrue(stub.messages.first().activeVariant.content.isEmpty(), "Earlier messages in stub must be empty")
+        assertEquals(2, stub.displayMessageCount, "Dehydrated stub must preserve exact message count for sidebar badges")
+        assertEquals(1, stub.messages.size, "Dehydrated stub must retain only the preview node when earlier messages are unpinned")
+        assertTrue(stub.messages.dropLast(1).all { it.pinned }, "Unpinned earlier messages must be omitted from compact stub")
         assertTrue(stub.messages.last().activeVariant.thinkingSummary.isEmpty(), "Thinking summary must be freed in stub")
         assertTrue(stub.messages.last().activeVariant.toolCalls.isEmpty(), "Tool calls must be freed in stub")
         assertEquals(persistedAttachmentPath, stub.messages.last().activeVariant.attachments.first().localFilePath)

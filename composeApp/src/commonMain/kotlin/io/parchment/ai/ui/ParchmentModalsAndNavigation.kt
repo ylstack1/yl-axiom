@@ -419,7 +419,7 @@ internal fun MobileTabSwitcherModal(
                                             " • ${formatCompactTimestamp(sess.updatedAt)}"
                                         } else ""
                                         BasicText(
-                                            text = Strings.messages(sess.messages.size, dateSuffix),
+                                            text = Strings.messages(sess.displayMessageCount, dateSuffix),
                                             style = p.uiLabelStyle.copy(fontSize = 11.sp)
                                         )
                                     }

@@ -245,7 +245,7 @@ internal fun ParchmentSidebar(
             val historySearch = rememberHistorySearch(storedChatIds, searchQuery)
             val sessionListSignature = remember(appState.sessions) {
                 appState.sessions.joinToString("|") { s ->
-                    "${s.id}:${s.assistantId}:${s.title}:${s.isPinned}:${s.messages.size}:${s.updatedAt}:${s.isCompactStub}"
+                    "${s.id}:${s.assistantId}:${s.title}:${s.isPinned}:${s.displayMessageCount}:${s.updatedAt}:${s.isCompactStub}"
                 }
             }
             val assistantIdsSignature = remember(appState.assistants) {

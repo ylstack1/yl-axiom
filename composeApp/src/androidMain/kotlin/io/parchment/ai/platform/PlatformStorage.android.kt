@@ -27,8 +27,18 @@ actual object PlatformStorage {
     actual fun isReadableLocalFile(filePath: String): Boolean =
         File(filePath).let { it.isFile && it.canRead() && it.length() > 0L }
 
-    private fun chatsDir(): File = File(AndroidPlatformHost.resolveStorageDir(), "chats").also {
-        if (!it.exists()) it.mkdirs()
+    @Volatile
+    private var cachedChatsDirPair: Pair<File, File>? = null
+
+    private fun chatsDir(): File {
+        val root = AndroidPlatformHost.resolveStorageDir()
+        cachedChatsDirPair?.let { (cachedRoot, cachedDir) ->
+            if (cachedRoot == root && cachedDir.exists()) return cachedDir
+        }
+        return File(root, "chats").also {
+            if (!it.exists()) it.mkdirs()
+            cachedChatsDirPair = root to it
+        }
     }
 
     actual fun getChatsStorageDirectoryPath(): String = chatsDir().absolutePath

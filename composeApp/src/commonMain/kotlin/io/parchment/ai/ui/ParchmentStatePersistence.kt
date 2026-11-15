@@ -408,8 +408,6 @@ internal fun buildFreshSessionForAssistant(
     )
 }
 
-private val EMPTY_STUB_VARIANT = MessageVariant(id = "stub-var", content = "")
-
 /**
  * Strips duplicate in-memory base64 strings from attachments when `localFilePath` is already persisted on disk,
  * automatically relocates any legacy root `media/` files into `chats/<sessionId>/media/`, and caps raw wire previews.
@@ -512,6 +510,7 @@ internal fun mergeSessionMetadata(full: ChatSession, metadata: ChatSession): Cha
     systemPrompt = metadata.systemPrompt,
     activeCard = metadata.activeCard,
     authorsNoteDepth = metadata.authorsNoteDepth,
+    stubMessageCount = 0,
     isCompactStub = false
 )
 
@@ -524,7 +523,9 @@ internal fun dehydrateChatSessionToCompactStub(session: ChatSession): ChatSessio
     if (session.isCompactStub || session.id.isBlank() || session.messages.isEmpty()) return session
     val msgCount = session.messages.size
     val lastNode = session.messages.last()
-    val lastPreviewText = lastNode.activeVariant.content.take(140)
+    val lastPreviewText = lastNode.activeVariant.content.take(
+        if (lastNode.pinned) maxOf(140, PIN_PREVIEW_CHARS) else 140
+    )
     // Preserve only localFilePath references so Storage Manager orphan detection knows which media files belong to this chat
     val refAttachments = session.messages
         .asSequence()
@@ -555,30 +556,29 @@ internal fun dehydrateChatSessionToCompactStub(session: ChatSession): ChatSessio
         ),
         pinned = lastNode.pinned
     )
-    val stubList = ArrayList<MessageNode>(msgCount)
-    for (i in 0 until msgCount - 1) {
-        val node = session.messages[i]
-        // Pinned replies keep their id and a preview so the all-chats pin list works without loading the chat.
-        stubList.add(
+    val stubList = buildList {
+        for (i in 0 until msgCount - 1) {
+            val node = session.messages[i]
+            // Pinned replies keep their id and a preview so the all-chats pin list works without loading the chat.
             if (node.pinned) {
-                MessageNode(
-                    id = node.id,
-                    role = node.role,
-                    variants = listOf(MessageVariant(id = node.activeVariant.id, content = node.activeVariant.content.take(PIN_PREVIEW_CHARS))),
-                    pinned = true
+                add(
+                    MessageNode(
+                        id = node.id,
+                        role = node.role,
+                        variants = listOf(MessageVariant(id = node.activeVariant.id, content = node.activeVariant.content.take(PIN_PREVIEW_CHARS))),
+                        pinned = true
+                    )
                 )
-            } else {
-                // The chat list needs a unique id for each row, and a stub is on screen until the real chat loads.
-                MessageNode(id = "stub-node-$i", role = MessageRole.USER, variants = listOf(EMPTY_STUB_VARIANT))
             }
-        )
+        }
+        add(stubLastNode)
     }
-    stubList.add(stubLastNode)
     return session.copy(
         storySummary = "",
         fragments = emptyList(),
         authorsNote = "",
         messages = stubList,
+        stubMessageCount = msgCount,
         isCompactStub = true
     )
 }

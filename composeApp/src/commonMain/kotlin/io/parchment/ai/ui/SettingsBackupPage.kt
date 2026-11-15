@@ -346,7 +346,7 @@ internal fun BackupAndOtaSubpage(
                         }
                         val displayTitle = when {
                             item.category == io.parchment.ai.model.StorageFileCategory.CHAT_SESSION && matchedSession != null ->
-                                "${matchedSession.title} (${matchedSession.messages.size} msgs)"
+                                "${matchedSession.title} (${matchedSession.displayMessageCount} msgs)"
                             matchedSession != null ->
                                 "${item.fileName} • ${matchedSession.title}"
                             else -> item.fileName
