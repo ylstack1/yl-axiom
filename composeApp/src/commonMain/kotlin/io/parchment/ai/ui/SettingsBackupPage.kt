@@ -21,11 +21,14 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicText
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -71,8 +74,14 @@ internal fun BackupAndOtaSubpage(
     var storageCategoryFilter by remember { mutableStateOf<io.parchment.ai.model.StorageFileCategory?>(null) }
     var storageSearchQuery by remember { mutableStateOf("") }
 
-    val allStoredFiles = remember(storageRefreshTick, appState.sessions.size) {
-        PlatformStorage.listAppStorageFiles()
+    var allStoredFiles by remember { mutableStateOf<List<io.parchment.ai.model.StoredAppFileItem>>(emptyList()) }
+    var isScanningStorage by remember { mutableStateOf(true) }
+    LaunchedEffect(storageRefreshTick, appState.sessions.size) {
+        isScanningStorage = true
+        allStoredFiles = withContext(Dispatchers.IO) {
+            PlatformStorage.listAppStorageFiles()
+        }
+        isScanningStorage = false
     }
     val sessionsByFileStem = remember(appState.sessions) {
         appState.sessions.associateBy { sess ->
@@ -329,7 +338,7 @@ internal fun BackupAndOtaSubpage(
                 ) {
                     if (filteredStorageFiles.isEmpty()) {
                         BasicText(
-                            text = Strings.noMatchingFilesInStorage,
+                            text = if (isScanningStorage && allStoredFiles.isEmpty()) Strings.loading else Strings.noMatchingFilesInStorage,
                             style = p.uiLabelStyle.copy(color = p.mutedInk),
                             modifier = Modifier.padding(Space.s8)
                         )

@@ -5,7 +5,6 @@ import io.parchment.ai.strings.Strings
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.ui.draw.alpha
 import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.animateContentSize
 import androidx.compose.animation.expandVertically
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -1031,7 +1030,6 @@ internal fun ManuscriptViewport(
                         color = if (isStreaming) p.accent else p.border.copy(alpha = 0.85f),
                         shape = deckShape
                     )
-                    .animateContentSize(animationSpec = motionSpring())
                     .padding(horizontal = Space.s12, vertical = 9.dp),
                 verticalArrangement = Arrangement.spacedBy(7.dp)
             ) {
@@ -1161,9 +1159,17 @@ internal fun ManuscriptViewport(
 
                 // 3. Collapsible Capabilities, Workspace Mount & 16-Tool Harness Tray (`⚙ Tools`)
                 var showAllHarnessToolsInComposer by remember { mutableStateOf(false) }
-                val composerPermissionDefaults = AgentPermissionResolver.defaults(activeAssistant)
-                val composerPermissionOverrides = activeSession.permissionOverrides ?: AgentPermissionResolver.legacyOverrides(activeSession, activeProfile)
-                val composerToolPolicy = composerPermissionOverrides.applyTo(composerPermissionDefaults)
+                val (composerPermissionDefaults, composerPermissionOverrides, composerToolPolicy) = remember(
+                    activeAssistant,
+                    activeSession.permissionOverrides,
+                    activeSession.workspacePath,
+                    activeSession.workspaceMode,
+                    activeProfile
+                ) {
+                    val defaults = AgentPermissionResolver.defaults(activeAssistant)
+                    val overrides = activeSession.permissionOverrides ?: AgentPermissionResolver.legacyOverrides(activeSession, activeProfile)
+                    Triple(defaults, overrides, overrides.applyTo(defaults))
+                }
                 val effectiveComposerWsPath = composerToolPolicy.workspacePath
                 val effectiveComposerWsMode = composerToolPolicy.workspaceMode
                 val allHarnessTools = remember { WorkspaceHarness.allTools() }
@@ -1886,7 +1892,7 @@ internal fun ManuscriptViewport(
                     onTriggerVoiceInput = onTriggerVoiceInput,
                     onUpdateProfile = onUpdateProfile,
                     onComposerToolsDrawerChange = onComposerToolsDrawerChange,
-                    onToggleContextBreakdown = { showContextBreakdownPopover = !showContextBreakdownPopover },
+                    onToggleContextBreakdown = stableAction { showContextBreakdownPopover = !showContextBreakdownPopover },
                     onStopStream = onStopStream,
                     onQueuePrompt = onQueuePrompt,
                     onSteerNow = onSteerNow,

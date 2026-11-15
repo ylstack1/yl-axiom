@@ -1984,6 +1984,11 @@ class ParchmentProtocolAndHarnessTest {
             sessions = listOf(sess.copy(messages = listOf(sess.messages[0].copy(pinned = true), sess.messages[1])))
         )
         kotlin.test.assertNotEquals(io.parchment.ai.ui.sidebarFingerprint(baseSnap), io.parchment.ai.ui.sidebarFingerprint(pinnedMsgSnap))
+
+        val fpCache = io.parchment.ai.ui.SidebarFingerprintCache()
+        assertEquals(io.parchment.ai.ui.sidebarFingerprint(baseSnap), io.parchment.ai.ui.sidebarFingerprint(baseSnap, fpCache))
+        assertEquals(io.parchment.ai.ui.sidebarFingerprint(streamedTextSnap), io.parchment.ai.ui.sidebarFingerprint(streamedTextSnap, fpCache))
+        assertEquals(io.parchment.ai.ui.sidebarFingerprint(pinnedMsgSnap), io.parchment.ai.ui.sidebarFingerprint(pinnedMsgSnap, fpCache))
     }
 
     @Test

@@ -786,11 +786,18 @@ fun ParchmentApp(
                         // - On phones: the chat or Settings underneath, with the sidebar sliding over 86% of the width.
                         // A streaming reply replaces appState every frame. The sidebar gets the copy it last drew from until
                         // something it shows changes, so its lists and pinned replies aren't rebuilt per frame.
-                        val sidebarKey = sidebarFingerprint(appState)
+                        val sidebarCache = remember { SidebarFingerprintCache() }
+                        val sidebarKey = sidebarFingerprint(appState, sidebarCache)
                         val sidebarAppState = remember(sidebarKey) { appState }
                         val sidebarActiveSession = remember(sidebarKey) { activeSession }
-                        val sidebarComposable: @Composable (Modifier) -> Unit = { mod ->
-                            ParchmentSidebar(
+                        val sidebarComposable: @Composable (Modifier) -> Unit = remember(
+                            sidebarKey,
+                            activeAssistant,
+                            sidebarTab,
+                            isCompactScreen
+                        ) {
+                            @Composable { mod ->
+                                ParchmentSidebar(
                                 appState = sidebarAppState,
                                 activeAssistant = activeAssistant,
                                 activeSession = sidebarActiveSession,
@@ -886,6 +893,7 @@ fun ParchmentApp(
                                     if (isCompactScreen) showSidebar = false
                                 }
                             )
+                            }
                         }
 
                         Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
@@ -1075,7 +1083,7 @@ fun ParchmentApp(
                                         activeProfile = activeProfile,
                                         preferences = appState.preferences,
                                         showSessionInspector = showSessionInspector,
-                                        onToggleSessionInspector = { showSessionInspector = !showSessionInspector },
+                                        onToggleSessionInspector = stableAction { showSessionInspector = !showSessionInspector },
                                         isStreaming = isStreaming,
                                         isCurrentlyThinkingPhase = isCurrentlyThinkingPhase,
                                         streamingTargetNodeId = streamingTargetNodeId,
@@ -1136,39 +1144,43 @@ fun ParchmentApp(
                                                 }
                                             }
                                         },
-                                        onReattachExistingAttachment = { existingAtt ->
+                                        onReattachExistingAttachment = stableCallback { existingAtt ->
                                             val curList = pendingAttachmentsBySession[activeSession.id].orEmpty()
                                             if (curList.none { it.fileName == existingAtt.fileName }) {
                                                 pendingAttachmentsBySession = pendingAttachmentsBySession +
                                                     (activeSession.id to (curList + existingAtt.copy(id = "att-re-${PlatformRuntime.currentTimeMillis()}")))
                                             }
                                         },
-                                        onPasteClipboardMedia = {
-                                            val pasted = PlatformPickers.readClipboardFiles()
-                                            if (pasted.isNotEmpty()) {
-                                                attachPickedFiles(pasted)
-                                                if (pasted.none { it.oversized }) {
-                                                    bannerNotification = Strings.attached(plural(pasted.size, "clipboard item"), pasted.joinToString { it.fileName })
+                                        onPasteClipboardMedia = run {
+                                            val holder = remember { Array(1) { { false } } }
+                                            holder[0] = {
+                                                val pasted = PlatformPickers.readClipboardFiles()
+                                                if (pasted.isNotEmpty()) {
+                                                    attachPickedFiles(pasted)
+                                                    if (pasted.none { it.oversized }) {
+                                                        bannerNotification = Strings.attached(plural(pasted.size, "clipboard item"), pasted.joinToString { it.fileName })
+                                                    }
+                                                    true
+                                                } else {
+                                                    false
                                                 }
-                                                true
-                                            } else {
-                                                false
                                             }
+                                            remember { { holder[0]() } }
                                         },
-                                        onRequestClearCurrentChat = {
+                                        onRequestClearCurrentChat = stableAction {
                                             if (appState.preferences.confirmBeforeDeletingChat) {
                                                 pendingDeleteConfirmation = DeleteConfirmRequest.ClearCurrentMessages(activeSession.title)
                                             } else {
                                                 clearCurrentChatMessages(activeSession.id)
                                             }
                                         },
-                                        onRemoveAttachment = { attId ->
+                                        onRemoveAttachment = stableCallback { attId ->
                                             val curAtts = pendingAttachmentsBySession[activeSession.id].orEmpty()
                                             pendingAttachmentsBySession = pendingAttachmentsBySession +
                                                 (activeSession.id to curAtts.filterNot { it.id == attId })
                                         },
                                         onInspectAttachment = ::openAttachmentInViewer,
-                                        onInspectGeneratedImage = { media ->
+                                        onInspectGeneratedImage = stableCallback { media ->
                                             activeViewerItem = ActiveMediaViewerItem.ImageViewer(
                                                 title = media.revisedPrompt.take(48).ifBlank { "Generated Image" },
                                                 mimeType = media.mimeType.ifBlank { "image/png" },
@@ -1176,7 +1188,7 @@ fun ParchmentApp(
                                                 remoteUrl = media.remoteUrl
                                             )
                                         },
-                                        onExportChatMarkdown = {
+                                        onExportChatMarkdown = stableAction {
                                             uiScope.launch {
                                                 val md = buildString {
                                                     appendLine("# ${activeSession.title}")
@@ -1232,7 +1244,7 @@ fun ParchmentApp(
                                                 if (saved != null) bannerNotification = Strings.exportedMarkdownTo(saved)
                                             }
                                         },
-                                        onExportChatJson = {
+                                        onExportChatJson = stableAction {
                                             uiScope.launch {
                                                 val hasLocalMedia = activeSession.messages.any { n ->
                                                     n.variants.any { v ->
@@ -1255,7 +1267,7 @@ fun ParchmentApp(
                                                 }
                                             }
                                         },
-                                        onOpenProviderSettings = {
+                                        onOpenProviderSettings = stableAction {
                                             activeSettingsCategory = SettingsCategory.PROVIDERS
                                             startMobileSettingsAtRoot = false
                                             isSettingsOpen = true
@@ -1265,9 +1277,9 @@ fun ParchmentApp(
                                         onSteerNow = ::triggerSteerNow,
                                         onQueuePrompt = ::enqueueFollowUpPrompt,
                                         onImpersonateDraft = ::triggerImpersonateDraft,
-                                        onAutoSummarizeStory = { triggerAutoSummarizeStory(autoMuteOlderTurns = false) },
-                                        onCompactContext = { triggerAutoSummarizeStory(autoMuteOlderTurns = true) },
-                                        onRewindToNode = { nodeIndex ->
+                                        onAutoSummarizeStory = stableAction { triggerAutoSummarizeStory(autoMuteOlderTurns = false) },
+                                        onCompactContext = stableAction { triggerAutoSummarizeStory(autoMuteOlderTurns = true) },
+                                        onRewindToNode = stableCallback { nodeIndex ->
                                             val sessId = activeSession.id
                                             stopSessionStream(sessId)
                                             val total = activeSession.messages.size
@@ -1289,7 +1301,7 @@ fun ParchmentApp(
                                                 }
                                             }
                                         },
-                                        onForkSessionFromNode = { nodeIndex ->
+                                        onForkSessionFromNode = stableCallback { nodeIndex ->
                                             val now = PlatformRuntime.currentTimeMillis()
                                             val keepVersions = appState.preferences.keepMessageVersionsWhenForking
                                             val sourceSession = activeSession.withSpendProvenance()
@@ -1316,12 +1328,12 @@ fun ParchmentApp(
                                             )
                                             bannerNotification = Strings.startedANewBranchAtMessage(nodeIndex + 1)
                                         },
-                                        onStopStream = {
+                                        onStopStream = stableAction {
                                             stopSessionStream(activeSession.id)
                                         },
-                                        onUpdateSession = { transform -> updateActiveSession(immediate = true, transform = transform) },
+                                        onUpdateSession = stableCallback { transform -> updateActiveSession(immediate = true, transform = transform) },
                                         onUpdateProfile = ::updateActiveProfile,
-                                        onRegenerateNode = { nodeIndex ->
+                                        onRegenerateNode = stableCallback { nodeIndex ->
                                             if (appState.preferences.confirmBeforeRegenerating) {
                                                 pendingRegenerateConfirm = RegenerateConfirmRequest(activeSession.id, nodeIndex)
                                             } else {
@@ -1567,36 +1579,88 @@ fun ParchmentApp(
  * Changes only when something the sidebar displays changes, so a streaming reply doesn't redraw it. Per chat:
  * what the sidebar shows, leaving out reply text on purpose (it changes every frame). Allocation-free key.
  */
-internal fun sidebarFingerprint(state: AppStateSnapshot): Any {
+internal class SidebarFingerprintCache(
+    var lastAppState: AppStateSnapshot? = null,
+    internal var lastKey: SidebarFingerprintKey? = null,
+    val entries: HashMap<String, CachedSidebarSession> = HashMap()
+)
+
+internal class CachedSidebarSession(
+    val session: ChatSession,
+    val messagesRef: List<io.parchment.ai.model.MessageNode>,
+    val structuralHash1: Long,
+    val structuralHash2: Long,
+    val pinnedHash1: Long,
+    val pinnedHash2: Long
+)
+
+internal fun sidebarFingerprint(
+    state: AppStateSnapshot,
+    cache: SidebarFingerprintCache? = null
+): Any {
+    if (cache != null && cache.lastAppState === state) {
+        cache.lastKey?.let { return it }
+    }
     var h1 = 0x123456789ABCDEF0L
     var h2 = -0x5432109876543210L
     val sessions = state.sessions
     for (i in sessions.indices) {
         val s = sessions[i]
-        val idHash = (s.id.hashCode().toLong() shl 32) or (s.id.length.toLong() and 0xffffffffL)
-        val titleHash = (s.title.hashCode().toLong() shl 32) or (s.title.length.toLong() and 0xffffffffL)
-        val asstHash = (s.assistantId.hashCode().toLong() shl 32) or (s.assistantId.length.toLong() and 0xffffffffL)
-        val flags = (if (s.isPinned) 1L else 0L) or (if (s.isCompactStub) 2L else 0L)
-        h1 = mixSidebar64(h1, idHash)
-        h1 = mixSidebar64(h1, titleHash)
-        h1 = mixSidebar64(h1, s.updatedAt)
-        h1 = mixSidebar64(h1, asstHash)
-        val msgCount = s.displayMessageCount.toLong()
-        h1 = mixSidebar64(h1, (msgCount shl 2) or flags)
-        h2 = mixSidebar64(h2, s.updatedAt xor idHash xor ((i + 1).toLong() shl 40))
-        h2 = mixSidebar64(h2, titleHash xor (asstHash.rotateLeft(13)))
-        h2 = mixSidebar64(h2, (flags shl 32) or msgCount)
-        val msgs = s.messages
-        for (j in msgs.indices) {
-            val node = msgs[j]
-            if (node.pinned) {
-                val nodeHash = (node.id.hashCode().toLong() shl 32) or ((j + 1).toLong() shl 16) or (node.id.length.toLong() and 0xffffL)
-                h1 = mixSidebar64(h1, nodeHash)
-                h2 = mixSidebar64(h2, nodeHash.rotateLeft(19))
+        val cached = cache?.entries?.get(s.id)
+        val sH1: Long
+        val sH2: Long
+        val pH1: Long
+        val pH2: Long
+        if (cached != null && cached.session === s) {
+            sH1 = cached.structuralHash1
+            sH2 = cached.structuralHash2
+            pH1 = cached.pinnedHash1
+            pH2 = cached.pinnedHash2
+        } else {
+            val idHash = (s.id.hashCode().toLong() shl 32) or (s.id.length.toLong() and 0xffffffffL)
+            val titleHash = (s.title.hashCode().toLong() shl 32) or (s.title.length.toLong() and 0xffffffffL)
+            val asstHash = (s.assistantId.hashCode().toLong() shl 32) or (s.assistantId.length.toLong() and 0xffffffffL)
+            val flags = (if (s.isPinned) 1L else 0L) or (if (s.isCompactStub) 2L else 0L)
+            val msgCount = s.displayMessageCount.toLong()
+            var m1 = mixSidebar64(0x243F6A8885A308D3L, idHash)
+            m1 = mixSidebar64(m1, titleHash)
+            m1 = mixSidebar64(m1, s.updatedAt)
+            m1 = mixSidebar64(m1, asstHash)
+            sH1 = mixSidebar64(m1, (msgCount shl 2) or flags)
+            var m2 = mixSidebar64(-0x50A2B9C3D4E5F617L, s.updatedAt xor idHash)
+            m2 = mixSidebar64(m2, titleHash xor (asstHash.rotateLeft(13)))
+            sH2 = mixSidebar64(m2, (flags shl 32) or msgCount)
+            if (cached != null && cached.messagesRef === s.messages) {
+                pH1 = cached.pinnedHash1
+                pH2 = cached.pinnedHash2
+            } else {
+                var ph1 = 0x13198A2E03707344L
+                var ph2 = -0x540F2A11C7D0B539L
+                val msgs = s.messages
+                for (j in msgs.indices) {
+                    val node = msgs[j]
+                    if (node.pinned) {
+                        val nodeHash = (node.id.hashCode().toLong() shl 32) or ((j + 1).toLong() shl 16) or (node.id.length.toLong() and 0xffffL)
+                        ph1 = mixSidebar64(ph1, nodeHash)
+                        ph2 = mixSidebar64(ph2, nodeHash.rotateLeft(19))
+                    }
+                }
+                pH1 = ph1
+                pH2 = ph2
             }
+            cache?.entries?.put(s.id, CachedSidebarSession(s, s.messages, sH1, sH2, pH1, pH2))
         }
+        h1 = mixSidebar64(h1, sH1)
+        h1 = mixSidebar64(h1, pH1)
+        h2 = mixSidebar64(h2, sH2 xor ((i + 1).toLong() shl 40))
+        h2 = mixSidebar64(h2, pH2)
     }
-    return SidebarFingerprintKey(
+    if (cache != null && cache.entries.size > sessions.size + 64) {
+        val activeIds = HashSet<String>(sessions.size)
+        for (i in sessions.indices) activeIds.add(sessions[i].id)
+        cache.entries.keys.retainAll(activeIds)
+    }
+    val key = SidebarFingerprintKey(
         sessionsHash1 = h1,
         sessionsHash2 = h2,
         sessionCount = sessions.size,
@@ -1604,6 +1668,11 @@ internal fun sidebarFingerprint(state: AppStateSnapshot): Any {
         preferences = state.preferences,
         activeSessionId = state.activeSessionId
     )
+    if (cache != null) {
+        cache.lastAppState = state
+        cache.lastKey = key
+    }
+    return key
 }
 
 private inline fun mixSidebar64(h: Long, value: Long): Long {
@@ -1612,7 +1681,7 @@ private inline fun mixSidebar64(h: Long, value: Long): Long {
     return z xor (z ushr 27)
 }
 
-private class SidebarFingerprintKey(
+internal class SidebarFingerprintKey(
     private val sessionsHash1: Long,
     private val sessionsHash2: Long,
     private val sessionCount: Int,
@@ -1627,8 +1696,8 @@ private class SidebarFingerprintKey(
             sessionsHash2 == other.sessionsHash2 &&
             sessionCount == other.sessionCount &&
             activeSessionId == other.activeSessionId &&
-            assistants == other.assistants &&
-            preferences == other.preferences
+            (assistants === other.assistants || assistants == other.assistants) &&
+            (preferences === other.preferences || preferences == other.preferences)
     }
 
     override fun hashCode(): Int {
