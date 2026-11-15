@@ -2,6 +2,13 @@
 
 What changed in each release, newest first. From 2.1.7 on, release-please writes these entries from commit messages that follow [Conventional Commits](https://www.conventionalcommits.org/) (`feat:` and `fix:` appear here and set the next version); edit wording in its release PR before merging it.
 
+## [2.1.11](https://github.com/baros4294/parchment/compare/v2.1.10...v2.1.11) (2026-11-15)
+
+
+### Fixes
+
+* **network,model,ui:** harden cross-provider reasoning handoff and Gemini poll recovery ([83592e4](https://github.com/baros4294/parchment/commit/83592e4ffe29bcb60e5488c95f5340e30ee32799))
+
 ## [2.1.10](https://github.com/baros4294/parchment/compare/v2.1.9...v2.1.10) (2026-11-14)
 
 
