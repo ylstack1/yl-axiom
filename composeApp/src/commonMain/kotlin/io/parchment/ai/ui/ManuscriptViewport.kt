@@ -19,6 +19,7 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsDraggedAsState
 import androidx.compose.foundation.interaction.collectIsHoveredAsState
 import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.Arrangement
@@ -173,21 +174,59 @@ internal fun ManuscriptViewport(
     // Following the newest text:
     // 1. Scrolls to the bottom spacer with a large offset, so a long reply keeps its bottom edge in view
     //    instead of jumping to its top.
-    // 2. Stops following as soon as the user scrolls up, and stays stopped until they scroll back down or tap
-    //    Latest, so the page never moves away while they read.
-    var userScrollPausedUntilMs by remember(activeSession.id) { mutableStateOf(0L) }
+    // 2. Stops following the instant the user drags or scrolls away, and resumes only when they scroll
+    //    back within the bottom threshold or tap Latest.
+    val isListDragged by listState.interactionSource.collectIsDraggedAsState()
+    var isPointerInteracting by remember(activeSession.id) { mutableStateOf(false) }
     var userDisengagedAutoFollow by remember(activeSession.id) { mutableStateOf(false) }
+    var wasScrolledUpSincePause by remember(activeSession.id) { mutableStateOf(false) }
+    var isProgrammaticAutoFollow by remember { mutableStateOf(false) }
+    var wasStreamingFollow by remember(activeSession.id) { mutableStateOf(false) }
+
+    val isScrolledUpFromBottom by remember(activeSession.id, activeSession.messages.size) {
+        derivedStateOf {
+            if (activeSession.messages.isEmpty()) {
+                false
+            } else {
+                val layout = listState.layoutInfo
+                val lastVisible = layout.visibleItemsInfo.lastOrNull()
+                val total = layout.totalItemsCount
+                if (lastVisible == null || total <= 0) {
+                    false
+                } else {
+                    val overhangPx = (lastVisible.offset + lastVisible.size) - layout.viewportEndOffset
+                    lastVisible.index < total - 1 || overhangPx > 24
+                }
+            }
+        }
+    }
 
     suspend fun jumpToBottomEdge() {
-        val totalItems = listState.layoutInfo.totalItemsCount
-        val bottomSpacerIdx = (totalItems - 1).coerceAtLeast(activeSession.messages.size)
-        listState.scrollToItem(bottomSpacerIdx, scrollOffset = 100_000)
+        isProgrammaticAutoFollow = true
+        try {
+            val totalItems = listState.layoutInfo.totalItemsCount
+            val bottomSpacerIdx = (totalItems - 1).coerceAtLeast(activeSession.messages.size)
+            listState.scrollToItem(bottomSpacerIdx, scrollOffset = 100_000)
+        } finally {
+            isProgrammaticAutoFollow = false
+        }
+    }
+
+    fun resumeAutoFollowAndJumpToBottom() {
+        userDisengagedAutoFollow = false
+        wasScrolledUpSincePause = false
+        isPointerInteracting = false
+        scope.launch {
+            jumpToBottomEdge()
+        }
     }
 
     // Auto-scroll to bottom when opening or switching to a chat (when enabled in Settings -> Preferences)
     LaunchedEffect(activeSession.id, preferences.autoScrollToBottomOnOpen) {
         userDisengagedAutoFollow = false
-        userScrollPausedUntilMs = 0L
+        wasScrolledUpSincePause = false
+        isPointerInteracting = false
+        wasStreamingFollow = false
         if (activeSession.messages.isNotEmpty() && jumpToNodeId.isBlank()) {
             if (preferences.autoScrollToBottomOnOpen) {
                 jumpToBottomEdge()
@@ -205,6 +244,7 @@ internal fun ManuscriptViewport(
         val index = activeSession.messages.indexOfFirst { it.id == jumpToNodeId }
         if (index >= 0) {
             userDisengagedAutoFollow = true
+            wasScrolledUpSincePause = true
             withFrameNanos { }
             listState.scrollToItem(index + 1) // Item 0 is the top spacer.
         }
@@ -212,19 +252,26 @@ internal fun ManuscriptViewport(
     }
 
     LaunchedEffect(isStreaming) {
-        if (isStreaming) {
-            if (!listState.canScrollForward) {
-                userDisengagedAutoFollow = false
-            }
+        if (isStreaming && !isScrolledUpFromBottom) {
+            userDisengagedAutoFollow = false
+            wasScrolledUpSincePause = false
         }
     }
 
-    LaunchedEffect(listState.isScrollInProgress, listState.canScrollForward) {
-        if (listState.isScrollInProgress && listState.canScrollForward) {
-            userDisengagedAutoFollow = true
-        } else if (!listState.isScrollInProgress && !listState.canScrollForward) {
-            userDisengagedAutoFollow = false
-            userScrollPausedUntilMs = 0L
+    LaunchedEffect(isListDragged, isPointerInteracting, listState.isScrollInProgress, isScrolledUpFromBottom) {
+        val userMoving = isListDragged || isPointerInteracting || (!isProgrammaticAutoFollow && listState.isScrollInProgress)
+        if (userMoving) {
+            if (isScrolledUpFromBottom) {
+                userDisengagedAutoFollow = true
+                wasScrolledUpSincePause = true
+            }
+        } else if (userDisengagedAutoFollow) {
+            if (isScrolledUpFromBottom) {
+                wasScrolledUpSincePause = true
+            } else if (wasScrolledUpSincePause) {
+                userDisengagedAutoFollow = false
+                wasScrolledUpSincePause = false
+            }
         }
     }
 
@@ -234,20 +281,45 @@ internal fun ManuscriptViewport(
     val lastAutoFollowMs = remember { longArrayOf(0L) }
 
     LaunchedEffect(lastMsgContentLen, isStreaming) {
-        if (!isStreaming) {
-            lastAutoFollowMs[0] = 0L
+        if (!preferences.autoFollowBottom || activeSession.messages.isEmpty()) {
+            if (!isStreaming) {
+                lastAutoFollowMs[0] = 0L
+                wasStreamingFollow = false
+            }
             return@LaunchedEffect
         }
+        val canFollowNow = !listState.isScrollInProgress &&
+            !isListDragged &&
+            !isPointerInteracting &&
+            !userDisengagedAutoFollow
+        if (!isStreaming) {
+            val streamJustFinished = wasStreamingFollow
+            wasStreamingFollow = false
+            lastAutoFollowMs[0] = 0L
+            if (streamJustFinished && canFollowNow && listState.canScrollForward) {
+                withFrameNanos { }
+                if (!isListDragged && !isPointerInteracting && !userDisengagedAutoFollow) {
+                    jumpToBottomEdge()
+                }
+            }
+            return@LaunchedEffect
+        }
+        wasStreamingFollow = true
+        if (!canFollowNow) return@LaunchedEffect
         val now = PlatformRuntime.currentTimeMillis()
+        val elapsed = now - lastAutoFollowMs[0]
+        if (lastAutoFollowMs[0] != 0L && elapsed in 0L until 48L) {
+            kotlinx.coroutines.delay(48L - elapsed)
+        }
         if (preferences.autoFollowBottom &&
             activeSession.messages.isNotEmpty() &&
             !listState.isScrollInProgress &&
+            !isListDragged &&
+            !isPointerInteracting &&
             !userDisengagedAutoFollow &&
-            now >= userScrollPausedUntilMs &&
-            (lastAutoFollowMs[0] == 0L || now - lastAutoFollowMs[0] >= 48L) &&
             (listState.canScrollForward || lastMsgContentLen % 24 == 0)
         ) {
-            lastAutoFollowMs[0] = now
+            lastAutoFollowMs[0] = PlatformRuntime.currentTimeMillis()
             jumpToBottomEdge()
         }
     }
@@ -346,24 +418,6 @@ internal fun ManuscriptViewport(
         }
     }
 
-    val isScrolledUpFromBottom by remember(activeSession.id, activeSession.messages.size) {
-        derivedStateOf {
-            if (activeSession.messages.isEmpty()) {
-                false
-            } else if (listState.canScrollForward) {
-                true
-            } else {
-                val layout = listState.layoutInfo
-                val lastVisible = layout.visibleItemsInfo.lastOrNull()
-                val total = layout.totalItemsCount
-                lastVisible != null && total > 0 && (
-                    lastVisible.index < total - 1 ||
-                        (lastVisible.offset + lastVisible.size) > (layout.viewportEndOffset + 20)
-                    )
-            }
-        }
-    }
-
     Column(
         modifier = Modifier.fillMaxSize(),
         horizontalAlignment = Alignment.CenterHorizontally
@@ -402,17 +456,15 @@ internal fun ManuscriptViewport(
                         awaitPointerEventScope {
                             while (true) {
                                 val ev = awaitPointerEvent()
+                                isPointerInteracting = ev.type != PointerEventType.Exit && ev.changes.any { it.pressed }
                                 if (ev.type == PointerEventType.Scroll) {
                                     val dy = ev.changes.firstOrNull()?.scrollDelta?.y ?: 0f
                                     if (dy < 0f) {
-                                        // Scrolling up with the wheel or trackpad pauses following for 5 seconds.
+                                        // Scrolling up via wheel/trackpad pauses auto-follow immediately.
                                         userDisengagedAutoFollow = true
-                                        userScrollPausedUntilMs = PlatformRuntime.currentTimeMillis() + 5000L
-                                    }
-                                } else if (ev.type == PointerEventType.Press) {
-                                    // Touch or scrollbar press while streaming — pause auto-follow so user can read
-                                    if (isStreaming) {
-                                        userScrollPausedUntilMs = PlatformRuntime.currentTimeMillis() + 5000L
+                                    } else if (dy > 0f && userDisengagedAutoFollow && !isScrolledUpFromBottom) {
+                                        userDisengagedAutoFollow = false
+                                        wasScrolledUpSincePause = false
                                     }
                                 }
                             }
@@ -739,11 +791,7 @@ internal fun ManuscriptViewport(
                                 .background(p.accent)
                                 .border(1.dp, p.cardBg.copy(alpha = 0.55f), pillInnerShape)
                                 .kissClickable {
-                                    userDisengagedAutoFollow = false
-                                    userScrollPausedUntilMs = 0L
-                                    scope.launch {
-                                        jumpToBottomEdge()
-                                    }
+                                    resumeAutoFollowAndJumpToBottom()
                                 }
                                 .padding(horizontal = 14.dp, vertical = Space.s6),
                             verticalAlignment = Alignment.CenterVertically,
@@ -993,11 +1041,7 @@ internal fun ManuscriptViewport(
                             style = SepiaButtonStyle.GHOST,
                             onClick = {
                                 minimapInteractionTick++
-                                userDisengagedAutoFollow = false
-                                userScrollPausedUntilMs = 0L
-                                scope.launch {
-                                    jumpToBottomEdge()
-                                }
+                                resumeAutoFollowAndJumpToBottom()
                             }
                         )
                     }

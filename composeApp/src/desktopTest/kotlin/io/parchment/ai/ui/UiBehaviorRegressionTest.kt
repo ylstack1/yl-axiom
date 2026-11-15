@@ -14,6 +14,8 @@ import androidx.compose.runtime.snapshots.Snapshot
 import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.ImageComposeScene
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.input.pointer.PointerEventType
 import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.semantics.SemanticsNode
 import androidx.compose.ui.semantics.SemanticsProperties
@@ -27,8 +29,16 @@ import com.sun.net.httpserver.HttpServer
 import io.parchment.ai.model.AppStateSnapshot
 import io.parchment.ai.model.AssistantAgent
 import io.parchment.ai.model.ChatSession
+import io.parchment.ai.model.GeneratedMediaItem
+import io.parchment.ai.model.MediaKind
+import io.parchment.ai.model.MessageNode
+import io.parchment.ai.model.MessageRole
+import io.parchment.ai.model.MessageVariant
+import io.parchment.ai.model.PreferencesConfig
+import io.parchment.ai.model.PromptAttachment
 import io.parchment.ai.model.ProviderProfile
 import io.parchment.ai.model.ProviderProtocol
+import io.parchment.ai.model.TurnTextLayout
 import io.parchment.ai.strings.Strings
 import java.net.InetSocketAddress
 import java.util.concurrent.CountDownLatch
@@ -466,6 +476,206 @@ class UiBehaviorRegressionTest {
 
             val anchorTopAfter = nodes(scene).single { description(it) == "ViewportAnchor" }.boundsInRoot.top
             assertEquals(anchorTopBefore, anchorTopAfter, "Viewport must not shift vertically when quick model picker opens")
+        }
+    }
+
+    @Test
+    fun viewportPausesAutoFollowOnScrollAndAsyncMediaAndLivePeekReserveBounds() {
+        val asst = AssistantAgent(id = "a", name = "A", iconEmoji = "📖")
+        val prof = ProviderProfile(
+            id = "p",
+            name = "OpenAI",
+            protocol = ProviderProtocol.OPENAI_RESPONSES,
+            baseUrl = "https://example.com",
+            defaultModel = "gpt-4o"
+        )
+        val initialMessages = (0..11).map { idx ->
+            MessageNode(
+                id = "turn-$idx",
+                role = if (idx % 2 == 0) MessageRole.USER else MessageRole.ASSISTANT,
+                variants = listOf(
+                    MessageVariant(
+                        id = "v-$idx",
+                        content = "Turn $idx line 1\nTurn $idx line 2\nTurn $idx line 3",
+                        isStreaming = idx == 11
+                    )
+                )
+            )
+        }
+        var session by mutableStateOf(
+            ChatSession(
+                id = "s-scroll",
+                title = "Scroll Test",
+                createdAt = 1L,
+                updatedAt = 1L,
+                profileId = prof.id,
+                assistantId = asst.id,
+                messages = initialMessages
+            )
+        )
+        val appState = AppStateSnapshot(
+            assistants = listOf(asst),
+            profiles = listOf(prof),
+            sessions = listOf(session),
+            activeSessionId = session.id
+        )
+        var frameNanos = 0L
+
+        withUiScene(
+            width = 900,
+            height = 460,
+            content = {
+                ManuscriptViewport(
+                    appState = appState,
+                    activeSession = session,
+                    activeAssistant = asst,
+                    activeProfile = prof,
+                    preferences = PreferencesConfig(),
+                    showSessionInspector = false,
+                    onToggleSessionInspector = {},
+                    isStreaming = true,
+                    isCurrentlyThinkingPhase = false,
+                    streamingTargetNodeId = "turn-11",
+                    streamingStatus = "",
+                    streamingInteractionId = "",
+                    queuedPrompts = emptyList(),
+                    onRemoveQueuedPrompt = {},
+                    onSteerQueuedPromptNow = {},
+                    userPromptInput = "",
+                    onUserPromptChange = {},
+                    assistantPrefillInput = "",
+                    onAssistantPrefillChange = {},
+                    showPrefillBox = false,
+                    onTogglePrefillBox = {},
+                    showComposerToolsDrawer = false,
+                    onComposerToolsDrawerChange = {},
+                    isGoalModeEnabled = false,
+                    onToggleGoalMode = {},
+                    isLiveVoiceMode = false,
+                    isVoiceListening = false,
+                    onToggleLiveVoiceMode = {},
+                    onTriggerVoiceInput = {},
+                    pendingAttachments = emptyList(),
+                    onAddAttachment = {},
+                    onPasteClipboardMedia = { false },
+                    onRequestClearCurrentChat = {},
+                    onRemoveAttachment = {},
+                    onInspectAttachment = {},
+                    onInspectGeneratedImage = {},
+                    onExportChatMarkdown = {},
+                    onOpenProviderSettings = {},
+                    onSend = {},
+                    onSendGuidedDirection = {},
+                    onSteerNow = {},
+                    onQueuePrompt = {},
+                    onImpersonateDraft = {},
+                    onAutoSummarizeStory = {},
+                    onCompactContext = {},
+                    onRewindToNode = {},
+                    onForkSessionFromNode = {},
+                    onStopStream = {},
+                    onUpdateSession = {},
+                    onUpdateProfile = {},
+                    onRegenerateNode = {},
+                    onContinueAssistantNode = {}
+                )
+            }
+        ) { scene ->
+            repeat(3) {
+                frameNanos += 20_000_000L
+                settle(scene, frameNanos)
+            }
+            assertTrue(nodes(scene).any { text(it).contains("Turn 11") }, "Initial open should follow to bottom turn")
+
+            // Scroll up away from bottom via mouse wheel; streaming must pause auto-follow immediately.
+            repeat(8) {
+                scene.sendPointerEvent(
+                    eventType = PointerEventType.Scroll,
+                    position = Offset(400f, 180f),
+                    scrollDelta = Offset(0f, -6f),
+                    timeMillis = (it + 1) * 16L
+                )
+                frameNanos += 16_000_000L
+                settle(scene, frameNanos)
+            }
+            val latestPill = nodes(scene).firstOrNull { text(it).contains(Strings.latest) }
+            assertNotNull(latestPill, "Latest pill must appear once scrolled away from bottom")
+
+            // Append streaming chunk while paused: Turn 11 update must NOT snap the viewport down.
+            val lastTurn = session.messages.last()
+            val updatedLast = lastTurn.copy(
+                variants = listOf(
+                    lastTurn.activeVariant.copy(content = lastTurn.activeVariant.content + "\nNEW_STREAMED_TAIL_MARKER")
+                )
+            )
+            session = session.copy(messages = session.messages.dropLast(1) + updatedLast)
+            Snapshot.sendApplyNotifications()
+            repeat(4) {
+                frameNanos += 64_000_000L
+                settle(scene, frameNanos)
+            }
+            assertNotNull(
+                nodes(scene).firstOrNull { text(it).contains(Strings.latest) },
+                "Auto-follow must remain paused across streaming updates while scrolled up"
+            )
+
+            // Tapping Latest resumes auto-follow and jumps to the bottom marker.
+            val clickableLatest = generateSequence(latestPill) { it.parent }
+                .first { it.config.contains(SemanticsActions.OnClick) }
+            click(clickableLatest)
+            repeat(3) {
+                frameNanos += 20_000_000L
+                settle(scene, frameNanos)
+            }
+            assertTrue(nodes(scene).any { text(it).contains("NEW_STREAMED_TAIL_MARKER") })
+        }
+
+        withUiScene(
+            width = 760,
+            height = 900,
+            content = {
+                Box(Modifier.semantics { contentDescription = "AttachmentBoundsHost" }) {
+                    TurnAttachmentsSection(
+                        visible = true,
+                        attachments = listOf(PromptAttachment("att1", "scene.png", "image/png")),
+                        onInspectAttachment = {}
+                    )
+                }
+                Box(Modifier.semantics { contentDescription = "GeneratedMediaBoundsHost" }) {
+                    TurnGeneratedMediaSection(
+                        mediaItems = listOf(
+                            GeneratedMediaItem(
+                                id = "gen1",
+                                kind = MediaKind.IMAGE,
+                                mimeType = "image/png",
+                                aspectRatio = "16:9"
+                            )
+                        ),
+                        onInspectGeneratedImage = {}
+                    )
+                }
+                Box(Modifier.semantics { contentDescription = "LivePeekHost" }) {
+                    MessageTurnReasoningDrawer(
+                        nodeId = "n1",
+                        activeVariantIndex = 0,
+                        activeVar = MessageVariant("v1", content = "", thinkingSummary = "Single short thought"),
+                        turnText = TurnTextLayout(beforeTool = emptyList(), finalText = ""),
+                        preferences = PreferencesConfig(),
+                        enableMd = false,
+                        isActivelyThinkingThisNode = true,
+                        isReasoningExpanded = false,
+                        isLivePeekOnly = true,
+                        onTogglePeekOrCollapse = {}
+                    )
+                }
+            }
+        ) { scene ->
+            val attHost = nodes(scene).single { description(it) == "AttachmentBoundsHost" }
+            val genHost = nodes(scene).single { description(it) == "GeneratedMediaBoundsHost" }
+            val peekHost = nodes(scene).single { description(it) == "LivePeekHost" }
+            assertTrue(attHost.boundsInRoot.height >= 160f, "Attachment placeholder must reserve vertical height (${attHost.boundsInRoot.height})")
+            assertTrue(genHost.boundsInRoot.height >= 160f, "Generated media placeholder must reserve aspect height (${genHost.boundsInRoot.height})")
+            assertTrue(peekHost.boundsInRoot.height >= 72f, "Live peek drawer must reserve stable minimum height (${peekHost.boundsInRoot.height})")
         }
     }
 }

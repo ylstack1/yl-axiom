@@ -12,6 +12,7 @@ import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
@@ -99,7 +100,8 @@ private fun AttachmentImageCard(
     onInspectAttachment: (PromptAttachment) -> Unit
 ) {
     val p = LocalParchmentPalette.current
-    val bmp = rememberFileImage(att.localFilePath).bitmap
+    val fileImage = rememberFileImage(att.localFilePath)
+    val bmp = fileImage.bitmap
     Column(
         modifier = Modifier
             .widthIn(max = 360.dp)
@@ -120,15 +122,27 @@ private fun AttachmentImageCard(
                     .clip(RoundedCornerShape(Radius.r6))
             )
         } else {
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(Space.s6)
+            Box(
+                modifier = Modifier
+                    .widthIn(min = 200.dp, max = 360.dp)
+                    .height(180.dp)
+                    .clip(RoundedCornerShape(Radius.r6))
+                    .background(p.sheetBg.copy(alpha = 0.6f))
+                    .padding(Space.s10),
+                contentAlignment = Alignment.Center
             ) {
-                KissVectorIcon(icon = KissIcon.IMAGE, tint = p.accent, size = 14.dp)
-                BasicText(
-                    text = att.fileName,
-                    style = p.uiBodyStyle.copy(color = p.accent, fontWeight = FontWeight.SemiBold)
-                )
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(Space.s6)
+                ) {
+                    KissVectorIcon(icon = KissIcon.IMAGE, tint = p.accent, size = IconSize.md)
+                    BasicText(
+                        text = if (fileImage.isLoading) Strings.loading else att.fileName,
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis,
+                        style = p.uiBodyStyle.copy(color = p.accent, fontWeight = FontWeight.SemiBold)
+                    )
+                }
             }
         }
         Row(
@@ -239,13 +253,40 @@ internal fun TurnGeneratedMediaSection(
     }
 }
 
+private fun parseMediaAspectRatio(raw: String): Float {
+    val cleaned = raw.trim()
+    if (cleaned.isEmpty()) return 4f / 3f
+    val sep = when {
+        ':' in cleaned -> ':'
+        '/' in cleaned -> '/'
+        'x' in cleaned -> 'x'
+        'X' in cleaned -> 'X'
+        else -> null
+    }
+    if (sep != null) {
+        val parts = cleaned.split(sep, limit = 2)
+        val w = parts.getOrNull(0)?.trim()?.toFloatOrNull()
+        val h = parts.getOrNull(1)?.trim()?.toFloatOrNull()
+        if (w != null && h != null && w > 0f && h > 0f) {
+            return (w / h).coerceIn(0.55f, 2.2f)
+        }
+    }
+    val numeric = cleaned.toFloatOrNull()
+    if (numeric != null && numeric > 0f) {
+        return numeric.coerceIn(0.55f, 2.2f)
+    }
+    return 4f / 3f
+}
+
 @Composable
 private fun GeneratedImageMediaCard(
     media: GeneratedMediaItem,
     onInspectGeneratedImage: (GeneratedMediaItem) -> Unit
 ) {
     val p = LocalParchmentPalette.current
-    val bmp = rememberFileImage(media.localFilePath).bitmap
+    val fileImage = rememberFileImage(media.localFilePath)
+    val bmp = fileImage.bitmap
+    val reservedAspect = remember(media.aspectRatio) { parseMediaAspectRatio(media.aspectRatio) }
     Column(
         modifier = Modifier
             .fillMaxWidth()
@@ -269,15 +310,28 @@ private fun GeneratedImageMediaCard(
                     }
             )
         } else {
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(Space.s6)
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .heightIn(min = 160.dp, max = 360.dp)
+                    .aspectRatio(reservedAspect, matchHeightConstraintsFirst = false)
+                    .clip(RoundedCornerShape(Radius.r6))
+                    .background(p.sheetBg.copy(alpha = 0.6f))
+                    .padding(Space.s12),
+                contentAlignment = Alignment.Center
             ) {
-                KissVectorIcon(icon = KissIcon.IMAGE, tint = p.accent, size = IconSize.md)
-                BasicText(
-                    text = Strings.generatedImage(media.localFilePath.ifBlank { media.remoteUrl }),
-                    style = p.uiBodyStyle.copy(color = p.accent)
-                )
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(Space.s6)
+                ) {
+                    KissVectorIcon(icon = KissIcon.IMAGE, tint = p.accent, size = IconSize.md)
+                    BasicText(
+                        text = Strings.generatedImage(media.localFilePath.ifBlank { media.remoteUrl }),
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis,
+                        style = p.uiBodyStyle.copy(color = p.accent)
+                    )
+                }
             }
         }
         @OptIn(ExperimentalLayoutApi::class)

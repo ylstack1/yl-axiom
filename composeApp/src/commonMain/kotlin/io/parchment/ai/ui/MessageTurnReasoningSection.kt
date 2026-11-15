@@ -15,6 +15,7 @@ import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicText
@@ -210,8 +211,9 @@ private fun LiveAgentPeekContent(livePeekInfo: LiveAgentPeekInfo) {
     Column(
         modifier = Modifier
             .fillMaxWidth()
+            .heightIn(min = 72.dp)
             .padding(vertical = Space.s2),
-        verticalArrangement = Arrangement.spacedBy(5.dp)
+        verticalArrangement = Arrangement.spacedBy(Space.s4)
     ) {
         if (livePeekInfo.title.isNotEmpty()) {
             Row(
