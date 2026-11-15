@@ -366,9 +366,8 @@ internal fun BackupAndOtaSubpage(
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .clip(RoundedCornerShape(Radius.r8))
-                                .background(p.cardBg)
-                                .border(LineWidth.hairline, p.border.copy(alpha = 0.65f), RoundedCornerShape(Radius.r8))
-                                .padding(horizontal = Space.s10, vertical = 7.dp),
+                                .background(p.cardBg.copy(alpha = 0.85f))
+                                .padding(horizontal = Space.s10, vertical = Space.s8),
                             horizontalArrangement = Arrangement.SpaceBetween,
                             verticalAlignment = Alignment.CenterVertically
                         ) {

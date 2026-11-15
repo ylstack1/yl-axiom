@@ -786,45 +786,35 @@ internal fun ManuscriptViewport(
                     enter = motionPopEnter(),
                     exit = motionPopExit()
                 ) {
-                    val pillOuterShape = RoundedCornerShape(Radius.pill)
-                    val pillInnerShape = RoundedCornerShape(Radius.pill)
-                    // Outer frosted halo shield blocks underlying manuscript text completely
-                    Box(
+                    val pillShape = RoundedCornerShape(Radius.pill)
+                    Row(
                         modifier = Modifier
-                            .clip(pillOuterShape)
-                            .background(p.canvasBg.copy(alpha = 0.96f))
-                            .border(1.dp, p.border, pillOuterShape)
-                            .padding(3.dp)
-                    ) {
-                        Row(
-                            modifier = Modifier
-                                .clip(pillInnerShape)
-                                .background(p.accent)
-                                .border(1.dp, p.cardBg.copy(alpha = 0.55f), pillInnerShape)
-                                .kissClickable {
-                                    resumeAutoFollowAndJumpToBottom()
-                                }
-                                .padding(horizontal = 14.dp, vertical = Space.s6),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(Space.s6)
-                        ) {
-                            if (isStreaming) {
-                                KissStreamingPulseDot(color = onFillInk(p.accent))
+                            .overlayShadow(pillShape)
+                            .clip(pillShape)
+                            .background(p.accent)
+                            .kissClickable {
+                                resumeAutoFollowAndJumpToBottom()
                             }
-                            KissVectorIcon(
-                                icon = KissIcon.ARROW_DOWN,
-                                tint = onFillInk(p.accent),
-                                size = IconSize.sm
-                            )
-                            BasicText(
-                                text = Strings.latest,
-                                style = p.uiLabelStyle.copy(
-                                    color = onFillInk(p.accent),
-                                    fontWeight = FontWeight.Bold,
-                                    fontSize = 12.sp
-                                )
-                            )
+                            .padding(horizontal = 14.dp, vertical = Space.s6),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(Space.s6)
+                    ) {
+                        if (isStreaming) {
+                            KissStreamingPulseDot(color = onFillInk(p.accent))
                         }
+                        KissVectorIcon(
+                            icon = KissIcon.ARROW_DOWN,
+                            tint = onFillInk(p.accent),
+                            size = IconSize.sm
+                        )
+                        BasicText(
+                            text = Strings.latest,
+                            style = p.uiLabelStyle.copy(
+                                color = onFillInk(p.accent),
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 12.sp
+                            )
+                        )
                     }
                 }
             }

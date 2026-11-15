@@ -486,8 +486,6 @@ fun SepiaSectionCard(
                     }
                 }
             }
-            Spacer(Modifier.height(Space.s10))
-            SepiaDivider()
             Spacer(Modifier.height(Space.s12))
         }
         content()

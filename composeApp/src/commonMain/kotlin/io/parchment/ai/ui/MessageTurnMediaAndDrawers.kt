@@ -404,7 +404,7 @@ private fun PlayableGeneratedMediaCard(
             .fillMaxWidth()
             .clip(RoundedCornerShape(Radius.r10))
             .background(p.cardBg)
-            .border(LineWidth.hairline, p.accentSecondary, RoundedCornerShape(Radius.r10))
+            .border(LineWidth.hairline, p.border, RoundedCornerShape(Radius.r10))
             .padding(Space.s12),
         verticalArrangement = Arrangement.spacedBy(Space.s8)
     ) {
@@ -454,7 +454,7 @@ internal fun TurnWebSourcesDrawer(
                 .fillMaxWidth()
                 .clip(RoundedCornerShape(Radius.r10))
                 .background(p.sheetBg.copy(alpha = 0.85f))
-                .border(LineWidth.hairline, p.accent.copy(alpha = 0.65f), RoundedCornerShape(Radius.r10))
+                .border(LineWidth.hairline, p.border, RoundedCornerShape(Radius.r10))
                 .padding(11.dp),
             verticalArrangement = Arrangement.spacedBy(Space.s8)
         ) {

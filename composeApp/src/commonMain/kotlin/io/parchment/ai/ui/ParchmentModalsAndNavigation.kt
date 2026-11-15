@@ -853,14 +853,16 @@ internal fun ParchmentAttachmentViewerModal(
                 var offsetX by remember(item) { mutableStateOf(0f) }
                 var offsetY by remember(item) { mutableStateOf(0f) }
 
+                val viewerShape = RoundedCornerShape(Radius.r12)
                 Column(
                     modifier = Modifier
                         .widthIn(max = 1040.dp)
                         .fillMaxWidth(0.94f)
                         .fillMaxHeight(0.88f)
-                        .clip(RoundedCornerShape(Radius.r12))
+                        .overlayShadow(viewerShape)
+                        .clip(viewerShape)
                         .background(p.cardBg)
-                        .border(1.dp, p.accent, RoundedCornerShape(Radius.r12))
+                        .border(LineWidth.hairline, p.border, viewerShape)
                         .blockTapThrough()
                         .padding(14.dp),
                     verticalArrangement = Arrangement.SpaceBetween
@@ -869,10 +871,7 @@ internal fun ParchmentAttachmentViewerModal(
                     FlowRow(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .clip(RoundedCornerShape(Radius.r10))
-                            .background(p.sheetBg.copy(alpha = 0.85f))
-                            .border(LineWidth.hairline, p.border, RoundedCornerShape(Radius.r10))
-                            .padding(horizontal = Space.s12, vertical = Space.s8),
+                            .padding(horizontal = Space.s4, vertical = Space.s4),
                         horizontalArrangement = Arrangement.SpaceBetween,
                         verticalArrangement = Arrangement.spacedBy(Space.s6)
                     ) {
@@ -1064,14 +1063,16 @@ internal fun ParchmentAttachmentViewerModal(
                     mutableStateOf(isSvgContent || isMarkdownContent)
                 }
 
+                val viewerShape = RoundedCornerShape(Radius.r12)
                 Column(
                     modifier = Modifier
                         .widthIn(max = 940.dp)
                         .fillMaxWidth(0.94f)
                         .fillMaxHeight(0.88f)
-                        .clip(RoundedCornerShape(Radius.r12))
+                        .overlayShadow(viewerShape)
+                        .clip(viewerShape)
                         .background(p.cardBg)
-                        .border(1.dp, p.accent, RoundedCornerShape(Radius.r12))
+                        .border(LineWidth.hairline, p.border, viewerShape)
                         .blockTapThrough()
                         .padding(Space.s16),
                     verticalArrangement = Arrangement.spacedBy(Space.s10)
@@ -1262,13 +1263,15 @@ internal fun ContextWindowBreakdownPopover(
 
     val slices = remember(breakdown, p) { buildContextCategorySlices(breakdown, p) }
 
+    val popoverShape = RoundedCornerShape(Radius.r12)
     Column(
         modifier = modifier
             .fillMaxWidth()
             .padding(bottom = Space.s8)
-            .clip(RoundedCornerShape(Radius.r12))
+            .overlayShadow(popoverShape)
+            .clip(popoverShape)
             .background(p.cardBg)
-            .border(1.dp, p.accent.copy(alpha = 0.75f), RoundedCornerShape(Radius.r12))
+            .border(LineWidth.hairline, p.border, popoverShape)
             .padding(Space.s12),
         verticalArrangement = Arrangement.spacedBy(Space.s8)
     ) {

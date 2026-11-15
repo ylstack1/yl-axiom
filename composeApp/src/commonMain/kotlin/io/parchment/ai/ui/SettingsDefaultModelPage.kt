@@ -157,7 +157,6 @@ internal fun DefaultModelSubpage(
                         )
                     }
                 }
-                SepiaDivider()
                 SepiaToggleRow(
                     title = Strings.followGlobalChoiceUseCurrent,
                     checked = defaultModels.translationFollowGlobal,

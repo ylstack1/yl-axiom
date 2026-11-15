@@ -400,7 +400,7 @@ internal fun ParchmentRightFilesSidebar(
                                         .fillMaxWidth()
                                         .clip(RoundedCornerShape(Radius.r8))
                                         .background(p.cardBg)
-                                        .border(LineWidth.hairline, p.accent.copy(alpha = 0.65f), RoundedCornerShape(Radius.r8))
+                                        .border(LineWidth.hairline, p.border.copy(alpha = 0.65f), RoundedCornerShape(Radius.r8))
                                         .kissClickable(pressScale = 0.99f, hoverScale = 1.004f, role = Role.Button, onClickLabel = Strings.openAttachment) {
                                             val wsRoot = activeSession.workspacePath
                                             val fullLocalPath = if (wsRoot.isNotBlank()) {
@@ -491,7 +491,7 @@ internal fun ParchmentRightFilesSidebar(
                                         .fillMaxWidth()
                                         .clip(RoundedCornerShape(Radius.r8))
                                         .background(p.cardBg)
-                                        .border(LineWidth.hairline, p.accent.copy(alpha = 0.65f), RoundedCornerShape(Radius.r8))
+                                        .border(LineWidth.hairline, p.border.copy(alpha = 0.65f), RoundedCornerShape(Radius.r8))
                                         .kissClickable(pressScale = 0.99f, hoverScale = 1.004f, role = Role.Button, onClickLabel = Strings.openAttachment) {
                                             if (isVideo) {
                                                 val target = media.localFilePath.ifBlank { media.remoteUrl }
@@ -563,7 +563,7 @@ internal fun ParchmentRightFilesSidebar(
                                         .fillMaxWidth()
                                         .clip(RoundedCornerShape(Radius.r8))
                                         .background(p.cardBg)
-                                        .border(LineWidth.hairline, p.accent.copy(alpha = 0.65f), RoundedCornerShape(Radius.r8))
+                                        .border(LineWidth.hairline, p.border.copy(alpha = 0.65f), RoundedCornerShape(Radius.r8))
                                         .kissClickable(pressScale = 0.99f, hoverScale = 1.004f, role = Role.Button, onClickLabel = Strings.openAttachment) {
                                             onInspectAttachment(
                                                 PromptAttachment(

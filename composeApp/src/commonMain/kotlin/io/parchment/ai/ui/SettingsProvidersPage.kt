@@ -174,8 +174,7 @@ internal fun ProvidersSubpage(
                                         modifier = Modifier
                                             .size(26.dp)
                                             .clip(CircleShape)
-                                            .background(if (isSel) p.accent.copy(alpha = 0.16f) else p.elevatedBg)
-                                            .border(LineWidth.hairline, if (isSel) p.accent else p.border, CircleShape),
+                                            .background(if (isSel) p.accent.copy(alpha = 0.16f) else p.elevatedBg),
                                         contentAlignment = Alignment.Center
                                     ) {
                                         ModelLabSvgIcon(
@@ -295,8 +294,7 @@ internal fun ProvidersSubpage(
                                         modifier = Modifier
                                             .size(34.dp)
                                             .clip(CircleShape)
-                                            .background(if (isSel) p.accent.copy(alpha = 0.16f) else p.elevatedBg)
-                                            .border(LineWidth.hairline, if (isSel) p.accent else p.border, CircleShape),
+                                            .background(if (isSel) p.accent.copy(alpha = 0.16f) else p.elevatedBg),
                                         contentAlignment = Alignment.Center
                                     ) {
                                         ModelLabSvgIcon(
@@ -887,11 +885,7 @@ internal fun ProvidersSubpage(
                                             else -> p.elevatedBg.copy(alpha = 0.35f)
                                         }
                                     )
-                                    .border(
-                                        LineWidth.hairline,
-                                        if (isSelectedModel || rowHovered) p.accent.copy(alpha = if (isSelectedModel) 1f else 0.55f) else Color.Transparent,
-                                        RoundedCornerShape(Radius.r8)
-                                    )
+                                    .then(if (isSelectedModel) Modifier.rubricMark(p.accent, verticalInset = Space.s6) else Modifier)
                                     .padding(horizontal = Space.s12, vertical = Space.s8),
                                 horizontalArrangement = Arrangement.SpaceBetween,
                                 verticalArrangement = Arrangement.spacedBy(Space.s6)

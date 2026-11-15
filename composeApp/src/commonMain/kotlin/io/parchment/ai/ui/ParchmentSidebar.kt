@@ -101,7 +101,7 @@ internal fun ParchmentSidebar(
                 .clip(RoundedCornerShape(Radius.pill))
                 .background(p.cardBg.copy(alpha = 0.7f))
                 .border(LineWidth.hairline, p.border.copy(alpha = 0.65f), RoundedCornerShape(Radius.pill))
-                .padding(3.dp),
+                .padding(Space.s2),
             horizontalArrangement = Arrangement.spacedBy(Space.s4)
         ) {
             listOf(SidebarTab.ASSISTANTS to Strings.assistants, SidebarTab.TOPICS to Strings.chats, SidebarTab.PINNED to Strings.pinned).forEach { (tab, label) ->
@@ -173,7 +173,7 @@ internal fun ParchmentSidebar(
                 }
                 itemsIndexed(filteredAssistants, key = { _, a -> a.id }) { _, asst ->
                     val isSel = asst.id == activeAssistant.id
-                    val shape = RoundedCornerShape(Radius.pill)
+                    val shape = RoundedCornerShape(Radius.r8)
                     val rowInteraction = remember { MutableInteractionSource() }
                     val rowHovered by rowInteraction.collectIsHoveredAsState()
                     val rowPressed by rowInteraction.collectIsPressedAsState()
@@ -190,12 +190,13 @@ internal fun ParchmentSidebar(
                             .clip(shape)
                             .background(
                                 when {
-                                    isSel -> p.sheetBg
+                                    isSel -> p.cardBg
                                     rowPressed -> p.accent.copy(alpha = 0.14f)
                                     rowHovered -> p.accent.copy(alpha = 0.08f)
                                     else -> Color.Transparent
                                 }
                             )
+                            .then(if (isSel) Modifier.rubricMark(p.accent, verticalInset = Space.s8) else Modifier)
                             .padding(horizontal = Space.s10, vertical = Space.s8),
                         horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically

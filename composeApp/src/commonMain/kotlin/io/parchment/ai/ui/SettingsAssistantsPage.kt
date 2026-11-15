@@ -202,7 +202,6 @@ internal fun AssistantsSubpage(
                             maxListHeight = 200.dp
                         )
                     }
-                    SepiaDivider()
                     SepiaAdaptiveRow(label = Strings.thinkingEffortOverride) {
                         @OptIn(ExperimentalLayoutApi::class)
                         FlowRow(horizontalArrangement = Arrangement.spacedBy(Space.s6), verticalArrangement = Arrangement.spacedBy(Space.s6)) {
@@ -246,13 +245,11 @@ internal fun AssistantsSubpage(
                             )
                         }
                     }
-                    SepiaDivider()
                     val defaults = AgentPermissionResolver.defaults(editingAssistant)
                     AgentPermissionEditor(
                         defaults = AgentPermissionPolicy(), overrides = defaults.asOverrides(),
                         onChange = { value -> updateCurrent { it.copy(permissionDefaults = value.applyTo(AgentPermissionPolicy())) } }
                     )
-                    SepiaDivider()
                     AgentToolRegistry(
                         policy = defaults, overrides = defaults.asOverrides(),
                         onChange = { value -> updateCurrent { it.copy(permissionDefaults = value.applyTo(AgentPermissionPolicy())) } }

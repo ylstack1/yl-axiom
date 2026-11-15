@@ -1054,4 +1054,77 @@ class UiBehaviorRegressionTest {
             assertTrue(nodes(scene).any { text(it).contains(Strings.lorebookStoryMemory) })
         }
     }
+
+    @Test
+    fun workspacePagePlacesHeadingBeforeMcpServersAndSidebarSelectsAssistant() {
+        val alice = AssistantAgent(id = "a1", name = "Alice")
+        val bob = AssistantAgent(id = "a2", name = "Bob")
+        val profile = ProviderProfile(id = "p1", name = "OpenAI", protocol = ProviderProtocol.OPENAI_RESPONSES, defaultModel = "gpt-4o")
+        val session = ChatSession(id = "s1", title = "Study", createdAt = 1L, updatedAt = 1L, profileId = profile.id, assistantId = bob.id)
+        val state = AppStateSnapshot(
+            assistants = listOf(alice, bob),
+            sessions = listOf(session),
+            profiles = listOf(profile),
+            activeAssistantId = bob.id,
+            activeSessionId = session.id,
+            activeProfileId = profile.id
+        )
+        withUiScene(
+            width = 760,
+            height = 1800,
+            content = {
+                WorkspaceSubpage(
+                    appState = state,
+                    activeSession = session,
+                    activeProfile = profile,
+                    onUpdateSession = {},
+                    onUpdateProfile = {},
+                    onUpdatePreferences = {},
+                    onNotify = {}
+                )
+            }
+        ) { scene ->
+            val headerNode = nodes(scene).first { text(it).contains(Strings.workspaceAndAgentTools) }
+            val mcpNode = nodes(scene).first { text(it).contains(Strings.mcpServers) }
+            assertTrue(
+                headerNode.boundsInRoot.top < mcpNode.boundsInRoot.top,
+                "Workspace heading (${headerNode.boundsInRoot.top}) must appear above MCP Servers (${mcpNode.boundsInRoot.top})"
+            )
+        }
+        withUiScene(
+            width = 360,
+            height = 560,
+            content = {
+                ParchmentSidebar(
+                    appState = state,
+                    activeAssistant = bob,
+                    activeSession = session,
+                    selectedTab = SidebarTab.ASSISTANTS,
+                    isCompactScreen = false,
+                    onSelectTab = {},
+                    onSelectAssistant = {},
+                    onEditAssistantInSettings = {},
+                    onCreateNewAssistant = {},
+                    onSelectSession = {},
+                    onOpenPinnedReply = {},
+                    onUnpinReply = {},
+                    onNewTopic = {},
+                    onTogglePinSession = {},
+                    onRegenerateSessionTitle = {},
+                    onDeleteSession = {},
+                    onDeleteAllTopicsForAssistant = {},
+                    onOpenSettings = {}
+                )
+            }
+        ) { scene ->
+            val bobRow = nodes(scene).single {
+                text(it).contains("Bob") && it.config.contains(SemanticsProperties.Selected)
+            }
+            val aliceRow = nodes(scene).single {
+                text(it).contains("Alice") && it.config.contains(SemanticsProperties.Selected)
+            }
+            assertEquals(true, bobRow.config[SemanticsProperties.Selected])
+            assertEquals(false, aliceRow.config[SemanticsProperties.Selected])
+        }
+    }
 }

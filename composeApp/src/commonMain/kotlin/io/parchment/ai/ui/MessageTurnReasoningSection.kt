@@ -551,7 +551,7 @@ internal fun MessageTurnGoalTrackerCard(goalTracker: GoalTrackerState?) {
             .background(p.sheetBg.copy(alpha = 0.78f))
             .border(
                 width = LineWidth.hairline,
-                color = if (goalTracker.isCompleted) p.accentSecondary else p.accent,
+                color = if (goalTracker.isCompleted) p.border else p.accent.copy(alpha = 0.55f),
                 shape = RoundedCornerShape(Radius.r8)
             )
             .padding(11.dp),
