@@ -21,6 +21,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -44,6 +45,10 @@ import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import io.parchment.ai.platform.PlatformStorage
 import io.parchment.ai.platform.PlatformWorkspace
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.IO
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 // ============================================================================================
 // Right sidebar: the chat's files, generated media and sources (`ParchmentRightFilesSidebar`).
@@ -101,6 +106,9 @@ private val rightVaultJson = Json {
 
 private val VAULT_CODE_FENCE_REGEX = Regex("```([a-zA-Z0-9_+-]*)\\n([\\s\\S]*?)```")
 private val VAULT_LINE_NUMBER_STRIP_REGEX = Regex("^\\d+:\\s?")
+
+internal fun stripWorkspaceReadLineNumbers(rawRead: String): String =
+    rawRead.lines().drop(1).joinToString("\n") { it.replaceFirst(VAULT_LINE_NUMBER_STRIP_REGEX, "") }
 
 /**
  * Counts the chat's files for the top bar badge without parsing or building lists; the full
@@ -242,6 +250,7 @@ internal fun ParchmentRightFilesSidebar(
     modifier: Modifier = Modifier
 ) {
     val p = LocalParchmentPalette.current
+    val scope = rememberCoroutineScope()
     var selectedFilter by remember(activeSession.id) { mutableStateOf(RightVaultFilter.ALL) }
     val vaultStructuralKey = remember(
         activeSession.id,
@@ -395,23 +404,27 @@ internal fun ParchmentRightFilesSidebar(
                                         .border(LineWidth.hairline, p.accent.copy(alpha = 0.65f), RoundedCornerShape(Radius.r8))
                                         .clickable(role = Role.Button) {
                                             val wsRoot = activeSession.workspacePath
-                                            val liveText = if (wsRoot.isNotBlank()) {
-                                                PlatformWorkspace.workspaceRead(wsRoot, item.filePath, 1, 2000).getOrNull()?.let { raw ->
-                                                    raw.lines().drop(1).joinToString("\n") { it.replaceFirst(VAULT_LINE_NUMBER_STRIP_REGEX, "") }
-                                                }
-                                            } else null
                                             val fullLocalPath = if (wsRoot.isNotBlank()) {
                                                 "${wsRoot.trimEnd('/', '\\')}/${item.filePath.trimStart('/', '\\')}"
                                             } else ""
-                                            onInspectAttachment(
-                                                PromptAttachment(
-                                                    id = "ai-ws-${item.turnNumber}-${item.filePath}",
-                                                    fileName = item.filePath,
-                                                    mimeType = "text/plain",
-                                                    textContent = liveText?.takeIf { it.isNotBlank() } ?: item.content,
-                                                    localFilePath = fullLocalPath
+                                            scope.launch {
+                                                val liveText = if (wsRoot.isNotBlank()) {
+                                                    withContext(Dispatchers.IO) {
+                                                        PlatformWorkspace.workspaceRead(wsRoot, item.filePath, 1, 2000).getOrNull()?.let { raw ->
+                                                            stripWorkspaceReadLineNumbers(raw)
+                                                        }
+                                                    }
+                                                } else null
+                                                onInspectAttachment(
+                                                    PromptAttachment(
+                                                        id = "ai-ws-${item.turnNumber}-${item.filePath}",
+                                                        fileName = item.filePath,
+                                                        mimeType = "text/plain",
+                                                        textContent = liveText?.takeIf { it.isNotBlank() } ?: item.content,
+                                                        localFilePath = fullLocalPath
+                                                    )
                                                 )
-                                            )
+                                            }
                                         }
                                         .padding(Space.s10),
                                     verticalArrangement = Arrangement.spacedBy(Space.s4)

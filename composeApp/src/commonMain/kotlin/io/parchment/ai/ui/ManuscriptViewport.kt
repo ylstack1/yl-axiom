@@ -55,6 +55,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -96,6 +97,7 @@ import io.parchment.ai.platform.PlatformWorkspace
 import io.parchment.ai.protocol.O200kTokenizer
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
@@ -228,10 +230,15 @@ internal fun ManuscriptViewport(
         isPointerInteracting = false
         wasStreamingFollow = false
         if (activeSession.messages.isNotEmpty() && jumpToNodeId.isBlank()) {
+            snapshotFlow { listState.layoutInfo.totalItemsCount }.first { it > 0 }
             if (preferences.autoScrollToBottomOnOpen) {
-                jumpToBottomEdge()
-                kotlinx.coroutines.delay(16L)
-                jumpToBottomEdge()
+                if (!userDisengagedAutoFollow && !isListDragged && !isPointerInteracting) {
+                    jumpToBottomEdge()
+                }
+                withFrameNanos { }
+                if (!userDisengagedAutoFollow && !isListDragged && !isPointerInteracting) {
+                    jumpToBottomEdge()
+                }
             } else {
                 listState.scrollToItem(0)
             }
@@ -245,7 +252,7 @@ internal fun ManuscriptViewport(
         if (index >= 0) {
             userDisengagedAutoFollow = true
             wasScrolledUpSincePause = true
-            withFrameNanos { }
+            snapshotFlow { listState.layoutInfo.totalItemsCount }.first { it > index + 1 }
             listState.scrollToItem(index + 1) // Item 0 is the top spacer.
         }
         onJumpHandled()

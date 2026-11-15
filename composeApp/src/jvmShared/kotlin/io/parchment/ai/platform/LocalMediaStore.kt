@@ -42,6 +42,13 @@ internal class LocalMediaStore(
         resolve(filePath)?.takeIf { it.isFile }?.length() ?: -1L
     }.getOrDefault(-1L)
 
+    fun isReadable(filePath: String): Boolean = runCatching {
+        val trimmed = filePath.trim()
+        if (trimmed.isEmpty()) return false
+        val target = resolve(trimmed) ?: File(trimmed)
+        target.isFile && target.canRead() && target.length() > 0L
+    }.getOrDefault(false)
+
     fun save(fileName: String, bytes: ByteArray, sessionId: String): String {
         val mediaDir = if (sessionId.isNotBlank()) File(chatFolder(sessionId), "media") else File(storageRoot(), "media")
         if (!mediaDir.exists()) mediaDir.mkdirs()

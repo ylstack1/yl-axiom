@@ -39,6 +39,7 @@ import io.parchment.ai.platform.PlatformStorage
 import io.parchment.ai.platform.PlatformVoice
 import io.parchment.ai.platform.normalizePickedBinaryFile
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.IO
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.launch
@@ -1423,35 +1424,28 @@ internal class ParchmentAppController(
      * Keeps what is needed to bring chats back before they are deleted, so the notice can offer Undo instead of
      * a confirm dialog. Chats in memory are saved as they are; stored ones are read from disk first.
      */
-    fun rememberForUndo(removed: List<ChatSession>, message: String) {
-        pendingUndo = DeletedChats(
-            chats = removed.map { s ->
-                val rawJson = if (s.isCompactStub) {
-                    appDiskWriter.pendingFullSession(s.id)?.let { compactStateJson.encodeToString(ChatSession.serializer(), it) }
-                        ?: PlatformStorage.loadChatSessionJsonById(s.id)
+    private fun buildDeletedChats(removed: List<ChatSession>, coldJsonById: Map<String, String>): DeletedChats {
+        val entries = removed.map { s ->
+            if (!s.isCompactStub) {
+                DeletedChatEntry(listed = s, fullSession = s)
+            } else {
+                val pending = appDiskWriter.pendingFullSession(s.id)
+                if (pending != null) {
+                    DeletedChatEntry(listed = s, fullSession = pending)
                 } else {
-                    compactStateJson.encodeToString(ChatSession.serializer(), s)
+                    DeletedChatEntry(listed = s, diskJson = coldJsonById[s.id])
                 }
-                s to rawJson
-            },
-            activeSessionId = appState.activeSessionId,
-            openTabIds = openTabIds
-        )
-        bannerNotification = message
+            }
+        }
+        return DeletedChats(entries = entries, activeSessionId = appState.activeSessionId, openTabIds = openTabIds)
     }
 
-    fun undoDelete() {
-        val undo = pendingUndo ?: return
-        pendingUndo = null
-        val restoredFull = undo.chats.mapNotNull { (session, json) ->
-            if (!session.isCompactStub) session
-            else json?.let { runCatching { compactStateJson.decodeFromString(ChatSession.serializer(), it) }.getOrNull() }
-        }
+    private fun applyRestoredUndo(undo: DeletedChats, restoredFull: List<ChatSession>) {
         if (restoredFull.isNotEmpty()) {
             appDiskWriter.enqueue(sessions = restoredFull, urgent = true, notify = false)
         }
-        val restoredIds = undo.chats.map { it.first.id }.toSet()
-        val sessions = undo.chats.map { it.first } + appState.sessions.filterNot { it.id in restoredIds }
+        val restoredIds = undo.entries.map { it.listed.id }.toSet()
+        val sessions = undo.entries.map { it.listed } + appState.sessions.filterNot { it.id in restoredIds }
         val existing = sessions.map { it.id }.toSet()
         persist(
             appState.copy(
@@ -1461,11 +1455,37 @@ internal class ParchmentAppController(
             ),
             immediateFlush = true
         )
-        bannerNotification = if (undo.chats.size == 1) "Restored the chat." else "Restored ${undo.chats.size} chats."
+        bannerNotification = if (undo.entries.size == 1) "Restored the chat." else "Restored ${undo.entries.size} chats."
     }
 
-    fun executeDeleteSingleSession(targetId: String) {
-        appState.sessions.find { it.id == targetId }?.let { rememberForUndo(listOf(it), "Deleted \"${it.title}\".") }
+    fun undoDelete() {
+        val undo = pendingUndo ?: return
+        pendingUndo = null
+        val needsJsonDecode = undo.entries.any { it.fullSession == null && it.diskJson != null }
+        if (!needsJsonDecode) {
+            applyRestoredUndo(undo, undo.entries.mapNotNull { it.fullSession })
+            return
+        }
+        appProcessScope.launch {
+            val restoredFull = withContext(Dispatchers.Default) {
+                undo.entries.mapNotNull { entry ->
+                    entry.fullSession ?: entry.diskJson?.let { raw ->
+                        runCatching { compactStateJson.decodeFromString(ChatSession.serializer(), raw) }.getOrNull()
+                    }
+                }
+            }
+            applyRestoredUndo(undo, restoredFull)
+        }
+    }
+
+    private fun coldStubIdsNeedingDiskRead(removed: List<ChatSession>): List<String> =
+        removed.mapNotNull { s ->
+            if (s.isCompactStub && appDiskWriter.pendingFullSession(s.id) == null) s.id else null
+        }
+
+    private fun commitDeleteSingleSession(targetId: String, targetSession: ChatSession, coldJsonById: Map<String, String>) {
+        pendingUndo = buildDeletedChats(listOf(targetSession), coldJsonById)
+        bannerNotification = "Deleted \"${targetSession.title}\"."
         stopSessionStream(targetId)
         queuedPromptsBySession = queuedPromptsBySession - targetId
         pendingAttachmentsBySession = pendingAttachmentsBySession - targetId
@@ -1506,12 +1526,26 @@ internal class ParchmentAppController(
         }
     }
 
-    fun executeClearAllTopicsForAssistant() {
-        val removedSessions = appState.sessions.filter {
-            it.assistantId == activeAssistant.id || appState.assistants.none { a -> a.id == it.assistantId }
+    fun executeDeleteSingleSession(targetId: String) {
+        val target = appState.sessions.find { it.id == targetId } ?: return
+        val coldIds = coldStubIdsNeedingDiskRead(listOf(target))
+        if (coldIds.isEmpty()) {
+            commitDeleteSingleSession(targetId, target, emptyMap())
+            return
         }
+        appProcessScope.launch {
+            val coldJsonById = withContext(Dispatchers.IO) {
+                coldIds.mapNotNull { id -> PlatformStorage.loadChatSessionJsonById(id)?.let { id to it } }.toMap()
+            }
+            val currentTarget = appState.sessions.find { it.id == targetId } ?: return@launch
+            commitDeleteSingleSession(targetId, currentTarget, coldJsonById)
+        }
+    }
+
+    private fun commitClearAllTopicsForAssistant(removedSessions: List<ChatSession>, coldJsonById: Map<String, String>) {
         val removedIds = removedSessions.map { it.id }.toSet()
-        rememberForUndo(removedSessions, Strings.deletedFor(plural(removedSessions.size, "chat"), activeAssistant.name))
+        pendingUndo = buildDeletedChats(removedSessions, coldJsonById)
+        bannerNotification = Strings.deletedFor(plural(removedSessions.size, "chat"), activeAssistant.name)
         removedIds.forEach { stopSessionStream(it) }
         queuedPromptsBySession = queuedPromptsBySession - removedIds
         pendingAttachmentsBySession = pendingAttachmentsBySession - removedIds
@@ -1533,5 +1567,25 @@ internal class ParchmentAppController(
             ),
             immediateFlush = true
         )
+    }
+
+    fun executeClearAllTopicsForAssistant() {
+        val removedSessions = appState.sessions.filter {
+            it.assistantId == activeAssistant.id || appState.assistants.none { a -> a.id == it.assistantId }
+        }
+        val coldIds = coldStubIdsNeedingDiskRead(removedSessions)
+        if (coldIds.isEmpty()) {
+            commitClearAllTopicsForAssistant(removedSessions, emptyMap())
+            return
+        }
+        appProcessScope.launch {
+            val coldJsonById = withContext(Dispatchers.IO) {
+                coldIds.mapNotNull { id -> PlatformStorage.loadChatSessionJsonById(id)?.let { id to it } }.toMap()
+            }
+            val latestRemoved = appState.sessions.filter {
+                it.assistantId == activeAssistant.id || appState.assistants.none { a -> a.id == it.assistantId }
+            }
+            commitClearAllTopicsForAssistant(latestRemoved, coldJsonById)
+        }
     }
 }

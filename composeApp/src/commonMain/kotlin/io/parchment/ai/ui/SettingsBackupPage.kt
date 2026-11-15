@@ -47,6 +47,7 @@ import io.parchment.ai.platform.PlatformPickers
 import io.parchment.ai.platform.PlatformRuntime
 import io.parchment.ai.platform.PlatformStorage
 import io.parchment.ai.protocol.CardAndPromptCodec
+import kotlinx.coroutines.IO
 import kotlinx.coroutines.launch
 
 // ============================================================================================
@@ -559,7 +560,9 @@ internal fun BackupAndOtaSubpage(
                         onClick = {
                             scope.launch {
                                 val saved = runCatching {
-                                    exportChatSessionsBundle("parchment-chats-backup.zip", appState.sessions)
+                                    withContext(Dispatchers.IO) {
+                                        exportChatSessionsBundle("parchment-chats-backup.zip", appState.sessions)
+                                    }
                                 }.getOrElse { error ->
                                     onNotify(Strings.chatExportFailed(error.message))
                                     return@launch
@@ -576,7 +579,11 @@ internal fun BackupAndOtaSubpage(
                         onClick = {
                             scope.launch {
                                 val zipName = buildExportZipFileNameForChat(activeSession)
-                                val saved = runCatching { exportChatSessionsBundle(zipName, listOf(activeSession)) }.getOrElse { error ->
+                                val saved = runCatching {
+                                    withContext(Dispatchers.IO) {
+                                        exportChatSessionsBundle(zipName, listOf(activeSession))
+                                    }
+                                }.getOrElse { error ->
                                     onNotify(Strings.chatExportFailed(error.message))
                                     return@launch
                                 }
@@ -642,7 +649,9 @@ internal fun BackupAndOtaSubpage(
                         onClick = {
                             scope.launch {
                                 val settingsOnly = appState.copy(sessions = emptyList())
-                                val bytes = CardAndPromptCodec.prettyJson.encodeToString(AppStateSnapshot.serializer(), settingsOnly).encodeToByteArray()
+                                val bytes = withContext(Dispatchers.Default) {
+                                    CardAndPromptCodec.prettyJson.encodeToString(AppStateSnapshot.serializer(), settingsOnly).encodeToByteArray()
+                                }
                                 val saved = PlatformPickers.saveFileForExport("parchment-settings.json", bytes)
                                 if (saved != null) onNotify(Strings.exportedSettingsAssistantsTo(saved))
                             }
@@ -659,7 +668,9 @@ internal fun BackupAndOtaSubpage(
                                     return@launch
                                 }
                                 runCatching {
-                                    CardAndPromptCodec.prettyJson.decodeFromString<AppStateSnapshot>(picked.bytes.decodeToString())
+                                    withContext(Dispatchers.Default) {
+                                        CardAndPromptCodec.prettyJson.decodeFromString<AppStateSnapshot>(picked.bytes.decodeToString())
+                                    }
                                 }.fold(
                                     onSuccess = { restored -> onRestoreFullBackup(restored) },
                                     onFailure = { err -> onNotify(Strings.settingsImportFailed(err.message)) }

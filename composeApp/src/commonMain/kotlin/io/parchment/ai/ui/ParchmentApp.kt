@@ -81,6 +81,7 @@ import io.parchment.ai.platform.PlatformWorkspace
 import io.parchment.ai.protocol.O200kTokenizer
 import io.parchment.ai.protocol.CardAndPromptCodec
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.IO
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -1001,63 +1002,79 @@ fun ParchmentApp(
                                             activeStreamsBySession = emptyMap()
                                             queuedPromptsBySession = emptyMap()
                                             pendingAttachmentsBySession = emptyMap()
-                                            // Importing a settings-only file keeps the chats already on disk.
-                                            val mergedSessions = if (restored.sessions.isEmpty()) {
-                                                appState.sessions
-                                            } else {
-                                                val byId = LinkedHashMap<String, ChatSession>()
-                                                for (s in appState.sessions) byId[s.id] = s
-                                                for (s in restored.sessions) byId[s.id] = s
-                                                byId.values.toList()
+                                            val existingSessions = appState.sessions
+                                            appProcessScope.launch {
+                                                val (finalSnap, removedIds) = withContext(Dispatchers.Default) {
+                                                    // Importing a settings-only file keeps the chats already on disk.
+                                                    val mergedSessions = if (restored.sessions.isEmpty()) {
+                                                        existingSessions
+                                                    } else {
+                                                        val byId = LinkedHashMap<String, ChatSession>()
+                                                        for (s in existingSessions) byId[s.id] = s
+                                                        for (s in restored.sessions) byId[s.id] = s
+                                                        byId.values.toList()
+                                                    }
+                                                    val snap = sanitizeLoadedSnapshot(restored.copy(sessions = mergedSessions))
+                                                    val removed = existingSessions.map { it.id }.toSet() - snap.sessions.map { it.id }.toSet()
+                                                    snap to removed
+                                                }
+                                                withContext(Dispatchers.IO) {
+                                                    appDiskWriter.replaceState(finalSnap, removedIds)
+                                                    appDiskWriter.flush()
+                                                }
+                                                appState = finalSnap
+                                                bannerNotification = Strings.importedSettingsAssistantsPreserved(plural(finalSnap.sessions.size, "chat"))
                                             }
-                                            val finalSnap = sanitizeLoadedSnapshot(restored.copy(sessions = mergedSessions))
-                                            val removedIds = appState.sessions.map { it.id }.toSet() - finalSnap.sessions.map { it.id }.toSet()
-                                            appDiskWriter.replaceState(finalSnap, removedIds)
-                                            appDiskWriter.flushBlocking()
-                                            appState = finalSnap
-                                            bannerNotification = Strings.importedSettingsAssistantsPreserved(plural(finalSnap.sessions.size, "chat"))
                                         },
                                         onImportChatSessions = { importedList ->
-                                            val byId = LinkedHashMap<String, ChatSession>()
-                                            for (existing in appState.sessions) {
-                                                byId[existing.id] = existing
-                                            }
                                             val defaultProfId = appState.activeProfileId.ifBlank { appState.profiles.first().id }
                                             val defaultAsstId = appState.activeAssistantId.ifBlank { appState.assistants.first().id }
-                                            var addedOrUpdated = 0
-                                            var firstImportedId = ""
-                                            for (incomingChat in importedList) {
-                                                val rawChat = incomingChat.withImportedPermissions()
-                                                val safeId = rawChat.id.ifBlank { "sess-imp-${PlatformRuntime.currentTimeMillis()}-$addedOrUpdated" }
-                                                val validProfId = appState.profiles.find { it.id == rawChat.profileId }?.id ?: defaultProfId
-                                                val validAsstId = appState.assistants.find { it.id == rawChat.assistantId }?.id ?: defaultAsstId
-                                                val normalized = rawChat.copy(
-                                                    id = safeId,
-                                                    profileId = validProfId,
-                                                    assistantId = validAsstId,
-                                                    messages = rawChat.messages.map { n ->
-                                                        n.copy(variants = n.variants.map { v -> if (v.isStreaming) v.copy(isStreaming = false) else v })
+                                            val validProfIds = appState.profiles.map { it.id }.toSet()
+                                            val validAsstIds = appState.assistants.map { it.id }.toSet()
+                                            appProcessScope.launch {
+                                                val (importedChats, addedOrUpdated, firstImportedId) = withContext(Dispatchers.IO) {
+                                                    val baseTs = PlatformRuntime.currentTimeMillis()
+                                                    var count = 0
+                                                    var firstId = ""
+                                                    val list = ArrayList<ChatSession>(importedList.size)
+                                                    for (incomingChat in importedList) {
+                                                        val rawChat = incomingChat.withImportedPermissions()
+                                                        val safeId = rawChat.id.ifBlank { "sess-imp-$baseTs-$count" }
+                                                        val validProfId = rawChat.profileId.takeIf { it in validProfIds } ?: defaultProfId
+                                                        val validAsstId = rawChat.assistantId.takeIf { it in validAsstIds } ?: defaultAsstId
+                                                        val normalized = rawChat.copy(
+                                                            id = safeId,
+                                                            profileId = validProfId,
+                                                            assistantId = validAsstId,
+                                                            messages = rawChat.messages.map { n ->
+                                                                n.copy(variants = n.variants.map { v -> if (v.isStreaming) v.copy(isStreaming = false) else v })
+                                                            }
+                                                        )
+                                                        saveSingleChatSessionToDisk(normalized)
+                                                        list.add(normalized)
+                                                        if (firstId.isEmpty()) firstId = safeId
+                                                        count++
                                                     }
+                                                    Triple(list, count, firstId)
+                                                }
+                                                val byId = LinkedHashMap<String, ChatSession>(appState.sessions.size + importedChats.size)
+                                                for (existing in appState.sessions) byId[existing.id] = existing
+                                                for (normalized in importedChats) byId[normalized.id] = normalized
+                                                val sorted = byId.values.sortedWith(
+                                                    compareByDescending<ChatSession> { it.isPinned }.thenByDescending { it.updatedAt }
                                                 )
-                                                byId[safeId] = normalized
-                                                saveSingleChatSessionToDisk(normalized)
-                                                if (firstImportedId.isEmpty()) firstImportedId = safeId
-                                                addedOrUpdated++
+                                                val nextActive = if (firstImportedId.isNotEmpty()) firstImportedId else appState.activeSessionId
+                                                val nextTabs = (openTabIds + firstImportedId).filter { it.isNotBlank() }.distinct()
+                                                persist(
+                                                    appState.copy(
+                                                        sessions = sorted,
+                                                        activeSessionId = nextActive,
+                                                        openTabSessionIds = nextTabs
+                                                    ),
+                                                    immediateFlush = true
+                                                )
+                                                bannerNotification = Strings.importedInto(plural(addedOrUpdated, "chat"), PlatformStorage.getChatsStorageDirectoryPath())
                                             }
-                                            val sorted = byId.values.sortedWith(
-                                                compareByDescending<ChatSession> { it.isPinned }.thenByDescending { it.updatedAt }
-                                            )
-                                            val nextActive = if (firstImportedId.isNotEmpty()) firstImportedId else appState.activeSessionId
-                                            val nextTabs = (openTabIds + firstImportedId).filter { it.isNotBlank() }.distinct()
-                                            persist(
-                                                appState.copy(
-                                                    sessions = sorted,
-                                                    activeSessionId = nextActive,
-                                                    openTabSessionIds = nextTabs
-                                                ),
-                                                immediateFlush = true
-                                            )
-                                            bannerNotification = Strings.importedInto(plural(addedOrUpdated, "chat"), PlatformStorage.getChatsStorageDirectoryPath())
                                         },
                                         onWipeAllData = {
                                             activeStreamsBySession.values.forEach { it.job?.cancel() }
@@ -1066,9 +1083,11 @@ fun ParchmentApp(
                                             pendingAttachmentsBySession = emptyMap()
                                             PlatformVoice.stopSpeakingAloud()
                                             PlatformVoice.stopVoiceInput()
-                                            PlatformStorage.wipeAllLocalData()
-                                            appState = createDefaultAppState()
-                                            bannerNotification = Strings.allLocalDataWipedCleanly
+                                            appProcessScope.launch {
+                                                withContext(Dispatchers.IO) { PlatformStorage.wipeAllLocalData() }
+                                                appState = createDefaultAppState()
+                                                bannerNotification = Strings.allLocalDataWipedCleanly
+                                            }
                                         },
                                         onDeleteChatSessionById = ::executeDeleteSingleSession,
                                         onInspectAttachment = ::openAttachmentInViewer,
@@ -1124,13 +1143,16 @@ fun ParchmentApp(
                                             }
                                         },
                                         onAttachWorkspaceFile = { relPath ->
+                                            val targetSessionId = activeSession.id
                                             val wsRoot = AgentPermissionResolver.resolve(activeSession, activeAssistant, activeProfile).workspacePath
                                             if (wsRoot.isNotBlank()) {
-                                                PlatformWorkspace.workspaceRead(wsRoot, relPath, 1, 1500).onSuccess { rawRead ->
-                                                    val cleanLines = rawRead.lines().drop(1).joinToString("\n") {
-                                                        it.replaceFirst(Regex("^\\d+:\\s?"), "")
-                                                    }
-                                                    val curList = pendingAttachmentsBySession[activeSession.id].orEmpty()
+                                                uiScope.launch {
+                                                    val cleanLines = withContext(Dispatchers.IO) {
+                                                        PlatformWorkspace.workspaceRead(wsRoot, relPath, 1, 1500)
+                                                            .getOrNull()
+                                                            ?.let(::stripWorkspaceReadLineNumbers)
+                                                    } ?: return@launch
+                                                    val curList = pendingAttachmentsBySession[targetSessionId].orEmpty()
                                                     if (curList.none { it.fileName == relPath }) {
                                                         val att = PromptAttachment(
                                                             id = "att-ws-${PlatformRuntime.currentTimeMillis()}",
@@ -1139,7 +1161,7 @@ fun ParchmentApp(
                                                             textContent = cleanLines
                                                         )
                                                         pendingAttachmentsBySession = pendingAttachmentsBySession +
-                                                            (activeSession.id to (curList + att))
+                                                            (targetSessionId to (curList + att))
                                                     }
                                                 }
                                             }
@@ -1711,9 +1733,15 @@ internal class SidebarFingerprintKey(
     }
 }
 
-/** Chats removed by the last delete, with their saved data, so Undo can put them back as they were. */
+/** Chats removed by the last delete, retaining in-memory data or cold stub JSON so Undo can restore them without main-thread serialization. */
+internal class DeletedChatEntry(
+    val listed: ChatSession,
+    val fullSession: ChatSession? = null,
+    val diskJson: String? = null
+)
+
 internal class DeletedChats(
-    val chats: List<Pair<ChatSession, String?>>,
+    val entries: List<DeletedChatEntry>,
     val activeSessionId: String,
     val openTabIds: List<String>
 )

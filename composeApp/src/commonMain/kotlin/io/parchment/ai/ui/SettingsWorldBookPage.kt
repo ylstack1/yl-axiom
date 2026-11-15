@@ -39,7 +39,9 @@ import io.parchment.ai.model.ThemeConfig
 import io.parchment.ai.platform.PlatformPickers
 import io.parchment.ai.platform.PlatformRuntime
 import io.parchment.ai.protocol.CardAndPromptCodec
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 // ============================================================================================
 // Settings page 6: World Book and character cards (.png or .json).
@@ -94,7 +96,9 @@ internal fun WorldBookAndCardsSubpage(
                                 onNotify(Strings.isTooLargeToImport(picked.fileName))
                                 return@launch
                             }
-                            CardAndPromptCodec.importFromBytes(picked.fileName, picked.bytes).fold(
+                            withContext(Dispatchers.Default) {
+                                CardAndPromptCodec.importFromBytes(picked.fileName, picked.bytes)
+                            }.fold(
                                 onSuccess = { res ->
                                     when (res) {
                                         is CardAndPromptCodec.ImportResult.CardImported -> {
@@ -131,7 +135,9 @@ internal fun WorldBookAndCardsSubpage(
                                 firstMessage = cardFirstMes.trim(),
                                 systemPrompt = cardSysPrompt.trim()
                             )
-                            val bytes = CardAndPromptCodec.exportCardToPngBytes(card)
+                            val bytes = withContext(Dispatchers.Default) {
+                                CardAndPromptCodec.exportCardToPngBytes(card)
+                            }
                             val saved = PlatformPickers.saveFileForExport("${card.name}.card.png", bytes)
                             if (saved != null) onNotify(Strings.exportedPngCardTo(saved))
                         }

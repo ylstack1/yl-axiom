@@ -313,12 +313,29 @@ internal const val MAX_TEXT_PREVIEW_BYTES = 4L * 1024L * 1024L
 private val MULTIPLE_UNDERSCORES_REGEX = Regex("_+")
 private val EXPORT_SHORT_ID_REGEX = Regex("[^a-zA-Z0-9_-]")
 
+private const val MAX_THOUGHT_PEEK_SCAN_CHARS = 8192
+
 /**
  * Extracts the latest single thought block (title + body) for the Compact Single-Thought Peek Window
  * when the user presses `Hide ▲` while the model is still actively reasoning.
  */
 internal fun extractLatestThoughtPeek(variant: MessageVariant): Pair<String, String> {
-    val raw = variant.trailingThinking.ifBlank { variant.thinkingSummary }.trim()
+    val rawFull = variant.trailingThinking.ifBlank { variant.thinkingSummary }
+    if (rawFull.isBlank()) return "" to ""
+    val raw = if (rawFull.length > MAX_THOUGHT_PEEK_SCAN_CHARS) {
+        val targetStart = rawFull.length - MAX_THOUGHT_PEEK_SCAN_CHARS
+        val prevBreak = rawFull.lastIndexOf("\n\n", startIndex = targetStart)
+        val sliceStart = when {
+            prevBreak >= targetStart - 2048 && prevBreak >= 0 -> prevBreak + 2
+            else -> {
+                val nl = rawFull.indexOf('\n', startIndex = targetStart)
+                if (nl in targetStart until (rawFull.length - 128)) nl + 1 else targetStart
+            }
+        }
+        rawFull.substring(sliceStart).trim()
+    } else {
+        rawFull.trim()
+    }
     if (raw.isEmpty()) return "" to ""
 
     val blocks = raw.split(THOUGHT_BLOCK_SPLIT_REGEX)

@@ -24,8 +24,7 @@ actual object PlatformStorage {
 
     actual fun getAppStorageDirectoryPath(): String = AndroidPlatformHost.resolveStorageDir().absolutePath
 
-    actual fun isReadableLocalFile(filePath: String): Boolean =
-        File(filePath).let { it.isFile && it.canRead() && it.length() > 0L }
+    actual fun isReadableLocalFile(filePath: String): Boolean = mediaStore.isReadable(filePath)
 
     @Volatile
     private var cachedChatsDirPair: Pair<File, File>? = null

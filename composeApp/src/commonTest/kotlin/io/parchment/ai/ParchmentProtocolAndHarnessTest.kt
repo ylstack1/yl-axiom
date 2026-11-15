@@ -655,6 +655,20 @@ class ParchmentProtocolAndHarnessTest {
         assertEquals("Refining Humorous Angles", peekHeading)
         assertTrue(peekText.startsWith("I'm exploring genuinely funny ideas"))
 
+        val largePrefix = buildString {
+            repeat(300) { idx ->
+                append("**Earlier Step $idx**\nReasoning filler paragraph for performance bounded tail test.\n\n")
+            }
+        }
+        val boundedTailVar = MessageVariant(
+            id = "v-peek-tail",
+            content = "",
+            thinkingSummary = "$largePrefix**Latest Beyond Scan Tail**\nFinal tail insight here."
+        )
+        val (tailHeading, tailText) = extractLatestThoughtPeek(boundedTailVar)
+        assertEquals("Latest Beyond Scan Tail", tailHeading)
+        assertEquals("Final tail insight here.", tailText)
+
         // 15. Verify Balanced-Parenthesis Markdown Link Parser & HTML-to-Markdown Converter
         val wikiLink = "[Kotlin](https://en.wikipedia.org/wiki/Kotlin_(programming_language)) is great."
         val openParenIdx = wikiLink.indexOf('(')

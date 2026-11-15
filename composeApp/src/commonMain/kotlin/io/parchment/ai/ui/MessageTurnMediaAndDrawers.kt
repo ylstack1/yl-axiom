@@ -25,6 +25,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -45,6 +46,10 @@ import io.parchment.ai.model.WebSourceCitation
 import io.parchment.ai.platform.PlatformPickers
 import io.parchment.ai.platform.PlatformStorage
 import io.parchment.ai.strings.Strings
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.IO
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 /**
  * Attached images and non-image file chips shown below a message body.
@@ -284,6 +289,7 @@ private fun GeneratedImageMediaCard(
     onInspectGeneratedImage: (GeneratedMediaItem) -> Unit
 ) {
     val p = LocalParchmentPalette.current
+    val scope = rememberCoroutineScope()
     val fileImage = rememberFileImage(media.localFilePath)
     val bmp = fileImage.bitmap
     val reservedAspect = remember(media.aspectRatio) { parseMediaAspectRatio(media.aspectRatio) }
@@ -369,9 +375,14 @@ private fun GeneratedImageMediaCard(
                         compact = true,
                         style = SepiaButtonStyle.OUTLINE,
                         onClick = {
-                            val bytes = PlatformStorage.readBinaryFileBytes(media.localFilePath)
-                            if (bytes != null) {
-                                PlatformPickers.copyImageToClipboard(bytes)
+                            val path = media.localFilePath
+                            scope.launch {
+                                val bytes = withContext(Dispatchers.IO) {
+                                    PlatformStorage.readBinaryFileBytes(path)
+                                }
+                                if (bytes != null) {
+                                    PlatformPickers.copyImageToClipboard(bytes)
+                                }
                             }
                         }
                     )
