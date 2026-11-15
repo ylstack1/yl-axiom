@@ -182,7 +182,11 @@ internal fun PreferencesSubpage(
                         }
                     }
 
-                    AnimatedVisibility(visible = showCustomColorHexDrawer) {
+                    AnimatedVisibility(
+                        visible = showCustomColorHexDrawer,
+                        enter = motionExpandEnter(),
+                        exit = motionShrinkExit()
+                    ) {
                         Column(verticalArrangement = Arrangement.spacedBy(Space.s8)) {
                             if (win.isCompact) {
                                 Row(horizontalArrangement = Arrangement.spacedBy(Space.s8)) {

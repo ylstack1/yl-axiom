@@ -54,11 +54,12 @@ internal fun FloatingNotification(
     SideEffect { if (message.isNotBlank()) lastMessage = message }
     val visibleMessage = message.ifBlank { lastMessage }
     val shape = RoundedCornerShape(Radius.r12)
+    val reduceMotion = LocalReduceMotion.current
     AnimatedVisibility(
         visible = message.isNotBlank(),
         modifier = modifier.widthIn(max = 560.dp),
-        enter = fadeIn(motionTween(Motion.STANDARD)) + slideInVertically(motionTween(Motion.MEDIUM)) { -it / 3 },
-        exit = fadeOut(motionTween(Motion.STANDARD)) + slideOutVertically(motionTween(Motion.STANDARD)) { -it / 3 }
+        enter = if (reduceMotion) androidx.compose.animation.EnterTransition.None else fadeIn(motionTween(Motion.STANDARD)) + slideInVertically(motionTween(Motion.MEDIUM)) { -it / 3 },
+        exit = if (reduceMotion) androidx.compose.animation.ExitTransition.None else fadeOut(motionTween(Motion.STANDARD)) + slideOutVertically(motionTween(Motion.STANDARD)) { -it / 3 }
     ) {
         Row(
             modifier = Modifier

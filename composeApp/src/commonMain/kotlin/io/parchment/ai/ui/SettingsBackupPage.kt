@@ -519,21 +519,7 @@ internal fun BackupAndOtaSubpage(
                             text = Strings.downloadingMbMb(otaState.release.assetName, downMb, totalMb, otaState.progressPercent),
                             style = p.uiBodyStyle.copy(color = p.accent, fontWeight = FontWeight.SemiBold)
                         )
-                        Box(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .height(6.dp)
-                                .clip(RoundedCornerShape(Radius.pill))
-                                .background(p.border.copy(alpha = 0.45f))
-                        ) {
-                            Box(
-                                modifier = Modifier
-                                    .fillMaxWidth((otaState.progressPercent / 100f).coerceIn(0.02f, 1f))
-                                    .height(6.dp)
-                                    .clip(RoundedCornerShape(Radius.pill))
-                                    .background(p.accent)
-                            )
-                        }
+                        SepiaProgressBar(fraction = otaState.progressPercent / 100f)
                     }
                     is OtaUpdateState.Installing -> {
                         BasicText(text = otaState.message, style = p.uiBodyStyle.copy(color = p.accentSecondary))

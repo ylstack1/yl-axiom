@@ -444,7 +444,11 @@ internal fun TurnWebSourcesDrawer(
     onClose: () -> Unit
 ) {
     val p = LocalParchmentPalette.current
-    AnimatedVisibility(visible = visible && webSources.isNotEmpty()) {
+    AnimatedVisibility(
+        visible = visible && webSources.isNotEmpty(),
+        enter = motionExpandEnter(),
+        exit = motionShrinkExit()
+    ) {
         Column(
             modifier = Modifier
                 .padding(top = Space.s8)
@@ -647,7 +651,11 @@ internal fun TurnRawWireDrawer(
     val p = LocalParchmentPalette.current
     @Suppress("DEPRECATION")
     val clipboard = LocalClipboardManager.current
-    AnimatedVisibility(visible = visible && rawRequestPreview.isNotBlank()) {
+    AnimatedVisibility(
+        visible = visible && rawRequestPreview.isNotBlank(),
+        enter = motionExpandEnter(),
+        exit = motionShrinkExit()
+    ) {
         var copiedRawWire by remember(nodeId, activeVariantIndex) { mutableStateOf("") }
         SelectionContainer {
             Column(

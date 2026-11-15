@@ -1,8 +1,6 @@
 package io.parchment.ai.ui
 
-import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.animateFloatAsState
-import androidx.compose.animation.core.spring
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -130,8 +128,6 @@ enum class SepiaButtonStyle {
     DANGER
 }
 
-private val KISS_SCALE_SPRING = spring<Float>(dampingRatio = 0.78f, stiffness = 680f)
-private val KISS_LIFT_SPRING = spring<Float>(dampingRatio = Spring.DampingRatioNoBouncy, stiffness = 560f)
 private val COMPACT_BTN_SHAPE = RoundedCornerShape(Radius.r8)
 private val REGULAR_BTN_SHAPE = RoundedCornerShape(Radius.r8)
 
@@ -168,14 +164,22 @@ fun Modifier.kissClickable(
         isHovered -> hoverScale
         else -> 1f
     }
-    val scale by animateFloatAsState(
-        targetValue = targetScale,
-        animationSpec = KISS_SCALE_SPRING
-    )
-    val liftY by animateFloatAsState(
-        targetValue = if (isHovered && !isPressed && enabled && !reduceMotion) -1.2f else 0f,
-        animationSpec = KISS_LIFT_SPRING
-    )
+    val scale = if (reduceMotion || !enabled) {
+        1f
+    } else {
+        animateFloatAsState(
+            targetValue = targetScale,
+            animationSpec = Motion.SCALE_SPRING
+        ).value
+    }
+    val liftY = if (reduceMotion || !enabled) {
+        0f
+    } else {
+        animateFloatAsState(
+            targetValue = if (isHovered && !isPressed) -1.2f else 0f,
+            animationSpec = Motion.LIFT_SPRING
+        ).value
+    }
     return this
         .then(if (enabled) Modifier.pointerHoverIcon(PointerIcon.Hand) else Modifier)
         .graphicsLayer {

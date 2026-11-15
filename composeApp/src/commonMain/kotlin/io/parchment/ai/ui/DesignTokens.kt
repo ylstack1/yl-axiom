@@ -1,10 +1,22 @@
 package io.parchment.ai.ui
 
+import androidx.compose.animation.EnterTransition
+import androidx.compose.animation.ExitTransition
 import androidx.compose.animation.core.FiniteAnimationSpec
 import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.snap
 import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
+import androidx.compose.animation.expandHorizontally
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.scaleIn
+import androidx.compose.animation.scaleOut
+import androidx.compose.animation.shrinkHorizontally
+import androidx.compose.animation.shrinkVertically
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.runtime.Composable
@@ -90,6 +102,10 @@ object Motion {
 
     /** Stiffness of a brisk spring for things that pop in. */
     const val POP_STIFFNESS = 580f
+
+    /** Springs shared by interactive press and hover feedback. */
+    val SCALE_SPRING: FiniteAnimationSpec<Float> = spring(dampingRatio = 0.78f, stiffness = 680f)
+    val LIFT_SPRING: FiniteAnimationSpec<Float> = spring(dampingRatio = Spring.DampingRatioNoBouncy, stiffness = 560f)
 }
 
 /**
@@ -147,3 +163,49 @@ fun <T> motionSpring(
     dampingRatio: Float = Spring.DampingRatioNoBouncy
 ): FiniteAnimationSpec<T> =
     if (LocalReduceMotion.current) snap() else spring(dampingRatio = dampingRatio, stiffness = stiffness)
+
+/** Vertical disclosure transitions that honor [LocalReduceMotion]. */
+@Composable
+fun motionExpandEnter(stiffness: Float = Spring.StiffnessMediumLow, fadeDurationMillis: Int = Motion.STANDARD): EnterTransition =
+    if (LocalReduceMotion.current) EnterTransition.None
+    else expandVertically(motionSpring(stiffness)) + fadeIn(motionTween(fadeDurationMillis))
+
+@Composable
+fun motionShrinkExit(stiffness: Float = Spring.StiffnessMediumLow, fadeDurationMillis: Int = Motion.QUICK): ExitTransition =
+    if (LocalReduceMotion.current) ExitTransition.None
+    else shrinkVertically(motionSpring(stiffness)) + fadeOut(motionTween(fadeDurationMillis))
+
+/** Floating pill pop transitions that honor [LocalReduceMotion]. */
+@Composable
+fun motionPopEnter(): EnterTransition =
+    if (LocalReduceMotion.current) EnterTransition.None
+    else slideInVertically(initialOffsetY = { it / 2 }, animationSpec = motionSpring(Motion.POP_STIFFNESS)) +
+        scaleIn(initialScale = 0.90f, animationSpec = motionSpring(Motion.POP_STIFFNESS, 0.8f)) +
+        fadeIn(motionTween(Motion.QUICK))
+
+@Composable
+fun motionPopExit(): ExitTransition =
+    if (LocalReduceMotion.current) ExitTransition.None
+    else slideOutVertically(targetOffsetY = { it / 2 }, animationSpec = motionTween(Motion.QUICK)) +
+        scaleOut(targetScale = 0.92f, animationSpec = motionTween(Motion.QUICK)) +
+        fadeOut(motionTween(Motion.QUICK))
+
+/** Horizontal drawer panel transitions that honor [LocalReduceMotion]. */
+@Composable
+fun motionSideExpandEnter(): EnterTransition =
+    if (LocalReduceMotion.current) EnterTransition.None
+    else expandHorizontally(motionSpring()) + fadeIn(motionTween(Motion.STANDARD))
+
+@Composable
+fun motionSideShrinkExit(): ExitTransition =
+    if (LocalReduceMotion.current) ExitTransition.None
+    else shrinkHorizontally(motionSpring()) + fadeOut(motionTween(Motion.QUICK))
+
+/** Simple fade transitions that honor [LocalReduceMotion]. */
+@Composable
+fun motionFadeEnter(durationMillis: Int = Motion.STANDARD): EnterTransition =
+    if (LocalReduceMotion.current) EnterTransition.None else fadeIn(motionTween(durationMillis))
+
+@Composable
+fun motionFadeExit(durationMillis: Int = Motion.STANDARD): ExitTransition =
+    if (LocalReduceMotion.current) ExitTransition.None else fadeOut(motionTween(durationMillis))

@@ -666,3 +666,31 @@ fun KissStreamingPulseDot(
             .background(color)
     )
 }
+
+/** Calm determinate progress bar whose fill interpolates with [motionTween]. */
+@Composable
+internal fun SepiaProgressBar(
+    fraction: Float,
+    modifier: Modifier = Modifier
+) {
+    val p = LocalParchmentPalette.current
+    val smoothFraction by animateFloatAsState(
+        targetValue = fraction.coerceIn(0.02f, 1f),
+        animationSpec = motionTween(Motion.MEDIUM)
+    )
+    Box(
+        modifier = modifier
+            .fillMaxWidth()
+            .height(6.dp)
+            .clip(RoundedCornerShape(Radius.pill))
+            .background(p.border.copy(alpha = 0.45f))
+    ) {
+        Box(
+            modifier = Modifier
+                .fillMaxWidth(smoothFraction)
+                .height(6.dp)
+                .clip(RoundedCornerShape(Radius.pill))
+                .background(p.accent)
+        )
+    }
+}

@@ -5,14 +5,6 @@ import io.parchment.ai.strings.Strings
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.ui.draw.alpha
 import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.expandVertically
-import androidx.compose.animation.fadeIn
-import androidx.compose.animation.fadeOut
-import androidx.compose.animation.scaleIn
-import androidx.compose.animation.scaleOut
-import androidx.compose.animation.shrinkVertically
-import androidx.compose.animation.slideInVertically
-import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -430,7 +422,11 @@ internal fun ManuscriptViewport(
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
         // Chat notes and memory, opened from Notes in the top bar.
-        AnimatedVisibility(visible = showSessionInspector) {
+        AnimatedVisibility(
+            visible = showSessionInspector,
+            enter = motionExpandEnter(),
+            exit = motionShrinkExit()
+        ) {
             ChatNotesPanel(
                 activeSession = activeSession,
                 isStreaming = isStreaming,
@@ -621,17 +617,8 @@ internal fun ManuscriptViewport(
             ) {
                 AnimatedVisibility(
                     visible = showFloatingAudioPill,
-                    enter = slideInVertically(
-                        initialOffsetY = { it / 2 },
-                        animationSpec = motionSpring(Motion.POP_STIFFNESS)
-                    ) + scaleIn(
-                        initialScale = 0.90f,
-                        animationSpec = motionSpring(Motion.POP_STIFFNESS, 0.8f)
-                    ) + fadeIn(motionTween(Motion.QUICK)),
-                    exit = slideOutVertically(
-                        targetOffsetY = { it / 2 },
-                        animationSpec = motionTween(Motion.QUICK)
-                    ) + scaleOut(targetScale = 0.92f, animationSpec = motionTween(Motion.QUICK)) + fadeOut(motionTween(Motion.QUICK))
+                    enter = motionPopEnter(),
+                    exit = motionPopExit()
                 ) {
                     val audioPillShape = RoundedCornerShape(Radius.pill)
                     Box(
@@ -770,17 +757,8 @@ internal fun ManuscriptViewport(
                 // The Latest pill, shown when scrolled up; opaque so text behind it doesn't show through.
                 AnimatedVisibility(
                     visible = isScrolledUpFromBottom,
-                    enter = slideInVertically(
-                        initialOffsetY = { it / 2 },
-                        animationSpec = motionSpring(Motion.POP_STIFFNESS)
-                    ) + scaleIn(
-                        initialScale = 0.90f,
-                        animationSpec = motionSpring(Motion.POP_STIFFNESS, 0.8f)
-                    ) + fadeIn(motionTween(Motion.QUICK)),
-                    exit = slideOutVertically(
-                        targetOffsetY = { it / 2 },
-                        animationSpec = motionTween(Motion.QUICK)
-                    ) + scaleOut(targetScale = 0.92f, animationSpec = motionTween(Motion.QUICK)) + fadeOut(motionTween(Motion.QUICK))
+                    enter = motionPopEnter(),
+                    exit = motionPopExit()
                 ) {
                     val pillOuterShape = RoundedCornerShape(Radius.pill)
                     val pillInnerShape = RoundedCornerShape(Radius.pill)
@@ -838,15 +816,19 @@ internal fun ManuscriptViewport(
             ) {
                 AnimatedVisibility(
                     visible = showNavButtons || showMinimapTreeModal,
-                    enter = fadeIn(motionTween(Motion.STANDARD)),
-                    exit = fadeOut(motionTween(Motion.SLOW))
+                    enter = motionFadeEnter(Motion.STANDARD),
+                    exit = motionFadeExit(Motion.SLOW)
                 ) {
                     Row(
                         horizontalArrangement = Arrangement.spacedBy(Space.s6),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                     // Expandable Interactive Tree & Swipe Minimap Modal with In-Chat Turn Filter
-                    AnimatedVisibility(visible = showMinimapTreeModal) {
+                    AnimatedVisibility(
+                        visible = showMinimapTreeModal,
+                        enter = motionExpandEnter(),
+                        exit = motionShrinkExit()
+                    ) {
                         var mapFilterQuery by remember { mutableStateOf("") }
                         val filteredMapItems = remember(activeSession.messages, mapFilterQuery) {
                             val q = mapFilterQuery.trim()
@@ -1086,7 +1068,11 @@ internal fun ManuscriptViewport(
             ) {
                 // 1. Live status while streaming: the headline and its detail on separate lines.
                 var statusExpanded by remember { mutableStateOf(false) }
-                AnimatedVisibility(visible = isStreaming) {
+                AnimatedVisibility(
+                    visible = isStreaming,
+                    enter = motionExpandEnter(),
+                    exit = motionShrinkExit()
+                ) {
                     val rawStatus = streamingStatus.ifBlank { Strings.generatingReply }
                     val (statusHeadline, statusDetail) = remember(rawStatus) {
                         when {
@@ -1160,7 +1146,11 @@ internal fun ManuscriptViewport(
                 }
 
                 // 2. Queued Prompts Bar (`⏳ Queue` mode)
-                AnimatedVisibility(visible = queuedPrompts.isNotEmpty()) {
+                AnimatedVisibility(
+                    visible = queuedPrompts.isNotEmpty(),
+                    enter = motionExpandEnter(),
+                    exit = motionShrinkExit()
+                ) {
                     Column(
                         modifier = Modifier
                             .fillMaxWidth()
@@ -1234,8 +1224,8 @@ internal fun ManuscriptViewport(
 
                 AnimatedVisibility(
                     visible = showComposerToolsDrawer,
-                    enter = expandVertically(motionSpring(Motion.POP_STIFFNESS)) + fadeIn(motionTween(Motion.QUICK)),
-                    exit = shrinkVertically(motionSpring(Motion.POP_STIFFNESS)) + fadeOut(motionTween(Motion.QUICK))
+                    enter = motionExpandEnter(Motion.POP_STIFFNESS, Motion.QUICK),
+                    exit = motionShrinkExit(Motion.POP_STIFFNESS, Motion.QUICK)
                 ) {
                     BoxWithConstraints {
                         val drawerMaxHeight = (maxHeight * 0.5f).coerceAtMost(420.dp)
@@ -1299,7 +1289,11 @@ internal fun ManuscriptViewport(
                                     onClick = onTogglePrefillBox
                                 )
                             }
-                            AnimatedVisibility(visible = showAllHarnessToolsInComposer) {
+                            AnimatedVisibility(
+                                visible = showAllHarnessToolsInComposer,
+                                enter = motionExpandEnter(),
+                                exit = motionShrinkExit()
+                            ) {
                                 AgentToolRegistry(
                                     policy = composerToolPolicy, overrides = composerPermissionOverrides,
                                     onChange = { value -> onUpdateSession { it.copy(permissionOverrides = value) } },
@@ -1407,7 +1401,11 @@ internal fun ManuscriptViewport(
                     }
                 }
 
-                AnimatedVisibility(visible = showPrefillBox) {
+                AnimatedVisibility(
+                    visible = showPrefillBox,
+                    enter = motionExpandEnter(),
+                    exit = motionShrinkExit()
+                ) {
                     SepiaTextField(
                         value = assistantPrefillInput,
                         onValueChange = onAssistantPrefillChange,
@@ -1436,8 +1434,8 @@ internal fun ManuscriptViewport(
                 }
                 AnimatedVisibility(
                     visible = matchingSlashCommands.isNotEmpty(),
-                    enter = expandVertically(motionSpring()) + fadeIn(motionTween(Motion.STANDARD)),
-                    exit = shrinkVertically(motionSpring()) + fadeOut(motionTween(Motion.QUICK))
+                    enter = motionExpandEnter(),
+                    exit = motionShrinkExit()
                 ) {
                     Column(
                         modifier = Modifier
@@ -1716,8 +1714,8 @@ internal fun ManuscriptViewport(
                 }
                 AnimatedVisibility(
                     visible = matchingAtItems.isNotEmpty(),
-                    enter = expandVertically(motionSpring()) + fadeIn(motionTween(Motion.STANDARD)),
-                    exit = shrinkVertically(motionSpring()) + fadeOut(motionTween(Motion.QUICK))
+                    enter = motionExpandEnter(),
+                    exit = motionShrinkExit()
                 ) {
                     Column(
                         modifier = Modifier
@@ -1872,7 +1870,11 @@ internal fun ManuscriptViewport(
                 )
 
                 // Interactive Context Window Breakdown Popover (Opened by clicking the Circular Context Ring)
-                AnimatedVisibility(visible = showContextBreakdownPopover) {
+                AnimatedVisibility(
+                    visible = showContextBreakdownPopover,
+                    enter = motionExpandEnter(),
+                    exit = motionShrinkExit()
+                ) {
                     val canCompactNow = activeSession.messages.count { it.includedInContext } > 1 ||
                         activeSession.messages.any { it.includedInContext && it.activeVariant.toolCalls.isNotEmpty() }
                     ContextWindowBreakdownPopover(

@@ -226,7 +226,11 @@ internal fun ProvidersSubpage(
                         onClick = { showAddProviderMenu = !showAddProviderMenu }
                     )
 
-                    AnimatedVisibility(visible = showAddProviderMenu) {
+                    AnimatedVisibility(
+                        visible = showAddProviderMenu,
+                        enter = motionExpandEnter(),
+                        exit = motionShrinkExit()
+                    ) {
                         Column(verticalArrangement = Arrangement.spacedBy(Space.s4)) {
                             ProviderProtocol.entries.forEach { proto ->
                                 SepiaButton(
@@ -353,7 +357,11 @@ internal fun ProvidersSubpage(
                             modifier = Modifier.fillMaxWidth(),
                             onClick = { showAddProviderMenu = !showAddProviderMenu }
                         )
-                        AnimatedVisibility(visible = showAddProviderMenu) {
+                        AnimatedVisibility(
+                            visible = showAddProviderMenu,
+                            enter = motionExpandEnter(),
+                            exit = motionShrinkExit()
+                        ) {
                             Column(verticalArrangement = Arrangement.spacedBy(Space.s6)) {
                                 ProviderProtocol.entries.forEach { proto ->
                                     SepiaButton(
@@ -700,7 +708,11 @@ internal fun ProvidersSubpage(
                 }
 
                 // Manual Model Add Drawer
-                AnimatedVisibility(visible = showAddModelBox || activeProfile.savedModels.isEmpty()) {
+                AnimatedVisibility(
+                    visible = showAddModelBox || activeProfile.savedModels.isEmpty(),
+                    enter = motionExpandEnter(),
+                    exit = motionShrinkExit()
+                ) {
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.spacedBy(Space.s8),
@@ -1299,31 +1311,40 @@ private fun ModelConfigSubpage(
             )
         }
 
+        var isSyncingCatalog by remember(modelId) { mutableStateOf(false) }
+
         SepiaSectionCard(
             title = Strings.conversationAndReplyLimits,
             headerAction = {
                 SepiaButton(
-                    text = Strings.fillInFromModelCatalog,
+                    text = if (isSyncingCatalog) Strings.fetching else Strings.fillInFromModelCatalog,
                     compact = true,
+                    enabled = !isSyncingCatalog,
                     style = SepiaButtonStyle.SECONDARY,
                     onClick = {
+                        if (isSyncingCatalog) return@SepiaButton
+                        isSyncingCatalog = true
                         scope.launch {
-                            ModelsDevClient.fetchModelSpec(modelId).fold(
-                                onSuccess = { spec ->
-                                    ctxText = spec.contextWindowTokens.toString()
-                                    maxOutText = spec.maxOutputTokens?.toString() ?: ""
-                                    val syncedPricing = spec.knownPricing ?: io.parchment.ai.model.legacyTokenPricing(spec.inputPricePerM, spec.outputPricePerM, spec.cacheReadPricePerM, spec.cacheWritePricePerM, spec.reasoningPricePerM)
-                                    inPriceText = syncedPricing.inputPerM?.toString() ?: ""
-                                    outPriceText = syncedPricing.outputPerM?.toString() ?: ""
-                                    cachePriceText = syncedPricing.cacheReadPerM?.toString() ?: ""
-                                    thinkPriceText = syncedPricing.reasoningPerM?.toString() ?: ""
-                                    writePriceText = syncedPricing.cacheWritePerM?.toString() ?: ""
-                                    longWritePriceText = syncedPricing.longCacheWritePerM?.toString() ?: ""
-                                    saveSpec(spec)
-                                    onNotify(Strings.syncedFromTheModelCatalog(modelId))
-                                },
-                                onFailure = { err -> onNotify(Strings.modelCatalog(err.message)) }
-                            )
+                            try {
+                                ModelsDevClient.fetchModelSpec(modelId).fold(
+                                    onSuccess = { spec ->
+                                        ctxText = spec.contextWindowTokens.toString()
+                                        maxOutText = spec.maxOutputTokens?.toString() ?: ""
+                                        val syncedPricing = spec.knownPricing ?: io.parchment.ai.model.legacyTokenPricing(spec.inputPricePerM, spec.outputPricePerM, spec.cacheReadPricePerM, spec.cacheWritePricePerM, spec.reasoningPricePerM)
+                                        inPriceText = syncedPricing.inputPerM?.toString() ?: ""
+                                        outPriceText = syncedPricing.outputPerM?.toString() ?: ""
+                                        cachePriceText = syncedPricing.cacheReadPerM?.toString() ?: ""
+                                        thinkPriceText = syncedPricing.reasoningPerM?.toString() ?: ""
+                                        writePriceText = syncedPricing.cacheWritePerM?.toString() ?: ""
+                                        longWritePriceText = syncedPricing.longCacheWritePerM?.toString() ?: ""
+                                        saveSpec(spec)
+                                        onNotify(Strings.syncedFromTheModelCatalog(modelId))
+                                    },
+                                    onFailure = { err -> onNotify(Strings.modelCatalog(err.message)) }
+                                )
+                            } finally {
+                                isSyncingCatalog = false
+                            }
                         }
                     }
                 )

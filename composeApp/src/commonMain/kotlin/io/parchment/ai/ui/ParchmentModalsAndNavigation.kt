@@ -773,6 +773,28 @@ internal fun TopEditorialBar(
 
 // Attachment viewer: zoomable images, and text or code files.
 @Composable
+internal fun ImageViewerFallbackState(isLoading: Boolean, sourceLabel: String) {
+    val p = LocalParchmentPalette.current
+    if (isLoading) {
+        Row(
+            horizontalArrangement = Arrangement.spacedBy(Space.s8),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            KissStreamingPulseDot(color = p.accent)
+            BasicText(
+                text = Strings.loading,
+                style = p.uiLabelStyle.copy(color = p.mutedInk)
+            )
+        }
+    } else {
+        BasicText(
+            text = Strings.unableToDecodeImagePreview(sourceLabel),
+            style = p.uiHeaderStyle.copy(color = p.narrationInk)
+        )
+    }
+}
+
+@Composable
 internal fun ParchmentAttachmentViewerModal(
     item: ActiveMediaViewerItem,
     onNotify: (String) -> Unit,
@@ -982,10 +1004,10 @@ internal fun ParchmentAttachmentViewerModal(
                                         translationY = offsetY
                                     )
                             )
-                        } else if (!fileImage.isLoading) {
-                            BasicText(
-                                text = Strings.unableToDecodeImagePreview(item.localFilePath.ifBlank { item.remoteUrl }),
-                                style = p.uiHeaderStyle.copy(color = p.narrationInk)
+                        } else {
+                            ImageViewerFallbackState(
+                                isLoading = fileImage.isLoading,
+                                sourceLabel = item.localFilePath.ifBlank { item.remoteUrl }
                             )
                         }
                     }

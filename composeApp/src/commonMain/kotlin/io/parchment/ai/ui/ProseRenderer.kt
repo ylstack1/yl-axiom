@@ -479,7 +479,11 @@ fun LiteraryProseRenderer(
                                     )
                                 }
                             }
-                            AnimatedVisibility(visible = !isCollapsed) {
+                            AnimatedVisibility(
+                                visible = !isCollapsed,
+                                enter = motionExpandEnter(),
+                                exit = motionShrinkExit()
+                            ) {
                                 Column {
                                     SepiaDivider()
                                     val isDiffLang = block.language.equals("diff", ignoreCase = true) ||

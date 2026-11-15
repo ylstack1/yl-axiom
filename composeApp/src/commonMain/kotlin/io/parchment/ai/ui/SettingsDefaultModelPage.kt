@@ -81,7 +81,11 @@ internal fun DefaultModelSubpage(
                     checked = defaultModels.titleFollowGlobal,
                     onCheckedChange = { onUpdateDefaultModels(defaultModels.copy(titleFollowGlobal = it)) }
                 )
-                AnimatedVisibility(visible = !defaultModels.titleFollowGlobal) {
+                AnimatedVisibility(
+                    visible = !defaultModels.titleFollowGlobal,
+                    enter = motionExpandEnter(),
+                    exit = motionShrinkExit()
+                ) {
                     SepiaSearchableModelPicker(
                         profiles = appState.profiles,
                         selectedProfileId = defaultModels.titleProfileId,
@@ -113,7 +117,11 @@ internal fun DefaultModelSubpage(
                     checked = defaultModels.summaryFollowGlobal,
                     onCheckedChange = { onUpdateDefaultModels(defaultModels.copy(summaryFollowGlobal = it)) }
                 )
-                AnimatedVisibility(visible = !defaultModels.summaryFollowGlobal) {
+                AnimatedVisibility(
+                    visible = !defaultModels.summaryFollowGlobal,
+                    enter = motionExpandEnter(),
+                    exit = motionShrinkExit()
+                ) {
                     SepiaSearchableModelPicker(
                         profiles = appState.profiles,
                         selectedProfileId = defaultModels.summaryProfileId,
@@ -155,7 +163,11 @@ internal fun DefaultModelSubpage(
                     checked = defaultModels.translationFollowGlobal,
                     onCheckedChange = { onUpdateDefaultModels(defaultModels.copy(translationFollowGlobal = it)) }
                 )
-                AnimatedVisibility(visible = !defaultModels.translationFollowGlobal) {
+                AnimatedVisibility(
+                    visible = !defaultModels.translationFollowGlobal,
+                    enter = motionExpandEnter(),
+                    exit = motionShrinkExit()
+                ) {
                     SepiaSearchableModelPicker(
                         profiles = appState.profiles,
                         selectedProfileId = defaultModels.translationProfileId,

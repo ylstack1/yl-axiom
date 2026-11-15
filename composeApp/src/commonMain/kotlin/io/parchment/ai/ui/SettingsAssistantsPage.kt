@@ -177,7 +177,11 @@ internal fun AssistantsSubpage(
                             }
                         }
                     )
-                    AnimatedVisibility(visible = !followsGlobalModel) {
+                    AnimatedVisibility(
+                        visible = !followsGlobalModel,
+                        enter = motionExpandEnter(),
+                        exit = motionShrinkExit()
+                    ) {
                         SepiaSearchableModelPicker(
                             profiles = appState.profiles,
                             selectedProfileId = editingAssistant.defaultProfileId.ifBlank { appState.activeProfileId },

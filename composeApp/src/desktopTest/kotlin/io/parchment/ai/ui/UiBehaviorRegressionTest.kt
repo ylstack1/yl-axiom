@@ -1,11 +1,15 @@
 package io.parchment.ai.ui
 
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.EnterTransition
+import androidx.compose.animation.ExitTransition
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.text.BasicText
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -676,6 +680,76 @@ class UiBehaviorRegressionTest {
             assertTrue(attHost.boundsInRoot.height >= 160f, "Attachment placeholder must reserve vertical height (${attHost.boundsInRoot.height})")
             assertTrue(genHost.boundsInRoot.height >= 160f, "Generated media placeholder must reserve aspect height (${genHost.boundsInRoot.height})")
             assertTrue(peekHost.boundsInRoot.height >= 72f, "Live peek drawer must reserve stable minimum height (${peekHost.boundsInRoot.height})")
+        }
+    }
+
+    @Test
+    fun reduceMotionTransitionsAndLoadingPlaceholdersBehaveDeterministically() {
+        var expanded by mutableStateOf(false)
+        var loading by mutableStateOf(true)
+        var observedExpandEnter: EnterTransition? = null
+        var observedShrinkExit: ExitTransition? = null
+        var observedPopEnter: EnterTransition? = null
+        var observedPopExit: ExitTransition? = null
+        var observedSideEnter: EnterTransition? = null
+        var observedSideExit: ExitTransition? = null
+        var observedFadeEnter: EnterTransition? = null
+        var observedFadeExit: ExitTransition? = null
+        var frameNanos = 0L
+
+        withUiScene(
+            width = 760,
+            height = 420,
+            content = {
+                CompositionLocalProvider(LocalReduceMotion provides true) {
+                    observedExpandEnter = motionExpandEnter()
+                    observedShrinkExit = motionShrinkExit()
+                    observedPopEnter = motionPopEnter()
+                    observedPopExit = motionPopExit()
+                    observedSideEnter = motionSideExpandEnter()
+                    observedSideExit = motionSideShrinkExit()
+                    observedFadeEnter = motionFadeEnter()
+                    observedFadeExit = motionFadeExit()
+
+                    AnimatedVisibility(
+                        visible = expanded,
+                        enter = motionExpandEnter(),
+                        exit = motionShrinkExit()
+                    ) {
+                        BasicText("ReducedMotionRevealed")
+                    }
+                    SepiaProgressBar(fraction = 0.45f)
+                    ImageViewerFallbackState(isLoading = loading, sourceLabel = "demo.png")
+                }
+            }
+        ) { scene ->
+            assertEquals(EnterTransition.None, observedExpandEnter)
+            assertEquals(ExitTransition.None, observedShrinkExit)
+            assertEquals(EnterTransition.None, observedPopEnter)
+            assertEquals(ExitTransition.None, observedPopExit)
+            assertEquals(EnterTransition.None, observedSideEnter)
+            assertEquals(ExitTransition.None, observedSideExit)
+            assertEquals(EnterTransition.None, observedFadeEnter)
+            assertEquals(ExitTransition.None, observedFadeExit)
+
+            assertTrue(nodes(scene).any { text(it) == Strings.loading }, "Image viewer must render Loading indicator while decoding")
+            assertTrue(nodes(scene).none { text(it) == "ReducedMotionRevealed" })
+
+            expanded = true
+            loading = false
+            Snapshot.sendApplyNotifications()
+            frameNanos += 16_000_000L
+            settle(scene, frameNanos)
+            assertTrue(nodes(scene).any { text(it) == "ReducedMotionRevealed" }, "EnterTransition.None must reveal content in 1 frame")
+            assertTrue(nodes(scene).any { text(it) == Strings.unableToDecodeImagePreview("demo.png") })
+
+            expanded = false
+            Snapshot.sendApplyNotifications()
+            frameNanos += 16_000_000L
+            settle(scene, frameNanos)
+            frameNanos += 16_000_000L
+            settle(scene, frameNanos)
+            assertTrue(nodes(scene).none { text(it) == "ReducedMotionRevealed" }, "ExitTransition.None must finish well before Motion.QUICK (32ms < 110ms)")
         }
     }
 }

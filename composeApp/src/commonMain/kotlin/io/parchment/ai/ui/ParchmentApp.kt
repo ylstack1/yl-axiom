@@ -3,10 +3,6 @@ package io.parchment.ai.ui
 import io.parchment.ai.strings.Strings
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.Crossfade
-import androidx.compose.animation.expandHorizontally
-import androidx.compose.animation.fadeIn
-import androidx.compose.animation.fadeOut
-import androidx.compose.animation.shrinkHorizontally
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -685,21 +681,7 @@ fun ParchmentApp(
                                             style = p.monoStyle.copy(color = p.accent, fontWeight = FontWeight.Bold, fontSize = 12.sp)
                                         )
                                     }
-                                    Box(
-                                        modifier = Modifier
-                                            .fillMaxWidth()
-                                            .height(6.dp)
-                                            .clip(RoundedCornerShape(Radius.pill))
-                                            .background(p.border.copy(alpha = 0.45f))
-                                    ) {
-                                        Box(
-                                            modifier = Modifier
-                                                .fillMaxWidth((currentOta.progressPercent / 100f).coerceIn(0.02f, 1f))
-                                                .height(6.dp)
-                                                .clip(RoundedCornerShape(Radius.pill))
-                                                .background(p.accent)
-                                        )
-                                    }
+                                    SepiaProgressBar(fraction = currentOta.progressPercent / 100f)
                                 }
                                 SepiaDivider()
                             }
@@ -901,8 +883,8 @@ fun ParchmentApp(
                             Row(modifier = Modifier.fillMaxSize()) {
                                 AnimatedVisibility(
                                     visible = !isCompactScreen && showSidebar && !isSettingsOpen,
-                                    enter = expandHorizontally(motionSpring()) + fadeIn(motionTween(Motion.STANDARD)),
-                                    exit = shrinkHorizontally(motionSpring()) + fadeOut(motionTween(Motion.QUICK))
+                                    enter = motionSideExpandEnter(),
+                                    exit = motionSideShrinkExit()
                                 ) {
                                     Row(modifier = Modifier.fillMaxHeight()) {
                                         sidebarComposable(Modifier.textScaledWidth(285.dp).fillMaxHeight())
@@ -1377,8 +1359,8 @@ fun ParchmentApp(
 
                             AnimatedVisibility(
                                 visible = !isCompactScreen && showRightFilesSidebar && !isSettingsOpen,
-                                enter = expandHorizontally(motionSpring()) + fadeIn(motionTween(Motion.STANDARD)),
-                                exit = shrinkHorizontally(motionSpring()) + fadeOut(motionTween(Motion.QUICK))
+                                enter = motionSideExpandEnter(),
+                                exit = motionSideShrinkExit()
                             ) {
                                 Row(modifier = Modifier.fillMaxHeight()) {
                                     Box(
@@ -1419,8 +1401,8 @@ fun ParchmentApp(
                                 Row(modifier = Modifier.fillMaxSize()) {
                                     AnimatedVisibility(
                                         visible = showSidebar && !isSettingsOpen,
-                                        enter = fadeIn(motionTween(Motion.STANDARD)),
-                                        exit = fadeOut(motionTween(Motion.STANDARD))
+                                        enter = motionFadeEnter(Motion.STANDARD),
+                                        exit = motionFadeExit(Motion.STANDARD)
                                     ) {
                                         Box(
                                             modifier = Modifier
@@ -1434,8 +1416,8 @@ fun ParchmentApp(
                                 Row(modifier = Modifier.fillMaxHeight()) {
                                     AnimatedVisibility(
                                         visible = showSidebar && !isSettingsOpen,
-                                        enter = expandHorizontally(motionSpring()) + fadeIn(motionTween(Motion.STANDARD)),
-                                        exit = shrinkHorizontally(motionSpring()) + fadeOut(motionTween(Motion.QUICK))
+                                        enter = motionSideExpandEnter(),
+                                        exit = motionSideShrinkExit()
                                     ) {
                                         Row(modifier = Modifier.fillMaxHeight()) {
                                             sidebarComposable(
@@ -1458,8 +1440,8 @@ fun ParchmentApp(
                                 Row(modifier = Modifier.fillMaxSize()) {
                                     AnimatedVisibility(
                                         visible = showRightFilesSidebar && !isSettingsOpen,
-                                        enter = fadeIn(motionTween(Motion.STANDARD)),
-                                        exit = fadeOut(motionTween(Motion.STANDARD))
+                                        enter = motionFadeEnter(Motion.STANDARD),
+                                        exit = motionFadeExit(Motion.STANDARD)
                                     ) {
                                         Box(
                                             modifier = Modifier
@@ -1473,8 +1455,8 @@ fun ParchmentApp(
                                 Row(modifier = Modifier.fillMaxSize(), horizontalArrangement = Arrangement.End) {
                                     AnimatedVisibility(
                                         visible = showRightFilesSidebar && !isSettingsOpen,
-                                        enter = expandHorizontally(motionSpring()) + fadeIn(motionTween(Motion.STANDARD)),
-                                        exit = shrinkHorizontally(motionSpring()) + fadeOut(motionTween(Motion.QUICK))
+                                        enter = motionSideExpandEnter(),
+                                        exit = motionSideShrinkExit()
                                     ) {
                                         Row(modifier = Modifier.fillMaxHeight()) {
                                             Box(

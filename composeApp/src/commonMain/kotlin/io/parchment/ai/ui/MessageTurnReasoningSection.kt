@@ -1,10 +1,6 @@
 package io.parchment.ai.ui
 
 import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.expandVertically
-import androidx.compose.animation.fadeIn
-import androidx.compose.animation.fadeOut
-import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -67,8 +63,8 @@ internal fun MessageTurnReasoningDrawer(
 
     AnimatedVisibility(
         visible = showDrawer,
-        enter = expandVertically(motionSpring()) + fadeIn(motionTween(Motion.STANDARD)),
-        exit = shrinkVertically(motionSpring()) + fadeOut(motionTween(Motion.QUICK))
+        enter = motionExpandEnter(),
+        exit = motionShrinkExit()
     ) {
         val livePeekInfo = remember(isLivePeekOnly, activeVar.thinkingSummary, activeVar.trailingThinking, activeVar.toolCalls) {
             if (isLivePeekOnly) extractLatestAgentPeek(activeVar) else LiveAgentPeekInfo(isToolPeek = false, title = "", body = "")
