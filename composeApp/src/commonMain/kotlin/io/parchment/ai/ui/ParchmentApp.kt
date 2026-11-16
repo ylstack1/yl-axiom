@@ -226,6 +226,12 @@ fun ParchmentApp(
         LaunchedEffect(Unit) {
             PlatformRuntime.registerStateFlushCallback { blocking ->
                 flushPendingDraftToDiskWriter()
+                // Save streaming replies as shown, not as of their last checkpoint (up to 3.5 s older).
+                LiveTurns.sessionIds().forEach { streamingId ->
+                    appState.sessions.find { it.id == streamingId }?.takeUnless { it.isCompactStub }?.let { session ->
+                        appDiskWriter.enqueue(sessions = listOf(session.withLiveTurns()), notify = false)
+                    }
+                }
                 if (blocking) appDiskWriter.flushBlocking() else appDiskWriter.flushUrgentlyAsync()
             }
         }

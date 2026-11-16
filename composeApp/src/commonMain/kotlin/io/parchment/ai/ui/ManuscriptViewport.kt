@@ -98,6 +98,7 @@ import io.parchment.ai.platform.PlatformWorkspace
 import io.parchment.ai.protocol.O200kTokenizer
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -286,18 +287,30 @@ internal fun ManuscriptViewport(
         }
     }
 
-    val lastMsgContentLen = activeSession.messages.lastOrNull()?.activeVariant?.let {
-        it.content.length + it.thinkingSummary.length + it.trailingThinking.length + it.toolCalls.size
-    } ?: 0
+    // The last reply's length, including its live text while it streams. It changes every streamed frame, so it is
+    // read in snapshotFlow and derived buckets below, never directly here: the viewport must not recompose per frame.
+    val lastVariant = activeSession.messages.lastOrNull()?.activeVariant
+    val lastLive = lastVariant?.let { LiveTurns.stateOf(it.id) }
+    val lastMsgLenState = remember(lastVariant, lastLive) {
+        derivedStateOf {
+            val v = lastVariant?.withLiveTurn(lastLive?.value)
+            if (v == null) 0 else v.content.length + v.thinkingSummary.length + v.trailingThinking.length + v.toolCalls.size
+        }
+    }
     val lastAutoFollowMs = remember { longArrayOf(0L) }
+    val currentPreferences by rememberUpdatedState(preferences)
+    val currentSession by rememberUpdatedState(activeSession)
 
-    LaunchedEffect(lastMsgContentLen, isStreaming) {
+    LaunchedEffect(isStreaming, activeSession.id) {
+        snapshotFlow { lastMsgLenState.value }.collectLatest { lastMsgContentLen ->
+        val preferences = currentPreferences
+        val activeSession = currentSession
         if (!preferences.autoFollowBottom || activeSession.messages.isEmpty()) {
             if (!isStreaming) {
                 lastAutoFollowMs[0] = 0L
                 wasStreamingFollow = false
             }
-            return@LaunchedEffect
+            return@collectLatest
         }
         val canFollowNow = !listState.isScrollInProgress &&
             !isListDragged &&
@@ -313,10 +326,10 @@ internal fun ManuscriptViewport(
                     jumpToBottomEdge()
                 }
             }
-            return@LaunchedEffect
+            return@collectLatest
         }
         wasStreamingFollow = true
-        if (!canFollowNow) return@LaunchedEffect
+        if (!canFollowNow) return@collectLatest
         val now = PlatformRuntime.currentTimeMillis()
         val elapsed = now - lastAutoFollowMs[0]
         if (lastAutoFollowMs[0] != 0L && elapsed in 0L until 48L) {
@@ -333,14 +346,16 @@ internal fun ManuscriptViewport(
             lastAutoFollowMs[0] = PlatformRuntime.currentTimeMillis()
             jumpToBottomEdge()
         }
+        }
     }
 
     // While streaming, recount the context breakdown every 128 characters rather than on every frame:
     // counting the whole history is too costly to repeat per character.
-    val throttledBreakdownTrigger = if (isStreaming) {
-        (lastMsgContentLen / 128) * 128 + (activeSession.messages.lastOrNull()?.activeVariant?.toolCalls?.size ?: 0)
-    } else {
-        lastMsgContentLen
+    val throttledBreakdownTrigger by remember(isStreaming, lastMsgLenState, lastVariant) {
+        derivedStateOf {
+            val len = lastMsgLenState.value
+            if (isStreaming) (len / 128) * 128 + (lastVariant?.toolCalls?.size ?: 0) else len
+        }
     }
     val ownedUtilityRecords = remember(activeSession.id, activeSession.utilityUsageRecords) {
         activeSession.utilityUsageRecords.filter { it.ownerSessionId.isBlank() || it.ownerSessionId == activeSession.id }
@@ -406,7 +421,12 @@ internal fun ManuscriptViewport(
     }
     val baseContextPrefix = baseContextPrefixState.value
     val baseContextBreakdown = remember(baseContextPrefix, throttledBreakdownTrigger, isStreaming) {
-        O200kTokenizer.applyLastTurnToBreakdown(baseContextPrefix, activeSession.messages.lastOrNull())
+        // The live text is read unobserved: the trigger above already limits this to every 128 characters.
+        val lastNode = activeSession.messages.lastOrNull()?.let { node ->
+            val live = androidx.compose.runtime.snapshots.Snapshot.withoutReadObservation { lastLive?.value }
+            if (live == null) node else node.copy(variants = node.variants.map { it.withLiveTurn(live) })
+        }
+        O200kTokenizer.applyLastTurnToBreakdown(baseContextPrefix, lastNode)
     }
     val pendingAttachmentsTokens = remember(pendingAttachments) {
         O200kTokenizer.countAttachmentsTokens(pendingAttachments)

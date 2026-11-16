@@ -786,7 +786,7 @@ internal suspend fun exportChatSessionsBundle(fileName: String, sessions: List<C
 internal fun chatBundleEntry(rawSession: ChatSession): ChatBundleEntry {
     val mediaFileEntries = mutableListOf<Pair<String, String>>()
     val prettyJson = io.parchment.ai.protocol.CardAndPromptCodec.prettyJson
-    val fullSession = stripRedundantAttachmentBase64(hydrateSessionFromDiskIfNeeded(rawSession))
+    val fullSession = stripRedundantAttachmentBase64(hydrateSessionFromDiskIfNeeded(rawSession).withLiveTurns())
     check(!fullSession.isCompactStub) { "This chat's full data isn't available, so it wasn't exported." }
     val safeSessId = fullSession.id.trim().replace(EXPORT_UNSAFE_CHAR_REGEX, "_").ifBlank { "session" }
     val portableMessages = fullSession.messages.map { node ->

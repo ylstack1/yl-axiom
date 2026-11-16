@@ -189,7 +189,12 @@ internal fun GenerationHost.beginGeneration(
                 activeThinkingPhaseStartMs = -1L
             }
         }
-        fun patchVariantMemory(updater: (MessageVariant) -> MessageVariant) {
+        fun patchVariantMemory(eventUpdate: (MessageVariant) -> MessageVariant) {
+            // The variant arrives with the live text (completeSessionForAction); afterwards the live overlay takes
+            // the patched fields, so an event (say a tool step clearing trailing thinking) shows at once even when
+            // the pacer has nothing new to publish.
+            var patched: MessageVariant? = null
+            val updater: (MessageVariant) -> MessageVariant = { v -> eventUpdate(v).also { patched = it } }
             updateActiveSessionInMemoryOnly(sessionId) { sess ->
                 val msgs = sess.messages
                 val lastIdx = msgs.lastIndex
@@ -218,10 +223,21 @@ internal fun GenerationHost.beginGeneration(
                     )
                 }
             }
+            val result = patched
+            val live = LiveTurns.stateOf(targetVariantId)?.value
+            if (result != null && live != null) {
+                LiveTurns.publish(live.copy(content = result.content, thinkingSummary = result.thinkingSummary,
+                    trailingThinking = result.trailingThinking, thinkingSignature = result.thinkingSignature,
+                    thinkingDurationMs = result.thinkingDurationMs))
+            }
         }
 
         fun flushCheckpointToDisk(isFinal: Boolean, finalUpdater: ((MessageVariant) -> MessageVariant)? = null) {
-            if (isFinal) pauseActiveThinkingStopwatch()
+            if (isFinal) {
+                pauseActiveThinkingStopwatch()
+                // The final text below is authoritative; a live overlay left behind would be merged over it later.
+                LiveTurns.end(targetVariantId)
+            }
             val curContent = if (isFinal) networkContentTarget.toString() else networkContentTarget.substring(0, displayedContentLen.coerceAtMost(networkContentTarget.length))
             val curThink = if (isFinal) networkThinkingTarget.toString() else networkThinkingTarget.substring(0, displayedThinkingLen.coerceAtMost(networkThinkingTarget.length))
             val curStepThink = if (accumulatedTools.isEmpty()) "" else if (isFinal) currentStepThinkingTarget.toString() else currentStepThinkingTarget.substring(0, displayedStepThinkingLen.coerceAtMost(currentStepThinkingTarget.length))
@@ -462,18 +478,21 @@ internal fun GenerationHost.beginGeneration(
                         cachedSig = signatureSb.toString()
                         cachedSigLen = signatureSb.length
                     }
-                    patchVariantMemory { v ->
-                        if (runFlags.aborted) return@patchVariantMemory v
-                        v.copy(
-                            content = cachedVisibleCont,
-                            thinkingSummary = cachedVisibleThink,
-                            trailingThinking = cachedVisibleStepThink,
-                            thinkingSignature = cachedSig,
-                            thinkingDurationMs = thinkingDurationMs,
-                            tokenMetrics = if (liveTokensPerSec > 0.0) {
-                                v.tokenMetrics.copy(tokensPerSec = liveTokensPerSec)
-                            } else v.tokenMetrics,
-                            isStreaming = true
+                    // Every frame goes to the live overlay, so only this reply redraws; the app state takes the text
+                    // at the checkpoint below and at the end (flushCheckpointToDisk).
+                    if (!runFlags.aborted) {
+                        LiveTurns.publish(
+                            LiveTurnOverlay(
+                                sessionId = sessionId,
+                                nodeId = targetAssistantNodeId,
+                                variantId = targetVariantId,
+                                content = cachedVisibleCont,
+                                thinkingSummary = cachedVisibleThink,
+                                trailingThinking = cachedVisibleStepThink,
+                                thinkingSignature = cachedSig,
+                                thinkingDurationMs = thinkingDurationMs,
+                                tokensPerSec = liveTokensPerSec
+                            )
                         )
                     }
                 }
@@ -999,6 +1018,7 @@ internal fun GenerationHost.beginGeneration(
                 )
             }
         } finally {
+            LiveTurns.end(targetVariantId)
             approvalObserver.cancel()
             networkDone = true
             if (processState.runs.isStopRequested(identity) || activeStreamsBySession[sessionId]?.phase == AgentRunPhase.STOPPED) {

@@ -100,7 +100,9 @@ internal fun MessageTurnItem(
 ) {
     val p = LocalParchmentPalette.current
     val win = LocalParchmentWindowSize.current
-    val activeVar = node.activeVariant
+    // While this reply streams, its text comes from its live state (read here, so frames redraw only this item).
+    val liveTurn = LiveTurns.stateOf(node.activeVariant.id)?.value
+    val activeVar = remember(node.activeVariant, liveTurn) { node.activeVariant.withLiveTurn(liveTurn) }
     val isAssistant = node.role == MessageRole.ASSISTANT
 
     var isEditing by remember(node.id, node.activeVariantIndex) { mutableStateOf(false) }

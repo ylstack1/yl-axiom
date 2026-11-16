@@ -364,7 +364,8 @@ internal class ParchmentAppController(
             bannerNotification = Strings.chatHistoryIsUnavailableRestoreIts
             return null
         }
-        return complete
+        // A streaming reply's newest text lives in LiveTurns until its next checkpoint; actions start from it.
+        return complete.withLiveTurns()
     }
 
     fun updateActiveSession(immediate: Boolean = false, transform: (ChatSession) -> ChatSession) {
