@@ -764,4 +764,50 @@ class StreamRecoveryHttpTest {
             assertEquals(listOf("/v1beta/interactions"), server.requestPaths)
         }
     }
+
+    @Test fun openAiResponsesAndChatPreserveMaxAndStepDownEffortBeforeOmitting() {
+        val badMax = Reply("""{"error":{"message":"Unsupported value: 'max' for reasoning.effort"}}""", status = 400, contentType = "application/json")
+        val badXhigh = Reply("""{"error":{"message":"Unsupported value: 'xhigh' for reasoning.effort"}}""", status = 400, contentType = "application/json")
+        Server(listOf(badMax, badXhigh, Reply(finishedStreams.getValue(CUSTOM_DIALECT_OPENAI_RESPONSES)))).use { server ->
+            val p = profile(server, CUSTOM_DIALECT_OPENAI_RESPONSES).copy(thinkingEffort = "max")
+            val done = assertIs<StreamUpdate.Completed>(runUntilTerminalOrRetry(p))
+            assertTrue(done.fullContent.isNotEmpty())
+            assertEquals(3, server.requests.size)
+            val efforts = server.requests.map {
+                Json.parseToJsonElement(it).jsonObject["reasoning"]!!.jsonObject["effort"]?.jsonPrimitive?.contentOrNull
+            }
+            assertEquals(listOf("max", "xhigh", "high"), efforts)
+        }
+
+        Server(listOf(badMax, badXhigh, Reply(finishedStreams.getValue(CUSTOM_DIALECT_OPENAI_CHAT)))).use { server ->
+            val p = profile(server, CUSTOM_DIALECT_OPENAI_CHAT).copy(thinkingEffort = "max")
+            val done = assertIs<StreamUpdate.Completed>(runUntilTerminalOrRetry(p))
+            assertTrue(done.fullContent.isNotEmpty())
+            assertEquals(3, server.requests.size)
+            val efforts = server.requests.map {
+                Json.parseToJsonElement(it).jsonObject["reasoning_effort"]?.jsonPrimitive?.contentOrNull
+            }
+            assertEquals(listOf("max", "xhigh", "high"), efforts)
+        }
+    }
+
+    @Test fun anthropicAdaptiveDisplayStripsDisplayAndStepsEffortWithoutDroppingAdaptive() {
+        val badDisplay = Reply("""{"error":{"message":"Extra inputs are not permitted: thinking.display"}}""", status = 400, contentType = "application/json")
+        val badMax = Reply("""{"error":{"message":"Unsupported value 'max' for output_config.effort"}}""", status = 400, contentType = "application/json")
+        Server(listOf(badDisplay, badMax, Reply(finishedStreams.getValue(CUSTOM_DIALECT_ANTHROPIC)))).use { server ->
+            val p = profile(server, CUSTOM_DIALECT_ANTHROPIC).copy(thinkingEffort = "max")
+            val done = assertIs<StreamUpdate.Completed>(runUntilTerminalOrRetry(p))
+            assertTrue(done.fullContent.isNotEmpty())
+            assertEquals(3, server.requests.size)
+            val req0 = Json.parseToJsonElement(server.requests[0]).jsonObject
+            val req1 = Json.parseToJsonElement(server.requests[1]).jsonObject
+            val req2 = Json.parseToJsonElement(server.requests[2]).jsonObject
+            assertEquals("summarized", req0["thinking"]!!.jsonObject["display"]?.jsonPrimitive?.contentOrNull)
+            assertEquals("adaptive", req1["thinking"]!!.jsonObject["type"]?.jsonPrimitive?.contentOrNull)
+            assertNull(req1["thinking"]!!.jsonObject["display"])
+            assertEquals("max", req1["output_config"]!!.jsonObject["effort"]?.jsonPrimitive?.contentOrNull)
+            assertEquals("adaptive", req2["thinking"]!!.jsonObject["type"]?.jsonPrimitive?.contentOrNull)
+            assertEquals("xhigh", req2["output_config"]!!.jsonObject["effort"]?.jsonPrimitive?.contentOrNull)
+        }
+    }
 }

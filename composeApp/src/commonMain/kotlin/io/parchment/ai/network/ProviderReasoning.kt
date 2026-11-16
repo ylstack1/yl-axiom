@@ -35,6 +35,18 @@ import io.parchment.ai.protocol.sanitizeGeminiThoughtSignature
  */
 internal fun normalizeReasoningModelId(name: String): String = name.trim().removePrefix("models/")
 
+internal fun stepDownReasoningEffort(currentEffort: String, errMsg: String): Pair<String, String>? =
+    when (currentEffort.trim().lowercase()) {
+        "max" -> "xhigh" to io.parchment.ai.strings.Strings.endpointRejectedMaxThinkingRetryingWith
+        "xhigh" -> "high" to io.parchment.ai.strings.Strings.endpointRejectedXhighThinkingRetryingWith
+        "minimal" -> if (errMsg.contains("minimal") || errMsg.contains("effort") || errMsg.contains("reasoning") ||
+            errMsg.contains("unsupported_value") || errMsg.contains("invalid_value")
+        ) {
+            "low" to io.parchment.ai.strings.Strings.endpointRejectedMinimalThinkingSteppingUp
+        } else null
+        else -> null
+    }
+
 internal fun isSameReasoningModel(
     savedModel: String,
     currentModel: String,

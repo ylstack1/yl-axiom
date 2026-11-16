@@ -36,7 +36,8 @@ import kotlinx.serialization.json.intOrNull
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.put
 
-internal class McpException(message: String) : Exception(message)
+internal open class McpException(message: String) : Exception(message)
+internal class McpHttpException(val statusCode: Int, message: String) : McpException(message)
 
 internal data class McpToolInfo(val name: String, val description: String, val inputSchema: JsonObject)
 internal data class McpToolResult(val text: String, val isError: Boolean)
@@ -141,7 +142,7 @@ internal class HttpMcpTransport(url: String, bearerToken: String) : McpTransport
                     onResponse(errJson)
                 } else {
                     val detail = errBody.take(240).takeIf { it.isNotEmpty() }?.let { ": $it" }.orEmpty()
-                    throw McpException("The server returned HTTP $status$detail.")
+                    throw McpHttpException(status, "The server returned HTTP $status$detail.")
                 }
                 return@execute
             }
@@ -230,6 +231,7 @@ internal const val MCP_HANDSHAKE_VERSION = "2025-11-25"
 internal const val MCP_STATELESS_VERSION = "2026-07-28"
 private val MCP_HANDSHAKE_VERSIONS = setOf("2025-11-25", "2025-06-18", "2025-03-26", "2024-11-05")
 private const val MCP_VERSION_META = "io.modelcontextprotocol/protocolVersion"
+private const val MCP_CLIENT_INFO_META = "io.modelcontextprotocol/clientInfo"
 private const val MCP_REQUEST_TIMEOUT_MS = 120_000L
 private const val MCP_MAX_RESULT_CHARS = 64_000
 private const val MCP_MAX_PAGES = 20
@@ -309,7 +311,18 @@ internal class McpClient(private val transport: McpTransport) {
         put("jsonrpc", "2.0")
         if (id != null) put("id", id)
         put("method", method)
-        put("params", if (!stateless) params else JsonObject(params + ("_meta" to buildJsonObject { put(MCP_VERSION_META, MCP_STATELESS_VERSION) })))
+        if (!stateless) {
+            put("params", params)
+        } else {
+            val existingMeta = (params["_meta"] as? JsonObject).orEmpty()
+            val mergedMeta = JsonObject(
+                existingMeta + mapOf(
+                    MCP_VERSION_META to JsonPrimitive(MCP_STATELESS_VERSION),
+                    MCP_CLIENT_INFO_META to buildJsonObject { put("name", "Parchment"); put("version", "2") }
+                )
+            )
+            put("params", JsonObject(params + ("_meta" to mergedMeta)))
+        }
     }
 
     /** Returns the JSON-RPC response object, which may carry an error. */
@@ -344,16 +357,27 @@ internal class McpClient(private val transport: McpTransport) {
 
     private suspend fun performConnect() {
         if (connected) return
-        val response = exchange("initialize", buildJsonObject {
-            put("protocolVersion", MCP_HANDSHAKE_VERSION)
-            put("capabilities", JsonObject(emptyMap()))
-            put("clientInfo", buildJsonObject { put("name", "Parchment"); put("version", "2") })
-        })
+        val response = try {
+            exchange("initialize", buildJsonObject {
+                put("protocolVersion", MCP_HANDSHAKE_VERSION)
+                put("capabilities", JsonObject(emptyMap()))
+                put("clientInfo", buildJsonObject { put("name", "Parchment"); put("version", "2") })
+            })
+        } catch (httpErr: McpHttpException) {
+            // A pure 2026-07-28 HTTP server may reject initialize or the 2025 header with 400/404/405/422.
+            if (httpErr.statusCode in setOf(400, 404, 405, 422)) {
+                stateless = true
+                transport.protocolVersion = MCP_STATELESS_VERSION
+                connected = true
+                return
+            }
+            throw httpErr
+        }
         val result = response["result"] as? JsonObject
         if (result == null) {
             val errObj = response["error"] as? JsonObject
             val errCode = (errObj?.get("code") as? JsonPrimitive)?.intOrNull
-            if (errObj == null || errCode == -32601) {
+            if (errObj == null || errCode == -32601 || errCode == -32600) {
                 // A 2026 server has no handshake, so listing tools is what proves it is usable.
                 stateless = true
                 transport.protocolVersion = MCP_STATELESS_VERSION

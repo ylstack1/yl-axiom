@@ -429,4 +429,62 @@ for line in sys.stdin:
             }
         }
     }
+
+    @Test
+    fun http400OnInitializeFallsBackTo2026StatelessWhileTrue404StillFails() = runBlocking<Unit> {
+        val strictStateless = HttpServer.create(InetSocketAddress("127.0.0.1", 0), 0).apply {
+            createContext("/mcp") { ex ->
+                val msg = Json.parseToJsonElement(ex.requestBody.bufferedReader().use { it.readText() }).jsonObject
+                val method = msg.getValue("method").jsonPrimitive.content
+                val protoHeader = ex.requestHeaders.getFirst("MCP-Protocol-Version")
+                if (method == "initialize" || protoHeader != MCP_STATELESS_VERSION) {
+                    val err = """{"error":"Stateless 2026-07-28 endpoint does not implement initialize"}""".toByteArray()
+                    ex.responseHeaders.set("Content-Type", "application/json")
+                    ex.sendResponseHeaders(400, err.size.toLong())
+                    ex.responseBody.use { it.write(err) }
+                } else {
+                    val meta = msg["params"]!!.jsonObject["_meta"]!!.jsonObject
+                    assertEquals(MCP_STATELESS_VERSION, meta["io.modelcontextprotocol/protocolVersion"]?.jsonPrimitive?.content)
+                    assertEquals("Parchment", meta["io.modelcontextprotocol/clientInfo"]?.jsonObject?.get("name")?.jsonPrimitive?.content)
+                    val res = buildJsonObject {
+                        put("jsonrpc", "2.0")
+                        put("id", msg.getValue("id"))
+                        putJsonObject("result") {
+                            putJsonArray("tools") {
+                                add(buildJsonObject {
+                                    put("name", "ping")
+                                    put("description", "Ping")
+                                    putJsonObject("inputSchema") { put("type", "object") }
+                                })
+                            }
+                        }
+                    }.toString().toByteArray()
+                    ex.responseHeaders.set("Content-Type", "application/json")
+                    ex.sendResponseHeaders(200, res.size.toLong())
+                    ex.responseBody.use { it.write(res) }
+                }
+                ex.close()
+            }
+            createContext("/missing") { ex ->
+                ex.requestBody.use { it.readBytes() }
+                val err = "Not found".toByteArray()
+                ex.sendResponseHeaders(404, err.size.toLong())
+                ex.responseBody.use { it.write(err) }
+                ex.close()
+            }
+            start()
+        }
+        try {
+            val base = "http://127.0.0.1:${strictStateless.address.port}"
+            connected(listOf(McpServerConfig("s26", "Stateless26", url = "$base/mcp", enabled = true))) {
+                assertEquals(McpServerState.READY, McpRegistry.statuses.value.getValue("s26").state)
+                assertEquals(listOf("mcp__Stateless26__ping"), McpRegistry.definitions.value.map { it.name })
+            }
+            connected(listOf(McpServerConfig("bad", "Missing", url = "$base/missing", enabled = true))) {
+                assertEquals(McpServerState.FAILED, McpRegistry.statuses.value.getValue("bad").state)
+            }
+        } finally {
+            strictStateless.stop(0)
+        }
+    }
 }

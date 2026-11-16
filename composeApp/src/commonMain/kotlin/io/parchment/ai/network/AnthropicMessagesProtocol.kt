@@ -115,6 +115,8 @@ internal suspend fun AiProviderEngine.executeAnthropicMessagesLoop(
     var thinkingModeOverride = "auto"
     var triedAdaptiveThinking = false
     var triedBudgetThinking = false
+    var omitAdaptiveDisplayOnRetry = false
+    var adaptiveEffortOverride: String? = null
     var omitNativeWebSearchOnRetry = AgentPermissionResolver.resolve(session, profile = profile).approvalMode != ToolApprovalMode.NEVER
     var loopStep = 0
 
@@ -154,18 +156,15 @@ internal suspend fun AiProviderEngine.executeAnthropicMessagesLoop(
                 if (useAdaptiveMode) {
                     putJsonObject("thinking") {
                         put("type", "adaptive")
-                        put("display", "summarized")
+                        if (!omitAdaptiveDisplayOnRetry) put("display", "summarized")
                     }
-                    if (effort.isNotEmpty() && lowerEffort != "default" && lowerEffort != "auto") {
-                        // Official tiers: low | medium | high | xhigh | max. `xhigh` is its own
-                        // level and must pass through verbatim; only the non-official
-                        // `minimal` is folded down to `low`.
-                        val normalizedAnthropicEffort = when (lowerEffort) {
-                            "minimal" -> "low"
-                            else -> lowerEffort
-                        }
+                    val resolvedEffort = adaptiveEffortOverride ?: when (lowerEffort) {
+                        "minimal" -> "low"
+                        else -> lowerEffort
+                    }
+                    if (resolvedEffort.isNotEmpty() && resolvedEffort != "default" && resolvedEffort != "auto") {
                         putJsonObject("output_config") {
-                            put("effort", normalizedAnthropicEffort)
+                            put("effort", resolvedEffort)
                         }
                     }
                 } else if (useBudgetMode) {
@@ -511,8 +510,6 @@ internal suspend fun AiProviderEngine.executeAnthropicMessagesLoop(
             } catch (e: kotlinx.coroutines.CancellationException) {
                 throw e
             } catch (e: Throwable) {
-                if (useAdaptiveMode) triedAdaptiveThinking = true
-                if (useBudgetMode) triedBudgetThinking = true
                 val hasAnyToolUse = streamBlocksByIndex.values.any { it is AnthropicStreamBlock.ToolUse }
                 val errMsg = (e.message ?: e.toString()).lowercase()
                 if (!stepEmittedOutput && !hasAnyToolUse && errMsg.contains("http 400")) {
@@ -528,9 +525,30 @@ internal suspend fun AiProviderEngine.executeAnthropicMessagesLoop(
                         onStatus(Strings.endpointDoesNotSupportNativeWeb)
                         continue
                     }
+                    if (useAdaptiveMode && !omitAdaptiveDisplayOnRetry && errMsg.contains("display") && !errMsg.contains("adaptive")) {
+                        omitAdaptiveDisplayOnRetry = true
+                        onStatus(Strings.endpointRejectedAdaptiveDisplayRetryingWithout)
+                        continue
+                    }
+                    if (useAdaptiveMode && (errMsg.contains("effort") || errMsg.contains("output_config") ||
+                            errMsg.contains("max") || errMsg.contains("xhigh") ||
+                            errMsg.contains("unsupported_value") || errMsg.contains("invalid_value"))
+                    ) {
+                        val currentEffort = adaptiveEffortOverride ?: when (lowerEffort) {
+                            "minimal" -> "low"
+                            else -> lowerEffort
+                        }
+                        val stepped = stepDownReasoningEffort(currentEffort, errMsg)
+                        if (stepped != null) {
+                            adaptiveEffortOverride = stepped.first
+                            onStatus(stepped.second)
+                            continue
+                        }
+                    }
                     if (useAdaptiveMode && !triedBudgetThinking && thinkingModeOverride != "budget" &&
                         (errMsg.contains("adaptive") || errMsg.contains("output_config") || errMsg.contains("effort") || errMsg.contains("display"))
                     ) {
+                        triedAdaptiveThinking = true
                         thinkingModeOverride = "budget"
                         onStatus(Strings.endpointDoesNotSupportAdaptiveThinking)
                         continue
@@ -538,11 +556,14 @@ internal suspend fun AiProviderEngine.executeAnthropicMessagesLoop(
                     if (useBudgetMode && !triedAdaptiveThinking && thinkingModeOverride != "adaptive" &&
                         (errMsg.contains("budget_tokens") || errMsg.contains("enabled") || errMsg.contains("thinking"))
                     ) {
+                        triedBudgetThinking = true
                         thinkingModeOverride = "adaptive"
                         onStatus(Strings.modelUsesAdaptiveThinkingSwitchingFrom)
                         continue
                     }
                     if (thinkingModeOverride != "omit" && (errMsg.contains("thinking") || errMsg.contains("budget_tokens") || errMsg.contains("output_config") || errMsg.contains("effort") || errMsg.contains("adaptive") || errMsg.contains("display"))) {
+                        if (useAdaptiveMode) triedAdaptiveThinking = true
+                        if (useBudgetMode) triedBudgetThinking = true
                         thinkingModeOverride = "omit"
                         onStatus(Strings.endpointRejectedThinkingConfigurationRetryingWith)
                         continue
@@ -820,7 +841,6 @@ internal fun AiProviderEngine.buildAnthropicBaseMessages(
                     val batchThinking = batch.precedingThinking
                     if (!cleanText.contains(REASONING_HANDOFF_MARKER) &&
                         batchSig.isNotBlank() &&
-                        (batchThinking.isNotBlank() || batches.size == 1) &&
                         isValidAnthropicSignature(batchSig, nodeVar?.providerProtocol, nodeVar?.modelUsed.orEmpty(), currentModel)
                     ) {
                         assistantToolBlocks.add(buildJsonObject {
