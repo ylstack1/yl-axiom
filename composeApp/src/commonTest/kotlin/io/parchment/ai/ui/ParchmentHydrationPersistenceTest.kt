@@ -33,6 +33,53 @@ class ParchmentHydrationPersistenceTest {
     )
 
     @Test
+    fun chatIndexServesUnchangedStubsAndRereadsEverythingElse() {
+        val stamp = PlatformRuntime.currentTimeMillis()
+        val ids = List(3) { "index-test-$it-$stamp" }
+        val base = AppStateSnapshot().copy(activeSessionId = "no-such-chat-$stamp", sessions = emptyList())
+        fun titleOf(state: AppStateSnapshot, id: String) = state.sessions.first { it.id == id }.title
+        fun chatFile(id: String) = java.io.File(PlatformStorage.getChatsStorageDirectoryPath(), PlatformStorage.chatFolderName(id) + "/chat.json")
+        /** Same length and modification time: only the index can tell the old content apart. */
+        fun swapTitleKeepingStamp(id: String, from: String, to: String) {
+            val file = chatFile(id)
+            val modified = file.lastModified()
+            file.writeText(file.readText().replace(from, to))
+            check(file.setLastModified(modified))
+        }
+        try {
+            ids.forEach { saveSingleChatSessionToDisk(full(it)) }
+            val first = loadRemainingHistoricalSessionsDehydrated(base)
+            ids.forEach { id -> assertTrue(first.sessions.first { it.id == id }.isCompactStub, "inactive chats load as stubs") }
+            val index = PlatformStorage.loadChatIndexJson().orEmpty()
+            ids.forEach { assertTrue(it in index, "the first load records $it in chat-index.json") }
+
+            swapTitleKeepingStamp(ids[0], "original", "ORIGINAL")
+            saveSingleChatSessionToDisk(full(ids[1]).copy(title = "renamed"))
+            PlatformStorage.deleteChatSessionFile(ids[2])
+            val second = loadRemainingHistoricalSessionsDehydrated(base)
+            assertEquals("original", titleOf(second, ids[0]), "an unchanged stamp is served from the index without reading the chat")
+            assertEquals("renamed", titleOf(second, ids[1]), "a rewritten chat is read again")
+            assertTrue(second.sessions.none { it.id == ids[2] }, "a deleted chat disappears")
+            assertFalse(ids[2] in PlatformStorage.loadChatIndexJson().orEmpty())
+
+            val active = loadRemainingHistoricalSessionsDehydrated(base.copy(activeSessionId = ids[0]))
+            assertEquals("ORIGINAL", titleOf(active, ids[0]), "the open chat is always read in full")
+            assertFalse(active.sessions.first { it.id == ids[0] }.isCompactStub)
+
+            PlatformStorage.saveChatIndexJson("{not json")
+            assertEquals("ORIGINAL", titleOf(loadRemainingHistoricalSessionsDehydrated(base), ids[0]), "a corrupt index falls back")
+
+            swapTitleKeepingStamp(ids[0], "ORIGINAL", "original")
+            val current = PlatformStorage.loadChatIndexJson().orEmpty()
+            assertTrue("\"stubFormat\":$CHAT_STUB_FORMAT" in current)
+            PlatformStorage.saveChatIndexJson(current.replace("\"stubFormat\":$CHAT_STUB_FORMAT", "\"stubFormat\":0"))
+            assertEquals("original", titleOf(loadRemainingHistoricalSessionsDehydrated(base), ids[0]), "an index of another stub format is ignored")
+        } finally {
+            ids.forEach { PlatformStorage.deleteChatSessionFile(it) }
+        }
+    }
+
+    @Test
     fun everyMessageInAStubHasAUniqueId() {
         val messages = List(5) { MessageNode(id = "real-$it", role = MessageRole.USER, variants = listOf(MessageVariant(id = "v$it", content = "text"))) }
         val stub = dehydrateChatSessionToCompactStub(full("stub-ids").copy(messages = messages))

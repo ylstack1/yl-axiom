@@ -541,6 +541,12 @@ internal fun mergeSessionMetadata(full: ChatSession, metadata: ChatSession): Cha
  * exact `messages.size` and a 140-char preview of the final message so sidebar badges and tab switchers
  * work identically without retaining full conversation content.
  */
+/**
+ * The shape of a compact stub. `chat-index.json` stores stubs, so bump this whenever
+ * [dehydrateChatSessionToCompactStub] keeps something new or different; old indexes are then ignored and rebuilt.
+ */
+internal const val CHAT_STUB_FORMAT = 1
+
 internal fun dehydrateChatSessionToCompactStub(session: ChatSession): ChatSession {
     if (session.isCompactStub || session.id.isBlank() || session.messages.isEmpty()) return session
     val msgCount = session.messages.size
@@ -905,7 +911,10 @@ internal fun loadRemainingHistoricalSessionsDehydrated(
         mergedById[decoded.id] = stub ?: stripRedundantAttachmentBase64(decoded)
     }
     if (nextEntries != index.entries) {
-        runCatching { PlatformStorage.saveChatIndexJson(compactStateJson.encodeToString(ChatStubIndex.serializer(), ChatStubIndex(entries = nextEntries))) }
+        runCatching {
+            val updated = ChatStubIndex(stubFormat = CHAT_STUB_FORMAT, entries = nextEntries)
+            PlatformStorage.saveChatIndexJson(compactStateJson.encodeToString(ChatStubIndex.serializer(), updated))
+        }
     }
     if (!loadedAny) return currentState
     val combinedSessions = mergedById.values
@@ -924,7 +933,12 @@ internal fun loadRemainingHistoricalSessionsDehydrated(
  * falls back to reading that `chat.json`, which stays the only source of truth.
  */
 @Serializable
-internal data class ChatStubIndex(val version: Int = 1, val entries: Map<String, ChatIndexEntry> = emptyMap())
+internal data class ChatStubIndex(
+    val version: Int = 1,
+    /** [CHAT_STUB_FORMAT] the stubs were made with; 0 (missing) means an index older than the field. */
+    val stubFormat: Int = 0,
+    val entries: Map<String, ChatIndexEntry> = emptyMap()
+)
 
 @Serializable
 internal data class ChatIndexEntry(
@@ -952,7 +966,7 @@ internal data class ChatIndexEntry(
 
 private fun readChatStubIndex(): ChatStubIndex = runCatching {
     PlatformStorage.loadChatIndexJson()?.let { compactStateJson.decodeFromString<ChatStubIndex>(it) }
-}.getOrNull()?.takeIf { it.version == 1 } ?: ChatStubIndex()
+}.getOrNull()?.takeIf { it.version == 1 && it.stubFormat == CHAT_STUB_FORMAT } ?: ChatStubIndex(stubFormat = CHAT_STUB_FORMAT)
 
 internal fun loadOrCreateDefaultAppState(): AppStateSnapshot {
     val rawSettings = PlatformStorage.loadAppStateJson()?.let { migrateLegacyProviderJson(it) }
