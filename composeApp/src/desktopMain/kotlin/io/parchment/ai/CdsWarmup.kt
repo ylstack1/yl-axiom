@@ -11,6 +11,7 @@ import io.parchment.ai.platform.AtomicFileStorage
 import io.parchment.ai.platform.DesktopPlatformHost
 import io.parchment.ai.platform.PlatformRuntime
 import io.parchment.ai.platform.PlatformStorage
+import io.parchment.ai.platform.WindowsNative
 import io.parchment.ai.protocol.O200kTokenizer
 import io.parchment.ai.ui.ParchmentApp
 import io.parchment.ai.ui.compactStateJson
@@ -27,7 +28,10 @@ import kotlin.system.exitProcess
 /** The installer runs `Parchment.exe --cds-warmup` hidden, once, right after copying the files. */
 internal const val CDS_WARMUP_FLAG = "--cds-warmup"
 
-private const val WARMUP_TIME_LIMIT_MS = 30_000L
+/** Generous for 2-core machines; this i5 needs about 13 s including the archive dump. */
+private const val WARMUP_TIME_LIMIT_MS = 60_000L
+/** Exit code of a warm-up the watchdog ended; the installer ignores it, `perf.py` reports it. */
+private const val WARMUP_TIMED_OUT = 3
 private const val WARMUP_FRAMES = 90
 
 private const val WARMUP_MARKDOWN = "# Warm-up\n\nSome *prose* with `code` and \$\$x^2\$\$.\n\n```kotlin\nval x = 1\n```\n\n| a | b |\n|---|---|\n| 1 | 2 |\n"
@@ -40,12 +44,17 @@ private const val WARMUP_MARKDOWN = "# Warm-up\n\nSome *prose* with `code` and \
  *
  * Safe inside a silent install: it works in a throwaway folder (never the user's data) seeded with one chat, no
  * model, no MCP servers and the update check off, so start-up sends no network request; the folder is deleted
- * before exit. If anything hangs, the watchdog halts the process and the first real launch builds the archive.
+ * before exit. If anything hangs, the watchdog terminates the process without an archive and the first real launch
+ * builds it.
  */
 internal fun runCdsWarmup(): Nothing {
     Thread({
         Thread.sleep(WARMUP_TIME_LIMIT_MS)
-        Runtime.getRuntime().halt(0)
+        // Not Runtime.halt: it still dumps the archive, and a partial one would stay (the JVM only replaces an invalid
+        // archive), leaving every later start slower. Terminating writes nothing; the first real launch then writes
+        // a complete archive, as before the warm-up existed.
+        runCatching { WindowsNative.terminateCurrentProcess(WARMUP_TIMED_OUT) }
+        Runtime.getRuntime().halt(WARMUP_TIMED_OUT)
     }, "cds-warmup-watchdog").apply { isDaemon = true; start() }
 
     val dataDir = Files.createTempDirectory("parchment-cds-warmup-").toFile()

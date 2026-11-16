@@ -45,6 +45,26 @@ internal object WindowsNative {
         downcall("kernel32", "SetThreadExecutionState", FunctionDescriptor.of(JAVA_INT, JAVA_INT))
     }
 
+    /** HANDLE GetCurrentProcess(): a pseudo-handle, never closed. */
+    private val getCurrentProcess by lazy {
+        downcall("kernel32", "GetCurrentProcess", FunctionDescriptor.of(ADDRESS))
+    }
+
+    /** BOOL TerminateProcess(HANDLE, UINT exitCode). */
+    private val terminateProcess by lazy {
+        downcall("kernel32", "TerminateProcess", FunctionDescriptor.of(JAVA_INT, ADDRESS, JAVA_INT))
+    }
+
+    /**
+     * Ends this process at once with [exitCode]. Unlike `Runtime.halt` (which still runs the JVM's `before_exit`,
+     * where the dynamic class archive is dumped), nothing more runs: no archive, no shutdown hooks. Returns only if
+     * Windows refused, in which case the caller decides what to do next.
+     */
+    fun terminateCurrentProcess(exitCode: Int): Boolean {
+        val self = getCurrentProcess.invokeWithArguments() as MemorySegment
+        return (terminateProcess.invokeWithArguments(self, exitCode) as Int) != 0
+    }
+
     /** MEMORYSTATUSEX: two DWORDs then seven DWORDLONGs, 64 bytes with natural alignment. */
     val MEMORY_STATUS_EX: StructLayout = MemoryLayout.structLayout(
         JAVA_INT.withName("dwLength"),
