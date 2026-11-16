@@ -67,7 +67,7 @@ All Kotlin files below sit under `composeApp/src/commonMain/kotlin/io/parchment/
 
 | Source set | Files & responsibilities |
 |---|---|
-| `jvmShared/platform` | `AppAgentStorage.kt`, `AppStorageInventory.kt`, `AtomicFileStorage.kt`, `BoundedImageCache.kt`, `BoundedTextCapture.kt`, `ChatArchiveExtractor.kt`, `ChatArchiveWriter.kt`, `LocalMediaStore.kt`, `OtaStagedFile.kt`, `PublicWebTransport.kt` (DNS/private-IP SSRF guard), `SnapshotFileStorage.kt`, `StreamingJsonDecoder.kt`, `WorkspaceFileEditor.kt`, `WorkspacePathGuard.kt`, `WorkspaceTextReader.kt`, `WorkspaceTreeScanner.kt`. |
+| `jvmShared/platform` | `AppAgentStorage.kt`, `AppStorageInventory.kt`, `AtomicFileStorage.kt`, `BoundedImageCache.kt`, `BoundedTextCapture.kt`, `ChatArchiveExtractor.kt`, `ChatArchiveWriter.kt`, `LocalMediaStore.kt`, `OtaStagedFile.kt`, `PublicWebTransport.kt` (DNS/private-IP SSRF guard), `SnapshotFileStorage.kt`, `StreamingJsonDecoder.kt`, `WorkspaceFileEditor.kt`, `WorkspacePathGuard.kt`, `WorkspaceTextReader.kt`, `WorkspaceTreeScanner.kt`; `jvmShared/network/ProviderHttpEngine.kt` (OkHttp for both targets) and `jvmShared/ui/ProcessStatePreload.kt` (settings and open chat read while the window is built). |
 | `desktopMain` | `Main.kt` (window startup, single-instance lock, Windows framing), `CdsWarmup.kt` (installer `--cds-warmup`), `WindowKeys.kt`, and `platform/`: `DesktopComputerControl.kt`, `DesktopImageDecoder.kt`, `DesktopMcpProcess.kt`, `DesktopOwnedShell.kt`, `DesktopPlatformHost.kt`, `PlatformPickers.desktop.kt`, `PlatformRuntime.desktop.kt`, `PlatformStorage.desktop.kt`, `PlatformVoice.desktop.kt`, `PlatformWorkspace.desktop.kt`, `WindowsChrome.kt`, `WindowsMemory.kt`, `WindowsNative.kt` (FFM downcalls), `WindowsPowerLease.kt`. |
 | `androidMain` | `MainActivity.kt`, `LongDecodeForegroundService.kt`, `ParchmentAccessibilityService.kt`, `OtaInstallReceiver.kt`, `ParchmentFileProvider.kt`, and `platform/`: `AndroidComputerControl.kt`, `AndroidOwnedShell.kt`, `AndroidPlatformHost.kt`, `PlatformPickers.android.kt`, `PlatformRuntime.android.kt`, `PlatformStorage.android.kt`, `PlatformVoice.android.kt`, `PlatformWorkspace.android.kt`. |
 
@@ -76,7 +76,7 @@ All Kotlin files below sit under `composeApp/src/commonMain/kotlin/io/parchment/
 ### State ownership and persistence
 
 1. `Main.kt` (desktop) and `MainActivity.kt` (Android) initialize platform hosts (`DesktopPlatformHost` / `AndroidPlatformHost`) and render `ParchmentApp`, which binds Compose snapshot state in `ParchmentAppController` and `ParchmentStatePersistence`.
-2. Initial hydration loads metadata and chat stubs first so startup stays fast even with large histories; full chat bodies hydrate on demand and persist incrementally through `ParchmentDiskWriter` backed by `AtomicFileStorage` / `SnapshotFileStorage`.
+2. Initial hydration loads metadata and chat stubs first so startup stays fast even with large histories; inactive chats come from `chat-index.json` (stubs checked against each `chat.json`'s size and modification time, a cache only) and full chat bodies hydrate on demand and persist incrementally through `ParchmentDiskWriter` backed by `AtomicFileStorage` / `SnapshotFileStorage`.
 3. Data roots:
    - **Desktop packaged / Windows user install:** `%LOCALAPPDATA%\ParchmentAI`
    - **Desktop development (`:composeApp:run`):** `composeApp/parchment-portable-data` (override with `--user-dir`)

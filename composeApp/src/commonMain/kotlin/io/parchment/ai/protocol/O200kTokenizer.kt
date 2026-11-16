@@ -514,6 +514,45 @@ object O200kTokenizer {
     }
 
     /**
+     * A constant-time-per-message stand-in for [computeBaseContextPrefixBreakdown] (about four characters per token,
+     * no regex, no disk), shown for the moment the exact count takes off the UI thread.
+     */
+    fun estimateBaseContextPrefixBreakdown(
+        session: ChatSession,
+        assistant: AssistantAgent,
+        profile: ProviderProfile
+    ): ContextWindowBreakdown {
+        val activeModelId = session.modelOverride.ifBlank { assistant.defaultModelId.ifBlank { profile.defaultModel } }.trim()
+        val contextLimit = profile.customModelSpecs[activeModelId]?.contextWindowTokens ?: profile.contextWindowTokens
+        val effectiveMessages = if (assistant.contextMessageLimit > 0 && session.messages.size > assistant.contextMessageLimit) {
+            session.messages.takeLast(assistant.contextMessageLimit)
+        } else {
+            session.messages
+        }
+        var chatHistoryTokens = 0
+        var activeTurnsCount = 0
+        var mutedTurnsCount = (session.messages.size - effectiveMessages.size).coerceAtLeast(0)
+        for (i in 0 until (effectiveMessages.size - 1).coerceAtLeast(0)) {
+            val node = effectiveMessages[i]
+            if (!node.includedInContext) { mutedTurnsCount++; continue }
+            activeTurnsCount++
+            chatHistoryTokens += 4 + estimateTokensFast(node.activeVariant.content) + estimateTokensFast(node.activeVariant.thinkingSummary)
+        }
+        return ContextWindowBreakdown(
+            systemAndPersonaTokens = estimateTokensFast(assistant.systemPrompt) + estimateTokensFast(session.systemPrompt),
+            lorebookAndMemoryTokens = estimateTokensFast(session.storySummary),
+            workspaceAndToolsTokens = 0,
+            uploadedFilesTokens = 0,
+            uploadedFilesCount = 0,
+            chatHistoryTokens = chatHistoryTokens,
+            activeTurnsCount = activeTurnsCount,
+            mutedTurnsCount = mutedTurnsCount,
+            composerDraftTokens = 0,
+            contextLimitTokens = contextLimit
+        )
+    }
+
+    /**
      * Adds the final turn (`effectiveMessages.lastOrNull()`) onto a cached [prefixBreakdown] in $O(1)$
      * while streaming, using [countSingleTurnTokens] consistently with full-history scans.
      */

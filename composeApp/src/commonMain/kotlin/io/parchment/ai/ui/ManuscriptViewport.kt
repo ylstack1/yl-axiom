@@ -362,7 +362,12 @@ internal fun ManuscriptViewport(
         }
         acc
     } else 0L
-    val baseContextPrefix = remember(
+    // Counting the whole chat (and reading AGENTS.md on a cache miss) is too slow for the UI thread, so the exact
+    // count runs on Dispatchers.Default. Until it lands, a chat shows a length-based estimate, never another chat's.
+    val baseContextPrefixState = remember(activeSession.id) {
+        mutableStateOf(O200kTokenizer.estimateBaseContextPrefixBreakdown(activeSession, activeAssistant, activeProfile))
+    }
+    LaunchedEffect(
         activeSession.messages.takeUnless { isStreaming },
         streamingPrefixSignature,
         activeSession.id,
@@ -382,15 +387,24 @@ internal fun ManuscriptViewport(
         isGoalModeEnabled,
         isStreaming
     ) {
-        O200kTokenizer.computeBaseContextPrefixBreakdown(
-            session = activeSession,
-            assistant = activeAssistant,
-            profile = activeProfile,
-            goalModeActive = isGoalModeEnabled,
-            globalWorldBook = appState.globalWorldBook,
-            excludeLastFromKeywords = isStreaming
-        )
+        val session = activeSession
+        val assistant = activeAssistant
+        val profile = activeProfile
+        val goalMode = isGoalModeEnabled
+        val worldBook = appState.globalWorldBook
+        val excludeLast = isStreaming
+        baseContextPrefixState.value = withContext(Dispatchers.Default) {
+            O200kTokenizer.computeBaseContextPrefixBreakdown(
+                session = session,
+                assistant = assistant,
+                profile = profile,
+                goalModeActive = goalMode,
+                globalWorldBook = worldBook,
+                excludeLastFromKeywords = excludeLast
+            )
+        }
     }
+    val baseContextPrefix = baseContextPrefixState.value
     val baseContextBreakdown = remember(baseContextPrefix, throttledBreakdownTrigger, isStreaming) {
         O200kTokenizer.applyLastTurnToBreakdown(baseContextPrefix, activeSession.messages.lastOrNull())
     }
@@ -904,6 +918,13 @@ internal fun ManuscriptViewport(
                         val filteredMapItems = remember(activeSession.messages, mapFilterQuery, mapPromptsOnly) {
                             filterMessageMapTurns(activeSession.messages, mapFilterQuery, mapPromptsOnly)
                         }
+                        // Arrow keys in the filter field move this highlight; Enter jumps to it.
+                        var selectedMapRow by remember(filteredMapItems) { mutableStateOf(0) }
+                        fun jumpToMapRow(row: Int) {
+                            val (idx, _) = filteredMapItems.getOrNull(row) ?: return
+                            minimapInteractionTick++
+                            scope.launch { listState.scrollToItemWithMotion(idx + 1, reduceMotion) }
+                        }
                         Column(
                             modifier = Modifier
                                 .width(if (win.isCompact) 255.dp else 290.dp)
@@ -948,13 +969,15 @@ internal fun ManuscriptViewport(
                                     placeholder = Strings.filterTurns,
                                     singleLine = true,
                                     minHeight = 30.dp,
-                                    // Enter jumps to the first matching turn.
-                                    onEnterKeySend = { _, _ ->
-                                        filteredMapItems.firstOrNull()?.let { (idx, _) ->
-                                            minimapInteractionTick++
-                                            scope.launch { listState.scrollToItemWithMotion(idx + 1, reduceMotion) }
+                                    onEnterKeySend = { _, _ -> jumpToMapRow(selectedMapRow); true },
+                                    onKeyNavigation = { event ->
+                                        val count = filteredMapItems.size
+                                        when {
+                                            event.type != KeyEventType.KeyDown || count == 0 -> false
+                                            event.key == Key.DirectionDown -> { selectedMapRow = (selectedMapRow + 1) % count; true }
+                                            event.key == Key.DirectionUp -> { selectedMapRow = (selectedMapRow - 1 + count) % count; true }
+                                            else -> false
                                         }
-                                        true
                                     },
                                     modifier = Modifier.weight(1f)
                                 )
@@ -971,15 +994,20 @@ internal fun ManuscriptViewport(
                                 modifier = Modifier.verticalScroll(rememberScrollState()),
                                 verticalArrangement = Arrangement.spacedBy(Space.s6)
                             ) {
-                                filteredMapItems.forEach { (idx, mNode) ->
+                                filteredMapItems.forEachIndexed { row, (idx, mNode) ->
                                     val isAsst = mNode.role == MessageRole.ASSISTANT
                                     val roleBadge = if (isAsst) "AI" else Strings.you
+                                    val isSelectedRow = row == selectedMapRow
                                     Column(
                                         modifier = Modifier
                                             .fillMaxWidth()
                                             .clip(RoundedCornerShape(Radius.r8))
                                             .background(if (isAsst) p.sheetBg.copy(alpha = 0.65f) else p.elevatedBg.copy(alpha = 0.45f))
-                                            .kissClickable(pressScale = 0.98f) {
+                                            .then(
+                                                if (isSelectedRow) Modifier.border(1.dp, p.accent, RoundedCornerShape(Radius.r8)) else Modifier
+                                            )
+                                            .kissClickable(pressScale = 0.98f, selected = isSelectedRow) {
+                                                selectedMapRow = row
                                                 minimapInteractionTick++
                                                 scope.launch {
                                                     listState.scrollToItemWithMotion(idx + 1, reduceMotion)
@@ -1730,8 +1758,10 @@ internal fun ManuscriptViewport(
                         }
                     }
                 }
-                val historyAttachments = remember(activeSession.id, activeSession.messages.size) {
-                    activeSession.messages.flatMap { it.activeVariant.attachments }
+                // Only the @ popup lists earlier attachments, so they are gathered while it is open.
+                val atPopupOpen = activeAtQuery != null
+                val historyAttachments = remember(activeSession.id, activeSession.messages.size, atPopupOpen) {
+                    if (!atPopupOpen) emptyList() else activeSession.messages.flatMap { it.activeVariant.attachments }
                         .distinctBy { it.fileName }
                 }
                 val allLoreFragments = remember(appState.globalWorldBook, activeAssistant.fragments, activeSession.fragments) {

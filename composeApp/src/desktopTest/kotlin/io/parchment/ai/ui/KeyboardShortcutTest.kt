@@ -123,6 +123,10 @@ class KeyboardShortcutTest {
             assertFalse(paletteOpen(scene), "the prompt jump replaces, not stacks on, the command palette")
             pressInWindow(scene, shortcuts, Key.K, ctrl = true)
             assertTrue(paletteOpen(scene) && !promptJumpOpen(scene), "Ctrl+K switches to the command palette")
+            assertTrue(
+                nodes(scene).any { node -> node.config.getOrNull(SemanticsProperties.Text).orEmpty().any { it.text == Strings.closeThisTab } },
+                "Every shortcut has a palette row; Ctrl+W must too"
+            )
             pressInWindow(scene, shortcuts, Key.G, ctrl = true)
             assertTrue(promptJumpOpen(scene) && !paletteOpen(scene), "Ctrl+G switches back")
             pressInWindow(scene, shortcuts, Key.Escape, ctrl = false)

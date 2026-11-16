@@ -1527,6 +1527,12 @@ class ParchmentProtocolAndHarnessTest {
             excludeLastFromKeywords = false
         )
         assertEquals(baseBreakdown, O200kTokenizer.applyLastTurnToBreakdown(splitPrefix, fullSession.messages.lastOrNull()))
+        // The instant stand-in shown before the exact count must at least agree on turns and the limit.
+        val estimate = O200kTokenizer.estimateBaseContextPrefixBreakdown(fullSession, dummyAssistant, dummyProfile)
+        assertEquals(splitPrefix.activeTurnsCount, estimate.activeTurnsCount)
+        assertEquals(splitPrefix.mutedTurnsCount, estimate.mutedTurnsCount)
+        assertEquals(splitPrefix.contextLimitTokens, estimate.contextLimitTokens)
+        assertTrue(estimate.chatHistoryTokens > 0 == splitPrefix.chatHistoryTokens > 0)
 
         // 6. Verify countLinesFast and cached parseKissLabelIcons
         assertEquals(1, io.parchment.ai.ui.countLinesFast(""))

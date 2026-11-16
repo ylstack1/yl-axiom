@@ -404,6 +404,15 @@ fun ParchmentApp(
                     }
                     add(PaletteCommand(if (isSettingsOpen) Strings.closeSettings else Strings.openSettings, Strings.ctrl) { openSettings(null) })
                     if (!isCompactScreen) add(PaletteCommand(Strings.showOrHideTheSidebar, Strings.ctrlB) { showSidebar = !showSidebar })
+                    if (!isCompactScreen && !isSettingsOpen) {
+                        add(PaletteCommand(Strings.closeThisTab, Strings.ctrlW) { closeChatTab(appState.activeSessionId) })
+                        if (openTabIds.size > 1) {
+                            add(PaletteCommand(Strings.nextTab, Strings.ctrlTab) {
+                                val here = openTabIds.indexOf(appState.activeSessionId).coerceAtLeast(0)
+                                switchToTab(openTabIds[(here + 1) % openTabIds.size])
+                            })
+                        }
+                    }
                     SettingsCategory.entries.forEach { category ->
                         add(PaletteCommand(Strings.settings4(category.label)) { openSettings(category) })
                     }

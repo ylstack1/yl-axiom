@@ -46,7 +46,7 @@ Studied 2026-11 (iA Writer, Things, Linear, Raycast, Bear, Craft, Apple Design A
 |---|---|---|
 | Typography is the interface: a reading measure, a clear type scale, nothing competing with the text | iA Writer, Bear | One reading width and one type scale (above) |
 | Calm by default: secondary actions recede until wanted | Things, Linear | Controls appear on hover; at large text the phone composer moves its actions to a second row |
-| Keyboard first: every action reachable without a pointer, one palette to find them | Linear, Raycast | Ctrl+K command palette; Ctrl+N, Ctrl+, and Ctrl+B |
+| Keyboard first: every action reachable without a pointer, one palette to find them | Linear, Raycast | Ctrl+K command palette, Ctrl+G prompt jump; Ctrl+N, Ctrl+W, Ctrl+Tab, Ctrl+, and Ctrl+B |
 | Undo instead of asking | Things, Linear | Deleted chats come back from Undo on the notice; the confirm dialog is optional |
 | Empty states teach the next step | Things, Craft | Without a key, the empty chat leads into provider setup; empty lists say why and offer the fix |
 | Motion explains, briefly; it never delays | Linear, Things | Short timings above; Reduce motion makes all of it instant |
