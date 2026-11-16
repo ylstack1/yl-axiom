@@ -9,6 +9,8 @@ plugins {
     alias(libs.plugins.composeMultiplatform)
     alias(libs.plugins.composeCompiler)
     alias(libs.plugins.kotlinSerialization)
+    // Dev-only hot reload for desktop UI work: ./gradlew :composeApp:hotRunDesktop (see docs/ARCHITECTURE.md).
+    alias(libs.plugins.composeHotReload)
 }
 
 val appVersionProp = (project.findProperty("appVersion") as? String)?.removePrefix("v")?.trim()
