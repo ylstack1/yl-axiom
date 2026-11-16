@@ -33,7 +33,7 @@ A batch is done only when `affected` passes and TODO records it: tick what is ve
 
 Report in a few lines: what changed, what was verified, what wasn't. Never claim a check you did not run.
 
-Commit messages follow Conventional Commits (`feat:`, `fix:`, `perf:`, `docs:`, `chore:`, `ci:`, `refactor:`, `test:`): `feat:`, `fix:` and `perf:` advance release-please and CHANGELOG (`docs:`/`chore:`/`ci:`/`refactor:`/`test:` are hidden and do not cut a release). A push to `main` doesn't release; merging the release PR does.
+Commit messages follow Conventional Commits (`feat:`, `fix:`, `perf:`, `docs:`, `chore:`, `ci:`, `refactor:`, `test:`): `feat:`, `fix:` and `perf:` advance release-please and CHANGELOG (`docs:`/`chore:`/`ci:`/`refactor:`/`test:` are hidden and do not cut a release). A push to `main` doesn't release; merging the release PR does. Merge feature PRs with `gh pr merge --rebase`: a merge commit repeats the PR title, which release-please lists as a second entry.
 
 ## Spend tokens carefully
 
