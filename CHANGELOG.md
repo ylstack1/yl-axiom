@@ -7,7 +7,6 @@ What changed in each release, newest first. From 2.1.7 on, release-please writes
 
 ### Faster and lighter
 
-* FFM native calls, CDS warm-up, chat stub index, prompt jump and parallel helpers ([b2ecff7](https://github.com/baros4294/parchment/commit/b2ecff7d57fdb8a6716850145736baa759924ad0))
 * FFM native calls, CDS warm-up, chat stub index, prompt jump and parallel helpers ([a1d6cc5](https://github.com/baros4294/parchment/commit/a1d6cc5d583ee0f8bf6fcfea6c5e0cbe472338f6))
 
 ## [2.2.5](https://github.com/baros4294/parchment/compare/v2.2.4...v2.2.5) (2026-11-16)
