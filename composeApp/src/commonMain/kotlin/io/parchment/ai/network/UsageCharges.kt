@@ -186,6 +186,16 @@ internal fun estimateRequestCost(record: ApiUsageRecord): RequestCostEstimate {
     return RequestCostEstimate(total, missing)
 }
 
+/** [spendTowardLimit] for a ledger plus helper records not yet adopted into it (see GenerationStreamAccumulator). */
+internal fun spendTowardLimitWithPending(ledger: Collection<ApiUsageRecord>, pending: Collection<ApiUsageRecord>): Double {
+    if (pending.isEmpty()) return spendTowardLimit(ledger)
+    // Records are cumulative per request: a newer copy replaces the older one instead of adding to it.
+    val merged = LinkedHashMap<String, ApiUsageRecord>()
+    ledger.forEach { merged[it.requestId] = it }
+    pending.forEach { merged[it.requestId] = it }
+    return spendTowardLimit(merged.values)
+}
+
 /**
  * What a spend limit counts. Many servers leave out the cache split, which makes the displayed
  * cost unavailable; here that input counts at its lowest possible price, so the limit still

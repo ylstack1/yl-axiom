@@ -209,6 +209,8 @@ object AiProviderEngine {
         resumeMediaTask: String = "",
         spendLimitUsd: Double = 0.0,
         spendBeforeRunUsd: Double = 0.0,
+        /** Set for helpers: the whole run's live spend, so siblings working in parallel share one limit. */
+        externalRunSpendUsd: (() -> Double)? = null,
         initialElapsedMs: Long = 0L,
         initialApiUsageRecords: List<ApiUsageRecord> = emptyList(),
         initialTokenMetrics: TokenMetrics = TokenMetrics(),
@@ -247,6 +249,7 @@ object AiProviderEngine {
             resumeMediaTask = resumeMediaTask,
             spendLimitUsd = spendLimitUsd,
             spendBeforeRunUsd = spendBeforeRunUsd,
+            externalRunSpendUsd = externalRunSpendUsd,
             initialElapsedMs = initialElapsedMs,
             initialApiUsageRecords = initialApiUsageRecords,
             initialTokenMetrics = initialTokenMetrics,

@@ -342,6 +342,25 @@ class StreamRecoveryHttpTest {
         }
     }
 
+    @Test fun aHelperStopsWhenItsSiblingsHaveSpentTheRunsLimit() {
+        // Its own ledger is empty and spendBeforeRunUsd is 0; only the run-wide view knows the siblings spent $1.
+        Server(listOf(Reply(sse(chatText, "[DONE]")))).use { server ->
+            val priced = ModelPricingSpec("fixture-model", inputPricePerM = 1000.0, outputPricePerM = 1000.0)
+            val fixture = profile(server, CUSTOM_DIALECT_OPENAI_CHAT).copy(customModelSpecs = mapOf("fixture-model" to priced))
+            val updates = runBlocking {
+                withTimeout(20_000) {
+                    AiProviderEngine.streamGeneration(
+                        profile = fixture, session = ChatSession("chat:helper-2", "Helper", 1L, 1L, fixture.id),
+                        historyNodes = listOf(MessageNode("task", MessageRole.USER, listOf(MessageVariant("task-v", content = "Find it")))),
+                        spendLimitUsd = 1.0, spendBeforeRunUsd = 0.0, externalRunSpendUsd = { 1.0 }
+                    ).toList()
+                }
+            }
+            assertEquals(0, server.requests.size, "A helper must not send once the run as a whole reached the limit")
+            assertTrue("spend limit" in updates.filterIsInstance<StreamUpdate.Error>().single().message)
+        }
+    }
+
     @Test fun aRunStopsBetweenStepsOnceItCrossesTheLimit() {
         val step = """{"choices":[{"delta":{"tool_calls":[{"index":0,"id":"a","function":{"name":"fs_read","arguments":"{}"}}]},"finish_reason":"tool_calls"}],"usage":{"prompt_tokens":1000,"completion_tokens":1000}}"""
         Server(listOf(Reply(sse(step, "[DONE]")))).use { server ->

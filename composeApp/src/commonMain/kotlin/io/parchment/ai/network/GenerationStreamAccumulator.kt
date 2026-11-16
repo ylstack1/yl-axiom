@@ -47,6 +47,8 @@ internal class GenerationStreamAccumulator(
     initialWebSources: List<WebSourceCitation>,
     private val spendLimitUsd: Double,
     private val spendBeforeRunUsd: Double,
+    /** A helper's view of its whole run's spend (parent plus every sibling); null for a top-level run. */
+    private val externalRunSpendUsd: (() -> Double)?,
     private val initialElapsedMs: Long,
     initialApiUsageRecords: List<ApiUsageRecord>,
     initialTokenMetrics: TokenMetrics,
@@ -148,16 +150,20 @@ internal class GenerationStreamAccumulator(
 
     suspend fun attachSubagentRunner() {
         currentCoroutineContext()[AgentToolRunContext]?.broker?.takeIf { usagePurpose != SUBAGENT_PURPOSE }?.let { broker ->
-            // Parallel helpers call this from their own coroutines: the ledger read and the counter are locked, and
-            // usage is applied and emitted on the flow's coroutine (onFlowCoroutine), the only place emit() is legal.
+            // Parallel helpers call this from their own coroutines. A helper's usage counts toward the run's limit the
+            // moment it is reported (pendingHelperUsage, read by every sibling through runSpendUsd) and is adopted
+            // and emitted on the flow's coroutine (onFlowCoroutine), the only place emit() is legal. All ledger
+            // access from other threads holds the ledger's lock; its writers hold it too.
             broker.subagentRunner = { task, onProgress ->
-                val (number, spent) = synchronized(usageLedger) {
-                    ++helperCount to spendBeforeRunUsd + spendTowardLimit(usageLedger.snapshots()) - ledgerSpendAtStart
-                }
-                engine.runSubagent(profile, session, broker, number, task, spendLimitUsd, spent, onProgress) { record ->
+                val number = synchronized(usageLedger) { ++helperCount }
+                engine.runSubagent(
+                    profile, session, broker, number, task, spendLimitUsd, runSpendUsd(), ::runSpendUsd, onProgress
+                ) { record ->
+                    synchronized(usageLedger) { pendingHelperUsage[record.requestId] = record }
                     onFlowCoroutine {
                         synchronized(usageLedger) {
                             usageLedger.adopt(record)
+                            if (pendingHelperUsage[record.requestId] === record) pendingHelperUsage.remove(record.requestId)
                             latestUsageMetrics = usageLedger.metrics()
                         }
                         emit(StreamUpdate.UsageUpdated(record, latestUsageMetrics))
@@ -227,10 +233,19 @@ internal class GenerationStreamAccumulator(
         }
     }
 
+    /** Helper usage reported but not yet adopted on the flow's coroutine, by request id. Guarded by the ledger's lock. */
+    private val pendingHelperUsage = HashMap<String, ApiUsageRecord>()
+
+    /** This run's spend toward the chat limit, including helpers' not-yet-adopted usage. Safe from any thread. */
+    private fun runSpendUsd(): Double = synchronized(usageLedger) {
+        spendBeforeRunUsd + spendTowardLimitWithPending(usageLedger.snapshots(), pendingHelperUsage.values) - ledgerSpendAtStart
+    }
+
     private fun stopIfOverSpendLimit() {
-        if (spendLimitUsd > 0.0 && spendBeforeRunUsd + spendTowardLimit(usageLedger.snapshots()) - ledgerSpendAtStart >= spendLimitUsd) {
-            throw SpendLimitException(spendLimitUsd)
-        }
+        if (spendLimitUsd <= 0.0) return
+        // A helper checks its whole run, so siblings working side by side stop together at the limit.
+        val spent = externalRunSpendUsd?.invoke() ?: runSpendUsd()
+        if (spent >= spendLimitUsd) throw SpendLimitException(spendLimitUsd)
     }
 
     suspend fun beginUsageRequest(dialect: UsageDialect): String {
@@ -250,7 +265,7 @@ internal class GenerationStreamAccumulator(
                 }
             }
         }
-        val record = usageLedger.begin(dialect, mediaInputs)
+        val record = synchronized(usageLedger) { usageLedger.begin(dialect, mediaInputs) }
         latestUsageMetrics = usageLedger.metrics()
         emit(StreamUpdate.UsageUpdated(record, latestUsageMetrics))
         return record.requestId
@@ -258,14 +273,14 @@ internal class GenerationStreamAccumulator(
 
     suspend fun recordRequestUsage(requestId: String?, responseId: String, dialect: UsageDialect, usage: ProviderTokenUsage) {
         if (responseId.isNotBlank()) lastInteractionId = responseId
-        val record = usageLedger.update(requestId, responseId, dialect, usage) ?: return
+        val record = synchronized(usageLedger) { usageLedger.update(requestId, responseId, dialect, usage) } ?: return
         latestUsageMetrics = usageLedger.metrics()
         emit(StreamUpdate.UsageUpdated(record, latestUsageMetrics))
     }
 
     suspend fun beginMediaUsage(wireDialect: String, component: String): String {
         stopIfOverSpendLimit()
-        val record = usageLedger.beginMedia(wireDialect, component)
+        val record = synchronized(usageLedger) { usageLedger.beginMedia(wireDialect, component) }
         latestUsageMetrics = usageLedger.metrics()
         emit(StreamUpdate.UsageUpdated(record, latestUsageMetrics))
         return record.requestId
@@ -313,7 +328,7 @@ internal class GenerationStreamAccumulator(
 
     suspend fun recordGeneratedMedia(item: GeneratedMediaItem) {
         recordTokenActivity()
-        usageLedger.observeChargeComponent("output_${item.kind.name.lowercase()}")?.let { record ->
+        synchronized(usageLedger) { usageLedger.observeChargeComponent("output_${item.kind.name.lowercase()}") }?.let { record ->
             latestUsageMetrics = usageLedger.metrics()
             emit(StreamUpdate.UsageUpdated(record, latestUsageMetrics))
         }

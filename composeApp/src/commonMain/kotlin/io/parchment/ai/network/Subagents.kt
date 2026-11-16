@@ -66,6 +66,7 @@ internal suspend fun AiProviderEngine.runSubagent(
     task: String,
     spendLimitUsd: Double,
     spentUsd: Double,
+    runSpendUsd: () -> Double,
     onProgress: suspend (String) -> Unit,
     onUsage: suspend (ApiUsageRecord) -> Unit
 ): Result<String> {
@@ -88,7 +89,7 @@ internal suspend fun AiProviderEngine.runSubagent(
             streamGeneration(
                 profile = profile, session = session,
                 historyNodes = listOf(MessageNode("task", MessageRole.USER, listOf(MessageVariant("task-v", content = task)))),
-                spendLimitUsd = spendLimitUsd, spendBeforeRunUsd = spentUsd,
+                spendLimitUsd = spendLimitUsd, spendBeforeRunUsd = spentUsd, externalRunSpendUsd = runSpendUsd,
                 usageOwnerSessionId = parentSession.id, usageOwnerRunId = parent.runId, usagePurpose = SUBAGENT_PURPOSE
             ).flowOn(AgentToolRunContext(broker)).collect { update ->
                 when (update) {

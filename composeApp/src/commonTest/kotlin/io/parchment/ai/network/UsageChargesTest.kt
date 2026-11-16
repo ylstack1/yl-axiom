@@ -168,4 +168,19 @@ class UsageChargesTest {
         assertTrue(records.all { it.usage.inputTokens == null })
         assertTrue("image output" in ledger.metrics().unpricedCostComponents)
     }
+
+    @Test fun pendingHelperUsageReplacesItsOwnEarlierCopyInsteadOfAddingToIt() {
+        fun usage(id: String, output: Long) = record().copy(requestId = id,
+            usage = ProviderTokenUsage(inputTokens = 0, cachedInputTokens = 0, cacheCreationInputTokens = 0,
+                outputTokens = output, reasoningTokens = 0, isFinal = true))
+        val ledger = listOf(usage("parent", 1_000_000), usage("helper-1", 500_000))
+        val onePerMillion = spendTowardLimit(listOf(usage("x", 1_000_000)))
+        // helper-1 reported again with a larger cumulative count: it replaces, it does not stack.
+        assertEquals(spendTowardLimit(listOf(usage("parent", 1_000_000), usage("helper-1", 2_000_000))),
+            spendTowardLimitWithPending(ledger, listOf(usage("helper-1", 2_000_000))))
+        assertEquals(3 * onePerMillion, spendTowardLimitWithPending(ledger, listOf(usage("helper-1", 2_000_000))), 1e-9)
+        // A sibling's request not yet adopted adds its own cost.
+        assertEquals(spendTowardLimit(ledger) + onePerMillion, spendTowardLimitWithPending(ledger, listOf(usage("helper-2", 1_000_000))), 1e-9)
+        assertEquals(spendTowardLimit(ledger), spendTowardLimitWithPending(ledger, emptyList()))
+    }
 }
