@@ -28,6 +28,8 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ImageBitmap
@@ -192,165 +194,183 @@ internal fun MessageTurnItem(
         baseContainerModifier
     }
 
-    Column(modifier = containerModifier, horizontalAlignment = if (isSentBubble) Alignment.End else Alignment.Start) {
-        MessageTurnHeader(
-            node = node,
-            activeVar = activeVar,
-            isAssistant = isAssistant,
-            userPicture = userPicture,
-            preferences = preferences,
-            userName = userName,
-            characterName = characterName,
-            assistantIconEmoji = assistantIconEmoji,
-            providerName = providerName,
-            isActivelyThinkingThisNode = isActivelyThinkingThisNode,
-            isReasoningExpanded = isReasoningExpanded,
-            isLivePeekOnly = isLivePeekOnly,
-            onSelectVariant = onSelectVariant,
-            onToggleReasoningChip = {
-                manualThinkingToggle = if (isActivelyThinkingThisNode) {
-                    if (isLivePeekOnly) true else false
-                } else {
-                    !isReasoningExpanded
-                }
+    @Suppress("DEPRECATION")
+    val turnClipboard = LocalClipboardManager.current
+    // Right-click (desktop) offers the turn's main actions; they are also on the footer buttons.
+    PlatformContextMenu(items = {
+        buildList {
+            add(PlatformMenuItem(Strings.copy) { turnClipboard.setText(AnnotatedString(activeVar.content)) })
+            if (!activeVar.isStreaming) {
+                add(PlatformMenuItem(Strings.editMessage) {
+                    editBuffer = activeVar.content
+                    isEditing = true
+                })
             }
-        )
-
-        MessageTurnReasoningDrawer(
-            nodeId = node.id,
-            activeVariantIndex = node.activeVariantIndex,
-            activeVar = activeVar,
-            turnText = turnText,
-            preferences = preferences,
-            enableMd = enableMd,
-            isActivelyThinkingThisNode = isActivelyThinkingThisNode,
-            isReasoningExpanded = isReasoningExpanded,
-            isLivePeekOnly = isLivePeekOnly,
-            onTogglePeekOrCollapse = { manualThinkingToggle = if (isLivePeekOnly) true else false }
-        )
-
-        Spacer(Modifier.height(Space.s8))
-
-        MessageTurnGoalTrackerCard(activeVar.goalTracker)
-
-        // Main Prose Content OR In-Place Editor
-        val shrinkBubble = !isEditing && !activeVar.isStreaming && activeVar.attachments.isEmpty() &&
-            activeVar.mediaItems.isEmpty() && activeVar.content.length < MAX_SHRINKABLE_BUBBLE_CHARS
-        val contentModifier = when {
-            showBubbles -> Modifier.messageBubble(fromUser = !isAssistant, shrink = shrinkBubble, fill = if (isAssistant) p.cardBg else p.accent.copy(alpha = 0.16f), edge = if (isAssistant) p.border else Color.Transparent)
-            isAssistant -> Modifier
-            else -> Modifier.rubricMark(p.accent).padding(start = 14.dp, top = Space.s2, bottom = Space.s2)
+            if (isAssistant) add(PlatformMenuItem(if (node.pinned) Strings.unpinReply else Strings.pinReply, onTogglePin))
+            if (isAssistant && !activeVar.isStreaming) add(PlatformMenuItem(Strings.regenerateResponse, onRegenerate))
+            add(PlatformMenuItem(Strings.branch, onForkHere))
         }
-        Column(contentModifier) {
-            MessageTurnProseOrEditor(
+    }) {
+        Column(modifier = containerModifier, horizontalAlignment = if (isSentBubble) Alignment.End else Alignment.Start) {
+            MessageTurnHeader(
+                node = node,
+                activeVar = activeVar,
+                isAssistant = isAssistant,
+                userPicture = userPicture,
+                preferences = preferences,
+                userName = userName,
+                characterName = characterName,
+                assistantIconEmoji = assistantIconEmoji,
+                providerName = providerName,
+                isActivelyThinkingThisNode = isActivelyThinkingThisNode,
+                isReasoningExpanded = isReasoningExpanded,
+                isLivePeekOnly = isLivePeekOnly,
+                onSelectVariant = onSelectVariant,
+                onToggleReasoningChip = {
+                    manualThinkingToggle = if (isActivelyThinkingThisNode) {
+                        if (isLivePeekOnly) true else false
+                    } else {
+                        !isReasoningExpanded
+                    }
+                }
+            )
+
+            MessageTurnReasoningDrawer(
                 nodeId = node.id,
                 activeVariantIndex = node.activeVariantIndex,
                 activeVar = activeVar,
-                isAssistant = isAssistant,
-                isEditing = isEditing,
-                editBuffer = editBuffer,
-                onEditBufferChange = { editBuffer = it },
-                onCancelEdit = {
-                    editBuffer = ""
-                    isEditing = false
-                },
-                onSaveEditedText = { text, asBranch, regenerate ->
-                    onSaveEditedText(text, asBranch, regenerate)
-                    editBuffer = ""
-                    isEditing = false
-                },
+                turnText = turnText,
                 preferences = preferences,
                 enableMd = enableMd,
-                replyText = replyText,
-                turnTextHasSteps = turnText.hasSteps,
                 isActivelyThinkingThisNode = isActivelyThinkingThisNode,
-                highlightedSourceLineText = highlightedSourceLineText
+                isReasoningExpanded = isReasoningExpanded,
+                isLivePeekOnly = isLivePeekOnly,
+                onTogglePeekOrCollapse = { manualThinkingToggle = if (isLivePeekOnly) true else false }
             )
 
-            TurnAttachmentsSection(
-                visible = preferences.showFilesBelowReplies,
-                attachments = activeVar.attachments,
-                onInspectAttachment = onInspectAttachment
-            )
-
-            TurnGeneratedMediaSection(
-                mediaItems = activeVar.mediaItems,
-                onInspectGeneratedImage = onInspectGeneratedImage
-            )
-        }
-
-        Spacer(Modifier.height(Space.s6))
-
-        MessageTurnActionFooter(
-            node = node,
-            activeVar = activeVar,
-            isAssistant = isAssistant,
-            isLatestTurn = isLatestTurn,
-            isSentBubble = isSentBubble,
-            preferences = preferences,
-            footerAlpha = { footerAlphaState.value },
-            copiedBadge = copiedBadge,
-            onCopiedBadgeChange = { copiedBadge = it },
-            showMoreActions = showMoreActions,
-            onToggleMoreActions = { showMoreActions = !showMoreActions },
-            showSourcesDrawer = showSourcesDrawer,
-            onToggleSourcesDrawer = {
-                showSourcesDrawer = !showSourcesDrawer
-                if (!showSourcesDrawer) highlightedSourceLineText = ""
-            },
-            openUsageDetailsId = openUsageDetailsId,
-            onOpenUsageDetailsIdChange = { openUsageDetailsId = it },
-            onFooterFocusChange = { footerHasFocus = it },
-            onToggleEditing = {
-                editBuffer = if (!isEditing) activeVar.content else ""
-                isEditing = !isEditing
-            },
-            onToggleContextMute = onToggleContextMute,
-            onTogglePin = onTogglePin,
-            onDeleteCurrentVariant = onDeleteCurrentVariant,
-            onDeleteNode = onDeleteNode,
-            onForkHere = onForkHere,
-            onRewindHere = onRewindHere,
-            onRegenerate = onRegenerate,
-            onTranslate = onTranslate,
-            onContinue = onContinue,
-            onToggleRawWireDrawer = { showRawWireDrawer = !showRawWireDrawer }
-        )
-
-        if (!isAssistant) {
-            UserTurnUsageStats(
-                activeVar = activeVar,
-                showTokenAndContextStats = preferences.showTokenAndContextStats,
-                isSentBubble = isSentBubble,
-                inputPricePerM = inputPricePerM,
-                footerAlpha = { footerAlphaState.value }
-            )
-        }
-
-        if (isAssistant) {
-            TurnWebSourcesDrawer(
-                visible = showSourcesDrawer,
-                webSources = activeVar.webSources,
-                highlightedSourceLineText = highlightedSourceLineText,
-                onHighlightLineChange = { highlightedSourceLineText = it },
-                onClose = {
-                    showSourcesDrawer = false
-                    highlightedSourceLineText = ""
-                }
-            )
-        }
-
-        TurnRawWireDrawer(
-            visible = showRawWireDrawer,
-            nodeId = node.id,
-            activeVariantIndex = node.activeVariantIndex,
-            rawRequestPreview = activeVar.rawRequestPreview,
-            rawResponsePreview = activeVar.rawResponsePreview
-        )
-
-        if (viewMode == ViewMode.MANUSCRIPT) {
             Spacer(Modifier.height(Space.s8))
-            SepiaDivider()
+
+            MessageTurnGoalTrackerCard(activeVar.goalTracker)
+
+            // Main Prose Content OR In-Place Editor
+            val shrinkBubble = !isEditing && !activeVar.isStreaming && activeVar.attachments.isEmpty() &&
+                activeVar.mediaItems.isEmpty() && activeVar.content.length < MAX_SHRINKABLE_BUBBLE_CHARS
+            val contentModifier = when {
+                showBubbles -> Modifier.messageBubble(fromUser = !isAssistant, shrink = shrinkBubble, fill = if (isAssistant) p.cardBg else p.accent.copy(alpha = 0.16f), edge = if (isAssistant) p.border else Color.Transparent)
+                isAssistant -> Modifier
+                else -> Modifier.rubricMark(p.accent).padding(start = 14.dp, top = Space.s2, bottom = Space.s2)
+            }
+            Column(contentModifier) {
+                MessageTurnProseOrEditor(
+                    nodeId = node.id,
+                    activeVariantIndex = node.activeVariantIndex,
+                    activeVar = activeVar,
+                    isAssistant = isAssistant,
+                    isEditing = isEditing,
+                    editBuffer = editBuffer,
+                    onEditBufferChange = { editBuffer = it },
+                    onCancelEdit = {
+                        editBuffer = ""
+                        isEditing = false
+                    },
+                    onSaveEditedText = { text, asBranch, regenerate ->
+                        onSaveEditedText(text, asBranch, regenerate)
+                        editBuffer = ""
+                        isEditing = false
+                    },
+                    preferences = preferences,
+                    enableMd = enableMd,
+                    replyText = replyText,
+                    turnTextHasSteps = turnText.hasSteps,
+                    isActivelyThinkingThisNode = isActivelyThinkingThisNode,
+                    highlightedSourceLineText = highlightedSourceLineText
+                )
+
+                TurnAttachmentsSection(
+                    visible = preferences.showFilesBelowReplies,
+                    attachments = activeVar.attachments,
+                    onInspectAttachment = onInspectAttachment
+                )
+
+                TurnGeneratedMediaSection(
+                    mediaItems = activeVar.mediaItems,
+                    onInspectGeneratedImage = onInspectGeneratedImage
+                )
+            }
+
+            Spacer(Modifier.height(Space.s6))
+
+            MessageTurnActionFooter(
+                node = node,
+                activeVar = activeVar,
+                isAssistant = isAssistant,
+                isLatestTurn = isLatestTurn,
+                isSentBubble = isSentBubble,
+                preferences = preferences,
+                footerAlpha = { footerAlphaState.value },
+                copiedBadge = copiedBadge,
+                onCopiedBadgeChange = { copiedBadge = it },
+                showMoreActions = showMoreActions,
+                onToggleMoreActions = { showMoreActions = !showMoreActions },
+                showSourcesDrawer = showSourcesDrawer,
+                onToggleSourcesDrawer = {
+                    showSourcesDrawer = !showSourcesDrawer
+                    if (!showSourcesDrawer) highlightedSourceLineText = ""
+                },
+                openUsageDetailsId = openUsageDetailsId,
+                onOpenUsageDetailsIdChange = { openUsageDetailsId = it },
+                onFooterFocusChange = { footerHasFocus = it },
+                onToggleEditing = {
+                    editBuffer = if (!isEditing) activeVar.content else ""
+                    isEditing = !isEditing
+                },
+                onToggleContextMute = onToggleContextMute,
+                onTogglePin = onTogglePin,
+                onDeleteCurrentVariant = onDeleteCurrentVariant,
+                onDeleteNode = onDeleteNode,
+                onForkHere = onForkHere,
+                onRewindHere = onRewindHere,
+                onRegenerate = onRegenerate,
+                onTranslate = onTranslate,
+                onContinue = onContinue,
+                onToggleRawWireDrawer = { showRawWireDrawer = !showRawWireDrawer }
+            )
+
+            if (!isAssistant) {
+                UserTurnUsageStats(
+                    activeVar = activeVar,
+                    showTokenAndContextStats = preferences.showTokenAndContextStats,
+                    isSentBubble = isSentBubble,
+                    inputPricePerM = inputPricePerM,
+                    footerAlpha = { footerAlphaState.value }
+                )
+            }
+
+            if (isAssistant) {
+                TurnWebSourcesDrawer(
+                    visible = showSourcesDrawer,
+                    webSources = activeVar.webSources,
+                    highlightedSourceLineText = highlightedSourceLineText,
+                    onHighlightLineChange = { highlightedSourceLineText = it },
+                    onClose = {
+                        showSourcesDrawer = false
+                        highlightedSourceLineText = ""
+                    }
+                )
+            }
+
+            TurnRawWireDrawer(
+                visible = showRawWireDrawer,
+                nodeId = node.id,
+                activeVariantIndex = node.activeVariantIndex,
+                rawRequestPreview = activeVar.rawRequestPreview,
+                rawResponsePreview = activeVar.rawResponsePreview
+            )
+
+            if (viewMode == ViewMode.MANUSCRIPT) {
+                Spacer(Modifier.height(Space.s8))
+                SepiaDivider()
+            }
         }
     }
 }

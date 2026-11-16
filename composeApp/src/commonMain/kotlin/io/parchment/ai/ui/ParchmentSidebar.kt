@@ -317,92 +317,101 @@ internal fun ParchmentSidebar(
                     var rowHasFocus by remember { mutableStateOf(false) }
                     val rowHovered by rowInteraction.collectIsHoveredAsState()
                     val rowPressed by rowInteraction.collectIsPressedAsState()
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .onFocusChanged { rowHasFocus = it.hasFocus }
-                            .kissClickable(
-                                pressScale = 0.98f,
-                                interactionSource = rowInteraction,
-                                selected = selected,
-                                onClick = { onSelectSession(sess.id) }
-                            )
-                            .then(if (sess.isPinned) Modifier.semantics { stateDescription = Strings.pinned } else Modifier)
-                            .clip(shape)
-                            .background(
-                                when {
-                                    selected -> p.cardBg
-                                    rowPressed -> p.accent.copy(alpha = 0.14f)
-                                    rowHovered -> p.accent.copy(alpha = 0.06f)
-                                    else -> Color.Transparent
-                                }
-                            )
-                            .then(if (selected) Modifier.rubricMark(p.accent, verticalInset = 9.dp) else Modifier)
-                            .padding(horizontal = Space.s10, vertical = 7.dp),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Column(modifier = Modifier.weight(1f)) {
-                            Row(
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(Space.s4)
-                            ) {
-                                if (sess.isPinned) {
-                                    KissVectorIcon(icon = KissIcon.PIN, tint = p.accent, size = IconSize.sm)
-                                }
-                                BasicText(
-                                    text = sess.title,
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis,
-                                    style = p.uiBodyStyle.copy(
-                                        fontSize = 14.sp,
-                                        fontWeight = if (selected) FontWeight.Medium else FontWeight.Normal
-                                    )
+                    // Right-click (desktop) offers the same actions as the row's buttons.
+                    PlatformContextMenu(items = {
+                        buildList {
+                            add(PlatformMenuItem(if (sess.isPinned) Strings.unpinChat else Strings.pinChat) { onTogglePinSession(sess.id) })
+                            if (sess.messages.isNotEmpty()) add(PlatformMenuItem(Strings.regenerateTitle) { onRegenerateSessionTitle(sess.id) })
+                            add(PlatformMenuItem(Strings.deleteChat) { onDeleteSession(sess.id) })
+                        }
+                    }) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .onFocusChanged { rowHasFocus = it.hasFocus }
+                                .kissClickable(
+                                    pressScale = 0.98f,
+                                    interactionSource = rowInteraction,
+                                    selected = selected,
+                                    onClick = { onSelectSession(sess.id) }
                                 )
+                                .then(if (sess.isPinned) Modifier.semantics { stateDescription = Strings.pinned } else Modifier)
+                                .clip(shape)
+                                .background(
+                                    when {
+                                        selected -> p.cardBg
+                                        rowPressed -> p.accent.copy(alpha = 0.14f)
+                                        rowHovered -> p.accent.copy(alpha = 0.06f)
+                                        else -> Color.Transparent
+                                    }
+                                )
+                                .then(if (selected) Modifier.rubricMark(p.accent, verticalInset = 9.dp) else Modifier)
+                                .padding(horizontal = Space.s10, vertical = 7.dp),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Column(modifier = Modifier.weight(1f)) {
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(Space.s4)
+                                ) {
+                                    if (sess.isPinned) {
+                                        KissVectorIcon(icon = KissIcon.PIN, tint = p.accent, size = IconSize.sm)
+                                    }
+                                    BasicText(
+                                        text = sess.title,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis,
+                                        style = p.uiBodyStyle.copy(
+                                            fontSize = 14.sp,
+                                            fontWeight = if (selected) FontWeight.Medium else FontWeight.Normal
+                                        )
+                                    )
+                                }
+                                val dateLabel = if (appState.preferences.showChatListDates && sess.updatedAt > 0L) {
+                                    formatCompactTimestamp(sess.updatedAt)
+                                } else ""
+                                if (dateLabel.isNotEmpty()) {
+                                    BasicText(text = dateLabel, style = p.uiLabelStyle.copy(fontSize = 11.sp))
+                                }
                             }
-                            val dateLabel = if (appState.preferences.showChatListDates && sess.updatedAt > 0L) {
-                                formatCompactTimestamp(sess.updatedAt)
-                            } else ""
-                            if (dateLabel.isNotEmpty()) {
-                                BasicText(text = dateLabel, style = p.uiLabelStyle.copy(fontSize = 11.sp))
-                            }
-                        }
-                        // Row actions appear on hover or focus; touch opens them with one explicit button.
-                        val showRowActions = if (isCompactScreen) touchActionsChatId == sess.id else rowHovered || rowHasFocus
-                        if (isCompactScreen) {
-                            SepiaButton(
-                                text = if (showRowActions) "▴" else "⋯",
-                                contentDescription = if (showRowActions) Strings.hideChatActions else Strings.chatActions,
-                                compact = true,
-                                style = SepiaButtonStyle.GHOST,
-                                onClick = { touchActionsChatId = if (showRowActions) null else sess.id }
-                            )
-                        }
-                        if (showRowActions) Row(horizontalArrangement = Arrangement.spacedBy(Space.s2), verticalAlignment = Alignment.CenterVertically) {
-                            SepiaButton(
-                                text = "📌",
-                                contentDescription = if (sess.isPinned) Strings.unpinChat else Strings.pinChat,
-                                compact = true,
-                                style = SepiaButtonStyle.GHOST,
-                                onClick = { onTogglePinSession(sess.id) }
-                            )
-                            if (sess.messages.isNotEmpty()) {
+                            // Row actions appear on hover or focus; touch opens them with one explicit button.
+                            val showRowActions = if (isCompactScreen) touchActionsChatId == sess.id else rowHovered || rowHasFocus
+                            if (isCompactScreen) {
                                 SepiaButton(
-                                    text = "✦",
-                                    contentDescription = Strings.regenerateTitle,
-                                    hint = Strings.writeANewTitleFrom,
+                                    text = if (showRowActions) "▴" else "⋯",
+                                    contentDescription = if (showRowActions) Strings.hideChatActions else Strings.chatActions,
                                     compact = true,
                                     style = SepiaButtonStyle.GHOST,
-                                    onClick = { onRegenerateSessionTitle(sess.id) }
+                                    onClick = { touchActionsChatId = if (showRowActions) null else sess.id }
                                 )
                             }
-                            SepiaButton(
-                                text = "🗑",
-                                contentDescription = Strings.deleteChat,
-                                compact = true,
-                                style = SepiaButtonStyle.GHOST,
-                                onClick = { onDeleteSession(sess.id) }
-                            )
+                            if (showRowActions) Row(horizontalArrangement = Arrangement.spacedBy(Space.s2), verticalAlignment = Alignment.CenterVertically) {
+                                SepiaButton(
+                                    text = "📌",
+                                    contentDescription = if (sess.isPinned) Strings.unpinChat else Strings.pinChat,
+                                    compact = true,
+                                    style = SepiaButtonStyle.GHOST,
+                                    onClick = { onTogglePinSession(sess.id) }
+                                )
+                                if (sess.messages.isNotEmpty()) {
+                                    SepiaButton(
+                                        text = "✦",
+                                        contentDescription = Strings.regenerateTitle,
+                                        hint = Strings.writeANewTitleFrom,
+                                        compact = true,
+                                        style = SepiaButtonStyle.GHOST,
+                                        onClick = { onRegenerateSessionTitle(sess.id) }
+                                    )
+                                }
+                                SepiaButton(
+                                    text = "🗑",
+                                    contentDescription = Strings.deleteChat,
+                                    compact = true,
+                                    style = SepiaButtonStyle.GHOST,
+                                    onClick = { onDeleteSession(sess.id) }
+                                )
+                            }
                         }
                     }
                 }

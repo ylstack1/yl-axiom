@@ -110,6 +110,13 @@ actual object PlatformPickers {
 
     actual suspend fun pickWorkspaceDirectory(currentPath: String): String? =
         withContext(Dispatchers.IO) {
+            // The native Windows folder picker first (Quick access, OneDrive, search); Swing only if COM fails.
+            if (WindowsNative.isWindows) {
+                val owner = (java.awt.KeyboardFocusManager.getCurrentKeyboardFocusManager().activeWindow
+                    as? androidx.compose.ui.awt.ComposeWindow)?.windowHandle ?: 0L
+                WindowsFolderDialog.pickFolder("Select Local Workspace Folder for Agent Harness", currentPath, owner)
+                    .onSuccess { return@withContext it }
+            }
             runCatching {
                 val chooser = JFileChooser()
                 chooser.dialogTitle = "Select Local Workspace Folder for Agent Harness"
