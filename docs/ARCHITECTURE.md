@@ -68,7 +68,7 @@ All Kotlin files below sit under `composeApp/src/commonMain/kotlin/io/parchment/
 | Source set | Files & responsibilities |
 |---|---|
 | `jvmShared/platform` | `AppAgentStorage.kt`, `AppStorageInventory.kt`, `AtomicFileStorage.kt`, `BoundedImageCache.kt`, `BoundedTextCapture.kt`, `ChatArchiveExtractor.kt`, `ChatArchiveWriter.kt`, `LocalMediaStore.kt`, `OtaStagedFile.kt`, `PublicWebTransport.kt` (DNS/private-IP SSRF guard), `SnapshotFileStorage.kt`, `StreamingJsonDecoder.kt`, `WorkspaceFileEditor.kt`, `WorkspacePathGuard.kt`, `WorkspaceTextReader.kt`, `WorkspaceTreeScanner.kt`; `jvmShared/network/ProviderHttpEngine.kt` (OkHttp for both targets) and `jvmShared/ui/ProcessStatePreload.kt` (settings and open chat read while the window is built). |
-| `desktopMain` | `Main.kt` (window startup, single-instance lock, Windows framing), `CdsWarmup.kt` (installer `--cds-warmup`), `WindowKeys.kt`, and `platform/`: `DesktopComputerControl.kt`, `DesktopImageDecoder.kt`, `DesktopMcpProcess.kt`, `DesktopOwnedShell.kt`, `DesktopPlatformHost.kt`, `PlatformPickers.desktop.kt`, `PlatformRuntime.desktop.kt`, `PlatformStorage.desktop.kt`, `PlatformVoice.desktop.kt`, `PlatformWorkspace.desktop.kt`, `WindowsChrome.kt`, `WindowsMemory.kt`, `WindowsNative.kt` (FFM downcalls), `WindowsPowerLease.kt`. |
+| `desktopMain` | `Main.kt` (window startup, single-instance lock, Windows framing), `CdsWarmup.kt` (installer `--cds-warmup`), `WindowKeys.kt`, and `platform/`: `DesktopComputerControl.kt`, `DesktopImageDecoder.kt`, `DesktopMcpProcess.kt`, `DesktopOwnedShell.kt`, `DesktopPlatformHost.kt`, `PlatformPickers.desktop.kt`, `PlatformRuntime.desktop.kt`, `PlatformStorage.desktop.kt`, `PlatformVoice.desktop.kt`, `PlatformWorkspace.desktop.kt`, `WindowsChrome.kt`, `WindowsFolderDialog.kt` (IFileOpenDialog via FFM COM), `WindowsMemory.kt`, `WindowsNative.kt` (FFM downcalls), `WindowsPowerLease.kt`; `ui/PlatformContextMenu.desktop.kt` (right-click menus). |
 | `androidMain` | `MainActivity.kt`, `LongDecodeForegroundService.kt`, `ParchmentAccessibilityService.kt`, `OtaInstallReceiver.kt`, `ParchmentFileProvider.kt`, and `platform/`: `AndroidComputerControl.kt`, `AndroidOwnedShell.kt`, `AndroidPlatformHost.kt`, `PlatformPickers.android.kt`, `PlatformRuntime.android.kt`, `PlatformStorage.android.kt`, `PlatformVoice.android.kt`, `PlatformWorkspace.android.kt`. |
 
 ## Core runtime flows
@@ -104,6 +104,8 @@ Never run Gradle directly or in parallel; use `python scripts/verify.py`:
 | `python scripts/verify.py perf` | Synthetic 300-chat startup and frame-budget check (`scripts/perf.py`) |
 | `python scripts/verify.py final` | Release builds (`bundle`, Gradle/R8/signing/packaging edits) with the private signer loaded |
 | `python -m unittest scripts/test_workflow_tools.py` | When modifying `scripts/verify.py` or `scripts/quality.py` |
+
+For interactive desktop UI work (a person, not a check), `./gradlew :composeApp:hotRunDesktop` runs the app with Compose Hot Reload; it needs a JetBrains Runtime (add `-Pcompose.reload.jbr.autoProvisioningEnabled=true` to download one). Streaming replies are drawn from `ui/LiveTurnOverlay.kt` between checkpoints.
 
 Conventions enforced by tests and quality gates:
 

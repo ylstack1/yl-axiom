@@ -4,9 +4,9 @@ Updated 2026-11-16. AGENTS.md owns workflow; MEMORY holds contracts. Task IDs st
 
 ## Current status
 
-- **Source:** 2026-11-16 optimization and harness batch: Ctrl+G prompt jump + Message Map prompts filter, parallel `agent_delegate` (max 4, relayed emits), quiet read/search grouping, shell step breakdown, invisible-char key hygiene, `chat-index.json` stubs, off-thread paste/geometry/token counts, idle pacer, CRLF Markdown, FFM instead of JNA/PowerShell, compact headers + `--cds-warmup`, explicit OkHttp, Android edge-to-edge + baseline profile, Ctrl+W/Ctrl+Tab.
-- **Last verified:** 2026-11-16, `verify.py affected` (516 desktop tests + Android compile), `verify.py final` (signed APK + package + release checks), `verify.py perf` (`desktop_title_ms=1467`, first launch after update `4311` (was 17.0 s), `desktop_idle_private_mb=271.3`, `apk_mb=4.3`, `desktop_cds_archives_ok=True`).
-- **Next action:** User checks 17.1 on the phone after the release; then 17.2 (live turn overlay) with a frame-time A/B.
+- **Source:** 2026-11-16 hardening batch: warm-up watchdog without partial archive, shared helper spend limit, stub-format index, live streaming overlay, off-thread context gauge, Serial GC (idle memory under budget), realistic update perf, palette tab rows, Message Map arrows, native folder dialog, right-click menus, Hot Reload.
+- **Last verified:** 2026-11-16, `verify.py final` (525 tests, signed APK, package, release checks), `verify.py perf` (`desktop_title_ms=1456`, first launch after update `1380`, `desktop_idle_private_mb=219.7`, `apk_mb=4.4`, `desktop_cds_archives_ok=True`).
+- **Next action:** User checks 17.1 on the phone after the release.
 
 ## Open tasks
 
@@ -15,19 +15,13 @@ Updated 2026-11-16. AGENTS.md owns workflow; MEMORY holds contracts. Task IDs st
 - [ ] **13.6 Screen readers:** go through the app with NVDA on Windows and TalkBack on Android (chat, composer, sidebar, settings, Ctrl+K palette) and report anything unlabeled, read in the wrong order, or unreachable.
 - [ ] **17.1 Android check:** after the next release, check edge-to-edge system bars in light and dark themes, Ctrl+G on a hardware keyboard, and cold start (`verify.py perf --android-install`).
 
-### Deferred from the 2026-11-16 optimization plan
+### Waiting on a measurement
 
-Each needs its own batch with measurements; the plan's reasoning is in the commit history.
-
-- [ ] **17.2 Live turn overlay:** stream deltas through a per-turn overlay instead of patching `AppStateSnapshot` every frame; needs one commit helper for stop, edit, fork, export, compact and pause flushes.
-- [ ] **17.3 Composer TextFieldState:** move the composer to `TextFieldState` in a leaf host so typing recomposes only the field (today: the viewport, no longer the app root).
-- [ ] **17.4 Android startup profile:** add `startup-prof.txt` for R8 DEX layout once a device-generated profile exists; measure APK size.
-- [ ] **17.5 Windows UX:** native folder dialog (IFileDialog via FFM) instead of `JFileChooser`; right-click turn and chat menus; Android long-press bubble actions.
-- [ ] **17.6 Build tooling:** Compose Hot Reload and a `:core:*` module split; configuration cache for `final` (it runs without it today).
+- [ ] **17.3 Composer TextFieldState:** move the composer to `TextFieldState` in a leaf host. Measured 2026-11-16: keystroke frame p50 6.1 ms, p95 7.6 ms (`KeystrokeFrameProbeTest`); do it when that probe's p95 nears 12 ms or typing lag is reported, and test Android IME and rich-content paste on a phone.
 
 ## Known gaps
 
-Not planned; open a task first. No JDK AOT cache (16.6, dropped 2026-11): AppCDS already meets the start budget, and a cache built in CI may not match installed paths. No CHARX archives; cards over 512 KB of data lose their original copy. No persona profiles. No full-duplex voice. Android MCP is HTTP-only. Shell is not sandboxed.
+Not planned; open a task first. No JDK AOT cache (16.6, dropped 2026-11): AppCDS already meets the start budget, and a cache built in CI may not match installed paths. No Android startup profile without a device-generated one (single DEX; PERFORMANCE.md). No `:core:*` module split: `model` is a clean leaf but 2.4% of the code and `protocol` depends on `harness` (2026-11-16). No Android long-press menus: a long press belongs to text selection. `final` runs without the configuration cache (signer validation is not cache-compatible). No CHARX archives; cards over 512 KB of data lose their original copy. No persona profiles. No full-duplex voice. Android MCP is HTTP-only. Shell is not sandboxed.
 
 ## Sources
 
