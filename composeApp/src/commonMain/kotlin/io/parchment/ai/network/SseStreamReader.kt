@@ -13,7 +13,7 @@ import kotlinx.coroutines.withTimeoutOrNull
 
 // SSE and plain-JSON fallback stream reader with background stall detection and adaptive line timeouts.
 
-private const val RETURN_GRACE_MS = 3_000L
+internal const val DEFAULT_RETURN_GRACE_MS = 3_000L
 internal const val DEFAULT_MAX_SSE_BUFFER_CHARS = 64 * 1024 * 1024
 internal const val STREAM_CUT_WHILE_AWAY = "SSE stream timed out while the app was in the background."
 
@@ -22,14 +22,15 @@ internal suspend fun readProviderSseOrJsonFallback(
     streamFinished: () -> Boolean,
     onSseEvent: suspend (eventType: String, data: String) -> Unit,
     onPlainJsonFallback: suspend (fullJson: String) -> Unit,
-    maxBufferedChars: Int = DEFAULT_MAX_SSE_BUFFER_CHARS
+    maxBufferedChars: Int = DEFAULT_MAX_SSE_BUFFER_CHARS,
+    returnGraceMs: Long = DEFAULT_RETURN_GRACE_MS
 ) {
     var lastLineAt = PlatformRuntime.monotonicTimeMillis()
     var sawAnyData = false
     coroutineScope {
         val stallWatch = launch {
             AppForeground.resumedAt.drop(1).collectLatest { resumedAt ->
-                delay(RETURN_GRACE_MS)
+                delay(returnGraceMs)
                 if (AppForeground.leftAt in 1..resumedAt && sawAnyData && lastLineAt <= resumedAt) {
                     channel.cancel(IllegalStateException(STREAM_CUT_WHILE_AWAY))
                 }

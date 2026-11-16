@@ -81,7 +81,8 @@ internal suspend fun AiProviderEngine.executeGeminiInteractionsLoop(
     onRawWire: suspend (String, String) -> Unit,
     onRequestStarted: UsageRequestStarter,
     onUsage: UsageReporter,
-    onCitation: suspend (RawWebCitation) -> Unit = {}
+    onCitation: suspend (RawWebCitation) -> Unit = {},
+    pollDelayMsOverride: Long? = null
 ) {
     GeminiInteractionsSession(
         engine = this,
@@ -102,7 +103,8 @@ internal suspend fun AiProviderEngine.executeGeminiInteractionsLoop(
         onRawWire = onRawWire,
         onRequestStarted = onRequestStarted,
         onUsage = onUsage,
-        onCitation = onCitation
+        onCitation = onCitation,
+        pollDelayMsOverride = pollDelayMsOverride
     ).run()
 }
 
@@ -127,7 +129,8 @@ private class GeminiInteractionsSession(
     private val onRawWire: suspend (String, String) -> Unit,
     private val onRequestStarted: UsageRequestStarter,
     onUsage: UsageReporter,
-    onCitation: suspend (RawWebCitation) -> Unit
+    onCitation: suspend (RawWebCitation) -> Unit,
+    pollDelayMsOverride: Long? = null
 ) {
     private var usageRequestId: String? = null
     private val activeNodes = engine.sanitizeContextNodes(historyNodes)
@@ -183,7 +186,8 @@ private class GeminiInteractionsSession(
         onUsage = onUsage,
         onCitation = onCitation,
         onInteractionIdObserved = { id -> currentRoundInteractionId = id },
-        currentInteractionId = { currentRoundInteractionId.ifBlank { currentPrevInteractionId } }
+        currentInteractionId = { currentRoundInteractionId.ifBlank { currentPrevInteractionId } },
+        pollDelayMsOverride = pollDelayMsOverride
     )
 
     suspend fun run() {
@@ -333,25 +337,6 @@ private class GeminiInteractionsSession(
                 put("continuation_token", currentContinuationToken)
             }
 
-            // Build `input` using official Interactions API Steps schema (omitted when continuing a foreground hop via continuation_token)
-            if (!isContinuationHop) {
-                when {
-                    pendingToolResults.isNotEmpty() && useChainedId -> putJsonArray("input") {
-                        for (tr in pendingToolResults) {
-                            add(geminiFunctionResultStep(callId = tr.id, name = tr.name, isError = tr.isError, resultText = tr.resultText))
-                        }
-                        pendingToolResults.filter { it.hasScreenshot }.forEach { add(interactionsScreenshotStep(it)) }
-                    }
-                    pendingStopHookPrompt.isNotBlank() && useChainedId -> putJsonArray("input") {
-                        add(geminiUserInputStep(pendingStopHookPrompt))
-                    }
-                    else -> putJsonArray("input") {
-                        baseInputSteps.forEach { add(it) }
-                        compactedExtraSteps.forEach { add(it) }
-                    }
-                }
-            }
-
             // Official polymorphic `response_format` array when model outputs images
             if ((modelOutputsImages || forceImageResponseFormatOnRetry) && !omitResponseFormatOnRetry) {
                 putJsonArray("response_format") {
@@ -396,7 +381,7 @@ private class GeminiInteractionsSession(
                 }
             }
 
-            // Built-in Tools + Local Workspace Harness Tools
+            // Built-in Tools + Local Workspace Harness Tools before `input` so static prefix stays cacheable
             val workspaceTools = WorkspaceHarness.buildGeminiInteractionsTools(
                 session.workspaceMode,
                 session.workspacePath,
@@ -416,6 +401,25 @@ private class GeminiInteractionsSession(
             }
             if (toolsArray.isNotEmpty()) {
                 put("tools", toolsArray)
+            }
+
+            // Build `input` using official Interactions API Steps schema (omitted when continuing a foreground hop via continuation_token)
+            if (!isContinuationHop) {
+                when {
+                    pendingToolResults.isNotEmpty() && useChainedId -> putJsonArray("input") {
+                        for (tr in pendingToolResults) {
+                            add(geminiFunctionResultStep(callId = tr.id, name = tr.name, isError = tr.isError, resultText = tr.resultText))
+                        }
+                        pendingToolResults.filter { it.hasScreenshot }.forEach { add(interactionsScreenshotStep(it)) }
+                    }
+                    pendingStopHookPrompt.isNotBlank() && useChainedId -> putJsonArray("input") {
+                        add(geminiUserInputStep(pendingStopHookPrompt))
+                    }
+                    else -> putJsonArray("input") {
+                        baseInputSteps.forEach { add(it) }
+                        compactedExtraSteps.forEach { add(it) }
+                    }
+                }
             }
         }
 

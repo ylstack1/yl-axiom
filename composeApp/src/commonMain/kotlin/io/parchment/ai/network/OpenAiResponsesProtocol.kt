@@ -173,31 +173,6 @@ internal suspend fun AiProviderEngine.executeOpenAiResponsesLoop(
                     put("previous_response_id", currentPrevResponseId)
                 }
 
-                if (pendingToolResults.isNotEmpty() && useChainedId) {
-                    putJsonArray("input") {
-                        for (tr in pendingToolResults) {
-                            add(buildJsonObject {
-                                put("type", "function_call_output")
-                                put("call_id", tr.id)
-                                put("output", tr.resultText)
-                            })
-                        }
-                        pendingToolResults.filter { it.hasScreenshot }.forEach { add(responsesScreenshotMessage(it)) }
-                    }
-                } else if (pendingStopHookPrompt.isNotBlank() && useChainedId) {
-                    putJsonArray("input") {
-                        add(buildJsonObject {
-                            put("role", "user")
-                            put("content", pendingStopHookPrompt)
-                        })
-                    }
-                } else {
-                    putJsonArray("input") {
-                        baseInputItems.forEach { add(it) }
-                        compactedLoopItems.forEach { add(it) }
-                    }
-                }
-
                 val maxOut = profile.maxOutputTokens
                 if (maxOut != null && maxOut > 0) {
                     put("max_output_tokens", maxOut)
@@ -248,6 +223,31 @@ internal suspend fun AiProviderEngine.executeOpenAiResponsesLoop(
                 if (toolsArr.isNotEmpty()) {
                     put("tools", toolsArr)
                     put("tool_choice", "auto")
+                }
+
+                if (pendingToolResults.isNotEmpty() && useChainedId) {
+                    putJsonArray("input") {
+                        for (tr in pendingToolResults) {
+                            add(buildJsonObject {
+                                put("type", "function_call_output")
+                                put("call_id", tr.id)
+                                put("output", tr.resultText)
+                            })
+                        }
+                        pendingToolResults.filter { it.hasScreenshot }.forEach { add(responsesScreenshotMessage(it)) }
+                    }
+                } else if (pendingStopHookPrompt.isNotBlank() && useChainedId) {
+                    putJsonArray("input") {
+                        add(buildJsonObject {
+                            put("role", "user")
+                            put("content", pendingStopHookPrompt)
+                        })
+                    }
+                } else {
+                    putJsonArray("input") {
+                        baseInputItems.forEach { add(it) }
+                        compactedLoopItems.forEach { add(it) }
+                    }
                 }
             }
 
@@ -930,7 +930,7 @@ internal fun AiProviderEngine.buildOpenAiResponsesInputArray(
 }
 
 private fun AiProviderEngine.compactOpenAiResponsesExtraItems(items: List<JsonObject>): List<JsonObject> {
-    if (items.size <= 16) return items
+    if (items.size < 24) return items
     val total = items.size
     return items.mapIndexed { idx, obj ->
         val type = obj["type"]?.jsonPrimitive?.contentOrNull

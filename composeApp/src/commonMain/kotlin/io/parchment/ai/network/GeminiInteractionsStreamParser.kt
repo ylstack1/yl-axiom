@@ -41,7 +41,8 @@ internal class GeminiInteractionsRoundParser(
     private val onUsage: UsageReporter,
     private val onCitation: suspend (RawWebCitation) -> Unit,
     private val onInteractionIdObserved: (String) -> Unit,
-    private val currentInteractionId: () -> String
+    private val currentInteractionId: () -> String,
+    private val pollDelayMsOverride: Long? = null
 ) {
     val turnToolCalls = mutableListOf<Pair<String, Pair<String, String>>>() // callId -> (name, argsJson)
     val roundThoughtSig = StringBuilder()
@@ -198,7 +199,7 @@ internal class GeminiInteractionsRoundParser(
         ) {
             pollCount++
             onStatus(Strings.backgroundPollRecoveryPoll(status, pollCount), interactionIdToPoll)
-            if (transientErrors == 0) delay(2000L)
+            if (transientErrors == 0) delay(pollDelayMsOverride ?: 2000L)
             val pollUrl = engine.buildUrlWithAuthQuery(profile, "$pollBasePath/$interactionIdToPoll")
             try {
                 val pollResp = engine.httpClient.get(pollUrl) {
@@ -232,7 +233,7 @@ internal class GeminiInteractionsRoundParser(
                     "Poll error ($transientErrors/${AiProviderEngine.MAX_POLL_TRANSIENT_ERRORS}) — retrying status check…",
                     interactionIdToPoll
                 )
-                delay((transientErrors * 500L).coerceAtMost(2_500L))
+                delay(pollDelayMsOverride ?: (transientErrors * 500L).coerceAtMost(2_500L))
             }
         }
         if (status == "in_progress" || status == "queued" || status == "processing") {

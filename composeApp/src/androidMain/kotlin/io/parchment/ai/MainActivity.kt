@@ -226,7 +226,7 @@ class MainActivity : ComponentActivity() {
     }
 
     override fun onPause() {
-        PlatformRuntime.flushPendingStateNow()
+        PlatformRuntime.flushPendingStateAsync()
         super.onPause()
     }
 

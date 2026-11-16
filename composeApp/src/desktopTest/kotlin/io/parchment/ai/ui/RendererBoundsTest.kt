@@ -1,7 +1,15 @@
 package io.parchment.ai.ui
 
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.snapshots.Snapshot
+import androidx.compose.ui.ExperimentalComposeUiApi
+import androidx.compose.ui.ImageComposeScene
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.unit.Density
 import io.parchment.ai.model.ThemeConfig
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.swing.Swing
 import kotlin.random.Random
 import kotlin.test.*
 
@@ -265,5 +273,37 @@ class RendererBoundsTest {
         assertEquals(80f, scene.height)
         assertEquals(1, scene.drawItems.size)
         assertTrue(scene.gradients.containsKey("g"))
+    }
+
+    @OptIn(ExperimentalComposeUiApi::class)
+    @Test fun longCodeFenceChunksRoundTripAndStreamRenderQuickly() = runBlocking<Unit>(Dispatchers.Swing) {
+        val shortCode = (1..60).joinToString("\n") { "line $it" }
+        assertEquals(listOf(shortCode), splitCodeFenceChunks(shortCode))
+
+        val edgeCode = (1..80).joinToString("\n") { if (it == 41) "" else "val v$it = $it" } + "\n"
+        val chunks = splitCodeFenceChunks(edgeCode)
+        assertEquals(2, chunks.size)
+        assertEquals(edgeCode, chunks.joinToString("\n"))
+
+        val longReply = "```kotlin\n" + (1..240).joinToString("\n") { "val entry$it = computeValue($it) // rendered chunk line" } + "\n```"
+        val text = mutableStateOf("")
+        val scene = ImageComposeScene(760, 860, density = Density(1f), coroutineContext = Dispatchers.Swing.immediate)
+        try {
+            scene.setContent { LiteraryProseRenderer(text.value) }
+            var time = 0L
+            var pos = 0
+            while (pos < longReply.length) {
+                pos = minOf(longReply.length, pos + 180)
+                text.value = longReply.substring(0, pos)
+                Snapshot.sendApplyNotifications()
+                time += 16_000_000L
+                val started = System.nanoTime()
+                scene.render(time).close()
+                val elapsedMs = (System.nanoTime() - started) / 1_000_000
+                assertTrue(elapsedMs < 1_000, "Chunked long code fence frame took ${elapsedMs}ms at $pos chars")
+            }
+        } finally {
+            scene.close()
+        }
     }
 }

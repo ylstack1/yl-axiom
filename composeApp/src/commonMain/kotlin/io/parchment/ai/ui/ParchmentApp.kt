@@ -121,10 +121,11 @@ fun ParchmentApp(
         }
 
         McpServerConnections(appState.preferences.mcpServers)
-        // Background startup hydration: after Frame 1 renders, pre-warm O200kTokenizer and load inactive chat stubs on Dispatchers.Default
+        // Background startup hydration: let the first two frames paint, warm O200kTokenizer in parallel, and hydrate inactive stubs.
         LaunchedEffect(Unit) {
             withFrameNanos { }
-            withContext(Dispatchers.Default) {
+            withFrameNanos { }
+            launch(Dispatchers.Default) {
                 O200kTokenizer.warmUp()
             }
             if (needsBackgroundChatHydration) {
@@ -135,6 +136,9 @@ fun ParchmentApp(
                 }
                 appState = mergeLoadedSessions(appState, beforeLoad, hydrated)
                 needsBackgroundChatHydration = false
+            }
+            launch(Dispatchers.IO) {
+                PlatformStorage.pruneStaleTempFiles()
             }
         }
 
@@ -206,9 +210,9 @@ fun ParchmentApp(
 
         // One process-wide writer retains all dirty sessions across debounce and UI lifecycle changes.
         LaunchedEffect(Unit) {
-            PlatformRuntime.registerStateFlushCallback {
+            PlatformRuntime.registerStateFlushCallback { blocking ->
                 flushPendingDraftToDiskWriter()
-                appDiskWriter.flushBlocking()
+                if (blocking) appDiskWriter.flushBlocking() else appDiskWriter.flushUrgentlyAsync()
             }
         }
         LaunchedEffect(Unit) {
@@ -318,24 +322,30 @@ fun ParchmentApp(
             }
         }
 
-        generationHost = GenerationHost(
-            processState, activeAssistant, activeProfile, { isGoalModeEnabled }, { isLiveVoiceMode }, { dispatchNextQueuedItem },
-            ::updateSessionById, ::updateActiveSessionInMemoryOnly, ::generateTopicTitle
-        ) { id, purpose, profile, model, prompt, limit -> generateTrackedUtility(id, purpose, profile, model, prompt, limit) }
-
-        dispatchNextQueuedItem = { sessId, nextItem ->
-            dispatchPromptItem(
-                sessionId = sessId,
-                text = nextItem.text,
-                prefill = nextItem.prefill,
-                attachments = nextItem.attachments,
-                isGuidedDirection = nextItem.isGuidedDirection
-            )
+        generationHost = remember(activeAssistant, activeProfile) {
+            GenerationHost(
+                processState, activeAssistant, activeProfile, { isGoalModeEnabled }, { isLiveVoiceMode }, { dispatchNextQueuedItem },
+                ::updateSessionById, ::updateActiveSessionInMemoryOnly, ::generateTopicTitle
+            ) { id, purpose, profile, model, prompt, limit -> generateTrackedUtility(id, purpose, profile, model, prompt, limit) }
         }
 
-        summaryHost = StorySummaryHost(
-            processState, activeProfile, activeSession, ::completeSessionForAction, ::continueAssistantNodeAt, ::updateSessionStreamState, ::updateSessionById
-        ) { id, purpose, profile, model, prompt, limit -> generateTrackedUtility(id, purpose, profile, model, prompt, limit) }
+        dispatchNextQueuedItem = remember {
+            { sessId, nextItem ->
+                dispatchPromptItem(
+                    sessionId = sessId,
+                    text = nextItem.text,
+                    prefill = nextItem.prefill,
+                    attachments = nextItem.attachments,
+                    isGuidedDirection = nextItem.isGuidedDirection
+                )
+            }
+        }
+
+        summaryHost = remember(activeProfile) {
+            StorySummaryHost(
+                processState, activeProfile, { activeSession }, ::completeSessionForAction, ::continueAssistantNodeAt, ::updateSessionStreamState, ::updateSessionById
+            ) { id, purpose, profile, model, prompt, limit -> generateTrackedUtility(id, purpose, profile, model, prompt, limit) }
+        }
 
         LaunchedEffect(Unit) {
             if (appState.preferences.newChatOnLaunch && activeSession.messages.isNotEmpty()) {
@@ -537,24 +547,36 @@ fun ParchmentApp(
                         if (!isSettingsOpen) {
                             val bgStreamingCount = activeStreamsBySession.keys.count { it != activeSession.id }
                             val tailVariant = activeSession.messages.lastOrNull()?.activeVariant
-                            val vaultCountKey = remember(
+                            val prefixVaultHash = remember(
+                                activeSession.messages.takeUnless { tailVariant?.isStreaming == true },
                                 activeSession.id,
-                                activeSession.messages.size,
+                                activeSession.messages.size
+                            ) {
+                                var hash = activeSession.id.hashCode().toLong() * 31L + activeSession.messages.size
+                                val prefixEnd = (activeSession.messages.size - 1).coerceAtLeast(0)
+                                for (idx in 0 until prefixEnd) {
+                                    val v = activeSession.messages[idx].activeVariant
+                                    hash = hash * 31L + v.toolCalls.size * 17L + v.mediaItems.size * 31L +
+                                        v.webSources.size * 13L + v.attachments.size * 7L + v.content.length
+                                }
+                                hash
+                            }
+                            val vaultCountKey = remember(
+                                prefixVaultHash,
                                 pendingAttachments.size,
                                 tailVariant?.toolCalls?.size,
                                 tailVariant?.mediaItems?.size,
                                 tailVariant?.webSources?.size,
+                                tailVariant?.attachments?.size,
                                 tailVariant?.isStreaming,
                                 tailVariant?.let { if (it.isStreaming) it.content.length / 2048 else it.content.length }
                             ) {
-                                var hash = activeSession.id.hashCode().toLong() * 31L + activeSession.messages.size
-                                hash = hash * 31L + pendingAttachments.size
-                                for (idx in activeSession.messages.indices) {
-                                    val v = activeSession.messages[idx].activeVariant
-                                    val lenBucket = if (v.isStreaming) v.content.length / 2048 else v.content.length
-                                    hash = hash * 31L + v.toolCalls.size * 17L + v.mediaItems.size * 31L +
-                                        v.webSources.size * 13L + v.attachments.size * 7L + lenBucket +
-                                        if (v.isStreaming) 1L else 0L
+                                var hash = prefixVaultHash * 31L + pendingAttachments.size
+                                if (tailVariant != null) {
+                                    val lenBucket = if (tailVariant.isStreaming) tailVariant.content.length / 2048 else tailVariant.content.length
+                                    hash = hash * 31L + tailVariant.toolCalls.size * 17L + tailVariant.mediaItems.size * 31L +
+                                        tailVariant.webSources.size * 13L + tailVariant.attachments.size * 7L + lenBucket +
+                                        if (tailVariant.isStreaming) 1L else 0L
                                 }
                                 hash
                             }
@@ -1123,26 +1145,26 @@ fun ParchmentApp(
                                         streamingStatus = streamingStatus,
                                         streamingInteractionId = streamingInteractionId,
                                         queuedPrompts = queuedPrompts,
-                                        onRemoveQueuedPrompt = { qId ->
+                                        onRemoveQueuedPrompt = stableCallback { qId ->
                                             val curList = queuedPromptsBySession[activeSession.id].orEmpty()
                                             queuedPromptsBySession = queuedPromptsBySession + (activeSession.id to curList.filterNot { it.id == qId })
                                         },
-                                        onSteerQueuedPromptNow = { item ->
+                                        onSteerQueuedPromptNow = stableCallback { item ->
                                             steerQueuedPromptNow(activeSession.id, item)
                                         },
                                         userPromptInput = userPromptInput,
-                                        onUserPromptChange = { text -> userPromptInput = text },
+                                        onUserPromptChange = stableCallback { text -> userPromptInput = text },
                                         assistantPrefillInput = assistantPrefillInput,
-                                        onAssistantPrefillChange = { pf -> assistantPrefillInput = pf },
+                                        onAssistantPrefillChange = stableCallback { pf -> assistantPrefillInput = pf },
                                         showPrefillBox = showPrefillBox,
-                                        onTogglePrefillBox = { showPrefillBox = !showPrefillBox },
+                                        onTogglePrefillBox = stableAction { showPrefillBox = !showPrefillBox },
                                         showComposerToolsDrawer = showComposerToolsDrawer,
-                                        onComposerToolsDrawerChange = { showComposerToolsDrawer = it },
+                                        onComposerToolsDrawerChange = stableCallback { showComposerToolsDrawer = it },
                                         isGoalModeEnabled = isGoalModeEnabled,
-                                        onToggleGoalMode = { isGoalModeEnabled = !isGoalModeEnabled },
+                                        onToggleGoalMode = stableAction { isGoalModeEnabled = !isGoalModeEnabled },
                                         isLiveVoiceMode = isLiveVoiceMode,
                                         isVoiceListening = isVoiceListening,
-                                        onToggleLiveVoiceMode = {
+                                        onToggleLiveVoiceMode = stableAction {
                                             isLiveVoiceMode = !isLiveVoiceMode
                                             if (!isLiveVoiceMode) {
                                                 PlatformVoice.stopSpeakingAloud()
@@ -1150,13 +1172,13 @@ fun ParchmentApp(
                                         },
                                         onTriggerVoiceInput = ::triggerVoiceInput,
                                         pendingAttachments = pendingAttachments,
-                                        onAddAttachment = {
+                                        onAddAttachment = stableAction {
                                             uiScope.launch {
                                                 val picked = PlatformPickers.pickFileForImport(emptyList()) ?: return@launch
                                                 attachPickedFiles(listOf(picked))
                                             }
                                         },
-                                        onAttachWorkspaceFile = { relPath ->
+                                        onAttachWorkspaceFile = stableCallback { relPath ->
                                             val targetSessionId = activeSession.id
                                             val wsRoot = AgentPermissionResolver.resolve(activeSession, activeAssistant, activeProfile).workspacePath
                                             if (wsRoot.isNotBlank()) {
@@ -1376,13 +1398,13 @@ fun ParchmentApp(
                                                 executeRegenerateFromNode(nodeIndex, activeSession.id)
                                             }
                                         },
-                                        onTranslateNode = { nodeIndex ->
+                                        onTranslateNode = stableCallback { nodeIndex ->
                                             triggerTranslateNode(nodeIndex)
                                         },
-                                        onContinueAssistantNode = { idx -> continueAssistantNodeAt(idx, activeSession.id) },
+                                        onContinueAssistantNode = stableCallback { idx -> continueAssistantNodeAt(idx, activeSession.id) },
                                         jumpToNodeId = pendingPinJump?.takeIf { it.sessionId == activeSession.id }?.nodeId.orEmpty(),
-                                        onJumpHandled = { pendingPinJump = null },
-                                        onTogglePinnedReply = { nodeId -> togglePinnedReply(activeSession.id, nodeId) }
+                                        onJumpHandled = stableAction { pendingPinJump = null },
+                                        onTogglePinnedReply = stableCallback { nodeId -> togglePinnedReply(activeSession.id, nodeId) }
                                     )
                                     }
                                 }

@@ -43,18 +43,18 @@ internal object ComputerUse {
         ComputerAction(action, x, y, text("text"), text("keys").trim(), (number("amount") ?: 3).coerceIn(-20, 20))
     }
 
-    suspend fun perform(argumentsJson: String, isCancelled: () -> Boolean): ComputerOutcome {
+    suspend fun perform(argumentsJson: String, settleMs: Long = SETTLE_MS, isCancelled: () -> Boolean): ComputerOutcome {
         val action = parseAction(argumentsJson).getOrElse { return ComputerOutcome("Error: ${it.message}", isError = true) }
         if (!control.isAvailable) return ComputerOutcome("Error: Computer control is not available. On Android, turn on Parchment in Accessibility settings.", isError = true)
         if (isCancelled()) return ComputerOutcome("The run stopped before the action ran.")
         // Let the approval card or overlay leave the screen and the user's own tap finish settling first.
-        delay(SETTLE_MS)
+        delay(settleMs)
         if (isCancelled()) return ComputerOutcome("The run stopped before the action ran.")
         var done = "Screenshot taken."
         if (action.action != "screenshot") {
             done = withContext(Dispatchers.IO) { control.act(action) }
                 .getOrElse { return ComputerOutcome("Error: ${it.message}", isError = true) }
-            delay(SETTLE_MS)
+            delay(settleMs)
         }
         if (isCancelled()) return ComputerOutcome("$done The run stopped before the next screenshot.")
         val screenshot = withContext(Dispatchers.IO) { control.screenshot() }

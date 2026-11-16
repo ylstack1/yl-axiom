@@ -129,6 +129,16 @@ internal class ParchmentDiskWriter(
 
     fun pendingFullSession(sessionId: String): ChatSession? = pending.value.chats[sessionId]?.session?.takeUnless { it.isCompactStub }
 
+    fun flushUrgentlyAsync() {
+        val current = pending.value
+        if (current.settings == null && current.chats.isEmpty()) return
+        pending.update { old ->
+            if (old.settings == null && old.chats.isEmpty()) old else old.copy(urgent = true)
+        }
+        urgentWakeups.trySend(Unit)
+        wakeups.trySend(Unit)
+    }
+
     suspend fun flush() = writeMutex.withLock {
         val batch = pending.value
         var failure: Exception? = null

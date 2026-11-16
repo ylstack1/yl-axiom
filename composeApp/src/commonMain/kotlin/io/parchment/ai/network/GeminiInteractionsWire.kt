@@ -315,7 +315,7 @@ private fun AiProviderEngine.appendAssistantInteractionSteps(
 
 /** 3-Layer Rolling Context Compaction helper for Gemini Interactions extra loop steps. */
 internal fun compactGeminiInteractionsExtraSteps(steps: List<JsonObject>): List<JsonObject> {
-    if (steps.size <= 16) return steps
+    if (steps.size < 24) return steps
     val total = steps.size
     return steps.mapIndexed { idx, obj ->
         val type = obj["type"]?.jsonPrimitive?.contentOrNull

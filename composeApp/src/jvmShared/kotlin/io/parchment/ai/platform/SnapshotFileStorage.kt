@@ -1,7 +1,6 @@
 package io.parchment.ai.platform
 
 import io.parchment.ai.model.AppStateSnapshot
-import io.parchment.ai.model.ChatSession
 import io.parchment.ai.model.DefaultModelConfig
 import io.parchment.ai.model.PreferencesConfig
 import io.parchment.ai.model.ThemeConfig
@@ -114,7 +113,7 @@ internal class SnapshotFileStorage(
     }
 
     private fun validChat(raw: String, sessionId: String): Boolean = runCatching {
-        json.decodeFromString<ChatSession>(raw).id == sessionId
+        json.decodeFromString<ChatIdentity>(raw).id == sessionId
     }.getOrDefault(false)
 
     private fun read(file: File): String? = runCatching {
@@ -256,7 +255,7 @@ internal class SnapshotFileStorage(
                 if (!legacy.isFile) {
                     val fastRaw = read(primary)
                     if (fastRaw != null) {
-                        val parsed = runCatching { json.decodeFromString<ChatSession>(fastRaw) }.getOrNull()
+                        val parsed = runCatching { json.decodeFromString<ChatIdentity>(fastRaw) }.getOrNull()
                         if (parsed != null &&
                             parsed.id.isNotBlank() &&
                             parsed.id.trim().replace(unsafeSessionCharacters, "_") == id
@@ -284,7 +283,7 @@ internal class SnapshotFileStorage(
         val target = File(folder, "chat.json")
         val existing = read(target)
         if (target.isFile && existing == null) throw IOException("Unable to read the existing chat snapshot.")
-        val existingSession = existing?.let { runCatching { json.decodeFromString<ChatSession>(it) }.getOrNull() }
+        val existingSession = existing?.let { runCatching { json.decodeFromString<ChatIdentity>(it) }.getOrNull() }
         if (existingSession != null && existingSession.id != sessionId) {
             throw IOException("Chat identifier collides with an existing storage path.")
         }

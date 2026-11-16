@@ -1,7 +1,10 @@
 package io.parchment.ai.network
 
 import io.parchment.ai.model.*
+import kotlinx.serialization.builtins.MapSerializer
+import kotlinx.serialization.builtins.serializer
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.jsonObject
 import kotlin.test.*
 
 class PricingAvailabilityTest {
@@ -41,7 +44,13 @@ class PricingAvailabilityTest {
 
     @Test fun perTokenUnitsAndTinyPositivePricesAreNotGuessedOrRoundedToFree() {
         val catalog = linkedMapOf<String, ModelPricingSpec>()
-        ModelsDevClient.parseOpenRouterModelsIntoCatalog("""{"data":[{"id":"vendor/expensive","pricing":{"prompt":"0.1","completion":"0"}},{"id":"vendor/tiny","pricing":{"prompt":"0.000000000001"}}]}""", catalog)
+        ModelsDevClient.indexOpenRouterCatalog(
+            ModelsDevClient.catalogJson.decodeFromString(
+                OpenRouterCatalogDto.serializer(),
+                """{"data":[{"id":"vendor/expensive","pricing":{"prompt":"0.1","completion":"0"}},{"id":"vendor/tiny","pricing":{"prompt":"0.000000000001"}}]}"""
+            ),
+            catalog
+        )
         val expensive = ModelsDevClient.lookupSpecInCatalog(catalog, "vendor/expensive")!!
         assertEquals(100_000.0, expensive.knownPricing?.inputPerM)
         assertEquals(0.0, expensive.knownPricing?.outputPerM)
@@ -53,7 +62,13 @@ class PricingAvailabilityTest {
 
     @Test fun modelRegistryPreservesZeroMissingAndContextTierBoundaries() {
         val catalog = linkedMapOf<String, ModelPricingSpec>()
-        ModelsDevClient.parseModelsDevIntoCatalog("""{"vendor":{"models":{"model":{"id":"vendor/model","cost":{"input":1,"output":2,"cache_read":0,"context_over_100k":{"input":3,"output":4}}},"free":{"id":"vendor/free","cost":{"input":0,"output":0}},"unknown":{"id":"vendor/unknown"}}}}""", catalog)
+        ModelsDevClient.indexModelsDevCatalog(
+            ModelsDevClient.catalogJson.decodeFromString(
+                MapSerializer(String.serializer(), ModelsDevProviderDto.serializer()),
+                """{"vendor":{"models":{"model":{"id":"vendor/model","cost":{"input":1,"output":2,"cache_read":0,"context_over_100k":{"input":3,"output":4}}},"free":{"id":"vendor/free","cost":{"input":0,"output":0}},"unknown":{"id":"vendor/unknown"}}}}"""
+            ),
+            catalog
+        )
         val spec = ModelsDevClient.lookupSpecInCatalog(catalog, "vendor/model")!!
         assertEquals(0.0, spec.knownPricing?.cacheReadPerM)
         assertNull(spec.knownPricing?.cacheWritePerM)
@@ -78,7 +93,10 @@ class PricingAvailabilityTest {
 
     @Test fun liteLlmLongLifetimeAndContextTierRatesAreCapturedSeparately() {
         val catalog = linkedMapOf<String, ModelPricingSpec>()
-        ModelsDevClient.parseLiteLlmModelsIntoCatalog("""{"vendor/model":{"input_cost_per_token":0.000001,"output_cost_per_token":0.000002,"cache_creation_input_token_cost":0.00000125,"cache_creation_input_token_cost_above_1hr":0.000002,"input_cost_per_token_above_200k_tokens":0.000003,"cache_creation_input_token_cost_above_1hr_above_200k_tokens":0.000006}}""", catalog)
+        ModelsDevClient.indexLiteLlmCatalog(
+            ModelsDevClient.catalogJson.parseToJsonElement("""{"vendor/model":{"input_cost_per_token":0.000001,"output_cost_per_token":0.000002,"cache_creation_input_token_cost":0.00000125,"cache_creation_input_token_cost_above_1hr":0.000002,"input_cost_per_token_above_200k_tokens":0.000003,"cache_creation_input_token_cost_above_1hr_above_200k_tokens":0.000006}}""").jsonObject,
+            catalog
+        )
         val spec = ModelsDevClient.lookupSpecInCatalog(catalog, "vendor/model")!!
         assertEquals(2.0, spec.knownPricing?.longCacheWritePerM)
         assertEquals(3.0, spec.contextPricingTiers.single().pricing.inputPerM)
@@ -101,7 +119,13 @@ class PricingAvailabilityTest {
 
     @Test fun vercelPricingKeepsFreeFieldsAndRejectsMalformedNumbers() {
         val catalog = linkedMapOf<String, ModelPricingSpec>()
-        ModelsDevClient.parseVercelModelsIntoCatalog("""{"data":[{"id":"vendor/model","pricing":{"input":"0","output":"0.000002","input_cache_read":{},"input_cache_write":"-1"}}]}""", catalog)
+        ModelsDevClient.indexVercelCatalog(
+            ModelsDevClient.catalogJson.decodeFromString(
+                VercelCatalogDto.serializer(),
+                """{"data":[{"id":"vendor/model","pricing":{"input":"0","output":"0.000002","input_cache_read":{},"input_cache_write":"-1"}}]}"""
+            ),
+            catalog
+        )
         val spec = ModelsDevClient.lookupSpecInCatalog(catalog, "vendor/model")!!
         assertEquals(0.0, spec.knownPricing?.inputPerM)
         assertEquals(2.0, spec.knownPricing?.outputPerM)
@@ -111,8 +135,11 @@ class PricingAvailabilityTest {
 
     @Test fun openRouterLongCacheWrite1hRateIsCaptured() {
         val catalog = linkedMapOf<String, ModelPricingSpec>()
-        ModelsDevClient.parseOpenRouterModelsIntoCatalog(
-            """{"data":[{"id":"anthropic/claude-fixture","pricing":{"prompt":"0.000003","completion":"0.000015","input_cache_read":"0.0000003","input_cache_write":"0.00000375","input_cache_write_1h":"0.000006"}}]}""",
+        ModelsDevClient.indexOpenRouterCatalog(
+            ModelsDevClient.catalogJson.decodeFromString(
+                OpenRouterCatalogDto.serializer(),
+                """{"data":[{"id":"anthropic/claude-fixture","pricing":{"prompt":"0.000003","completion":"0.000015","input_cache_read":"0.0000003","input_cache_write":"0.00000375","input_cache_write_1h":"0.000006"}}]}"""
+            ),
             catalog
         )
         val spec = ModelsDevClient.lookupSpecInCatalog(catalog, "anthropic/claude-fixture")!!

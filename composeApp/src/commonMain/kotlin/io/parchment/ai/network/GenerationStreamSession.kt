@@ -50,7 +50,8 @@ internal class GenerationStreamSession(
     initialTokenMetrics: TokenMetrics,
     usageOwnerSessionId: String,
     resolvedUsageRunId: String,
-    usagePurpose: String
+    usagePurpose: String,
+    private val pollDelayMsOverride: Long? = null
 ) {
     private val toolPolicy = AgentPermissionResolver.resolve(session, profile = profile)
     private val transportProfile = profile.copy(
@@ -306,7 +307,8 @@ internal class GenerationStreamSession(
                     onRawWire = state::recordRawWireBounded,
                     onRequestStarted = state::beginUsageRequest,
                     onUsage = state::recordRequestUsage,
-                    onCitation = state::recordRawCitationAndEmit
+                    onCitation = state::recordRawCitationAndEmit,
+                    pollDelayMsOverride = pollDelayMsOverride
                 )
             }
         } catch (e: CancellationException) {
@@ -559,7 +561,8 @@ internal class GenerationStreamSession(
                 onRawWire = state::recordRawWireBounded,
                 onRequestStarted = state::beginUsageRequest,
                 onUsage = state::recordRequestUsage,
-                onMediaRequestStarted = state::beginMediaUsage
+                onMediaRequestStarted = state::beginMediaUsage,
+                pollDelayMsOverride = pollDelayMsOverride
             )
         }
     }

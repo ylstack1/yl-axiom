@@ -166,7 +166,6 @@ internal suspend fun AiProviderEngine.executeOpenAiChatCompletionsLoop(
                         add(JsonPrimitive("image"))
                     }
                 }
-                put("messages", chatWireMessages)
                 val wsTools = WorkspaceHarness.buildOpenAiChatCompletionsTools(
                     session.workspaceMode,
                     session.workspacePath,
@@ -179,6 +178,7 @@ internal suspend fun AiProviderEngine.executeOpenAiChatCompletionsLoop(
                     put("tools", wsTools)
                     put("tool_choice", "auto")
                 }
+                put("messages", chatWireMessages)
             }
 
             val finalPayload = mergeRawJsonExtraBody(payloadObj, profile.rawJsonExtraBody)

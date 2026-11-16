@@ -52,7 +52,8 @@ class StreamRecoveryHttpTest {
     private fun updates(profile: ProviderProfile) = AiProviderEngine.streamGeneration(
         profile = profile,
         session = ChatSession("chat", "Fixture", 1L, 1L, profile.id),
-        historyNodes = listOf(MessageNode("user", MessageRole.USER, listOf(MessageVariant("variant", content = "Hello"))))
+        historyNodes = listOf(MessageNode("user", MessageRole.USER, listOf(MessageVariant("variant", content = "Hello")))),
+        pollDelayMsOverride = 10L
     )
 
     /** Stops at the first retry notice so a test never sits through the real retry wait. */
@@ -295,7 +296,8 @@ class StreamRecoveryHttpTest {
                 AiProviderEngine.streamGeneration(
                     profile = video, session = ChatSession("chat", "Fixture", 1L, 1L, video.id),
                     historyNodes = listOf(MessageNode("user", MessageRole.USER, listOf(MessageVariant("variant", content = "A short clip")))),
-                    resumeMediaTask = resumeTask
+                    resumeMediaTask = resumeTask,
+                    pollDelayMsOverride = 10L
                 ).toList()
             }
         }

@@ -8,6 +8,37 @@ import java.util.concurrent.ConcurrentHashMap
 
 /** Shared JVM helpers for inspecting/cleaning app storage files and caching loaded custom fonts. */
 internal object AppStorageInventory {
+    /** Removes old OTA downloads and orphaned `.tmp` files older than [maxAgeMs] after startup hydration. */
+    fun pruneStaleTempFiles(
+        storageRoot: File,
+        otaDirs: List<File> = emptyList(),
+        maxAgeMs: Long = 24L * 60L * 60L * 1000L,
+        nowMs: Long = System.currentTimeMillis()
+    ): Int = runCatching {
+        val cutoffMs = nowMs - maxAgeMs
+        var deleted = 0
+        for (dir in otaDirs) {
+            if (!dir.exists() || !dir.isDirectory) continue
+            dir.listFiles()?.forEach { file ->
+                if (file.isFile && file.lastModified() in 1L..cutoffMs && file.delete()) deleted++
+            }
+        }
+        val rootDir = storageRoot.canonicalFile
+        if (rootDir.exists() && rootDir.isDirectory) {
+            rootDir.walkTopDown()
+                .maxDepth(6)
+                .filter { it.isFile && it.name.endsWith(".tmp", ignoreCase = true) && it.lastModified() in 1L..cutoffMs }
+                .forEach { file ->
+                    // Keep lone `.json.tmp` snapshots if their primary `.json` target is missing so recovery still sees them.
+                    val baseName = file.name.dropLast(4)
+                    val isJsonTmp = baseName.endsWith(".json", ignoreCase = true)
+                    val hasPrimaryTarget = !isJsonTmp || File(file.parentFile, baseName).isFile
+                    if (hasPrimaryTarget && file.delete()) deleted++
+                }
+        }
+        deleted
+    }.getOrDefault(0)
+
     fun wipeDirectory(dir: File, preserveRoot: Boolean): Boolean = runCatching {
         if (preserveRoot) {
             dir.listFiles()?.forEach { it.deleteRecursively() }

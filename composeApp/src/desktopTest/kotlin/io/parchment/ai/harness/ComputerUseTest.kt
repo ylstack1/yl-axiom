@@ -64,21 +64,21 @@ class ComputerUseTest {
 
     @Test fun badRequestsNeverReachTheComputer() = runBlocking {
         listOf("""{"action":"format_disk"}""", """{"action":"click"}""", """{"action":"type"}""", """{"action":"key"}""", "[1]", """{"action":"type","text":"${"x".repeat(4001)}"}""").forEach {
-            assertTrue(ComputerUse.perform(it) { false }.isError, it)
+            assertTrue(ComputerUse.perform(it, isCancelled = { false }, settleMs = 10L).isError, it)
         }
         assertTrue(fake.actions.isEmpty())
         assertEquals(0, fake.captures)
     }
 
     @Test fun anActionIsFollowedByAFreshScreenshot() = runBlocking {
-        val outcome = ComputerUse.perform(click) { false }
+        val outcome = ComputerUse.perform(click, isCancelled = { false }, settleMs = 10L)
         assertFalse(outcome.isError)
         assertEquals("click", fake.actions.single().action)
         assertEquals("SCREENBYTES", outcome.screenshot?.jpegBase64)
     }
 
     @Test fun aStoppedRunTakesNoFurtherScreenshot() = runBlocking {
-        assertNull(ComputerUse.perform(click) { true }.screenshot)
+        assertNull(ComputerUse.perform(click, isCancelled = { true }, settleMs = 10L).screenshot)
         assertTrue(fake.actions.isEmpty())
         assertEquals(0, fake.captures)
     }
@@ -99,7 +99,7 @@ class ComputerUseTest {
 
     @Test fun cancellingDuringPostApprovalSettleNeverActsOrCaptures() = runBlocking {
         val checks = AtomicInteger(0)
-        val outcome = ComputerUse.perform(click) { checks.incrementAndGet() >= 2 }
+        val outcome = ComputerUse.perform(click, settleMs = 10L) { checks.incrementAndGet() >= 2 }
         assertNull(outcome.screenshot)
         assertTrue(fake.actions.isEmpty(), "Cancelled or revoked approval must not dispatch the gesture")
         assertEquals(0, fake.captures)

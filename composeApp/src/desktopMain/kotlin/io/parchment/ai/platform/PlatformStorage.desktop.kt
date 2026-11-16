@@ -60,6 +60,15 @@ actual object PlatformStorage {
     actual fun wipeAllLocalData(): Boolean =
         AppStorageInventory.wipeDirectory(DesktopPlatformHost.resolveStorageDir(), preserveRoot = false)
 
+    actual fun pruneStaleTempFiles(maxAgeMs: Long): Int {
+        val root = DesktopPlatformHost.resolveStorageDir()
+        return AppStorageInventory.pruneStaleTempFiles(
+            storageRoot = root,
+            otaDirs = listOf(DesktopPlatformHost.otaTempDir(), File(root, "ota")),
+            maxAgeMs = maxAgeMs
+        )
+    }
+
     actual fun listAppStorageFiles(): List<StoredAppFileItem> =
         AppStorageInventory.listFiles(DesktopPlatformHost.resolveStorageDir(), extraOtaDir = DesktopPlatformHost.otaTempDir())
 

@@ -1,9 +1,12 @@
 package io.parchment.ai.ui
 
+import io.parchment.ai.model.AppStateSnapshot
 import io.parchment.ai.model.ChatSession
 import io.parchment.ai.model.MessageNode
 import io.parchment.ai.model.MessageRole
 import io.parchment.ai.model.MessageVariant
+import io.parchment.ai.model.ProviderProfile
+import io.parchment.ai.model.ProviderProtocol
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
@@ -44,6 +47,30 @@ class PinnedRepliesTest {
         val pinned = compactStateJson.encodeToString(MessageNode.serializer(), node("n", "text", pinned = true))
         assertTrue("\"pinned\":true" in pinned)
         assertTrue(compactStateJson.decodeFromString(MessageNode.serializer(), pinned).pinned)
+        assertFalse("goalTracker" in plain)
+        assertFalse("includedInContext" in plain)
+    }
+
+    @Test
+    fun compactStateJsonPreservesExplicitChainingAcrossLegacyMigration() {
+        val state = AppStateSnapshot(
+            profiles = listOf(
+                ProviderProfile(
+                    id = "prof-custom-chain",
+                    name = "Custom Chain",
+                    protocol = ProviderProtocol.OPENAI_RESPONSES,
+                    useStatefulChaining = true,
+                    storeServerSide = false
+                )
+            )
+        )
+        val encoded = compactStateJson.encodeToString(AppStateSnapshot.serializer(), state)
+        assertTrue("\"storeServerSide\":false" in encoded)
+        assertTrue("\"providerStorageReset\":true" in encoded)
+        val migrated = migrateLegacyProviderJson(encoded)
+        val decoded = compactStateJson.decodeFromString(AppStateSnapshot.serializer(), migrated)
+        assertTrue(decoded.profiles.single().useStatefulChaining)
+        assertFalse(decoded.profiles.single().storeServerSide)
     }
 
     @Test

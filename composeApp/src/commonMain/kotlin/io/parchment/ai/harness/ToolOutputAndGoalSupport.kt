@@ -17,7 +17,7 @@ internal object ToolOutputAndGoalSupport {
     private val ANSI_ESCAPE_REGEX = Regex("""\u001B\[[0-?]*[ -/]*[@-~]""")
     private val PS_CLIXML_BLOCK_REGEX = Regex("""(?s)#< CLIXML\s*<Objs\b.*?</Objs>""")
     private val EXCESS_BLANK_LINES_REGEX = Regex("""\n{4,}""")
-    private const val COMPACTION_BATCH = 8
+    private const val COMPACTION_BATCH = 16
 
     fun compressWithSizeValve(toolName: String, rawOutput: String): String {
         if (rawOutput.isEmpty()) return rawOutput
@@ -61,7 +61,8 @@ internal object ToolOutputAndGoalSupport {
             return rawOutput
         }
         val firstLine = rawOutput.lineSequence().firstOrNull()?.take(140).orEmpty()
-        return "[Compacted step #$stepIndex ($toolName): ${rawOutput.length} chars (${rawOutput.lines().size} lines) — \"$firstLine…\". Re-run tool if exact lines are needed.]"
+        val lineCount = rawOutput.count { it == '\n' } + 1
+        return "[Compacted step #$stepIndex ($toolName): ${rawOutput.length} chars ($lineCount lines) — \"$firstLine…\". Re-run tool if exact lines are needed.]"
     }
 
     fun parseTodoItems(args: JsonObject): List<TodoItem> {

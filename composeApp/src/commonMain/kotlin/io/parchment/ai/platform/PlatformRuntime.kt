@@ -14,8 +14,9 @@ expect object PlatformRuntime {
     fun monotonicTimeMillis(): Long
     fun createRunId(): String
 
-    fun registerStateFlushCallback(callback: () -> Unit)
+    fun registerStateFlushCallback(callback: (blocking: Boolean) -> Unit)
     fun flushPendingStateNow()
+    fun flushPendingStateAsync()
     fun registerBackHandler(handler: (() -> Boolean)?)
     fun handleSystemBackPressed(): Boolean
     fun isIgnoringBatteryOptimizations(): Boolean
@@ -27,4 +28,10 @@ expect object PlatformRuntime {
 
     // In-app update download and install.
     fun createOtaStagedDownload(assetName: String): OtaStagedDownload
+
+    suspend fun <T> decodeJsonStream(
+        channel: io.ktor.utils.io.ByteReadChannel,
+        json: kotlinx.serialization.json.Json,
+        deserializer: kotlinx.serialization.DeserializationStrategy<T>
+    ): T
 }

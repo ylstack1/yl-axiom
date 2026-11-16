@@ -189,7 +189,8 @@ internal suspend fun AiProviderEngine.executeByteDanceArkGeneration(
     onRawWire: suspend (String, String) -> Unit,
     onRequestStarted: UsageRequestStarter,
     onUsage: UsageReporter,
-    onMediaRequestStarted: suspend (String, String) -> String
+    onMediaRequestStarted: suspend (String, String) -> String,
+    pollDelayMsOverride: Long? = null
 ) {
     val latestUserPrompt = historyNodes.lastOrNull { it.role == MessageRole.USER }?.activeVariant?.content.orEmpty()
         .ifBlank { historyNodes.lastOrNull()?.activeVariant?.content.orEmpty() }
@@ -442,7 +443,7 @@ internal suspend fun AiProviderEngine.executeByteDanceArkGeneration(
             ) {
                 pollCount++
                 onStatus(Strings.videoGeneratingPoll(status, pollCount), taskRef)
-                delay(3000L)
+                delay(pollDelayMsOverride ?: 3000L)
                 val pollUrl = buildUrlWithAuthQuery(profile, "${activeTaskUrl.trimEnd('/')}/$taskId")
                 latestTaskObj = try {
                     val pollResp = httpClient.get(pollUrl) {

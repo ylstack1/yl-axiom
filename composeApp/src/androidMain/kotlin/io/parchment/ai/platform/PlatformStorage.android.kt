@@ -11,7 +11,7 @@ import java.io.File
 
 actual object PlatformStorage {
     private val imageCache = BoundedImageCache {
-        if (PlatformRuntime.isLowMemoryDevice) 4 to 24L * 1024L * 1024L else 16 to 96L * 1024L * 1024L
+        if (PlatformRuntime.isLowMemoryDevice) 3 to 18L * 1024L * 1024L else 6 to 40L * 1024L * 1024L
     }
 
     private val snapshotStorage = SnapshotFileStorage(AndroidPlatformHost::resolveStorageDir) {
@@ -55,6 +55,19 @@ actual object PlatformStorage {
 
     actual fun wipeAllLocalData(): Boolean =
         AppStorageInventory.wipeDirectory(AndroidPlatformHost.resolveStorageDir(), preserveRoot = true)
+
+    actual fun pruneStaleTempFiles(maxAgeMs: Long): Int {
+        val root = AndroidPlatformHost.resolveStorageDir()
+        val otaDirs = buildList {
+            AndroidPlatformHost.appContext?.cacheDir?.let { add(File(it, "ota")) }
+            add(File(root, "ota"))
+        }
+        return AppStorageInventory.pruneStaleTempFiles(
+            storageRoot = root,
+            otaDirs = otaDirs,
+            maxAgeMs = maxAgeMs
+        )
+    }
 
     actual fun listAppStorageFiles(): List<StoredAppFileItem> =
         AppStorageInventory.listFiles(AndroidPlatformHost.resolveStorageDir(), otaTempExtensions = setOf(".tmp", ".apk"))
