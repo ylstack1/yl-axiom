@@ -105,13 +105,21 @@ kotlin {
         desktopMain.dependencies {
             implementation(compose.desktop.currentOs)
             implementation(libs.kotlinx.coroutines.swing)
-            implementation(libs.jna)
             implementation(libs.ktor.client.okhttp)
         }
 
         commonTest.dependencies {
             implementation(kotlin("test"))
         }
+    }
+}
+
+// -Pparchment.composeMetrics=true writes the Compose compiler's stability and skippability reports to
+// build/compose-metrics, for checking that a hot composable (composer, streaming turn) can skip.
+if (providers.gradleProperty("parchment.composeMetrics").orNull == "true") {
+    composeCompiler {
+        metricsDestination = layout.buildDirectory.dir("compose-metrics")
+        reportsDestination = layout.buildDirectory.dir("compose-metrics")
     }
 }
 
@@ -161,7 +169,11 @@ compose.desktop {
             "-XX:G1PeriodicGCInterval=8000",
             "-XX:+G1PeriodicGCInvokesConcurrent",
             "-XX:SoftRefLRUPolicyMSPerMB=250",
-            // JNA (title bar, memory check) and Skia call native code; JDK 25 warns and later JDKs will block it.
+            // JDK 25 (JEP 519): 8-byte object headers instead of 12, a few percent less heap for the same chats.
+            // The base class archive must be dumped with the same flag (classes_coh.jsa, made after jlink below).
+            "-XX:+UseCompactObjectHeaders",
+            // FFM downcalls (title bar, memory check, keep-awake: WindowsNative) and Skia call native code; JDK 25 warns
+            // without this and later JDKs will block it.
             "--enable-native-access=ALL-UNNAMED"
         )
 
@@ -186,7 +198,6 @@ compose.desktop {
             modules(
                 "java.base",
                 "java.desktop",
-                "java.net.http",
                 "jdk.crypto.ec",
                 "java.naming",
                 "jdk.unsupported"
@@ -217,9 +228,22 @@ tasks.withType<org.jetbrains.compose.desktop.application.tasks.AbstractJLinkTask
     val runtimeBin = destinationDir.dir("bin")
     doLast {
         val bin = runtimeBin.get().asFile
+        // jlink dumps only the default-header archive (classes.jsa). With -XX:+UseCompactObjectHeaders the JVM looks
+        // for classes_coh.jsa and, missing it, silently runs without class sharing, so dump it here and fail loudly.
+        val javaExe = listOf("java.exe", "java").map { bin.resolve(it) }.firstOrNull { it.isFile }
+            ?: throw GradleException("jlink image has no java launcher to dump classes_coh.jsa with.")
+        // Dumped with the app's native-access flag too: a mismatch makes the JVM drop the archived module graph.
+        val dump = ProcessBuilder(
+            javaExe.path, "-XX:+UseCompactObjectHeaders", "--enable-native-access=ALL-UNNAMED", "-Xshare:dump"
+        ).redirectErrorStream(true).start()
+        val dumpLog = dump.inputStream.bufferedReader().readText()
+        if (dump.waitFor() != 0 || !bin.resolve("server/classes_coh.jsa").isFile) {
+            throw GradleException("Dumping classes_coh.jsa failed: " + dumpLog.takeLast(2000))
+        }
         bin.listFiles { file -> file.extension.equals("exe", ignoreCase = true) }?.forEach { it.delete() }
-        // The JVM reads this second archive only when compressed object pointers are off (heaps over about 32 GB);
-        // Parchment's heap is capped at 1 GB, so it would ship 12 MB that is never used.
+        // Unused at runtime: classes.jsa needs default headers and classes_nocoops.jsa needs compressed oops off
+        // (heaps over about 32 GB). The app always runs with compact headers and a 1 GB heap.
+        bin.resolve("server/classes.jsa").delete()
         bin.resolve("server/classes_nocoops.jsa").delete()
     }
 }

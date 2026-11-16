@@ -53,7 +53,11 @@ actual object PlatformStorage {
     actual fun saveAppStateJson(json: String) = snapshotStorage.saveSettings(json)
     actual fun loadChatSessionJsonById(sessionId: String): String? = snapshotStorage.loadChat(sessionId)
     actual fun loadAllChatSessionJsons(): List<String> = snapshotStorage.loadAllChats()
-    actual fun chatSessionJsons(): Sequence<String> = snapshotStorage.chats()
+    actual fun chatSessionJsons(skipFolders: Set<String>): Sequence<String> = snapshotStorage.chats(skipFolders)
+    actual fun chatFileStamps(): Map<String, ChatFileStamp> = snapshotStorage.chatFileStamps()
+    actual fun chatFolderName(sessionId: String): String = snapshotStorage.chatFolderName(sessionId)
+    actual fun loadChatIndexJson(): String? = snapshotStorage.loadChatIndex()
+    actual fun saveChatIndexJson(json: String) = snapshotStorage.saveChatIndex(json)
     actual fun saveChatSessionJson(sessionId: String, json: String) = snapshotStorage.saveChat(sessionId, json)
     actual fun deleteChatSessionFile(sessionId: String) = snapshotStorage.deleteChat(sessionId)
 

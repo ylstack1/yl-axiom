@@ -23,6 +23,7 @@ import io.parchment.ai.model.mapProtocolToDialect
 import io.parchment.ai.model.SystemPromptPreset
 import io.parchment.ai.model.ThemeConfig
 import io.parchment.ai.platform.ChatBundleEntry
+import io.parchment.ai.platform.ChatFileStamp
 import io.parchment.ai.platform.ChatImportOutcome
 import io.parchment.ai.platform.PlatformPickers
 import io.parchment.ai.platform.PlatformRuntime
@@ -35,6 +36,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.serialization.ExperimentalSerializationApi
+import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
@@ -871,22 +873,39 @@ internal fun loadRemainingHistoricalSessionsDehydrated(
         if (existing.id.isNotBlank()) mergedById[existing.id] = existing
     }
     var loadedAny = false
+    // Stamps first: a chat written after its stamp was read gets a newer stamp, so the index never vouches for it.
+    val stamps = runCatching { PlatformStorage.chatFileStamps() }.getOrDefault(emptyMap())
+    val index = readChatStubIndex()
+    val nextEntries = HashMap<String, ChatIndexEntry>()
+    for ((folder, stamp) in stamps) {
+        val entry = index.entries[folder] ?: continue
+        val id = entry.stub.id
+        if (!entry.matches(stamp) || id.isBlank() || id == activeId || id in keepHydratedIds) continue
+        if (PlatformStorage.chatFolderName(id) != folder) continue
+        loadedAny = true
+        nextEntries[folder] = entry
+        mergedById[id] = entry.restoredStub()
+    }
     // One chat at a time: each file's text and full decode are dropped once its stub is kept.
-    for (rawChat in PlatformStorage.chatSessionJsons()) {
+    for (rawChat in PlatformStorage.chatSessionJsons(skipFolders = nextEntries.keys.toSet())) {
         loadedAny = true
         val decoded = runCatching { compactStateJson.decodeFromString<ChatSession>(rawChat) }.getOrNull() ?: continue
         if (decoded.id.isBlank()) continue
+        val keepFull = decoded.id == activeId || decoded.id in keepHydratedIds
+        val stub = if (keepFull) null else dehydrateChatSessionToCompactStub(decoded)
+        val folder = PlatformStorage.chatFolderName(decoded.id)
+        stamps[folder]?.let { stamp ->
+            nextEntries[folder] = ChatIndexEntry.of(stamp, stub ?: dehydrateChatSessionToCompactStub(decoded))
+        }
         val alreadyInState = mergedById[decoded.id]
-        if (alreadyInState != null && (decoded.id == activeId || decoded.id in keepHydratedIds)) {
+        if (alreadyInState != null && keepFull) {
             // Preserve live in-memory state of active / streaming sessions
             continue
         }
-        val prepared = if (decoded.id == activeId || decoded.id in keepHydratedIds) {
-            stripRedundantAttachmentBase64(decoded)
-        } else {
-            dehydrateChatSessionToCompactStub(decoded)
-        }
-        mergedById[decoded.id] = prepared
+        mergedById[decoded.id] = stub ?: stripRedundantAttachmentBase64(decoded)
+    }
+    if (nextEntries != index.entries) {
+        runCatching { PlatformStorage.saveChatIndexJson(compactStateJson.encodeToString(ChatStubIndex.serializer(), ChatStubIndex(entries = nextEntries))) }
     }
     if (!loadedAny) return currentState
     val combinedSessions = mergedById.values
@@ -898,6 +917,42 @@ internal fun loadRemainingHistoricalSessionsDehydrated(
         openTabSessionIds = safeOpenTabs
     )
 }
+
+/**
+ * `chat-index.json`: each chat's sidebar stub, keyed by chat folder and valid only while the chat file's size and
+ * modification time match. It spares start-up a full decode of every chat; a missing, corrupt or stale entry just
+ * falls back to reading that `chat.json`, which stays the only source of truth.
+ */
+@Serializable
+internal data class ChatStubIndex(val version: Int = 1, val entries: Map<String, ChatIndexEntry> = emptyMap())
+
+@Serializable
+internal data class ChatIndexEntry(
+    val fileLength: Long,
+    val lastModifiedMs: Long,
+    /** [ChatSession.stubMessageCount] and [ChatSession.isCompactStub] are transient, so they travel here. */
+    val messageCount: Int,
+    val isStub: Boolean,
+    val stub: ChatSession
+) {
+    fun matches(stamp: ChatFileStamp): Boolean = fileLength == stamp.length && lastModifiedMs == stamp.lastModifiedMs
+
+    fun restoredStub(): ChatSession = stub.copy(isCompactStub = isStub, stubMessageCount = if (isStub) messageCount else 0)
+
+    companion object {
+        fun of(stamp: ChatFileStamp, stub: ChatSession) = ChatIndexEntry(
+            fileLength = stamp.length,
+            lastModifiedMs = stamp.lastModifiedMs,
+            messageCount = stub.stubMessageCount,
+            isStub = stub.isCompactStub,
+            stub = stub
+        )
+    }
+}
+
+private fun readChatStubIndex(): ChatStubIndex = runCatching {
+    PlatformStorage.loadChatIndexJson()?.let { compactStateJson.decodeFromString<ChatStubIndex>(it) }
+}.getOrNull()?.takeIf { it.version == 1 } ?: ChatStubIndex()
 
 internal fun loadOrCreateDefaultAppState(): AppStateSnapshot {
     val rawSettings = PlatformStorage.loadAppStateJson()?.let { migrateLegacyProviderJson(it) }

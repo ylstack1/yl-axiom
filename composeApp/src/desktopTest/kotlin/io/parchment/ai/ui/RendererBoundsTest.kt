@@ -122,9 +122,9 @@ class RendererBoundsTest {
                 val cache = IncrementalProseBlockCache()
                 for (end in 1..text.length step step) {
                     val partial = text.substring(0, end)
-                    assertEquals(parseProseBlocks(partial), cache.parseIncremental(partial), "step $step at $end")
+                    assertEquals(parseProseBlocks(normalizeLineEndings(partial)), cache.parseIncremental(partial), "step $step at $end")
                 }
-                assertEquals(parseProseBlocks(text), cache.parseIncremental(text))
+                assertEquals(parseProseBlocks(normalizeLineEndings(text)), cache.parseIncremental(text))
             }
         }
         val rewrites = IncrementalProseBlockCache()
@@ -134,6 +134,16 @@ class RendererBoundsTest {
         val rewritten = "Different text\n\n```b\ncode"
         assertEquals(parseProseBlocks(rewritten), rewrites.parseIncremental(rewritten))
         assertEquals(parseProseBlocks(rewritten, enableMath = false), rewrites.parseIncremental(rewritten, enableMath = false))
+    }
+
+    @Test fun crlfRepliesRenderLikeLfReplies() {
+        val lf = "Intro\n\n```kotlin\nval a = 1\n```\n\n| a | b |\n|---|---|\n| 1 | 2 |\n\nDone"
+        val crlf = lf.replace("\n", "\r\n")
+        assertEquals(parseProseBlocks(lf), IncrementalProseBlockCache().parseIncremental(crlf))
+        // Mid-stream a CR waits for its LF, so the normalized text only grows.
+        assertEquals("a", normalizeLineEndings("a\r"))
+        assertEquals("a\nb", normalizeLineEndings("a\r\nb"))
+        assertEquals("a\nb", normalizeLineEndings("a\rb"))
     }
 
     @Test fun storedChatSearchMatchesVisibleTextOnly() {

@@ -259,6 +259,74 @@ class ToolApprovalBroker(
     }
 }
 
+/** One command of a compound shell line; [joinedBy] is the operator before it ("" for the first). */
+data class ShellPreviewPart(val joinedBy: String, val command: String)
+
+/**
+ * A display-only breakdown of a shell command for the approval panel. It never changes what runs: the permit
+ * still binds the exact, unmodified arguments ([ToolExecutionPermit]).
+ */
+data class ShellApprovalPreview(
+    val parts: List<ShellPreviewPart>,
+    val writesFiles: Boolean,
+    val nestedCommands: Boolean,
+    val runsInBackground: Boolean
+) {
+    /** Worth showing only when the line is more than one plain command. */
+    val isCompound: Boolean get() = parts.size > 1 || writesFiles || nestedCommands || runsInBackground
+}
+
+/**
+ * Splits [command] at top-level `&&`, `||`, `;`, `|` and line breaks, ignoring operators inside quotes or after
+ * an escape (`\` for sh, the backtick for PowerShell), and flags redirections (`>`), nested commands (`$(`)
+ * and a trailing background `&`. Display only, so a parse that is wrong for an exotic shell costs nothing.
+ */
+fun parseShellApprovalPreview(command: String): ShellApprovalPreview {
+    val parts = ArrayList<ShellPreviewPart>()
+    val current = StringBuilder()
+    var joinedBy = ""
+    var inSingle = false
+    var inDouble = false
+    var writes = false
+    var nested = false
+    var background = false
+    fun flush(nextOperator: String) {
+        val text = current.toString().trim()
+        if (text.isNotEmpty()) parts += ShellPreviewPart(joinedBy, text)
+        if (text.isNotEmpty()) joinedBy = nextOperator
+        current.setLength(0)
+    }
+    var i = 0
+    while (i < command.length) {
+        val c = command[i]
+        val next = command.getOrNull(i + 1)
+        when {
+            (c == '\\' || c == '`') && !inSingle && next != null -> {
+                current.append(c).append(next); i += 2; continue
+            }
+            c == '\'' && !inDouble -> inSingle = !inSingle
+            c == '"' && !inSingle -> inDouble = !inDouble
+            inSingle -> Unit
+            c == '$' && next == '(' -> nested = true
+            inDouble -> Unit
+            (c == '&' && next == '&') || (c == '|' && next == '|') -> {
+                flush("$c$c"); i += 2; continue
+            }
+            c == ';' || c == '\n' -> { flush(";"); i++; continue }
+            c == '|' -> { flush("|"); i++; continue }
+            c == '>' -> if (next != '&') writes = true
+            c == '&' && command.substring(i + 1).trimStart().let { it.isEmpty() || it[0] == ';' || it[0] == '\n' } &&
+                command.getOrNull(i - 1) != '>' -> {
+                background = true; flush(";"); i++; continue
+            }
+        }
+        current.append(c)
+        i++
+    }
+    flush("")
+    return ShellApprovalPreview(parts, writes, nested, background)
+}
+
 class AgentToolRunContext(val broker: ToolApprovalBroker?) : AbstractCoroutineContextElement(Key) {
     companion object Key : CoroutineContext.Key<AgentToolRunContext>
 }

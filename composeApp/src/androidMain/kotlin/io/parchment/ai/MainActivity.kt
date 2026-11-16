@@ -17,6 +17,11 @@ import android.speech.SpeechRecognizer
 import androidx.activity.ComponentActivity
 import androidx.activity.OnBackPressedCallback
 import androidx.activity.compose.setContent
+import androidx.activity.enableEdgeToEdge
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.ui.graphics.luminance
+import androidx.core.view.WindowCompat
+import io.parchment.ai.ui.LocalParchmentPalette
 import androidx.activity.result.ActivityResultLauncher
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.runtime.DisposableEffect
@@ -30,6 +35,7 @@ import io.parchment.ai.platform.PickedBinaryFile
 import io.parchment.ai.platform.PlatformPickers
 import io.parchment.ai.platform.PlatformRuntime
 import io.parchment.ai.ui.ParchmentApp
+import io.parchment.ai.ui.preloadProcessStateInBackground
 import java.io.OutputStream
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
@@ -61,6 +67,9 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         AndroidPlatformHost.initAndroid(applicationContext, this)
+        preloadProcessStateInBackground()
+        // Draw behind the system bars on every API level (Android 15+ enforces it); the app pads itself with insets.
+        enableEdgeToEdge()
         handleIncomingShareIntent(intent)
 
         openDocumentLauncher = registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri: Uri? ->
@@ -182,7 +191,18 @@ class MainActivity : ComponentActivity() {
                     nextHandler.startInputMethod(wrappedRequest)
                 }
             ) {
-                ParchmentApp()
+                ParchmentApp(
+                    platformWindowChrome = { _ ->
+                        // System bar icons follow the app's theme, which can differ from the system's dark mode.
+                        val lightTheme = LocalParchmentPalette.current.canvasBg.luminance() >= 0.5f
+                        LaunchedEffect(lightTheme) {
+                            WindowCompat.getInsetsController(window, window.decorView).apply {
+                                isAppearanceLightStatusBars = lightTheme
+                                isAppearanceLightNavigationBars = lightTheme
+                            }
+                        }
+                    }
+                )
             }
         }
     }

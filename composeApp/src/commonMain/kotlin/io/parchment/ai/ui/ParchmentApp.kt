@@ -36,6 +36,8 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.snapshotFlow
+import androidx.compose.runtime.snapshots.Snapshot
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.withFrameNanos
@@ -47,6 +49,7 @@ import androidx.compose.ui.input.key.KeyEvent
 import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.isCtrlPressed
 import androidx.compose.ui.input.key.isMetaPressed
+import androidx.compose.ui.input.key.isShiftPressed
 import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
@@ -79,6 +82,7 @@ import io.parchment.ai.protocol.CardAndPromptCodec
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.IO
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlin.io.encoding.ExperimentalEncodingApi
@@ -89,8 +93,11 @@ private const val STARTUP_UPDATE_CHECK_DELAY_MS = 8_000L
 @OptIn(ExperimentalEncodingApi::class)
 @Composable
 fun ParchmentApp(
-    /** Desktop window hook; it receives what the window caption should name: the open chat or Settings. */
-    desktopWindowHeader: (@Composable (captionTitle: String) -> Unit)? = null,
+    /**
+     * Platform window hook, composed inside the app theme: desktop names the caption after the open chat (or
+     * Settings) and themes it; Android matches the system bar icons to the app theme.
+     */
+    platformWindowChrome: (@Composable (captionTitle: String) -> Unit)? = null,
     /** Desktop window hook; the window sends it key events that nothing focused consumed, so shortcuts always work. */
     shortcutDispatcher: AppShortcutDispatcher? = null
 ) {
@@ -178,13 +185,20 @@ fun ParchmentApp(
         val draftSessionId = activeSession.id
         userPromptInputState = remember(draftSessionId) { mutableStateOf(activeSession.draftInput) }
         assistantPrefillInputState = remember(draftSessionId) { mutableStateOf(activeSession.draftPrefill) }
-        syncPendingDraftTracking(draftSessionId, userPromptInputState.value, assistantPrefillInputState.value)
-        LaunchedEffect(draftSessionId, userPromptInput, assistantPrefillInput) {
-            if (userPromptInput == activeSession.draftInput && assistantPrefillInput == activeSession.draftPrefill) {
-                return@LaunchedEffect
+        // The root never reads the draft text, so a keystroke recomposes only the composer's viewport, not the whole
+        // app: tracking reads it unobserved, and saving watches it through snapshotFlow instead of an effect key.
+        Snapshot.withoutReadObservation {
+            syncPendingDraftTracking(draftSessionId, userPromptInputState.value, assistantPrefillInputState.value)
+        }
+        LaunchedEffect(draftSessionId) {
+            val promptState = userPromptInputState
+            val prefillState = assistantPrefillInputState
+            snapshotFlow { promptState.value to prefillState.value }.collectLatest { (prompt, prefill) ->
+                val saved = appState.sessions.find { it.id == draftSessionId }
+                if (saved != null && prompt == saved.draftInput && prefill == saved.draftPrefill) return@collectLatest
+                delay(300L)
+                persistDraftForSession(draftSessionId, prompt, prefill)
             }
-            delay(300L)
-            persistDraftForSession(draftSessionId, userPromptInput, assistantPrefillInput)
         }
         DisposableEffect(draftSessionId) {
             val capturedPromptState = userPromptInputState
@@ -385,6 +399,9 @@ fun ParchmentApp(
                 /** Everything Ctrl+K can do: main actions, every settings page, and each chat by name. */
                 fun paletteCommands(): List<PaletteCommand> = buildList {
                     add(PaletteCommand(Strings.newChat2, Strings.ctrlN, ::openNewChat))
+                    if (!isSettingsOpen && activeSession.messages.any { it.role == MessageRole.USER }) {
+                        add(PaletteCommand(Strings.jumpToPromptInChat, Strings.ctrlG) { showPromptJump = true })
+                    }
                     add(PaletteCommand(if (isSettingsOpen) Strings.closeSettings else Strings.openSettings, Strings.ctrl) { openSettings(null) })
                     if (!isCompactScreen) add(PaletteCommand(Strings.showOrHideTheSidebar, Strings.ctrlB) { showSidebar = !showSidebar })
                     SettingsCategory.entries.forEach { category ->
@@ -399,9 +416,17 @@ fun ParchmentApp(
                     }
                 }
 
+                /** Ctrl+G rows: each prompt of the open chat, newest first; choosing one scrolls it to the top. */
+                fun promptJumpCommands(): List<PaletteCommand> = promptJumpTargets(activeSession.messages).map { target ->
+                    PaletteCommand(Strings.promptJumpRow(target.number, target.preview)) {
+                        pendingPinJump = PinnedReply(activeSession.id, activeSession.title, target.nodeId, target.preview)
+                    }
+                }
+
                 // Register Android System Back Gesture / Back Button Navigation Stack
                 LaunchedEffect(
                     showCommandPalette,
+                    showPromptJump,
                     activeViewerItem,
                     pendingDeleteConfirmation,
                     pendingRegenerateConfirm,
@@ -418,6 +443,10 @@ fun ParchmentApp(
                         when {
                             showCommandPalette -> {
                                 showCommandPalette = false
+                                true
+                            }
+                            showPromptJump -> {
+                                showPromptJump = false
                                 true
                             }
                             activeViewerItem != null -> {
@@ -479,11 +508,21 @@ fun ParchmentApp(
                         val ctrl = event.isCtrlPressed || event.isMetaPressed
                         when {
                             event.key == Key.Escape && showCommandPalette -> { showCommandPalette = false; true }
+                            event.key == Key.Escape && showPromptJump -> { showPromptJump = false; true }
                             event.key == Key.Escape -> PlatformRuntime.handleSystemBackPressed()
-                            ctrl && event.key == Key.K -> { showCommandPalette = !showCommandPalette; true }
+                            ctrl && event.key == Key.K -> { showPromptJump = false; showCommandPalette = !showCommandPalette; true }
+                            ctrl && event.key == Key.G && !isSettingsOpen -> { showCommandPalette = false; showPromptJump = !showPromptJump; true }
                             ctrl && event.key == Key.N -> { openNewChat(); true }
                             ctrl && event.key == Key.Comma -> { openSettings(null); true }
                             ctrl && event.key == Key.B && !isCompactScreen -> { showSidebar = !showSidebar; true }
+                            ctrl && event.key == Key.W && !isCompactScreen && !isSettingsOpen -> { closeChatTab(appState.activeSessionId); true }
+                            // Ctrl+Tab / Ctrl+Shift+Tab cycle the open chat tabs, like a browser.
+                            ctrl && event.key == Key.Tab && !isCompactScreen && openTabIds.size > 1 -> {
+                                val here = openTabIds.indexOf(appState.activeSessionId).coerceAtLeast(0)
+                                val step = if (event.isShiftPressed) -1 else 1
+                                switchToTab(openTabIds[(here + step + openTabIds.size) % openTabIds.size])
+                                true
+                            }
                             else -> false
                         }
                     }
@@ -525,11 +564,11 @@ fun ParchmentApp(
                                 } else Modifier
                             )
                     ) {
-                        if (desktopWindowHeader != null) {
-                            desktopWindowHeader(if (isSettingsOpen) Strings.settings else activeSession.title)
+                        if (platformWindowChrome != null) {
+                            platformWindowChrome(if (isSettingsOpen) Strings.settings else activeSession.title)
                         }
 
-                        val hasModalOverlay = showCommandPalette ||
+                        val hasModalOverlay = showCommandPalette || showPromptJump ||
                             showMobileTabSwitcher ||
                             pendingDeleteConfirmation != null ||
                             pendingRegenerateConfirm != null ||
@@ -1152,9 +1191,9 @@ fun ParchmentApp(
                                         onSteerQueuedPromptNow = stableCallback { item ->
                                             steerQueuedPromptNow(activeSession.id, item)
                                         },
-                                        userPromptInput = userPromptInput,
+                                        readUserPromptInput = { userPromptInputState.value },
                                         onUserPromptChange = stableCallback { text -> userPromptInput = text },
-                                        assistantPrefillInput = assistantPrefillInput,
+                                        readAssistantPrefillInput = { assistantPrefillInputState.value },
                                         onAssistantPrefillChange = stableCallback { pf -> assistantPrefillInput = pf },
                                         showPrefillBox = showPrefillBox,
                                         onTogglePrefillBox = stableAction { showPrefillBox = !showPrefillBox },
@@ -1212,15 +1251,11 @@ fun ParchmentApp(
                                         onPasteClipboardMedia = run {
                                             val holder = remember { Array(1) { { false } } }
                                             holder[0] = {
-                                                val pasted = PlatformPickers.readClipboardFiles()
-                                                if (pasted.isNotEmpty()) {
+                                                PlatformPickers.pasteClipboardMediaAsync { pasted ->
                                                     attachPickedFiles(pasted)
                                                     if (pasted.none { it.oversized }) {
                                                         bannerNotification = Strings.attached(plural(pasted.size, "clipboard item"), pasted.joinToString { it.fileName })
                                                     }
-                                                    true
-                                                } else {
-                                                    false
                                                 }
                                             }
                                             remember { { holder[0]() } }
@@ -1632,6 +1667,13 @@ fun ParchmentApp(
                             }
                             if (showCommandPalette) {
                                 CommandPalette(paletteCommands(), onDismiss = { showCommandPalette = false })
+                            }
+                            if (showPromptJump) {
+                                CommandPalette(
+                                    promptJumpCommands(),
+                                    onDismiss = { showPromptJump = false },
+                                    placeholder = Strings.jumpToPromptPlaceholder
+                                )
                             }
                             FloatingNotification(
                                 message = bannerNotification,

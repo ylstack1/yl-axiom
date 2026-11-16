@@ -30,6 +30,11 @@ import io.parchment.ai.harness.ToolApprovalDecision
 import io.parchment.ai.harness.AgentPermissionGate
 import io.parchment.ai.harness.ToolAccessScope
 import io.parchment.ai.harness.WorkspaceHarness
+import io.parchment.ai.harness.parseShellApprovalPreview
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.contentOrNull
+import kotlinx.serialization.json.jsonPrimitive
 import io.parchment.ai.model.AgentPermissionOverrides
 import io.parchment.ai.model.AgentPermissionPolicy
 import io.parchment.ai.network.McpRegistry
@@ -221,6 +226,32 @@ internal fun UserQuestionPanel(broker: ToolApprovalBroker?, chatTitle: String) {
     }
 }
 
+/** Numbered parts of a compound shell line plus plain-language cues; the raw arguments above stay the authority. */
+@Composable
+private fun ShellCompoundBreakdown(argumentsJson: String) {
+    val palette = LocalParchmentPalette.current
+    val preview = remember(argumentsJson) {
+        val command = runCatching {
+            (Json.parseToJsonElement(argumentsJson) as? JsonObject)?.get("command")?.jsonPrimitive?.contentOrNull
+        }.getOrNull().orEmpty()
+        parseShellApprovalPreview(command)
+    }
+    if (!preview.isCompound) return
+    Column(verticalArrangement = Arrangement.spacedBy(Space.s4)) {
+        if (preview.parts.size > 1) BasicText(Strings.shellRunsCommands(preview.parts.size), style = palette.uiLabelStyle)
+        preview.parts.forEachIndexed { index, part ->
+            val joiner = Strings.shellJoiner(part.joinedBy)
+            BasicText(
+                text = if (joiner.isEmpty()) "${index + 1}. ${part.command}" else "${index + 1}. ($joiner) ${part.command}",
+                style = palette.monoStyle
+            )
+        }
+        if (preview.writesFiles) BasicText(Strings.shellWritesFiles, style = palette.uiLabelStyle.copy(color = palette.danger))
+        if (preview.nestedCommands) BasicText(Strings.shellNestedCommands, style = palette.uiLabelStyle.copy(color = palette.danger))
+        if (preview.runsInBackground) BasicText(Strings.shellRunsInBackground, style = palette.uiLabelStyle.copy(color = palette.danger))
+    }
+}
+
 @Composable
 internal fun ToolApprovalPanel(broker: ToolApprovalBroker?, chatTitle: String) {
     if (broker == null) return
@@ -243,7 +274,10 @@ internal fun ToolApprovalPanel(broker: ToolApprovalBroker?, chatTitle: String) {
                         )
                     }
                     BasicText(Strings.workspace(request.scope.policy.workspacePath.ifBlank { Strings.none }), style = palette.uiLabelStyle)
-                    if (request.toolName == "shell_exec") BasicText(Strings.fullProcessAccessFilesystemAndNetwork, style = palette.uiLabelStyle)
+                    if (request.toolName == "shell_exec") {
+                        ShellCompoundBreakdown(request.argumentsJson)
+                        BasicText(Strings.fullProcessAccessFilesystemAndNetwork, style = palette.uiLabelStyle)
+                    }
                     if (request.toolName == "computer_use") BasicText(WorkspaceHarness.describeToolCallIntent(request.toolName, request.argumentsJson), style = palette.uiBodyStyle)
                     val actionModifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)
                     SepiaButton(Strings.allowOnce, modifier = actionModifier, wrapText = true, style = SepiaButtonStyle.PRIMARY, onClick = { scope.launch { broker.respond(request.requestId, ToolApprovalDecision.ALLOW_ONCE) } })

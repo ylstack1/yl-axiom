@@ -172,7 +172,7 @@ object AiProviderEngine {
     }
 
     internal val httpClient by lazy {
-        HttpClient {
+        HttpClient(providerHttpEngine) {
             install(ContentNegotiation) {
                 json(this@AiProviderEngine.json)
             }

@@ -10,10 +10,10 @@ Gradle defines two modules sharing one version catalog (`gradle/libs.versions.to
 
 | Module | Role | JVM / SDK target | Packaging |
 |---|---|---|---|
-| `composeApp` | Multiplatform shared code, UI, desktop `main()` and desktop/common tests | Desktop JVM 21, Android JVM 17 | Desktop distributable via JLink + AppCDS + ProGuard, consumed as KMP library by `androidApp` |
+| `composeApp` | Multiplatform shared code, UI, desktop `main()` and desktop/common tests | Desktop JVM 21 bytecode on the bundled JDK 25 runtime (FFM, compact object headers), Android JVM 17 | Desktop distributable via JLink + AppCDS (`classes_coh.jsa` + `parchment.jsa`) + ProGuard, consumed as KMP library by `androidApp` |
 | `androidApp` | Android application shell (`AndroidManifest.xml`, launcher resources, `proguard-rules.pro`) | `minSdk 26`, `compileSdk 37`, `targetSdk 37` | Release APK via R8 full shrinking and resource shrinking |
 
-`composeApp/build.gradle.kts` generates `io.parchment.ai.ParchmentBuildConfig` (build version and platform flags) and wires pinned dependencies from `gradle/libs.versions.toml` (Kotlin `2.4.21`, AGP `9.3.3`, Compose Multiplatform `1.12.2`, Ktor `3.6.1`, Coroutines `1.11.0`, Serialization `1.12.0`, JNA `5.19.1`).
+`composeApp/build.gradle.kts` generates `io.parchment.ai.ParchmentBuildConfig` (build version and platform flags) and wires pinned dependencies from `gradle/libs.versions.toml` (Kotlin `2.4.21`, AGP `9.3.3`, Compose Multiplatform `1.12.2`, Ktor `3.6.1`, Coroutines `1.11.0`, Serialization `1.12.0`). Windows native calls use the JDK's FFM API (`WindowsNative`), not JNA.
 
 | Source set | Path | Compiles for | Role |
 |---|---|---|---|
@@ -68,7 +68,7 @@ All Kotlin files below sit under `composeApp/src/commonMain/kotlin/io/parchment/
 | Source set | Files & responsibilities |
 |---|---|
 | `jvmShared/platform` | `AppAgentStorage.kt`, `AppStorageInventory.kt`, `AtomicFileStorage.kt`, `BoundedImageCache.kt`, `BoundedTextCapture.kt`, `ChatArchiveExtractor.kt`, `ChatArchiveWriter.kt`, `LocalMediaStore.kt`, `OtaStagedFile.kt`, `PublicWebTransport.kt` (DNS/private-IP SSRF guard), `SnapshotFileStorage.kt`, `StreamingJsonDecoder.kt`, `WorkspaceFileEditor.kt`, `WorkspacePathGuard.kt`, `WorkspaceTextReader.kt`, `WorkspaceTreeScanner.kt`. |
-| `desktopMain` | `Main.kt` (window startup, single-instance lock, JNA Windows framing), `WindowKeys.kt`, and `platform/`: `DesktopComputerControl.kt`, `DesktopImageDecoder.kt`, `DesktopMcpProcess.kt`, `DesktopOwnedShell.kt`, `DesktopPlatformHost.kt`, `PlatformPickers.desktop.kt`, `PlatformRuntime.desktop.kt`, `PlatformStorage.desktop.kt`, `PlatformVoice.desktop.kt`, `PlatformWorkspace.desktop.kt`, `WindowsChrome.kt`, `WindowsMemory.kt`, `WindowsPowerLease.kt`. |
+| `desktopMain` | `Main.kt` (window startup, single-instance lock, Windows framing), `CdsWarmup.kt` (installer `--cds-warmup`), `WindowKeys.kt`, and `platform/`: `DesktopComputerControl.kt`, `DesktopImageDecoder.kt`, `DesktopMcpProcess.kt`, `DesktopOwnedShell.kt`, `DesktopPlatformHost.kt`, `PlatformPickers.desktop.kt`, `PlatformRuntime.desktop.kt`, `PlatformStorage.desktop.kt`, `PlatformVoice.desktop.kt`, `PlatformWorkspace.desktop.kt`, `WindowsChrome.kt`, `WindowsMemory.kt`, `WindowsNative.kt` (FFM downcalls), `WindowsPowerLease.kt`. |
 | `androidMain` | `MainActivity.kt`, `LongDecodeForegroundService.kt`, `ParchmentAccessibilityService.kt`, `OtaInstallReceiver.kt`, `ParchmentFileProvider.kt`, and `platform/`: `AndroidComputerControl.kt`, `AndroidOwnedShell.kt`, `AndroidPlatformHost.kt`, `PlatformPickers.android.kt`, `PlatformRuntime.android.kt`, `PlatformStorage.android.kt`, `PlatformVoice.android.kt`, `PlatformWorkspace.android.kt`. |
 
 ## Core runtime flows

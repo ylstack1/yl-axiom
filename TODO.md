@@ -1,18 +1,29 @@
 # Parchment TODO
 
-Updated 2026-11-15. AGENTS.md owns workflow; MEMORY holds contracts. Task IDs stay stable. Finished tasks are removed: CHANGELOG.md and the git history keep what was done.
+Updated 2026-11-16. AGENTS.md owns workflow; MEMORY holds contracts. Task IDs stay stable. Finished tasks are removed: CHANGELOG.md and the git history keep what was done.
 
 ## Current status
 
-- **Source:** 2026-11-16: Cross-stack perf & efficiency batch (`ChatIdentity` snapshot checks, `compactStateJson` default/null omission, async Android `onPause` flush & smaller image cache, desktop iconify `AppForeground`, `ModelsDevClient` streaming DTOs, incremental tokenizer prefix, static `tools` wire prefix & 16-step compaction, chunked `CodeFence` + stable item lambdas, stale `.tmp`/OTA pruning, parameterized test waits & `quality.py` binary skip).
-- **Last verified:** 2026-11-16, `verify.py affected` (505 desktop tests + Android compile clean, 3m34s), `verify.py perf` (`desktop_title_ms=1403`, `desktop_idle_private_mb=265.9`, `p50_ms=3.7`, `p95_ms=5.8`, `average_shared_prefix=0.908..0.909`, `apk_mb=4.3`), and `unittest` (`test_workflow_tools.py`).
-- **Next action:** Re-test Android `computer_use` on device and check `13.6 Screen readers` when the user tests NVDA and TalkBack.
+- **Source:** 2026-11-16 optimization and harness batch: Ctrl+G prompt jump + Message Map prompts filter, parallel `agent_delegate` (max 4, relayed emits), quiet read/search grouping, shell step breakdown, invisible-char key hygiene, `chat-index.json` stubs, off-thread paste/geometry/token counts, idle pacer, CRLF Markdown, FFM instead of JNA/PowerShell, compact headers + `--cds-warmup`, explicit OkHttp, Android edge-to-edge + baseline profile, Ctrl+W/Ctrl+Tab.
+- **Last verified:** 2026-11-16, `verify.py affected` (516 desktop tests + Android compile), `verify.py final` (signed APK + package + release checks), `verify.py perf` (`desktop_title_ms=1467`, first launch after update `4311` (was 17.0 s), `desktop_idle_private_mb=271.3`, `apk_mb=4.3`, `desktop_cds_archives_ok=True`).
+- **Next action:** User checks 17.1 on the phone after the release; then 17.2 (live turn overlay) with a frame-time A/B.
 
 ## Open tasks
 
 ### For the user
 
 - [ ] **13.6 Screen readers:** go through the app with NVDA on Windows and TalkBack on Android (chat, composer, sidebar, settings, Ctrl+K palette) and report anything unlabeled, read in the wrong order, or unreachable.
+- [ ] **17.1 Android check:** after the next release, check edge-to-edge system bars in light and dark themes, Ctrl+G on a hardware keyboard, and cold start (`verify.py perf --android-install`).
+
+### Deferred from the 2026-11-16 optimization plan
+
+Each needs its own batch with measurements; the plan's reasoning is in the commit history.
+
+- [ ] **17.2 Live turn overlay:** stream deltas through a per-turn overlay instead of patching `AppStateSnapshot` every frame; needs one commit helper for stop, edit, fork, export, compact and pause flushes.
+- [ ] **17.3 Composer TextFieldState:** move the composer to `TextFieldState` in a leaf host so typing recomposes only the field (today: the viewport, no longer the app root).
+- [ ] **17.4 Android startup profile:** add `startup-prof.txt` for R8 DEX layout once a device-generated profile exists; measure APK size.
+- [ ] **17.5 Windows UX:** native folder dialog (IFileDialog via FFM) instead of `JFileChooser`; right-click turn and chat menus; Android long-press bubble actions.
+- [ ] **17.6 Build tooling:** Compose Hot Reload and a `:core:*` module split; configuration cache for `final` (it runs without it today).
 
 ## Known gaps
 

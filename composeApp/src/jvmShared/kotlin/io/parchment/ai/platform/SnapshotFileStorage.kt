@@ -8,6 +8,8 @@ import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 import java.io.File
 import java.io.IOException
+import java.nio.file.Files
+import java.nio.file.attribute.BasicFileAttributes
 
 /** Reads only a chat's id: the rest of the JSON is syntax-checked and skipped, not built into objects. */
 @Serializable
@@ -236,7 +238,7 @@ internal class SnapshotFileStorage(
      * Every stored chat, read one at a time so a caller that decodes and drops each one never holds them all.
      * Finding a folder's real id decodes only the id; loadChat still validates the full chat.
      */
-    fun chats(): Sequence<String> = sequence {
+    fun chats(skipFolders: Set<String> = emptySet()): Sequence<String> = sequence {
         val chats = File(directory(), "chats")
         val ids = chats.listFiles().orEmpty().mapNotNull { entry ->
             when {
@@ -245,7 +247,7 @@ internal class SnapshotFileStorage(
                 entry.name.endsWith(".json") -> entry.name.removeSuffix(".json")
                 else -> null
             }
-        }.distinct()
+        }.distinct().filterNot { it in skipFolders }
         for (id in ids) {
             val loaded = runCatching {
                 val folder = File(chats, id)
@@ -275,6 +277,35 @@ internal class SnapshotFileStorage(
             if (loaded != null) yield(loaded)
         }
     }
+
+    fun chatFolderName(sessionId: String): String = sessionId.trim().replace(unsafeSessionCharacters, "_")
+
+    /**
+     * One attribute read per chat folder (no file contents). A folder that still has a legacy `<id>.json` beside it
+     * is left out, so its migration keeps going through [chats] and [loadChat].
+     */
+    fun chatFileStamps(): Map<String, ChatFileStamp> = runCatching {
+        val chats = File(directory(), "chats")
+        val entries = chats.listFiles().orEmpty()
+        val names = entries.mapTo(HashSet()) { it.name }
+        buildMap {
+            for (entry in entries) {
+                if ("${entry.name}.json" in names || "${entry.name}.json.tmp" in names) continue
+                val attributes = runCatching {
+                    Files.readAttributes(File(entry, "chat.json").toPath(), BasicFileAttributes::class.java)
+                }.getOrNull() ?: continue
+                if (!attributes.isRegularFile || attributes.size() <= 0L) continue
+                put(entry.name, ChatFileStamp(attributes.size(), attributes.lastModifiedTime().toMillis()))
+            }
+        }
+    }.getOrDefault(emptyMap())
+
+    private fun chatIndexFile(): File = File(directory(), "chat-index.json")
+
+    fun loadChatIndex(): String? = read(chatIndexFile())
+
+    @Synchronized
+    fun saveChatIndex(raw: String) = AtomicFileStorage.writeText(chatIndexFile(), raw)
 
     @Synchronized
     fun saveChat(sessionId: String, raw: String) {

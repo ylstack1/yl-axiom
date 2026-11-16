@@ -106,4 +106,30 @@ class KeyboardShortcutTest {
             PlatformStorage.saveAppStateJson(compactStateJson.encodeToString(createDefaultAppState()))
         }
     }
+
+    private fun promptJumpOpen(scene: ImageComposeScene) =
+        nodes(scene).any { node -> node.config.getOrNull(SemanticsProperties.Text).orEmpty().any { it.text == Strings.jumpToPromptPlaceholder } }
+
+    @Test fun ctrlGOpensThePromptJumpAndEscapeClosesIt() = runBlocking<Unit>(Dispatchers.Swing) {
+        PlatformStorage.saveAppStateJson(compactStateJson.encodeToString(createDefaultAppState().copy(autoCheckOtaOnStartup = false)))
+        parchmentProcessState.snapshot.value = loadFastInitialAppState().first
+        val shortcuts = AppShortcutDispatcher()
+        val scene = ImageComposeScene(1360, 860, density = Density(1f), coroutineContext = Dispatchers.Swing)
+        try {
+            scene.setContent { ParchmentApp(shortcutDispatcher = shortcuts) }
+            settle(scene, 120)
+            pressInWindow(scene, shortcuts, Key.G, ctrl = true)
+            assertTrue(promptJumpOpen(scene), "Ctrl+G must open the prompt jump list")
+            assertFalse(paletteOpen(scene), "the prompt jump replaces, not stacks on, the command palette")
+            pressInWindow(scene, shortcuts, Key.K, ctrl = true)
+            assertTrue(paletteOpen(scene) && !promptJumpOpen(scene), "Ctrl+K switches to the command palette")
+            pressInWindow(scene, shortcuts, Key.G, ctrl = true)
+            assertTrue(promptJumpOpen(scene) && !paletteOpen(scene), "Ctrl+G switches back")
+            pressInWindow(scene, shortcuts, Key.Escape, ctrl = false)
+            assertFalse(promptJumpOpen(scene), "Escape must close the prompt jump list")
+        } finally {
+            scene.close()
+            PlatformStorage.saveAppStateJson(compactStateJson.encodeToString(createDefaultAppState()))
+        }
+    }
 }

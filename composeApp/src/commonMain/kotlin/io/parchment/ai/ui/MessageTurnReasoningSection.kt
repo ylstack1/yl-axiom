@@ -305,18 +305,29 @@ private fun InterleavedReasoningTimeline(
     } else {
         activeVar.toolCalls
     }
+    val stepRuns = remember(visibleTools, hiddenStepCount, turnText, preferences.showThinkingCards, preferences.showToolCards) {
+        if (!preferences.showToolCards) {
+            visibleTools.indices.map { it..it }
+        } else {
+            groupConsecutiveTimelineSteps(visibleTools, preferences.showThinkingCards) { i ->
+                turnText.beforeTool.getOrElse(hiddenStepCount + i) { "" }
+            }
+        }
+    }
     var thoughtStepCounter = hiddenStepCount
-    visibleTools.forEachIndexed { visibleIndex, tc ->
-        key(tc.id) {
-            if (preferences.showThinkingCards && tc.precedingThinking.isNotBlank()) {
+    stepRuns.forEach { run ->
+        val first = visibleTools[run.first]
+        // A quiet group keeps the first step's key, so a single read that gains a neighbour keeps its slot.
+        key(first.id) {
+            if (preferences.showThinkingCards && first.precedingThinking.isNotBlank()) {
                 thoughtStepCounter++
                 ReasoningThoughtStepBlock(
                     stepNumber = thoughtStepCounter,
-                    text = tc.precedingThinking,
+                    text = first.precedingThinking,
                     preferences = preferences
                 )
             }
-            val stepText = turnText.beforeTool.getOrElse(hiddenStepCount + visibleIndex) { "" }.trim()
+            val stepText = turnText.beforeTool.getOrElse(hiddenStepCount + run.first) { "" }.trim()
             if (stepText.isNotEmpty()) {
                 LiteraryProseRenderer(
                     text = stepText,
@@ -327,7 +338,14 @@ private fun InterleavedReasoningTimeline(
                 )
             }
             if (preferences.showToolCards) {
-                ToolExecutionCard(tc, showToolResultSummary = preferences.showToolResultSummary)
+                if (run.first == run.last) {
+                    ToolExecutionCard(first, showToolResultSummary = preferences.showToolResultSummary)
+                } else {
+                    QuietToolGroup(
+                        tools = visibleTools.subList(run.first, run.last + 1),
+                        showToolResultSummary = preferences.showToolResultSummary
+                    )
+                }
             }
         }
     }
@@ -340,6 +358,111 @@ private fun InterleavedReasoningTimeline(
             preferences = preferences
         )
     }
+}
+
+/** Tools that only look (read, list, search, fetch). Runs of them fold into one quiet row once finished. */
+private val QUIET_LOOKUP_TOOLS = setOf("fs_read", "fs_list", "fs_glob", "fs_search", "web_search", "web_fetch")
+
+/**
+ * Splits a turn's tool steps into runs: each run is one step, or two or more consecutive finished, successful
+ * lookup steps with nothing shown between them (no step text, and no thinking when thinking cards are on).
+ * Running or failed steps, edits and shell commands always stand alone, so anything that needs attention stays
+ * visible; a group only hides the routine reading an agent does before it acts.
+ */
+internal fun groupConsecutiveTimelineSteps(
+    tools: List<ToolCallRecord>,
+    showThinking: Boolean,
+    stepTextBefore: (Int) -> String
+): List<IntRange> {
+    fun quiet(i: Int): Boolean {
+        val tc = tools[i]
+        return !tc.isRunning && !tc.isError && tc.name.lowercase() in QUIET_LOOKUP_TOOLS
+    }
+    fun joinsPrevious(i: Int): Boolean =
+        stepTextBefore(i).isBlank() && !(showThinking && tools[i].precedingThinking.isNotBlank())
+
+    val runs = ArrayList<IntRange>(tools.size)
+    var start = 0
+    while (start < tools.size) {
+        var end = start
+        if (quiet(start)) {
+            while (end + 1 < tools.size && quiet(end + 1) && joinsPrevious(end + 1)) end++
+        }
+        runs += start..end
+        start = end + 1
+    }
+    return runs
+}
+
+/** One calm row for a run of lookups ("Read 3 · searched 2"); opening it shows each step's own card. */
+@Composable
+private fun QuietToolGroup(tools: List<ToolCallRecord>, showToolResultSummary: Boolean) {
+    val p = LocalParchmentPalette.current
+    var expanded by remember(tools.first().id) { mutableStateOf(false) }
+    val summary = remember(tools) { quietToolGroupSummary(tools) }
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(Radius.r8))
+            .border(LineWidth.hairline, p.border.copy(alpha = 0.6f), RoundedCornerShape(Radius.r8)),
+        verticalArrangement = Arrangement.spacedBy(5.dp)
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .heightIn(min = 36.dp)
+                .kissClickable(
+                    pressScale = 0.99f,
+                    hoverScale = 1.004f,
+                    role = Role.Button,
+                    onClickLabel = if (expanded) Strings.collapseToolGroup else Strings.expandToolGroup
+                ) { expanded = !expanded }
+                .padding(horizontal = 9.dp, vertical = Space.s6),
+            horizontalArrangement = Arrangement.spacedBy(Space.s6),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            KissVectorIcon(
+                icon = remember(tools.first().name) { resolveToolKissIcon(tools.first().name) },
+                tint = p.accentSecondary,
+                size = IconSize.md
+            )
+            BasicText(
+                text = summary,
+                modifier = Modifier.weight(1f),
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                style = p.uiLabelStyle.copy(color = p.narrationInk, fontSize = 12.sp)
+            )
+            BasicText(
+                text = if (expanded) "▴" else "▾",
+                style = p.uiLabelStyle.copy(color = p.narrationInk, fontSize = 12.sp)
+            )
+        }
+        if (expanded) {
+            Column(
+                modifier = Modifier.padding(start = Space.s6, end = Space.s6, bottom = Space.s6),
+                verticalArrangement = Arrangement.spacedBy(Space.s6)
+            ) {
+                tools.forEach { tc ->
+                    key(tc.id) { ToolExecutionCard(tc, showToolResultSummary = showToolResultSummary) }
+                }
+            }
+        }
+    }
+}
+
+internal fun quietToolGroupSummary(tools: List<ToolCallRecord>): String {
+    var reads = 0
+    var searches = 0
+    var lists = 0
+    tools.forEach { tc ->
+        when (tc.name.lowercase()) {
+            "fs_read", "web_fetch" -> reads++
+            "fs_list" -> lists++
+            else -> searches++
+        }
+    }
+    return Strings.quietToolGroup(reads, searches, lists)
 }
 
 @Composable

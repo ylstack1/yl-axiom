@@ -26,7 +26,7 @@ Built with Kotlin Multiplatform and Compose Foundation: no Electron, no WebView,
 - Read aloud, dictation, and `/` commands such as `/goal`, `/compact` and `/continue`.
 - Composer controls for thinking effort and, for image and video models, aspect ratio, resolution and duration, with custom values.
 - Separate text and code fonts, including your own .ttf or .otf, and a native Windows 11 title bar.
-- Keyboard shortcuts: Ctrl+K command palette, Ctrl+N new chat, Ctrl+, settings, Ctrl+B sidebar.
+- Keyboard shortcuts: Ctrl+K command palette, Ctrl+G jump to one of the chat's prompts, Ctrl+N new chat, Ctrl+W close tab, Ctrl+Tab next tab, Ctrl+, settings, Ctrl+B sidebar.
 
 **Providers**
 - OpenAI Responses and Chat Completions, Anthropic Messages, and Gemini Interactions and generateContent, plus any compatible service through a custom provider.
@@ -36,7 +36,8 @@ Built with Kotlin Multiplatform and Compose Foundation: no Electron, no WebView,
 
 **Agent tools**
 - File tools in a folder you choose, keyless web search and fetch, a calculator, a todo list and goals.
-- Ask-the-user questions, read-only helper agents, and on-demand skills you can install from a GitHub link.
+- Ask-the-user questions, read-only helper agents (several work side by side), and on-demand skills you can install from a GitHub link.
+- Runs of file reads and searches fold into one quiet row; compound shell commands are broken down step by step before you approve them.
 - MCP servers, browsable from the official registry.
 - Computer control on Windows and phone control on Android, both off by default.
 - Every action can require approval. Imported chats never bring tool access with them.

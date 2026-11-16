@@ -1,6 +1,7 @@
 package io.parchment.ai.platform
 
 import android.content.ClipData
+import android.content.ClipDescription
 import android.content.ClipboardManager
 import android.content.Context
 import android.net.Uri
@@ -24,7 +25,9 @@ import java.io.FileInputStream
 import java.util.concurrent.ConcurrentHashMap
 import kotlin.io.encoding.Base64
 import kotlin.io.encoding.ExperimentalEncodingApi
+import io.parchment.ai.ui.appProcessScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 @OptIn(ExperimentalEncodingApi::class)
@@ -407,6 +410,34 @@ actual object PlatformPickers {
         }
         results
     }.getOrDefault(emptyList())
+
+    actual fun pasteClipboardMediaAsync(onFiles: (List<PickedBinaryFile>) -> Unit): Boolean {
+        val ctx = AndroidPlatformHost.appContext ?: return false
+        val cm = ctx.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager ?: return false
+        if (!clipboardMayHoldMedia(cm)) return false
+        appProcessScope.launch {
+            val files = withContext(Dispatchers.IO) { readClipboardFiles() }
+            if (files.isNotEmpty()) onFiles(files)
+        }
+        return true
+    }
+
+    /** Content URIs and non-text types are media; text counts only when it carries an inline image data URL. */
+    private fun clipboardMayHoldMedia(cm: ClipboardManager): Boolean = runCatching {
+        val desc = cm.primaryClipDescription ?: return@runCatching false
+        val nonText = (0 until desc.mimeTypeCount).any { i ->
+            val mime = desc.getMimeType(i).orEmpty().lowercase()
+            mime.isNotEmpty() && (!mime.startsWith("text/") || mime == ClipDescription.MIMETYPE_TEXT_URILIST)
+        }
+        if (nonText) return@runCatching true
+        val clip = cm.primaryClip ?: return@runCatching false
+        (0 until clip.itemCount).any { i ->
+            val item = clip.getItemAt(i)
+            item?.uri != null ||
+                item?.text?.trimStart()?.startsWith("data:image/") == true ||
+                item?.htmlText?.contains("data:image/") == true
+        }
+    }.getOrDefault(false)
 
     actual fun registerFileDropCallbacks(
         onDragHover: (Boolean) -> Unit,

@@ -335,6 +335,11 @@ internal object Strings {
     val tryTheOlderApiIf = "Try the older API if this one is missing"
     val ttfOtf = "📂 .TTF/.OTF"
     val typeACommandOrA = "Type a command or a chat name…"
+    val jumpToPromptInChat = "Jump to prompt in this chat…"
+    val jumpToPromptPlaceholder = "Type part of a prompt to jump to it…"
+    fun promptJumpRow(number: Int, preview: String): String = "#$number  $preview"
+    val promptsFilter = "Prompts"
+    val showOnlyYourPrompts = "Show only your prompts"
     val typeYourAnswer = "Type your answer"
     val unlimited = "Unlimited"
     val unmountFolder = "Unmount folder"
@@ -375,6 +380,18 @@ internal object Strings {
     fun approval2(a: Any?): String = "Approval · ${a}"
     fun workspace(a: Any?): String = "Workspace: ${a}"
     val fullProcessAccessFilesystemAndNetwork = "Full process access · filesystem and network are not confined"
+    fun shellRunsCommands(count: Int): String = "This runs $count commands:"
+    /** How a compound shell part follows the one before it. */
+    fun shellJoiner(operator: String): String = when (operator) {
+        "&&" -> "if the last succeeded"
+        "||" -> "if the last failed"
+        "|" -> "reads the last one's output"
+        ";" -> "then"
+        else -> ""
+    }
+    val shellWritesFiles = "Writes output to a file (>), which can overwrite it."
+    val shellNestedCommands = "Runs a nested command inside this one ($(…))."
+    val shellRunsInBackground = "Leaves a command running in the background (&)."
     val allowOnce = "Allow once"
     val allowThisExactActionForThis = "Allow this exact action for this run"
     val deny = "Deny"
@@ -413,6 +430,14 @@ internal object Strings {
     val aLocalCommandRunsWithYour = "A local command runs with your full account access. Add only servers you trust."
     val addServer = "Add server"
     fun showEarlierToolStepsTotal(a: Any?, b: Any?): String = "▾ Show ${a} earlier tool steps (${b} total)"
+    /** Summary of a folded run of lookups, e.g. "Read 3 · searched 2". Zero counts are left out. */
+    fun quietToolGroup(reads: Int, searches: Int, lists: Int): String = listOfNotNull(
+        if (reads > 0) "read $reads" else null,
+        if (searches > 0) "searched $searches" else null,
+        if (lists > 0) "listed $lists" else null
+    ).joinToString(" · ").replaceFirstChar { it.uppercase() }
+    val expandToolGroup = "Show these steps"
+    val collapseToolGroup = "Hide these steps"
     fun thought(a: Any?): String = "Thought #${a}"
     fun goal(a: Any?): String = "Goal: ${a}"
     fun verified(a: Any?): String = "Verified: ${a}"
@@ -729,6 +754,7 @@ internal object Strings {
     fun deletedFor(a: Any?, b: Any?): String = "Deleted ${a} for ${b}."
     val newChat2 = "New chat"
     val ctrlN = "Ctrl+N"
+    val ctrlG = "Ctrl+G"
     val closeSettings = "Close settings"
     val openSettings = "Open settings"
     val ctrl = "Ctrl+,"
@@ -911,6 +937,7 @@ internal object Strings {
     val routingImageModelViaV1Chat = "Routing image model via /v1/chat/completions…"
     fun awaitingApproval(a: Any?): String = "Awaiting approval: ${a}"
     fun executingReadSearchToolsInParallel(a: Any?, b: Any?): String = "Executing ${a} read/search tools in parallel (${b})…"
+    fun runningHelpersInParallel(count: Int): String = "$count helpers working side by side…"
     val usagePartialSuffix = " • partial"
     val usageReportedCostSuffix = " • reported cost"
     val usageEstimateSuffix = " • estimate"

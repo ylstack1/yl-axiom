@@ -198,6 +198,44 @@ class SnapshotFileStorageTest {
         assertEquals(original, File(root, "chats/safe/chat.json").readText())
     }
 
+    @Test
+    fun chatStampsChangeOnEveryWriteAndSkipLegacyFolders() = withStorage { root, storage ->
+        storage.saveChat("a", chat("a", "first"))
+        storage.saveChat("b", chat("b", "first"))
+        val before = storage.chatFileStamps()
+        assertEquals(setOf("a", "b"), before.keys)
+        File(root, "chats/a/chat.json").setLastModified(before.getValue("a").lastModifiedMs - 5_000)
+        storage.saveChat("a", chat("a", "second, longer"))
+        assertTrue(storage.chatFileStamps().getValue("a") != before.getValue("a"), "a rewrite must invalidate the index entry")
+        // A pending legacy file means migration still has to run through loadChat, so no stamp is offered.
+        File(root, "chats/b.json").writeText(chat("b", "legacy"))
+        assertFalse("b" in storage.chatFileStamps())
+        // Folders served from the index are not read again.
+        assertEquals(listOf("a"), storage.chats(skipFolders = setOf("b")).map { compactStateJson.decodeFromString<ChatSession>(it).id }.toList())
+        storage.saveChatIndex("{\"version\":1}")
+        assertEquals("{\"version\":1}", storage.loadChatIndex())
+    }
+
+    @Test
+    fun indexedStubsRoundTripTheirTransientStubFields() {
+        val full = ChatSession(
+            id = "c", title = "Trip", createdAt = 1, updatedAt = 2, profileId = "p",
+            messages = List(4) { MessageNode(id = "m$it", role = MessageRole.USER, variants = listOf(MessageVariant(id = "v$it", content = "text $it"))) }
+        )
+        val stub = io.parchment.ai.ui.dehydrateChatSessionToCompactStub(full)
+        val entry = io.parchment.ai.ui.ChatIndexEntry.of(ChatFileStamp(10, 20), stub)
+        val decoded = compactStateJson.decodeFromString(
+            io.parchment.ai.ui.ChatIndexEntry.serializer(),
+            compactStateJson.encodeToString(io.parchment.ai.ui.ChatIndexEntry.serializer(), entry)
+        )
+        val restored = decoded.restoredStub()
+        assertTrue(restored.isCompactStub)
+        assertEquals(4, restored.displayMessageCount)
+        assertEquals(stub.messages, restored.messages)
+        assertTrue(decoded.matches(ChatFileStamp(10, 20)))
+        assertFalse(decoded.matches(ChatFileStamp(10, 21)))
+    }
+
     private fun withStorage(block: (File, SnapshotFileStorage) -> Unit) {
         val root = Files.createTempDirectory("parchment-snapshot-test-").toFile()
         try {

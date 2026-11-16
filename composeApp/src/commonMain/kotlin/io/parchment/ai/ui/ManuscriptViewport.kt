@@ -122,9 +122,10 @@ internal fun ManuscriptViewport(
     queuedPrompts: List<QueuedPromptItem>,
     onRemoveQueuedPrompt: (String) -> Unit,
     onSteerQueuedPromptNow: (QueuedPromptItem) -> Unit,
-    userPromptInput: String,
+    /** Read inside this composable, so typing recomposes the viewport and not the app root that calls it. */
+    readUserPromptInput: () -> String,
     onUserPromptChange: (String) -> Unit,
-    assistantPrefillInput: String,
+    readAssistantPrefillInput: () -> String,
     onAssistantPrefillChange: (String) -> Unit,
     showPrefillBox: Boolean,
     onTogglePrefillBox: () -> Unit,
@@ -167,6 +168,8 @@ internal fun ManuscriptViewport(
     onJumpHandled: () -> Unit = {},
     onTogglePinnedReply: (nodeId: String) -> Unit = {}
 ) {
+    val userPromptInput = readUserPromptInput()
+    val assistantPrefillInput = readAssistantPrefillInput()
     val p = LocalParchmentPalette.current
     val scope = rememberCoroutineScope()
     val listState = rememberLazyListState()
@@ -897,15 +900,9 @@ internal fun ManuscriptViewport(
                         exit = motionShrinkExit()
                     ) {
                         var mapFilterQuery by remember { mutableStateOf("") }
-                        val filteredMapItems = remember(activeSession.messages, mapFilterQuery) {
-                            val q = mapFilterQuery.trim()
-                            activeSession.messages.mapIndexedNotNull { idx, node ->
-                                if (q.isEmpty() || node.activeVariant.content.contains(q, ignoreCase = true) ||
-                                    node.activeVariant.thinkingSummary.contains(q, ignoreCase = true)
-                                ) {
-                                    idx to node
-                                } else null
-                            }
+                        var mapPromptsOnly by remember { mutableStateOf(false) }
+                        val filteredMapItems = remember(activeSession.messages, mapFilterQuery, mapPromptsOnly) {
+                            filterMessageMapTurns(activeSession.messages, mapFilterQuery, mapPromptsOnly)
                         }
                         Column(
                             modifier = Modifier
@@ -940,14 +937,35 @@ internal fun ManuscriptViewport(
                                     onClick = { showMinimapTreeModal = false }
                                 )
                             }
-                            SepiaTextField(
-                                value = mapFilterQuery,
-                                onValueChange = { mapFilterQuery = it },
-                                placeholder = Strings.filterTurns,
-                                singleLine = true,
-                                minHeight = 30.dp,
-                                modifier = Modifier.fillMaxWidth()
-                            )
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.spacedBy(Space.s6),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                SepiaTextField(
+                                    value = mapFilterQuery,
+                                    onValueChange = { mapFilterQuery = it },
+                                    placeholder = Strings.filterTurns,
+                                    singleLine = true,
+                                    minHeight = 30.dp,
+                                    // Enter jumps to the first matching turn.
+                                    onEnterKeySend = { _, _ ->
+                                        filteredMapItems.firstOrNull()?.let { (idx, _) ->
+                                            minimapInteractionTick++
+                                            scope.launch { listState.scrollToItemWithMotion(idx + 1, reduceMotion) }
+                                        }
+                                        true
+                                    },
+                                    modifier = Modifier.weight(1f)
+                                )
+                                SepiaButton(
+                                    text = Strings.promptsFilter,
+                                    contentDescription = Strings.showOnlyYourPrompts,
+                                    compact = true,
+                                    style = if (mapPromptsOnly) SepiaButtonStyle.PRIMARY else SepiaButtonStyle.GHOST,
+                                    onClick = { mapPromptsOnly = !mapPromptsOnly }
+                                )
+                            }
                             SepiaDivider()
                             Column(
                                 modifier = Modifier.verticalScroll(rememberScrollState()),

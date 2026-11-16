@@ -6,6 +6,11 @@ internal object DesktopPlatformHost {
     @Volatile
     private var cachedStorageDir: File? = null
 
+    /** The installer's `--cds-warmup` run works in a throwaway folder, never in the user's data. */
+    fun useStorageDirectory(dir: File) {
+        cachedStorageDir = dir
+    }
+
     fun resolveStorageDir(): File {
         cachedStorageDir?.let { if (it.exists()) return it }
         // 0. Test workers get their own temporary folder, so tests never touch the real %LOCALAPPDATA%\ParchmentAI.

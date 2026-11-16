@@ -31,11 +31,16 @@ import io.parchment.ai.runtime.AppForeground
 import io.parchment.ai.ui.AppShortcutDispatcher
 import io.parchment.ai.ui.LocalParchmentPalette
 import io.parchment.ai.ui.ParchmentApp
+import io.parchment.ai.ui.preloadProcessStateInBackground
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.debounce
+import kotlinx.coroutines.withContext
 import org.jetbrains.skia.Image
 import java.awt.Component
 import java.awt.Dimension
+import java.awt.GraphicsEnvironment
+import java.awt.Rectangle
 import java.awt.Container
 import java.awt.MouseInfo
 import java.awt.datatransfer.DataFlavor
@@ -80,6 +85,23 @@ private fun loadSavedWindowGeometry(): SavedWindowGeometry {
     }.getOrDefault(SavedWindowGeometry(isMaximized = true, widthDp = 1400, heightDp = 900, xDp = -1, yDp = -1))
 }
 
+/**
+ * True when the window's title strip (top 40 dp of a saved floating window) still overlaps a connected screen by
+ * at least 100x40 dp, so a window saved on a monitor that has since been unplugged reopens centered instead of
+ * off-screen. Screen bounds are AWT user-space, which matches Compose dp on scaled Windows displays.
+ */
+internal fun savedPositionIsVisible(xDp: Int, yDp: Int, widthDp: Int, screens: List<Rectangle>): Boolean {
+    val titleStrip = Rectangle(xDp, yDp, widthDp.coerceAtLeast(1), 40)
+    return screens.any { screen ->
+        val overlap = screen.intersection(titleStrip)
+        !overlap.isEmpty && overlap.width >= 100 && overlap.height >= 40
+    }
+}
+
+private fun connectedScreenBounds(): List<Rectangle> = runCatching {
+    GraphicsEnvironment.getLocalGraphicsEnvironment().screenDevices.map { it.defaultConfiguration.bounds }
+}.getOrDefault(emptyList())
+
 private fun saveWindowGeometry(geom: SavedWindowGeometry) {
     runCatching {
         val f = windowBoundsFile()
@@ -123,9 +145,11 @@ internal fun windowCaption(runStatus: String, captionTitle: String): String {
 }
 
 @OptIn(kotlinx.coroutines.FlowPreview::class)
-fun main() {
+fun main(args: Array<String>) {
+    if (CDS_WARMUP_FLAG in args) runCdsWarmup()
     // Enable hardware VSync so Skia renders smoothly at the monitor's native refresh rate (60Hz / 120Hz / 144Hz / 240Hz)
     System.setProperty("skiko.vsync.enabled", "true")
+    preloadProcessStateInBackground()
 
     application {
         // Idle, the caption names the open chat; during a run it shows the run's progress instead.
@@ -139,7 +163,10 @@ fun main() {
     val windowState = rememberWindowState(
         placement = if (initialGeom.isMaximized) WindowPlacement.Maximized else WindowPlacement.Floating,
         size = DpSize(initialGeom.widthDp.dp, initialGeom.heightDp.dp),
-        position = if (!initialGeom.isMaximized && initialGeom.xDp >= 0 && initialGeom.yDp >= 0) {
+        // (-1, -1) is the "never placed" marker; other negative positions are real left/upper monitors.
+        position = if (!initialGeom.isMaximized && !(initialGeom.xDp == -1 && initialGeom.yDp == -1) &&
+            savedPositionIsVisible(initialGeom.xDp, initialGeom.yDp, initialGeom.widthDp, connectedScreenBounds())
+        ) {
             WindowPosition(initialGeom.xDp.dp, initialGeom.yDp.dp)
         } else {
             WindowPosition.Aligned(Alignment.Center)
@@ -175,15 +202,15 @@ fun main() {
                         lastFloatingY = pos.y.value.toInt()
                     }
                 }
-                saveWindowGeometry(
-                    SavedWindowGeometry(
-                        isMaximized = isMax,
-                        widthDp = lastFloatingWidth,
-                        heightDp = lastFloatingHeight,
-                        xDp = lastFloatingX,
-                        yDp = lastFloatingY
-                    )
+                val geometry = SavedWindowGeometry(
+                    isMaximized = isMax,
+                    widthDp = lastFloatingWidth,
+                    heightDp = lastFloatingHeight,
+                    xDp = lastFloatingX,
+                    yDp = lastFloatingY
                 )
+                // A resize drag emits many sizes; the debounced write still must not touch the disk on the EDT.
+                withContext(Dispatchers.IO) { saveWindowGeometry(geometry) }
             }
     }
 
@@ -296,7 +323,7 @@ fun main() {
             }
             ParchmentApp(
                 shortcutDispatcher = shortcuts,
-                desktopWindowHeader = { title ->
+                platformWindowChrome = { title ->
                     LaunchedEffect(title) { captionTitle = title }
                     val p = LocalParchmentPalette.current
                     LaunchedEffect(window, p.canvasBg, p.primaryInk, p.border) {

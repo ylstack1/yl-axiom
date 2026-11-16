@@ -199,7 +199,14 @@ internal class ParchmentProcessState(initial: AppStateSnapshot, needsHydration: 
     }
 }
 
+/**
+ * Settings and the open chat as plain data. Safe to load on any thread ([preloadProcessStateInBackground]):
+ * unlike [parchmentProcessState] it creates no Compose snapshot state, which a composition already running
+ * cannot read if another thread created it after the composition's snapshot was taken.
+ */
+internal val initialAppStateLoad = lazy { loadFastInitialAppState() }
+
 internal val parchmentProcessState by lazy {
-    val (snapshot, needsHydration) = loadFastInitialAppState()
+    val (snapshot, needsHydration) = initialAppStateLoad.value
     ParchmentProcessState(snapshot, needsHydration, leases = appRunLeases)
 }

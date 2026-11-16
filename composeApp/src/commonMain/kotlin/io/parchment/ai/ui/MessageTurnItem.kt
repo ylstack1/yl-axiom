@@ -120,7 +120,9 @@ internal fun MessageTurnItem(
     val isReasoningExpanded = when {
         isActivelyThinkingThisNode -> manualThinkingToggle != false
         manualThinkingToggle != null -> manualThinkingToggle == true
-        !preferences.autoCollapseThinking && activeVar.thinkingSummary.isNotBlank() -> true
+        // Tool-only turns (models that call tools without visible reasoning) open like reasoning turns.
+        !preferences.autoCollapseThinking &&
+            (activeVar.thinkingSummary.isNotBlank() || activeVar.toolCalls.isNotEmpty()) -> true
         else -> false
     }
     val isLivePeekOnly = isActivelyThinkingThisNode && manualThinkingToggle == false

@@ -1,7 +1,6 @@
 [versions]
 # Newest stable versions that work together (2026-11-11). Kotlin 2.4.21 supports AGP up to 9.3.x and
 # Gradle up to 9.7.x, so AGP 9.5 and Gradle 9.9 wait for a Kotlin release that covers them.
-jna = "5.19.1"
 agp = "9.3.3"
 android-compileSdk = "37"
 android-minSdk = "26"
@@ -14,7 +13,6 @@ kotlinx-serialization = "1.12.0"
 ktor = "3.6.1"
 
 [libraries]
-jna = { module = "net.java.dev.jna:jna", version.ref = "jna" }
 compose-runtime = { module = "org.jetbrains.compose.runtime:runtime", version.ref = "compose-multiplatform" }
 compose-foundation = { module = "org.jetbrains.compose.foundation:foundation", version.ref = "compose-multiplatform" }
 compose-ui = { module = "org.jetbrains.compose.ui:ui", version.ref = "compose-multiplatform" }

@@ -142,13 +142,24 @@ def measure_desktop(repo: Path, runs: int = 3) -> dict[str, object]:
     work = Path(tempfile.mkdtemp(prefix="parchment-perf-"))
     try:
         seed_chats(work / "parchment-portable-data")
-        # The first launch after a build records the class archive; it is reported apart from steady launches.
+        # Like the installer, build the class archive with the hidden warm-up run first; the first launch after it is
+        # what an installed user sees after an update, and is reported apart from steady launches.
+        # -Xshare:on makes the JVM exit instead of silently running unshared when the base archive cannot be used
+        # (for example a classes_coh.jsa missing under -XX:+UseCompactObjectHeaders).
+        warm_started = time.perf_counter()
+        warm = subprocess.run([str(exe), "--cds-warmup"], cwd=work, timeout=60, check=False,
+                              env=dict(os.environ, JAVA_TOOL_OPTIONS="-Xshare:on"))
+        warmup_ms = round((time.perf_counter() - warm_started) * 1000)
+        app_archive = app_dir / "app" / "parchment.jsa"
+        cds_ok = warm.returncode == 0 and app_archive.is_file()
         first = desktop_run(exe, work)
         steady = [desktop_run(exe, work) for _ in range(runs)]
     finally:
         close_app(app_dir)
         shutil.rmtree(work, ignore_errors=True)
     return {
+        "desktop_cds_warmup_ms": warmup_ms,
+        "desktop_cds_archives_ok": cds_ok,
         "desktop_first_launch_title_ms": first["title_ms"],
         "desktop_window_ms": statistics.median(r["window_ms"] for r in steady),
         "desktop_title_ms": statistics.median(r["title_ms"] for r in steady),
