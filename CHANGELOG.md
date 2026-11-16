@@ -2,6 +2,27 @@
 
 What changed in each release, newest first. From 2.1.7 on, release-please writes these entries from commit messages that follow [Conventional Commits](https://www.conventionalcommits.org/) (`feat:` and `fix:` appear here and set the next version); edit wording in its release PR before merging it.
 
+## [2.3.0](https://github.com/baros4294/parchment/compare/v2.2.6...v2.3.0) (2026-11-16)
+
+
+### New
+
+* **desktop:** native folder picker and right-click menus ([2c6b792](https://github.com/baros4294/parchment/commit/2c6b792b0d06160ffedf20082b143cb3612fb44d))
+* **ui:** tab commands in the palette, arrow keys in the Message Map, context gauge off the UI thread ([97daed9](https://github.com/baros4294/parchment/commit/97daed9be92ae9d7aeaf3020df04c1b85b7fabb6))
+
+
+### Fixes
+
+* **desktop:** end a stuck warm-up without writing a partial class archive ([ee5ed10](https://github.com/baros4294/parchment/commit/ee5ed1010f5247623c5b60326425b661aa705ca7))
+* **harness:** parallel helpers share one chat spend limit ([2c055be](https://github.com/baros4294/parchment/commit/2c055bec7b560de801a4fe230d2b9c2b3d4e951c))
+* **storage:** tie chat-index.json to the stub format ([80b56e1](https://github.com/baros4294/parchment/commit/80b56e1358cc7d84b710be2b5312a12a103028ab))
+
+
+### Faster and lighter
+
+* **desktop:** serial GC brings idle memory under budget ([bd58df1](https://github.com/baros4294/parchment/commit/bd58df1b2bebdf88634ff8c12c76a20e800721a6))
+* **ui:** stream replies through a live overlay instead of the app state ([3444296](https://github.com/baros4294/parchment/commit/3444296dbb89461d2ec51dd6d1284f485b559fa8))
+
 ## [2.2.6](https://github.com/baros4294/parchment/compare/v2.2.5...v2.2.6) (2026-11-16)
 
 
