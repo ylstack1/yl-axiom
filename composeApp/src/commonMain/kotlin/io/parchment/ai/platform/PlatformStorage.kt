@@ -27,6 +27,8 @@ expect object PlatformStorage {
     fun loadChatIndexJson(): String?
     fun saveChatIndexJson(json: String)
     fun saveChatSessionJson(sessionId: String, json: String)
+    /** A streaming reply's checkpoint beside its chat (`live.json`); the next full save of the chat replaces it. */
+    fun saveChatLiveTurnJson(sessionId: String, json: String)
     fun deleteChatSessionFile(sessionId: String)
     fun wipeAllLocalData(): Boolean
     fun pruneStaleTempFiles(maxAgeMs: Long = 24L * 60L * 60L * 1000L): Int

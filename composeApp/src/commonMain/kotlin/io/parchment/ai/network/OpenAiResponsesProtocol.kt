@@ -274,7 +274,7 @@ internal suspend fun AiProviderEngine.executeOpenAiResponsesLoop(
                     if (!response.status.isSuccess()) {
                         val err = response.bodyAsText()
                         onRawWire(reqStr, err)
-                        error("OpenAI Responses HTTP ${response.status.value}: $err")
+                        throw providerHttpError("OpenAI Responses", response, err)
                     }
 
 
@@ -589,17 +589,14 @@ internal suspend fun AiProviderEngine.executeOpenAiResponsesLoop(
                     } else {
                         MAX_PRE_TOKEN_RETRIES
                     }
-                    val waitSec = if (profile.useLegacyFallbackEndpoint) {
-                        LEGACY_FALLBACK_PRIMARY_WAIT_SECONDS
-                    } else {
-                        RETRY_WAIT_SECONDS
-                    }
+                    // The legacy-endpoint probe waits briefly before handing over; a server's own hint still wins.
+                    val probeWaitMs = if (profile.useLegacyFallbackEndpoint) LEGACY_FALLBACK_PRIMARY_WAIT_SECONDS * 1000L else null
                     if (stepRetryAttempt < maxPrimaryRetries) {
                         stepRetryAttempt++
                         waitWithRetryCountdown(
                             attempt = stepRetryAttempt,
                             maxAttempts = maxPrimaryRetries,
-                            waitSeconds = waitSec,
+                            waitMs = retryDelayMs(stepRetryAttempt, e, fixedMs = probeWaitMs),
                             reasonSummary = e.message ?: "Transient API error in step $loopStep",
                             onStatus = onStatus
                         )

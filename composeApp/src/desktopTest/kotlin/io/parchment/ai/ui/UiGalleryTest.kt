@@ -24,8 +24,12 @@ import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.semantics.getOrNull
 import androidx.compose.ui.unit.Density
 import io.parchment.ai.model.*
+import io.parchment.ai.network.RetryControl
+import io.parchment.ai.network.RetryWait
+import io.parchment.ai.network.RunErrorKind
 import io.parchment.ai.platform.PlatformRuntime
 import io.parchment.ai.platform.PlatformStorage
+import io.parchment.ai.strings.Strings
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.runBlocking
@@ -119,15 +123,40 @@ class UiGalleryTest {
         delay(12)
     }
 
-    private suspend fun capture(viewport: Viewport, theme: ThemeConfig, name: String, steps: List<String> = emptyList()) {
+    /** The active chat waiting to try again after a busy server, as a run shows it. */
+    private fun showRetryWait(process: ParchmentProcessState) {
+        val chatId = process.snapshot.value.activeSessionId
+        val wait = RetryWait(2, 10, 12, "Chat Completions HTTP 503: The server is overloaded. Please try again later.")
+        process.runs.attach(
+            AgentRunIdentity("gallery-retry", chatId, "", "", "", "", ""),
+            SessionStreamRuntime(chatId, statusText = Strings.tryingAgainIn(12, 2, 10) + "\n" + wait.reason,
+                retryWait = wait, retryControl = RetryControl()),
+            cancelPrevious = false
+        )
+    }
+
+    /** A run that failed on its API key: the notice leads to the provider's settings. */
+    private fun showKeyError(process: ParchmentProcessState) {
+        process.runError.value = RunErrorNotice(process.snapshot.value.activeSessionId, RunErrorKind.API_KEY)
+        process.notice.value = Strings.runErrorNotice(RunErrorKind.API_KEY)
+    }
+
+    private suspend fun capture(
+        viewport: Viewport,
+        theme: ThemeConfig,
+        name: String,
+        steps: List<String> = emptyList(),
+        setup: (ParchmentProcessState) -> Unit = {}
+    ) {
         seed(theme)
         val scene = ImageComposeScene(
             (viewport.widthDp * viewport.density).toInt(), (viewport.heightDp * viewport.density).toInt(),
             density = Density(viewport.density, viewport.fontScale), coroutineContext = Dispatchers.Swing
         )
+        val process = parchmentProcessState
         try {
-            val process = parchmentProcessState
             process.snapshot.value = loadFastInitialAppState().first.copy(theme = theme)
+            setup(process)
             scene.setContent { ParchmentApp() }
             settle(scene, 130)
             for (step in steps) {
@@ -143,7 +172,13 @@ class UiGalleryTest {
             )
             frame += 16_000_000L
             scene.render(frame).use { File(output, "${viewport.name}-$name.png").writeBytes(requireNotNull(it.encodeToData()).bytes) }
-        } finally { scene.close() }
+        } finally {
+            scene.close()
+            // A state set up for one picture must not leak into the next.
+            process.runs.streams.value = emptyMap()
+            process.runError.value = null
+            process.notice.value = ""
+        }
     }
 
     @Test fun yourMessagesSitRightAndRepliesLeft() = runBlocking<Unit>(Dispatchers.Swing) {
@@ -236,10 +271,15 @@ class UiGalleryTest {
                     capture(viewport, ThemeConfig(), "notes", closeDrawer + listOf("Chat notes"))
                     capture(viewport, night, "sidebar-dark")
                     capture(viewport, night, "settings-dark", listOf("Settings"))
+                    capture(viewport, ThemeConfig(), "retry", closeDrawer, setup = ::showRetryWait)
+                    capture(viewport, night, "retry-dark", closeDrawer, setup = ::showRetryWait)
+                    capture(viewport, ThemeConfig(), "key-error", closeDrawer, setup = ::showKeyError)
                 }
                 for (viewport in listOf(phoneLargeText, desktopLargeText)) {
-                    capture(viewport, ThemeConfig(), "chat", if (viewport.name.startsWith("phone")) listOf("Close sidebar") else emptyList())
+                    val closeDrawer = if (viewport.name.startsWith("phone")) listOf("Close sidebar") else emptyList()
+                    capture(viewport, ThemeConfig(), "chat", closeDrawer)
                     capture(viewport, ThemeConfig(), "settings", listOf("Settings"))
+                    capture(viewport, ThemeConfig(), "retry", closeDrawer, setup = ::showRetryWait)
                 }
                 for (page in listOf("Providers", "Assistant", "Workspace", "World Book & Cards", "Storage & Updates")) {
                     capture(desktop, ThemeConfig(), "page-${page.take(5).trim().lowercase()}", listOf("Settings", page))

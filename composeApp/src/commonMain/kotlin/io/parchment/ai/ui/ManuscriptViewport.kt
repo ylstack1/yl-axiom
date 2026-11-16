@@ -91,6 +91,7 @@ import io.parchment.ai.model.AgentPermissionOverrides
 import io.parchment.ai.model.ViewMode
 import io.parchment.ai.model.WorkspaceMode
 import io.parchment.ai.network.AiProviderEngine
+import io.parchment.ai.network.RetryWait
 import io.parchment.ai.platform.PlatformPickers
 import io.parchment.ai.platform.PlatformRuntime
 import io.parchment.ai.platform.PlatformVoice
@@ -120,6 +121,9 @@ internal fun ManuscriptViewport(
     streamingTargetNodeId: String,
     streamingStatus: String,
     streamingInteractionId: String,
+    /** Set while the run waits to send its request again; [onRetryNow] ends the wait. */
+    retryWait: RetryWait? = null,
+    onRetryNow: () -> Unit = {},
     queuedPrompts: List<QueuedPromptItem>,
     onRemoveQueuedPrompt: (String) -> Unit,
     onSteerQueuedPromptNow: (QueuedPromptItem) -> Unit,
@@ -1273,6 +1277,17 @@ internal fun ManuscriptViewport(
                                     lineHeight = 16.sp
                                 ),
                                 modifier = Modifier.padding(start = Space.s16)
+                            )
+                        }
+                        // While the run waits to try again, the wait can be skipped (Stop stays in the composer).
+                        if (retryWait != null) {
+                            SepiaButton(
+                                text = Strings.retryNow,
+                                onClick = onRetryNow,
+                                compact = true,
+                                style = SepiaButtonStyle.OUTLINE,
+                                hint = Strings.retryNowHint,
+                                modifier = Modifier.padding(start = Space.s16).heightIn(min = Space.s48)
                             )
                         }
                     }

@@ -78,12 +78,12 @@ internal suspend fun readProviderSseOrJsonFallback(
                             dataLinesChars = 0
                             deliver(currentEvent, combined)
                         }
-                        currentEvent = line.removePrefix("event:").trim()
+                        currentEvent = fieldValue(line, "event:".length)
                     }
                     line.startsWith("data:") -> {
                         sawSseLine = true
                         sawAnyData = true
-                        val dataVal = line.removePrefix("data:").trim()
+                        val dataVal = fieldValue(line, "data:".length)
                         if (dataVal == "[DONE]") {
                             if (dataLines.isNotEmpty()) {
                                 deliver(currentEvent, dataLines.joinToString("\n"))
@@ -138,6 +138,15 @@ internal suspend fun readProviderSseOrJsonFallback(
             stallWatch.cancel()
         }
     }
+}
+
+/** `line.substring(start).trim()` with one copy instead of two: the value after an SSE field name. */
+private fun fieldValue(line: String, start: Int): String {
+    var from = start
+    var to = line.length
+    while (from < to && line[from].isWhitespace()) from++
+    while (to > from && line[to - 1].isWhitespace()) to--
+    return line.substring(from, to)
 }
 
 private fun isCompleteJsonObject(text: String): Boolean {

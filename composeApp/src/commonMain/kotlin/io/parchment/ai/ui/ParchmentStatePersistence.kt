@@ -56,7 +56,8 @@ internal val appDiskWriter by lazy {
         appProcessScope,
         saveSettings = ::saveSettingsOnlyToDisk,
         saveSession = ::saveSingleChatSessionToDisk,
-        deleteSession = PlatformStorage::deleteChatSessionFile
+        deleteSession = PlatformStorage::deleteChatSessionFile,
+        saveLiveTurn = ::saveLiveTurnToDisk
     )
 }
 
@@ -114,7 +115,10 @@ data class SessionStreamRuntime(
     internal val phase: AgentRunPhase = AgentRunPhase.RUNNING,
     internal val providerContext: RunProviderContext? = null,
     val actualWireDialect: String = "",
-    internal val isPreparingHandoff: Boolean = false
+    internal val isPreparingHandoff: Boolean = false,
+    /** Set while the run waits to send its request again; [retryControl] ends the wait early. */
+    val retryWait: io.parchment.ai.network.RetryWait? = null,
+    val retryControl: io.parchment.ai.network.RetryControl? = null
 )
 
 data class SlashCommandSpec(
@@ -728,6 +732,23 @@ internal fun saveSingleChatSessionToDisk(session: ChatSession) {
     }
     val encoded = compactStateJson.encodeToString(ChatSession.serializer(), cleanSession)
     PlatformStorage.saveChatSessionJson(cleanSession.id, encoded)
+}
+
+@Serializable
+private class LiveTurnSidecar(val nodeId: String, val variant: MessageVariant)
+
+/**
+ * A streaming checkpoint that saves the reply alone (`chats/<id>/live.json`), so its cost follows the reply's size,
+ * not the chat's. Settled like a full save: after a crash the reply shows as interrupted.
+ */
+internal fun saveLiveTurnToDisk(session: ChatSession, turn: LiveTurnRef) {
+    val node = session.messages.find { it.id == turn.nodeId } ?: return
+    val variant = node.variants.find { it.id == turn.variantId } ?: return
+    val cleaned = stripRedundantAttachmentBase64(session.copy(messages = listOf(node.copy(variants = listOf(variant)))))
+    val settled = cleaned.messages.single().variants.single().settledForDisk()
+    PlatformStorage.saveChatLiveTurnJson(
+        session.id, compactStateJson.encodeToString(LiveTurnSidecar.serializer(), LiveTurnSidecar(turn.nodeId, settled))
+    )
 }
 
 internal fun decodeChatSessionsFromRawJson(rawJsonText: String): List<ChatSession> {

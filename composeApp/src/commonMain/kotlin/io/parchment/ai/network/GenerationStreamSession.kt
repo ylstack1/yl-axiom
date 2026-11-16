@@ -17,6 +17,7 @@ import io.parchment.ai.model.ToolCallRecord
 import io.parchment.ai.model.WebSourceCitation
 import io.parchment.ai.network.AiProviderEngine.NoRetryException
 import io.parchment.ai.network.AiProviderEngine.StepRetriesExhaustedException
+import io.parchment.ai.platform.PlatformRuntime
 import io.parchment.ai.runtime.RunActivity
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.delay
@@ -26,6 +27,8 @@ import kotlinx.coroutines.flow.FlowCollector
 
 private const val MAX_GOAL_NETWORK_RETRIES = 120
 private const val MAX_MID_STREAM_CONTINUATION_PASSES = 64
+/** A cut reply resumes after a short wait; only cuts that repeat within this window wait longer each time. */
+private const val CUT_MEMORY_MS = 5 * 60_000L
 
 internal class GenerationStreamSession(
     private val engine: AiProviderEngine,
@@ -105,6 +108,15 @@ internal class GenerationStreamSession(
     private var continuationPass = 0
     private var emptyAnswerNudgePass = 0
     private var emptyStreamRetryPass = 0
+    private val recentCutsAtMs = ArrayDeque<Long>()
+
+    /** Records a mid-reply cut and returns how many happened within [CUT_MEMORY_MS], this one included. */
+    private fun recordRecentCut(): Int {
+        val now = PlatformRuntime.monotonicTimeMillis()
+        while (recentCutsAtMs.isNotEmpty() && now - recentCutsAtMs.first() > CUT_MEMORY_MS) recentCutsAtMs.removeFirst()
+        recentCutsAtMs.addLast(now)
+        return recentCutsAtMs.size
+    }
 
     private fun effectiveTargetDialect(effectiveProfile: ProviderProfile, wireProtocol: ProviderProtocol): String {
         if (wireProtocol == ProviderProtocol.OPENAI_RESPONSES) {
@@ -252,7 +264,7 @@ internal class GenerationStreamSession(
             engine.waitWithRetryCountdown(
                 attempt = retryAttempt,
                 maxAttempts = maxRetries,
-                waitSeconds = AiProviderEngine.RETRY_WAIT_SECONDS,
+                waitMs = retryDelayMs(retryAttempt, actualErr),
                 reasonSummary = actualErr.message ?: "Transient network/proxy error",
                 onStatus = { msg -> state.emitStatus(msg) }
             )
@@ -267,7 +279,7 @@ internal class GenerationStreamSession(
             engine.waitWithRetryCountdown(
                 attempt = continuationPass,
                 maxAttempts = if (isLongGoalRun) MAX_GOAL_NETWORK_RETRIES else MAX_MID_STREAM_CONTINUATION_PASSES,
-                waitSeconds = AiProviderEngine.RETRY_WAIT_SECONDS,
+                waitMs = retryDelayMs(recordRecentCut(), actualErr),
                 reasonSummary = "Stream interrupted — resuming seamlessly: $cleanInterruptReason",
                 onStatus = { msg -> state.emitStatus(msg) }
             )

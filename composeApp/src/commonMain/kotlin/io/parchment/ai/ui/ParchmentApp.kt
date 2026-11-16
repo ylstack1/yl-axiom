@@ -54,7 +54,9 @@ import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.semantics.clearAndSetSemantics
+import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -72,6 +74,7 @@ import io.parchment.ai.network.ModelsDevClient
 import io.parchment.ai.ParchmentBuildConfig
 import io.parchment.ai.network.OtaUpdateEngine
 import io.parchment.ai.network.OtaUpdateState
+import io.parchment.ai.network.RunErrorKind
 import io.parchment.ai.platform.PlatformPickers
 import io.parchment.ai.platform.PlatformRuntime
 import io.parchment.ai.platform.PlatformStorage
@@ -235,6 +238,13 @@ fun ParchmentApp(
                 if (blocking) appDiskWriter.flushBlocking() else appDiskWriter.flushUrgentlyAsync()
             }
         }
+        // An error that escaped the previous run is mentioned once, with its details to copy for a report.
+        LaunchedEffect(Unit) {
+            val report = withContext(Dispatchers.IO) { runCatching { PlatformRuntime.takeCrashReport() }.getOrNull() }
+                ?: return@LaunchedEffect
+            pendingCrashReport = report
+            bannerNotification = Strings.crashNotice(report.saved)
+        }
         LaunchedEffect(Unit) {
             var previousSaveNotice = ""
             appDiskWriter.lastError.collect { message ->
@@ -345,7 +355,7 @@ fun ParchmentApp(
         generationHost = remember(activeAssistant, activeProfile) {
             GenerationHost(
                 processState, activeAssistant, activeProfile, { isGoalModeEnabled }, { isLiveVoiceMode }, { dispatchNextQueuedItem },
-                ::updateSessionById, ::updateActiveSessionInMemoryOnly, ::generateTopicTitle
+                ::updateSessionById, ::updateLiveTurnById, ::updateLiveTurnInMemory, ::generateTopicTitle
             ) { id, purpose, profile, model, prompt, limit -> generateTrackedUtility(id, purpose, profile, model, prompt, limit) }
         }
 
@@ -405,6 +415,9 @@ fun ParchmentApp(
                 /** Everything Ctrl+K can do: main actions, every settings page, and each chat by name. */
                 fun paletteCommands(): List<PaletteCommand> = buildList {
                     add(PaletteCommand(Strings.newChat2, Strings.ctrlN, ::openNewChat))
+                    if (currentTabStream?.retryWait != null) {
+                        add(PaletteCommand(Strings.retryNow) { currentTabStream?.retryControl?.retryNow() })
+                    }
                     if (!isSettingsOpen && activeSession.messages.any { it.role == MessageRole.USER }) {
                         add(PaletteCommand(Strings.jumpToPromptInChat, Strings.ctrlG) { showPromptJump = true })
                     }
@@ -855,14 +868,18 @@ fun ParchmentApp(
                         LaunchedEffect(bannerNotification, isVoiceListening) {
                             if (bannerNotification.isNotBlank() && !isVoiceListening) {
                                 val snap = bannerNotification
-                                // A notice with Undo stays longer, so there is time to reach the button.
-                                delay(if (pendingUndo != null) UNDO_NOTICE_MS else NOTICE_MS)
+                                // A notice with an action (Undo, Copy details) stays longer, so there is time to reach it.
+                                delay(if (pendingUndo != null || pendingCrashReport != null || runErrorNotice != null) UNDO_NOTICE_MS else NOTICE_MS)
                                 if (bannerNotification == snap && !isVoiceListening) {
                                     bannerNotification = ""
                                 }
                             }
                             // Once the notice has gone (or shows something else), the deleted chats can't come back.
-                            if (bannerNotification.isBlank()) pendingUndo = null
+                            if (bannerNotification.isBlank()) {
+                                pendingUndo = null
+                                pendingCrashReport = null
+                                runErrorNotice = null
+                            }
                         }
 
                         // 2. Main Content Area:
@@ -1197,6 +1214,8 @@ fun ParchmentApp(
                                         isCurrentlyThinkingPhase = isCurrentlyThinkingPhase,
                                         streamingTargetNodeId = streamingTargetNodeId,
                                         streamingStatus = streamingStatus,
+                                        retryWait = currentTabStream?.retryWait,
+                                        onRetryNow = { currentTabStream?.retryControl?.retryNow() },
                                         streamingInteractionId = streamingInteractionId,
                                         queuedPrompts = queuedPrompts,
                                         onRemoveQueuedPrompt = stableCallback { qId ->
@@ -1690,11 +1709,39 @@ fun ParchmentApp(
                                     placeholder = Strings.jumpToPromptPlaceholder
                                 )
                             }
+                            val noticeClipboard = LocalClipboardManager.current
+                            val crashReport = pendingCrashReport?.takeIf { bannerNotification == Strings.crashNotice(it.saved) }
+                            // A failed run's fixable cause leads to its fix; fixes that act on a chat need it open.
+                            val runError = runErrorNotice?.takeIf { bannerNotification == Strings.runErrorNotice(it.kind) }
+                            val runErrorFix: (() -> Unit)? = runError?.let { notice ->
+                                val inThisChat = notice.sessionId == activeSession.id
+                                when (notice.kind) {
+                                    RunErrorKind.API_KEY -> ({ openSettings(SettingsCategory.PROVIDERS) })
+                                    RunErrorKind.SPEND_LIMIT -> ({ openSettings(SettingsCategory.PREFERENCES) })
+                                    RunErrorKind.MODEL -> if (inThisChat) ({ showQuickModelPopover = true }) else null
+                                    RunErrorKind.CONVERSATION_LIMIT -> if (inThisChat) ({ triggerAutoSummarizeStory(autoMuteOlderTurns = true) }) else null
+                                    RunErrorKind.QUOTA -> null
+                                }
+                            }
                             FloatingNotification(
                                 message = bannerNotification,
                                 onDismiss = { bannerNotification = "" },
-                                actionLabel = if (pendingUndo != null) Strings.undo else null,
-                                onAction = ::undoDelete,
+                                actionLabel = when {
+                                    pendingUndo != null -> Strings.undo
+                                    crashReport != null -> Strings.copyDetails
+                                    runError != null && runErrorFix != null -> Strings.runErrorAction(runError.kind)
+                                    else -> null
+                                },
+                                onAction = {
+                                    when {
+                                        pendingUndo != null -> undoDelete()
+                                        crashReport != null -> noticeClipboard.setText(AnnotatedString(crashReport.text))
+                                        runErrorFix != null -> {
+                                            bannerNotification = ""
+                                            runErrorFix()
+                                        }
+                                    }
+                                },
                                 modifier = Modifier.align(Alignment.TopCenter).padding(horizontal = Space.s12, vertical = Space.s12)
                             )
                         }

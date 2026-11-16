@@ -1,5 +1,7 @@
 package io.parchment.ai.strings
 
+import io.parchment.ai.network.RunErrorKind
+
 /**
  * Interface text in one table, so the app can be translated without touching every screen. Entries are
  * named after their English text. Add new text here instead of writing it into a screen.
@@ -705,6 +707,14 @@ internal object Strings {
     val newServer = "New server"
     val connecting = "Connecting…"
     fun connected(a: Any?): String = "Connected, ${a}"
+    val mcpServerRestarting = "The server stopped. Starting it again…"
+    val mcpServerCouldNotRestart = "The server stopped and could not be started again."
+    val mcpServerKeepsStopping = "The server keeps stopping, so it was left off."
+    val restartServer = "Restart"
+    val restartServerHint = "Start this server again now"
+    fun crashNotice(saved: Boolean): String = if (saved) "Parchment hit an unexpected error last time. Your chats were saved."
+        else "Parchment hit an unexpected error last time. The newest changes may not have been saved."
+    val copyDetails = "Copy details"
     val user = "User"
     fun toolPeek(a: Any?): String = "🔧 Tool Peek${a}…"
     fun peek(a: Any?): String = "🧠 Peek${a}…"
@@ -894,7 +904,24 @@ internal object Strings {
     val translation = "Translation"
     val replyDrafts = "Reply drafts"
     val otherBackgroundRequests = "Other background requests"
-    fun retryingNowAttempt(a: Any?, b: Any?): String = "Retrying now (attempt ${a}/${b})…"
+    fun retryingNowAttempt(a: Any?, b: Any?): String = "Trying again now (${a} of ${b})…"
+    fun tryingAgainIn(seconds: Long, attempt: Int, maxAttempts: Int): String = "Trying again in $seconds s ($attempt of $maxAttempts)"
+    val retryNow = "Retry now"
+    val retryNowHint = "Send the request again without waiting"
+    fun runErrorNotice(kind: RunErrorKind): String = when (kind) {
+        RunErrorKind.API_KEY -> "The provider did not accept this API key."
+        RunErrorKind.MODEL -> "The provider does not offer this model."
+        RunErrorKind.CONVERSATION_LIMIT -> "This conversation is longer than the model's limit."
+        RunErrorKind.SPEND_LIMIT -> "This chat reached its spend limit."
+        RunErrorKind.QUOTA -> "The account is out of quota or credit. Trying again will not help until that changes."
+    }
+    fun runErrorAction(kind: RunErrorKind): String? = when (kind) {
+        RunErrorKind.API_KEY -> "Check API key"
+        RunErrorKind.MODEL -> "Choose a model"
+        RunErrorKind.CONVERSATION_LIMIT -> "Shorten the conversation"
+        RunErrorKind.SPEND_LIMIT -> "Change limit"
+        RunErrorKind.QUOTA -> null
+    }
     val endpointRejectedSamplingParametersRetryingWith = "Endpoint rejected sampling parameters — retrying with model defaults…"
     val endpointDoesNotSupportNativeWeb = "Endpoint does not support native web_search_20250305 — falling back to local web_fetch tool…"
     val endpointDoesNotSupportAdaptiveThinking = "Endpoint does not support adaptive thinking — retrying with budget_tokens thinking…"

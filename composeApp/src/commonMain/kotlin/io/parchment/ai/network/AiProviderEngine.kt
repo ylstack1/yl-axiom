@@ -45,6 +45,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
 
@@ -89,8 +90,14 @@ sealed class StreamUpdate {
         val apiUsageRecords: List<ApiUsageRecord> = emptyList(),
         val providerWireDialect: String = ""
     ) : StreamUpdate()
-    data class Error(val message: String, val rawDetails: String = "") : StreamUpdate()
+    data class Error(val message: String, val rawDetails: String = "", val kind: RunErrorKind? = null) : StreamUpdate()
 }
+
+/**
+ * A failure that sending the request again will not fix but the person can, so its notice says so and, except for
+ * [QUOTA], offers the way there.
+ */
+enum class RunErrorKind { API_KEY, MODEL, CONVERSATION_LIMIT, SPEND_LIMIT, QUOTA }
 
 internal const val MAX_DOWNLOADED_IMAGE_BYTES = 64 * 1024 * 1024
 internal const val MAX_DOWNLOADED_AUDIO_BYTES = 128 * 1024 * 1024
@@ -109,6 +116,7 @@ object AiProviderEngine {
      */
     internal const val MAX_SAFETY_HORIZON_STEPS = 10_000
     internal const val MAX_PRE_TOKEN_RETRIES = 10
+    /** The longest wait between attempts when the server gave no hint of its own (`retryDelayMs`). */
     internal const val RETRY_WAIT_SECONDS = 60
 
     /** Shown under an answer the model had to cut short; removed before the text is sent back. */
@@ -138,10 +146,14 @@ object AiProviderEngine {
     internal class SpendLimitException(limitUsd: Double) :
         NoRetryException("This chat reached its ${"$"}$limitUsd spend limit. Raise or clear the limit in Settings to continue.")
 
+    /**
+     * Counts down [waitMs] (from `retryDelayMs`) in whole seconds. It ends early when someone returns to the app or
+     * asks to retry now through the run's [RetryControl], which also shows each second of the countdown.
+     */
     internal suspend fun waitWithRetryCountdown(
         attempt: Int,
         maxAttempts: Int,
-        waitSeconds: Int = RETRY_WAIT_SECONDS,
+        waitMs: Long,
         reasonSummary: String,
         onStatus: suspend (String) -> Unit
     ) {
@@ -150,16 +162,26 @@ object AiProviderEngine {
             onStatus(Strings.retryingNowAttempt(attempt, maxAttempts))
             return
         }
+        val control = currentCoroutineContext()[RetryControl]
+        val requestsBefore = control?.requestsSoFar() ?: 0L
         val resumedAtStart = AppForeground.resumedAt.value
-        for (remaining in waitSeconds downTo 1) {
-            if (AppForeground.resumedAt.value != resumedAtStart) break // Someone is back and waiting; a connection may work again.
-            val statusMsg = if (cleanReason.isNotBlank()) {
-                "Auto-retrying ($attempt/$maxAttempts in ${remaining}s)\n$cleanReason"
-            } else {
-                "Auto-retrying ($attempt/$maxAttempts in ${remaining}s)…"
+        val deadline = PlatformRuntime.monotonicTimeMillis() + waitMs.coerceAtLeast(0L)
+        var shown: RetryWait? = null
+        try {
+            while (true) {
+                val remainingMs = deadline - PlatformRuntime.monotonicTimeMillis()
+                if (remainingMs <= 0L || AppForeground.resumedAt.value != resumedAtStart) break // Someone is back; a connection may work again.
+                val remaining = (remainingMs + 999L) / 1000L
+                shown = RetryWait(attempt, maxAttempts, remaining, cleanReason).also { control?.show(it) }
+                val heading = Strings.tryingAgainIn(remaining, attempt, maxAttempts)
+                onStatus(if (cleanReason.isNotBlank()) "$heading\n$cleanReason" else "$heading…")
+                // Wake on whole-second boundaries so the countdown ticks evenly whatever fraction the jitter left.
+                val tickMs = remainingMs - (remaining - 1L) * 1000L
+                if (control == null) delay(tickMs)
+                else if (withTimeoutOrNull(tickMs) { control.awaitRequestAfter(requestsBefore) } != null) break
             }
-            onStatus(statusMsg)
-            delay(1000L)
+        } finally {
+            control?.clear(shown)
         }
         onStatus(Strings.retryingNowAttempt(attempt, maxAttempts))
     }
@@ -223,7 +245,8 @@ object AiProviderEngine {
         if (model.isBlank()) {
             emit(
                 StreamUpdate.Error(
-                    message = "No Model ID is selected. Fetch models automatically from the endpoint or enter a Model ID manually in Providers & Proxy."
+                    message = "No Model ID is selected. Fetch models automatically from the endpoint or enter a Model ID manually in Providers & Proxy.",
+                    kind = RunErrorKind.MODEL
                 )
             )
             return@runActivityFlow

@@ -208,7 +208,7 @@ internal class GeminiInteractionsRoundParser(
                 val pollText = pollResp.bodyAsText()
                 onRawWire(requestJsonStr, pollText)
                 if (!pollResp.status.isSuccess()) {
-                    error("Gemini Interactions Poll HTTP ${pollResp.status.value}: $pollText")
+                    throw providerHttpError("Gemini Interactions Poll", pollResp, pollText)
                 }
                 interactionObj = engine.json.parseToJsonElement(pollText).jsonObject
                 status = (interactionObj["status"] as? JsonPrimitive)?.contentOrNull ?: "completed"

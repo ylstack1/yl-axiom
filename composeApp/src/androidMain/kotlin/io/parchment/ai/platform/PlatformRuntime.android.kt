@@ -42,6 +42,9 @@ actual object PlatformRuntime {
         runCatching { stateFlushCallback?.invoke(true) }
     }
 
+    actual fun takeCrashReport(): CrashReport? =
+        CrashRecorder.takeReport(AndroidPlatformHost.resolveStorageDir())?.let { CrashReport(it, CrashRecorder.reportSaysSaved(it)) }
+
     actual fun flushPendingStateAsync() {
         runCatching { stateFlushCallback?.invoke(false) }
     }

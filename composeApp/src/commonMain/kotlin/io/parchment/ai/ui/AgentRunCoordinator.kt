@@ -169,6 +169,9 @@ internal fun refreshGenerationHistory(requested: List<MessageNode>, persistedIds
     }
 }
 
+/** A failed run's fixable cause, and the chat it belongs to (some fixes act on that chat). */
+internal data class RunErrorNotice(val sessionId: String, val kind: io.parchment.ai.network.RunErrorKind)
+
 internal class ParchmentProcessState(initial: AppStateSnapshot, needsHydration: Boolean = false,
     completionScope: CoroutineScope = appProcessScope, leases: RunLeaseRegistry = RunLeaseRegistry()) {
     val snapshot = mutableStateOf(initial)
@@ -177,6 +180,8 @@ internal class ParchmentProcessState(initial: AppStateSnapshot, needsHydration: 
     val queuedPrompts = mutableStateOf<Map<String, List<QueuedPromptItem>>>(emptyMap())
     val pendingAttachments = mutableStateOf<Map<String, List<PromptAttachment>>>(emptyMap())
     val notice = mutableStateOf("")
+    /** A run failure the person can fix, offered on the notice while it shows that failure. */
+    val runError = mutableStateOf<RunErrorNotice?>(null)
     val frameClock = mutableStateOf<MonotonicFrameClock?>(null)
 
     fun attachClock(clock: MonotonicFrameClock?) { frameClock.value = clock }

@@ -31,6 +31,7 @@ import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.platform.PlatformTextInputMethodRequest
 import androidx.lifecycle.lifecycleScope
 import io.parchment.ai.platform.AndroidPlatformHost
+import io.parchment.ai.platform.CrashRecorder
 import io.parchment.ai.platform.PickedBinaryFile
 import io.parchment.ai.platform.PlatformPickers
 import io.parchment.ai.platform.PlatformRuntime
@@ -67,6 +68,8 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         AndroidPlatformHost.initAndroid(applicationContext, this)
+        // Once per process: an uncaught error flushes pending saves before Android ends the process.
+        CrashRecorder.install({ AndroidPlatformHost.resolveStorageDir() }) { PlatformRuntime.flushPendingStateNow() }
         preloadProcessStateInBackground()
         // Draw behind the system bars on every API level (Android 15+ enforces it); the app pads itself with insets.
         enableEdgeToEdge()

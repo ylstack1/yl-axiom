@@ -21,6 +21,49 @@ class ParchmentDiskWriterTest {
         ChatSession(id = id, title = title, createdAt = 1L, updatedAt = 1L, profileId = "profile")
 
     @Test
+    fun liveRepliesFollowTheirChatsFullSaveAndAFullSaveSupersedesThem() = runBlocking {
+        val scope = CoroutineScope(SupervisorJob())
+        val operations = mutableListOf<String>()
+        try {
+            val writer = ParchmentDiskWriter(scope, {}, { operations += "full:" + it.title }, {},
+                saveLiveTurn = { session, turn -> operations += "live:" + session.title + ":" + turn.variantId }, debounceMs = 60_000)
+            val turn = LiveTurnRef("node", "variant")
+            writer.enqueue(sessions = listOf(chat("a", "start")), notify = false)
+            writer.enqueueLiveTurn(chat("a", "partial"), turn, notify = false)
+            assertEquals("partial", writer.pendingFullSession("a")?.title, "The live copy is the newest one")
+            writer.flush()
+            assertEquals(listOf("full:start", "live:partial:variant"), operations)
+            operations.clear()
+            writer.enqueueLiveTurn(chat("a", "older"), turn, notify = false)
+            writer.enqueue(sessions = listOf(chat("a", "newest")), notify = false)
+            writer.flush()
+            assertEquals(listOf("full:newest"), operations, "A full save already carries the reply")
+        } finally {
+            scope.cancel()
+        }
+    }
+
+    @Test
+    fun aLiveReplyWaitsWhileItsChatsFullSaveFails() = runBlocking {
+        val scope = CoroutineScope(SupervisorJob())
+        val operations = mutableListOf<String>()
+        var failFull = true
+        try {
+            val writer = ParchmentDiskWriter(scope, {}, { if (failFull) error("disk full"); operations += "full" }, {},
+                saveLiveTurn = { _, _ -> operations += "live" }, debounceMs = 60_000)
+            writer.enqueue(sessions = listOf(chat("a")), notify = false)
+            writer.enqueueLiveTurn(chat("a"), LiveTurnRef("n", "v"), notify = false)
+            assertFailsWith<IllegalStateException> { writer.flush() }
+            assertEquals(emptyList(), operations, "Without its chat.json the reply has nothing to extend")
+            failFull = false
+            writer.flush()
+            assertEquals(listOf("full", "live"), operations)
+        } finally {
+            scope.cancel()
+        }
+    }
+
+    @Test
     fun debounceRetainsBothChats() = runBlocking {
         val scope = CoroutineScope(SupervisorJob())
         val saved = mutableListOf<String>()

@@ -128,9 +128,12 @@ internal class ParchmentAppController(
     var tabRebalanceTick by mutableStateOf(0)
 
     var bannerNotification by processState.notice
+    var runErrorNotice by processState.runError
 
     // Chats just deleted, kept until the notice offering Undo goes away.
     var pendingUndo by mutableStateOf<DeletedChats?>(null)
+    // The previous run's crash report, offered by its notice (Copy details) until the notice goes away.
+    var pendingCrashReport by mutableStateOf<io.parchment.ai.platform.CrashReport?>(null)
 
     var showCommandPalette by mutableStateOf(false)
     /** Ctrl+G: the palette listing this chat's prompts. */
@@ -389,8 +392,17 @@ internal class ParchmentAppController(
         modifiedSession?.let { persistSingleSession(it, immediateFlush = immediate) }
     }
 
-    /** [touch] = false keeps the chat's place in the list: for bookkeeping such as pins, not new content. */
-    fun updateSession(sessionId: String, immediate: Boolean, touch: Boolean, transform: (ChatSession) -> ChatSession) {
+    /**
+     * [touch] = false keeps the chat's place in the list: for bookkeeping such as pins, not new content.
+     * With [liveTurn], only that streaming reply goes to disk (a checkpoint); the whole chat follows later.
+     */
+    fun updateSession(
+        sessionId: String,
+        immediate: Boolean,
+        touch: Boolean,
+        liveTurn: LiveTurnRef? = null,
+        transform: (ChatSession) -> ChatSession
+    ) {
         val currentSnap = appState
         val target = currentSnap.sessions.find { it.id == sessionId } ?: return
         val complete = completeSessionForAction(target) ?: return
@@ -411,11 +423,18 @@ internal class ParchmentAppController(
         if (modifiedSession?.permissionOverrides != complete.permissionOverrides) {
             activeStreamsBySession[sessionId]?.toolApprovalBroker?.let { broker -> appProcessScope.launch { broker.refreshPolicy() } }
         }
-        modifiedSession?.let { persistSingleSession(it, immediateFlush = immediate) }
+        modifiedSession?.let { session ->
+            if (liveTurn != null) appDiskWriter.enqueueLiveTurn(session, liveTurn, urgent = immediate)
+            else persistSingleSession(session, immediateFlush = immediate)
+        }
     }
 
     fun updateSessionById(sessionId: String, immediate: Boolean = false, transform: (ChatSession) -> ChatSession) =
         updateSession(sessionId, immediate, touch = true, transform = transform)
+
+    /** A streaming checkpoint: the chat updates in memory and only the reply [turn] is saved now. */
+    fun updateLiveTurnById(sessionId: String, turn: LiveTurnRef, transform: (ChatSession) -> ChatSession) =
+        updateSession(sessionId, immediate = true, touch = true, liveTurn = turn, transform = transform)
 
     fun syncPendingDraftTracking(sessionId: String, draftInput: String, draftPrefill: String) {
         if (pendingDraftSessionId != sessionId) {
@@ -462,7 +481,8 @@ internal class ParchmentAppController(
     fun togglePinnedReply(sessionId: String, nodeId: String) =
         updateSession(sessionId, immediate = true, touch = false) { it.togglePinned(nodeId) }
 
-    fun updateActiveSessionInMemoryOnly(sessionId: String, transform: (ChatSession) -> ChatSession) {
+    /** Patches a streaming reply [turn] in memory; it reaches disk with the next write, as a live checkpoint. */
+    fun updateLiveTurnInMemory(sessionId: String, turn: LiveTurnRef, transform: (ChatSession) -> ChatSession) {
         val currentState = appState
         val target = currentState.sessions.find { it.id == sessionId } ?: return
         val complete = completeSessionForAction(target) ?: return
@@ -471,7 +491,7 @@ internal class ParchmentAppController(
             if (it.id == sessionId) transform(complete).also { updated -> modifiedSession = updated } else it
         }
         appState = currentState.copy(sessions = newSessions)
-        modifiedSession?.let { appDiskWriter.enqueue(sessions = listOf(it), notify = false) }
+        modifiedSession?.let { appDiskWriter.enqueueLiveTurn(it, turn, notify = false) }
     }
 
     fun updateActiveProfile(transform: (ProviderProfile) -> ProviderProfile) {

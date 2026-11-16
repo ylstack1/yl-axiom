@@ -255,7 +255,7 @@ internal suspend fun AiProviderEngine.executeGeminiGenerateContentLoop(
                     if (!response.status.isSuccess()) {
                         val err = response.bodyAsText()
                         onRawWire(reqStr, err)
-                        error("Gemini streamGenerateContent HTTP ${response.status.value}: $err")
+                        throw providerHttpError("Gemini streamGenerateContent", response, err)
                     }
 
 
@@ -471,7 +471,7 @@ internal suspend fun AiProviderEngine.executeGeminiGenerateContentLoop(
                         waitWithRetryCountdown(
                             attempt = stepRetryAttempt,
                             maxAttempts = MAX_PRE_TOKEN_RETRIES,
-                            waitSeconds = RETRY_WAIT_SECONDS,
+                            waitMs = retryDelayMs(stepRetryAttempt, e),
                             reasonSummary = e.message ?: "Transient API error in step $loopStep",
                             onStatus = onStatus
                         )

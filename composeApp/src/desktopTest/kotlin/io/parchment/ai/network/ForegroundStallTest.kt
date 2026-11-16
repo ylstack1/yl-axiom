@@ -5,6 +5,7 @@ import io.ktor.utils.io.close
 import io.ktor.utils.io.writeStringUtf8
 import io.parchment.ai.runtime.AppForeground
 import kotlinx.coroutines.*
+import kotlinx.coroutines.flow.first
 import kotlin.test.*
 
 class ForegroundStallTest {
@@ -43,9 +44,40 @@ class ForegroundStallTest {
     @Test fun aConnectionCutWhileAwayRetriesWithoutWaiting() = runBlocking<Unit> {
         val statuses = mutableListOf<String>()
         withTimeout(2_000) {
-            AiProviderEngine.waitWithRetryCountdown(1, 3, waitSeconds = 60, reasonSummary = "SSE stream timed out while the app was in the background.") { statuses += it }
+            AiProviderEngine.waitWithRetryCountdown(1, 3, waitMs = 60_000L, reasonSummary = "SSE stream timed out while the app was in the background.") { statuses += it }
         }
-        assertEquals(listOf("Retrying now (attempt 1/3)…"), statuses)
+        assertEquals(listOf("Trying again now (1 of 3)…"), statuses)
+    }
+
+    @Test fun retryNowEndsTheWaitAtOnceAndTheWaitShowsUntilThen() = runBlocking<Unit> {
+        val control = RetryControl()
+        val statuses = java.util.Collections.synchronizedList(mutableListOf<String>())
+        val waiting = async(Dispatchers.Default + control) {
+            AiProviderEngine.waitWithRetryCountdown(2, 10, waitMs = 60_000L, reasonSummary = "HTTP 503: busy") { statuses += it }
+        }
+        val shown = withTimeout(2_000) { control.waiting.first { it != null } }
+        assertEquals(RetryWait(2, 10, 60, "HTTP 503: busy"), shown)
+        val asked = System.nanoTime()
+        control.retryNow()
+        withTimeout(2_000) { waiting.await() }
+        val tookMs = (System.nanoTime() - asked) / 1_000_000L
+        assertTrue(tookMs < 100L, "Retry now must not wait for the next second, took $tookMs ms")
+        assertNull(control.waiting.value, "Nothing shows once the wait has ended")
+        assertEquals("Trying again in 60 s (2 of 10)\nHTTP 503: busy", statuses.first())
+        assertEquals("Trying again now (2 of 10)…", statuses.last())
+    }
+
+    @Test fun oneRetryNowEndsEveryWaitOfTheRun() = runBlocking<Unit> {
+        val control = RetryControl()
+        control.retryNow() // Nothing waits yet, so this must not end the waits that follow.
+        val first = async(Dispatchers.Default + control) { AiProviderEngine.waitWithRetryCountdown(1, 3, 60_000L, "first") {} }
+        withTimeout(2_000) { control.waiting.first { it?.reason == "first" } }
+        val second = async(Dispatchers.Default + control) { AiProviderEngine.waitWithRetryCountdown(1, 3, 60_000L, "second") {} }
+        withTimeout(2_000) { control.waiting.first { it?.reason == "second" } }
+        assertFalse(first.isCompleted || second.isCompleted)
+        control.retryNow()
+        withTimeout(2_000) { first.await(); second.await() }
+        assertNull(control.waiting.value)
     }
 
     @Test fun dataArrivingAfterReturningKeepsTheStream() = runBlocking<Unit> {

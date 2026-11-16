@@ -48,6 +48,8 @@ internal interface McpTransport {
     /** The revision sent on HTTP requests; the client sets it after negotiation. */
     var protocolVersion: String
     val isAlive: Boolean get() = true
+    /** True once after the server answered 404 to a request carrying its session: that session has ended. */
+    fun takeLostSession(): Boolean = false
     suspend fun request(message: JsonObject): JsonObject
     suspend fun notify(message: JsonObject)
     suspend fun close()
@@ -62,6 +64,9 @@ internal class HttpMcpTransport(url: String, bearerToken: String) : McpTransport
     private val cleanToken = sanitizeHeaderValue(bearerToken)
     @Volatile override var protocolVersion = MCP_HANDSHAKE_VERSION
     @Volatile private var sessionId = ""
+    @Volatile private var sessionLost = false
+
+    override fun takeLostSession(): Boolean = sessionLost.also { sessionLost = false }
 
     init {
         val hasHttpScheme = cleanUrl.startsWith("http://", ignoreCase = true) ||
@@ -119,7 +124,10 @@ internal class HttpMcpTransport(url: String, bearerToken: String) : McpTransport
         }.execute { response ->
             response.headers["Mcp-Session-Id"]?.let(::sanitizeHeaderValue)?.takeIf { it.isNotBlank() }?.let { sessionId = it }
             val status = response.status.value
-            if (status == 404 && sessionId.isNotEmpty()) sessionId = ""
+            if (status == 404 && sessionId.isNotEmpty()) {
+                sessionId = ""
+                sessionLost = true
+            }
             if (onResponse == null) {
                 if (status !in 200..299) throw McpException("The server rejected a notification (HTTP $status).")
                 return@execute
@@ -345,11 +353,32 @@ internal class McpClient(private val transport: McpTransport) {
     }
 
     private suspend fun call(method: String, params: JsonObject): JsonObject {
-        val response = exchange(method, params)
+        val response = exchangeRenewingSession(method, params)
         (response["error"] as? JsonObject)?.let { error ->
             throw McpException((error["message"] as? JsonPrimitive)?.contentOrNull ?: "The server reported an error.")
         }
         return response["result"] as? JsonObject ?: throw McpException("The server sent an invalid result.")
+    }
+
+    /**
+     * A server that ended our HTTP session answers 404 (MCP: the client must start a new session). It did not run
+     * the request, so after a new handshake the request is sent once more.
+     */
+    private suspend fun exchangeRenewingSession(method: String, params: JsonObject): JsonObject {
+        val first = try {
+            exchange(method, params)
+        } catch (rejected: McpHttpException) {
+            if (rejected.statusCode != 404 || !transport.takeLostSession()) throw rejected
+            return renewSession { exchange(method, params) }
+        }
+        // Some servers answer a lost session with a JSON-RPC error rather than a bare 404.
+        return if ("error" in first && transport.takeLostSession()) renewSession { exchange(method, params) } else first
+    }
+
+    private suspend fun renewSession(retry: suspend () -> JsonObject): JsonObject {
+        connected = false
+        connect()
+        return retry()
     }
 
     suspend fun connect() {

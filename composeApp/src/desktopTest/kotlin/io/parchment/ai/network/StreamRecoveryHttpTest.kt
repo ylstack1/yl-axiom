@@ -17,7 +17,8 @@ class StreamRecoveryHttpTest {
     private data class Reply(
         val body: String,
         val status: Int = 200,
-        val contentType: String = "text/event-stream"
+        val contentType: String = "text/event-stream",
+        val headers: Map<String, String> = emptyMap()
     )
 
     private class Server(private val replies: List<Reply>) : AutoCloseable {
@@ -25,13 +26,16 @@ class StreamRecoveryHttpTest {
         val requests: MutableList<String> = Collections.synchronizedList(mutableListOf())
         val requestPaths: MutableList<String> = Collections.synchronizedList(mutableListOf())
         val requestHeaders: MutableList<Map<String, List<String>>> = Collections.synchronizedList(mutableListOf())
+        val requestTimesMs: MutableList<Long> = Collections.synchronizedList(mutableListOf())
         private val server = HttpServer.create(InetSocketAddress("127.0.0.1", 0), 0).apply {
             createContext("/") { exchange ->
+                requestTimesMs.add(System.nanoTime() / 1_000_000L)
                 requestPaths.add(exchange.requestURI.rawPath + (exchange.requestURI.rawQuery?.let { "?$it" } ?: ""))
                 requestHeaders.add(exchange.requestHeaders.entries.associate { (k, v) -> k.lowercase() to v.toList() })
                 requests.add(exchange.requestBody.bufferedReader().use { it.readText() })
                 val reply = replies[next.getAndIncrement().coerceAtMost(replies.lastIndex)]
                 val bytes = reply.body.toByteArray()
+                reply.headers.forEach { (name, value) -> exchange.responseHeaders.set(name, value) }
                 exchange.responseHeaders.set("Content-Type", reply.contentType)
                 exchange.sendResponseHeaders(reply.status, bytes.size.toLong())
                 exchange.responseBody.use { it.write(bytes) }
@@ -56,10 +60,13 @@ class StreamRecoveryHttpTest {
         pollDelayMsOverride = 10L
     )
 
+    /** The countdown a run shows while it waits to send its request again. */
+    private fun StreamUpdate.isRetryNotice() = this is StreamUpdate.Status && message.startsWith("Trying again in ")
+
     /** Stops at the first retry notice so a test never sits through the real retry wait. */
     private fun outcome(profile: ProviderProfile): StreamUpdate = runBlocking {
         withTimeout(20_000) {
-            updates(profile).first { it is StreamUpdate.Completed || (it is StreamUpdate.Status && "Auto-retrying (" in it.message) }
+            updates(profile).first { it is StreamUpdate.Completed || it.isRetryNotice() }
         }
     }
 
@@ -209,7 +216,7 @@ class StreamRecoveryHttpTest {
             val updates = runBlocking { withTimeout(40_000) { runCatching { updates(video).toList() } } }
             assertEquals(1, server.requests.count { it.isNotEmpty() }, "The job must be created once")
             assertEquals(6, server.requests.size, "One create and five status checks")
-            assertFalse(updates.getOrDefault(emptyList()).any { it is StreamUpdate.Status && "Auto-retrying (" in it.message })
+            assertFalse(updates.getOrDefault(emptyList()).any { it.isRetryNotice() })
         }
     }
 
@@ -403,7 +410,7 @@ class StreamRecoveryHttpTest {
             ).first {
                 it is StreamUpdate.Completed ||
                     it is StreamUpdate.Error ||
-                    (it is StreamUpdate.Status && "Auto-retrying (" in it.message)
+                    it.isRetryNotice()
             }
         }
     }
@@ -620,6 +627,39 @@ class StreamRecoveryHttpTest {
             )
             assertIs<StreamUpdate.Error>(runUntilTerminalOrRetry(imgProfile))
             assertTrue(server.requestPaths.isNotEmpty() && server.requestPaths.all { it == "/v1/images/generations" }, server.requestPaths.toString())
+        }
+    }
+
+    private fun completeAll(profile: ProviderProfile) = runBlocking { withTimeout(20_000) { updates(profile).toList() } }
+
+    @Test fun aRateLimitWithRetryAfterResumesAsSoonAsTheServerAllows() {
+        val limited = Reply("""{"error":{"message":"Rate limit reached"}}""", 429, "application/json", mapOf("Retry-After" to "2"))
+        Server(listOf(limited, Reply(finishedStreams.getValue(CUSTOM_DIALECT_OPENAI_CHAT)))).use { server ->
+            assertTrue(completeAll(profile(server, CUSTOM_DIALECT_OPENAI_CHAT)).any { it is StreamUpdate.Completed })
+            assertEquals(2, server.requests.size)
+            val gap = server.requestTimesMs[1] - server.requestTimesMs[0]
+            assertTrue(gap in 2_000L..3_500L, "Must wait the server's 2 s and no more than 3.5 s, waited $gap ms")
+        }
+    }
+
+    @Test fun aStreamCutBeforeItsFirstTokenRetriesWithinSeconds() {
+        val cutBeforeAnything = Reply(": keep-alive\n\n")
+        Server(listOf(cutBeforeAnything, Reply(finishedStreams.getValue(CUSTOM_DIALECT_ANTHROPIC)))).use { server ->
+            assertTrue(completeAll(profile(server, CUSTOM_DIALECT_ANTHROPIC)).any { it is StreamUpdate.Completed })
+            assertEquals(2, server.requests.size)
+            val gap = server.requestTimesMs[1] - server.requestTimesMs[0]
+            assertTrue(gap in 1_500L..3_000L, "A dropped stream retries after about 2 s (was 60 s), waited $gap ms")
+        }
+    }
+
+    @Test fun aSpendCapStopsWithoutRetrying() {
+        val capped = Reply(
+            """{"type":"error","error":{"type":"rate_limit_error","message":"Spend limit reached.","details":{"error_code":"enforced_spend_limit_reached"}}}""",
+            429, "application/json"
+        )
+        Server(listOf(capped)).use { server ->
+            assertIs<StreamUpdate.Error>(runUntilTerminalOrRetry(profile(server, CUSTOM_DIALECT_ANTHROPIC)))
+            assertEquals(1, server.requests.size)
         }
     }
 

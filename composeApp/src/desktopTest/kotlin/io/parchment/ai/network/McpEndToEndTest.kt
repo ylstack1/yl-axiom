@@ -22,8 +22,11 @@ class McpEndToEndTest {
     private class HttpMcp(
         val stateless: Boolean,
         val streamed: Boolean = false,
-        val onMethod: ((String) -> Unit)? = null
+        val onMethod: ((String) -> Unit)? = null,
+        /** Ends the first session at its first tool call (HTTP 404), as a restarted server would. */
+        val loseSessionOnCall: Boolean = false
     ) : AutoCloseable {
+        @Volatile private var sessionEnded = false
         val requests = Collections.synchronizedList(mutableListOf<Pair<JsonObject, Map<String, String>>>())
         private val executor = Executors.newCachedThreadPool { task -> Thread(task, "mcp-e2e-fixture").apply { isDaemon = true } }
         private val server = HttpServer.create(InetSocketAddress("127.0.0.1", 0), 0).apply {
@@ -34,6 +37,12 @@ class McpEndToEndTest {
                 requests += message to headers
                 val method = message.getValue("method").jsonPrimitive.content
                 onMethod?.invoke(method)
+                if (loseSessionOnCall && method == "tools/call" && headers["mcp-session-id"] == "session-1") {
+                    sessionEnded = true
+                    exchange.sendResponseHeaders(404, -1)
+                    exchange.close()
+                    return@createContext
+                }
                 val id = message["id"]
                 val result: JsonElement? = when {
                     method == "initialize" && stateless -> null
@@ -52,7 +61,7 @@ class McpEndToEndTest {
                     result != null -> buildJsonObject { put("jsonrpc", "2.0"); put("id", id!!); put("result", result) }.toString()
                     else -> buildJsonObject { put("jsonrpc", "2.0"); put("id", id!!); put("error", buildJsonObject { put("code", -32601); put("message", "Method not found") }) }.toString()
                 }
-                if (!stateless) exchange.responseHeaders.set("Mcp-Session-Id", "session-1")
+                if (!stateless) exchange.responseHeaders.set("Mcp-Session-Id", if (sessionEnded) "session-2" else "session-1")
                 val sse = streamed && !isNotification
                 exchange.responseHeaders.set("Content-Type", if (sse) "text/event-stream" else "application/json")
                 val body = (if (sse) "event: message\ndata: {\"jsonrpc\":\"2.0\",\"method\":\"notifications/progress\"}\n\nevent: message\ndata: $reply\n\n" else reply).toByteArray()
@@ -161,18 +170,60 @@ for line in sys.stdin:
         } finally { Files.deleteIfExists(script) }
     }
 
-    @Test fun aServerThatExitsFailsItsCallsInsteadOfHanging() = runBlocking<Unit> {
+    @Test fun aServerThatExitsIsStartedAgainForTheNextCall() = runBlocking<Unit> {
         if (!python()) return@runBlocking
+        val marker = Files.createTempFile("parchment-mcp-once-", ".marker").also { Files.delete(it) }
+        val script = Files.createTempFile("parchment-mcp-exit-once-", ".py")
+        try {
+            val exitOnce = "        if not os.path.exists(MARKER):\n            open(MARKER, \"w\").close()\n            sys.exit(3)\n        calls += 1"
+            Files.writeString(script, "import os\nMARKER = r\"$marker\"\n" + pythonServer.replace("        calls += 1", exitOnce))
+            connected(listOf(McpServerConfig("py", "Restarts", command = "python $script", enabled = true))) {
+                val lost = withTimeout(15_000) { McpRegistry.call("mcp__Restarts__echo", """{"text":"lost"}""") }
+                assertTrue(lost.isError && "restarted" in lost.text, lost.text)
+                assertEquals(listOf("mcp__Restarts__echo"), McpRegistry.definitions.value.map { it.name }, "Its tool stays offered under its name")
+                val started = System.nanoTime()
+                assertEquals(McpToolResult("echo:back:1", false), withTimeout(15_000) { McpRegistry.call("mcp__Restarts__echo", """{"text":"back"}""") })
+                val waitedMs = (System.nanoTime() - started) / 1_000_000L
+                assertTrue(waitedMs < 5_000L, "The next call works within 5 s, took $waitedMs ms")
+                assertEquals(McpServerState.READY, McpRegistry.statuses.value.getValue("py").state)
+            }
+        } finally {
+            Files.deleteIfExists(script)
+            Files.deleteIfExists(marker)
+        }
+    }
+
+    @Test fun aServerThatKeepsExitingIsStartedThreeTimesThenLeftOff() = runBlocking<Unit> {
+        if (!python()) return@runBlocking
+        val starts = Files.createTempFile("parchment-mcp-starts-", ".log")
         val script = Files.createTempFile("parchment-mcp-exit-", ".py")
         try {
-            Files.writeString(script, pythonServer.replace("""        calls += 1""", """        sys.exit(3)"""))
+            val logStart = "import os\nwith open(r\"$starts\", \"a\") as log:\n    log.write(str(os.getpid()) + \"\\n\")\n"
+            Files.writeString(script, logStart + pythonServer.replace("        calls += 1", "        sys.exit(3)"))
             connected(listOf(McpServerConfig("py", "Dying", command = "python $script", enabled = true))) {
-                val result = withTimeout(15_000) { McpRegistry.call("mcp__Dying__echo", "{}") }
-                assertTrue(result.isError)
-                assertTrue(McpRegistry.definitions.value.isEmpty(), "A stopped server's tools are no longer offered")
+                repeat(3) { assertTrue(withTimeout(30_000) { McpRegistry.call("mcp__Dying__echo", "{}") }.isError) }
                 assertEquals(McpServerState.FAILED, McpRegistry.statuses.value.getValue("py").state)
+                assertTrue(McpRegistry.definitions.value.isEmpty(), "A server that keeps stopping is no longer offered")
+                assertTrue(McpRegistry.call("mcp__Dying__echo", "{}").isError)
             }
-        } finally { Files.deleteIfExists(script) }
+            val pids = Files.readAllLines(starts).filter { it.isNotBlank() }
+            assertEquals(3, pids.size, "Started three times: $pids")
+            assertTrue(pids.none { ProcessHandle.of(it.trim().toLong()).map { process -> process.isAlive }.orElse(false) }, "No server process is left running")
+        } finally {
+            Files.deleteIfExists(script)
+            Files.deleteIfExists(starts)
+        }
+    }
+
+    @Test fun aLostHttpSessionIsRenewedAndTheCallSentOnceMore() = runBlocking<Unit> {
+        HttpMcp(stateless = false, loseSessionOnCall = true).use { server ->
+            connected(listOf(McpServerConfig("a", "Web", url = server.url, enabled = true))) {
+                assertEquals(McpToolResult("http says hi", false), McpRegistry.call("mcp__Web__first_one", "{}"))
+            }
+            val methods = server.requests.map { it.first.getValue("method").jsonPrimitive.content }
+            assertEquals(2, methods.count { it == "initialize" }, methods.toString())
+            assertEquals(2, methods.count { it == "tools/call" }, "The call the ended session refused, then the one that ran: $methods")
+        }
     }
 
     private class Provider(val toolName: String, val arguments: String = """{"text":"from model"}""") : AutoCloseable {

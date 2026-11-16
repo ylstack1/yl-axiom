@@ -539,9 +539,9 @@ class ParchmentProtocolAndHarnessTest {
         val mergedUserTxt = mergedInteractions[0].jsonObject["content"]!!.jsonArray[0].jsonObject["text"]!!.jsonPrimitive.content
         assertEquals("Inspect the project structure.\n\ncontinue", mergedUserTxt)
 
-        // 7. Verify 10x 60s patient auto-retry configuration, error classification, and tool intent telemetry
+        // 7. Verify the retry limits, error classification, and tool intent telemetry
         assertEquals(10, AiProviderEngine.MAX_PRE_TOKEN_RETRIES, "Patient retry must allow 10 attempts")
-        assertEquals(60, AiProviderEngine.RETRY_WAIT_SECONDS, "Patient retry must wait 60s per attempt")
+        assertEquals(60, AiProviderEngine.RETRY_WAIT_SECONDS, "Without a server hint, no wait between attempts exceeds 60 s")
         assertTrue(AiProviderEngine.isTransientOrProxyTimeoutError(RuntimeException("HTTP 429: Too Many Requests")))
         assertTrue(AiProviderEngine.isTransientOrProxyTimeoutError(RuntimeException("HTTP 524: A timeout occurred")))
         assertTrue(AiProviderEngine.isTransientOrProxyTimeoutError(RuntimeException("Upstream proxy reset connection")))

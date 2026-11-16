@@ -15,6 +15,7 @@ internal open class AppRunState(val processState: ParchmentProcessState) {
     var appState by processState.snapshot
     var activeStreamsBySession by processState.runs.streams
     var bannerNotification by processState.notice
+    var runErrorNotice by processState.runError
     var queuedPromptsBySession by processState.queuedPrompts
 }
 
@@ -27,7 +28,8 @@ internal class GenerationHost(
     private val liveVoice: () -> Boolean,
     private val queuedDispatcher: () -> ((String, QueuedPromptItem) -> Unit)?,
     private val updateSession: (String, Boolean, SessionUpdate) -> Unit,
-    private val updateInMemory: (String, SessionUpdate) -> Unit,
+    private val updateLiveTurn: (String, LiveTurnRef, SessionUpdate) -> Unit,
+    private val updateInMemory: (String, LiveTurnRef, SessionUpdate) -> Unit,
     private val generateTitle: (String, Boolean) -> Unit,
     private val trackedUtility: TrackedUtility
 ) : AppRunState(processState) {
@@ -36,7 +38,8 @@ internal class GenerationHost(
     val dispatchNextQueuedItem: ((String, QueuedPromptItem) -> Unit)? get() = queuedDispatcher()
 
     fun updateSessionById(sessionId: String, immediate: Boolean = false, transform: SessionUpdate) = updateSession(sessionId, immediate, transform)
-    fun updateActiveSessionInMemoryOnly(sessionId: String, transform: SessionUpdate) = updateInMemory(sessionId, transform)
+    fun updateLiveTurnById(sessionId: String, turn: LiveTurnRef, transform: SessionUpdate) = updateLiveTurn(sessionId, turn, transform)
+    fun updateLiveTurnInMemory(sessionId: String, turn: LiveTurnRef, transform: SessionUpdate) = updateInMemory(sessionId, turn, transform)
     fun generateTopicTitle(sessionId: String, forceRegenerate: Boolean = false) = generateTitle(sessionId, forceRegenerate)
     suspend fun generateTrackedUtility(sessionId: String, purpose: String, profile: ProviderProfile, model: String, prompt: String, maxOutputTokens: Int? = null): Result<String> =
         trackedUtility(sessionId, purpose, profile, model, prompt, maxOutputTokens)

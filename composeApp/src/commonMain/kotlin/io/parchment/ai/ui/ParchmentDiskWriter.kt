@@ -18,15 +18,23 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withTimeoutOrNull
 
+/** The streaming reply a live checkpoint saves on its own: its node and the variant being written. */
+internal data class LiveTurnRef(val nodeId: String, val variantId: String)
+
 /**
  * Retains the newest dirty value for every file until its write succeeds.
  * The conflated channel carries wakeups, never snapshots that can discard another chat.
+ *
+ * A live write ([enqueueLiveTurn]) saves one streaming reply beside its chat instead of the whole chat. A full write
+ * of the same chat supersedes it (the full snapshot already carries the reply), and within a flush full writes go
+ * first, so a pending live write is always newer than the chat.json it extends.
  */
 internal class ParchmentDiskWriter(
     scope: CoroutineScope,
     private val saveSettings: (AppStateSnapshot) -> Unit,
     private val saveSession: (ChatSession) -> Unit,
     private val deleteSession: (String) -> Unit,
+    private val saveLiveTurn: (ChatSession, LiveTurnRef) -> Unit = { _, _ -> },
     private val debounceMs: Long = 250L,
     private val retryInitialMs: Long = 250L,
     private val retryMaxMs: Long = 30_000L
@@ -37,10 +45,12 @@ internal class ParchmentDiskWriter(
         val requiredChats: Map<String, Long> = emptyMap()
     )
     private data class ChatWrite(val revision: Long, val session: ChatSession?)
+    private data class LiveWrite(val revision: Long, val session: ChatSession, val turn: LiveTurnRef)
     private data class Pending(
         val revision: Long = 0L,
         val settings: SettingsWrite? = null,
         val chats: Map<String, ChatWrite> = emptyMap(),
+        val liveTurns: Map<String, LiveWrite> = emptyMap(),
         val urgent: Boolean = false
     )
 
@@ -90,7 +100,7 @@ internal class ParchmentDiskWriter(
             val chats = old.chats.toMutableMap()
             deletedIds.forEach { chats[it] = ChatWrite(revision, null) }
             sessions.forEach { session ->
-                val fullPending = chats[session.id]?.session?.takeUnless { it.isCompactStub }
+                val fullPending = newestFullSession(chats, old.liveTurns, session.id)
                 val value = if (session.isCompactStub && fullPending != null) mergeSessionMetadata(fullPending, session) else session
                 chats[session.id] = ChatWrite(revision, value)
             }
@@ -102,6 +112,8 @@ internal class ParchmentDiskWriter(
                     SettingsWrite(revision, it.copy(sessions = emptyList()), required)
                 } ?: old.settings?.let { it.copy(requiredChats = it.requiredChats.filterKeys { id -> id !in deletedIds }) },
                 chats = chats,
+                // A full write carries the reply as far as memory has it, and a deleted chat has none.
+                liveTurns = old.liveTurns - deletedIds - sessions.map { it.id }.toSet(),
                 urgent = old.urgent || urgent
             )
         }
@@ -116,7 +128,7 @@ internal class ParchmentDiskWriter(
             val revision = old.revision + 1L
             val chats = deletedIds.associateWith { ChatWrite(revision, null) }.toMutableMap()
             snapshot.sessions.forEach { session ->
-                val fullPending = old.chats[session.id]?.session?.takeUnless { it.isCompactStub }
+                val fullPending = newestFullSession(old.chats, old.liveTurns, session.id)
                 val value = if (session.isCompactStub && fullPending != null) mergeSessionMetadata(fullPending, session) else session
                 chats[session.id] = ChatWrite(revision, value)
             }
@@ -127,14 +139,41 @@ internal class ParchmentDiskWriter(
         wakeups.trySend(Unit)
     }
 
-    fun pendingFullSession(sessionId: String): ChatSession? = pending.value.chats[sessionId]?.session?.takeUnless { it.isCompactStub }
+    /**
+     * Saves only [turn] of [session] (a streaming reply's checkpoint), not the whole chat. The session is kept whole
+     * in memory so [pendingFullSession] can still answer with it.
+     */
+    fun enqueueLiveTurn(session: ChatSession, turn: LiveTurnRef, urgent: Boolean = false, notify: Boolean = true) {
+        if (session.isCompactStub) return
+        pending.update { old ->
+            val revision = old.revision + 1L
+            old.copy(
+                revision = revision,
+                liveTurns = old.liveTurns + (session.id to LiveWrite(revision, session, turn)),
+                urgent = old.urgent || urgent
+            )
+        }
+        if (notify) {
+            if (urgent) urgentWakeups.trySend(Unit)
+            wakeups.trySend(Unit)
+        }
+    }
+
+    /** The newest complete copy of a chat still waiting to be written; a live write newer than the full one wins. */
+    private fun newestFullSession(chats: Map<String, ChatWrite>, liveTurns: Map<String, LiveWrite>, sessionId: String): ChatSession? {
+        val full = chats[sessionId]
+        val live = liveTurns[sessionId]
+        return if (live != null && (full == null || live.revision > full.revision)) live.session
+        else full?.session?.takeUnless { it.isCompactStub }
+    }
+
+    fun pendingFullSession(sessionId: String): ChatSession? = pending.value.let { newestFullSession(it.chats, it.liveTurns, sessionId) }
+
+    private fun Pending.isEmpty() = settings == null && chats.isEmpty() && liveTurns.isEmpty()
 
     fun flushUrgentlyAsync() {
-        val current = pending.value
-        if (current.settings == null && current.chats.isEmpty()) return
-        pending.update { old ->
-            if (old.settings == null && old.chats.isEmpty()) old else old.copy(urgent = true)
-        }
+        if (pending.value.isEmpty()) return
+        pending.update { old -> if (old.isEmpty()) old else old.copy(urgent = true) }
         urgentWakeups.trySend(Unit)
         wakeups.trySend(Unit)
     }
@@ -151,6 +190,7 @@ internal class ParchmentDiskWriter(
             if (failure == null) failure = error
             false
         }
+        val failedChats = HashSet<String>()
         for ((id, entry) in batch.chats) {
             if (attempt {
                     val session = entry.session
@@ -165,6 +205,18 @@ internal class ParchmentDiskWriter(
                             } else settings
                         }
                     )
+                }
+            } else {
+                failedChats += id
+            }
+        }
+        // After the full writes, so a live reply always extends the chat.json it was meant for. When that chat's full
+        // write failed, both wait for the retry.
+        for ((id, entry) in batch.liveTurns) {
+            if (id in failedChats) continue
+            if (attempt { saveLiveTurn(entry.session, entry.turn) }) {
+                pending.update { latest ->
+                    if (latest.liveTurns[id]?.revision == entry.revision) latest.copy(liveTurns = latest.liveTurns - id) else latest
                 }
             }
         }

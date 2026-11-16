@@ -92,6 +92,9 @@ internal class GenerationStreamAccumulator(
     private var currentBurstLastMs = -1L
     private var lastRawReq = ""
     private var lastRawResp = ""
+    // The request behind lastRawReq, known by length and hash so the whole request text is not kept alive.
+    private var lastRawReqLength = -1
+    private var lastRawReqHash = 0
     private var helperCount = 0
     private var reachedOutputLimit = false
     private var activeWireDialect = engine.resolveWireDialect(profile)
@@ -177,7 +180,7 @@ internal class GenerationStreamAccumulator(
 
     suspend fun emitError(throwable: Throwable) {
         val cleanErr = engine.extractCleanApiErrorSummary(throwable.message ?: throwable::class.simpleName ?: "Unknown network error")
-        emit(StreamUpdate.Error(message = cleanErr, rawDetails = lastRawResp))
+        emit(StreamUpdate.Error(message = cleanErr, rawDetails = lastRawResp, kind = engine.runErrorKindOf(throwable)))
     }
 
     suspend fun emitStatus(
@@ -225,7 +228,11 @@ internal class GenerationStreamAccumulator(
     }
 
     fun recordRawWireBounded(req: String, resp: String) {
-        if (req.isNotEmpty()) {
+        // Every event of one request passes the same request text: cut its preview once, not once per event.
+        // A string caches its hash, so recognizing the same request again costs nothing.
+        if (req.isNotEmpty() && (req.length != lastRawReqLength || req.hashCode() != lastRawReqHash)) {
+            lastRawReqLength = req.length
+            lastRawReqHash = req.hashCode()
             lastRawReq = if (req.length > 4096) req.substring(0, 4096) else req
         }
         if (resp.isNotEmpty()) {

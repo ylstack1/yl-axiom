@@ -6,6 +6,12 @@ import io.parchment.ai.model.PreferencesConfig
 import io.parchment.ai.model.ThemeConfig
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.contentOrNull
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
+import kotlinx.serialization.json.longOrNull
 import java.io.File
 import java.io.IOException
 import java.nio.file.Files
@@ -223,7 +229,7 @@ internal class SnapshotFileStorage(
             runCatching { saveChat(sessionId, legacyRaw) }
             return legacyRaw
         }
-        if (current != null) return current
+        if (current != null) return foldLiveTurn(sessionId, folder, current)
         for (candidate in listOf(File(folder, "chat.json.tmp"), File(folder, "chat.prev.json"), legacyTemp)) {
             val raw = read(candidate)?.takeIf { validChat(it, sessionId) } ?: continue
             return raw
@@ -253,8 +259,8 @@ internal class SnapshotFileStorage(
                 val folder = File(chats, id)
                 val primary = File(folder, "chat.json")
                 val legacy = File(chats, "$id.json")
-                // Fast path: healthy chats with no pending legacy file validate in a single read/parse pass.
-                if (!legacy.isFile) {
+                // Fast path: healthy chats with no pending legacy file or live reply validate in a single read/parse pass.
+                if (!legacy.isFile && !File(folder, LIVE_TURN_FILE).isFile) {
                     val fastRaw = read(primary)
                     if (fastRaw != null) {
                         val parsed = runCatching { json.decodeFromString<ChatIdentity>(fastRaw) }.getOrNull()
@@ -281,8 +287,8 @@ internal class SnapshotFileStorage(
     fun chatFolderName(sessionId: String): String = sessionId.trim().replace(unsafeSessionCharacters, "_")
 
     /**
-     * One attribute read per chat folder (no file contents). A folder that still has a legacy `<id>.json` beside it
-     * is left out, so its migration keeps going through [chats] and [loadChat].
+     * One attribute read per chat folder (no file contents). A folder that still has a legacy `<id>.json` beside it,
+     * or a live reply left by a crash, is left out, so it goes through [chats] and [loadChat], which finish it.
      */
     fun chatFileStamps(): Map<String, ChatFileStamp> = runCatching {
         val chats = File(directory(), "chats")
@@ -291,6 +297,7 @@ internal class SnapshotFileStorage(
         buildMap {
             for (entry in entries) {
                 if ("${entry.name}.json" in names || "${entry.name}.json.tmp" in names) continue
+                if (File(entry, LIVE_TURN_FILE).isFile) continue
                 val attributes = runCatching {
                     Files.readAttributes(File(entry, "chat.json").toPath(), BasicFileAttributes::class.java)
                 }.getOrNull() ?: continue
@@ -324,8 +331,78 @@ internal class SnapshotFileStorage(
             if (!corrupt.exists()) AtomicFileStorage.copy(target, corrupt)
         }
         AtomicFileStorage.writeText(target, raw, previousBackup = File(folder, "chat.prev.json").takeIf { validExisting })
+        // The full chat now holds the reply; a sidecar that cannot be removed is recognized as stale by its base.
+        runCatching { deleteFile(File(folder, LIVE_TURN_FILE)) }
         deleteFile(File(folder.parentFile, folder.name + ".json"))
         deleteFile(File(folder.parentFile, folder.name + ".json.tmp"))
+    }
+
+    /**
+     * A streaming reply's newest checkpoint, saved beside its chat (`live.json`) instead of rewriting a chat.json
+     * that can be megabytes. [raw] is `{"nodeId":...,"variant":{...}}`; the file also records the chat.json it
+     * extends (size and modification time), so it is only ever folded into that exact file. The next full save
+     * deletes it; [loadChat] folds a sidecar left by a crash into chat.json. Nothing is written for a chat that
+     * has no chat.json yet: there is nothing for the reply to extend.
+     */
+    @Synchronized
+    fun saveLiveTurn(sessionId: String, raw: String) {
+        val folder = chatFolder(sessionId)
+        val base = stampOf(File(folder, "chat.json")) ?: return
+        AtomicFileStorage.writeText(
+            File(folder, LIVE_TURN_FILE),
+            "{\"chatLength\":${base.length},\"chatModifiedMs\":${base.lastModifiedMs},\"turn\":$raw}"
+        )
+    }
+
+    private fun stampOf(file: File): ChatFileStamp? = runCatching {
+        val attributes = Files.readAttributes(file.toPath(), BasicFileAttributes::class.java)
+        if (attributes.isRegularFile) ChatFileStamp(attributes.size(), attributes.lastModifiedTime().toMillis()) else null
+    }.getOrNull()
+
+    /**
+     * Returns [chatRaw] with a crash-surviving live reply folded in, and saves the result so every reader sees the
+     * same text. A sidecar written against another chat.json, unreadable, or naming a reply the chat no longer has
+     * is dropped. If saving the fold fails, the folded text is still returned and the sidecar kept for next time.
+     */
+    private fun foldLiveTurn(sessionId: String, folder: File, chatRaw: String): String {
+        val sidecar = File(folder, LIVE_TURN_FILE)
+        if (!sidecar.isFile) return chatRaw
+        val base = stampOf(File(folder, "chat.json"))
+        val folded = read(sidecar)?.let { raw -> runCatching { withLiveTurn(chatRaw, raw, base) }.getOrNull() }
+        if (folded == null) {
+            runCatching { deleteFile(sidecar) }
+            return chatRaw
+        }
+        runCatching { saveChat(sessionId, folded) }
+        return folded
+    }
+
+    private fun withLiveTurn(chatRaw: String, sidecarRaw: String, base: ChatFileStamp?): String? {
+        val sidecar = json.parseToJsonElement(sidecarRaw).jsonObject
+        val writtenAgainst = ChatFileStamp(
+            sidecar["chatLength"]?.jsonPrimitive?.longOrNull ?: return null,
+            sidecar["chatModifiedMs"]?.jsonPrimitive?.longOrNull ?: return null
+        )
+        if (writtenAgainst != base) return null
+        val turn = sidecar["turn"]?.jsonObject ?: return null
+        val nodeId = turn["nodeId"]?.jsonPrimitive?.contentOrNull ?: return null
+        val variant = turn["variant"] as? JsonObject ?: return null
+        val variantId = variant["id"]?.jsonPrimitive?.contentOrNull ?: return null
+        val chat = json.parseToJsonElement(chatRaw).jsonObject
+        var replaced = false
+        val messages = (chat["messages"] as? JsonArray ?: return null).map { node ->
+            val nodeObject = node as? JsonObject
+            val variants = nodeObject?.get("variants") as? JsonArray
+            if (nodeObject?.get("id")?.jsonPrimitive?.contentOrNull != nodeId || variants == null) return@map node
+            JsonObject(nodeObject + ("variants" to JsonArray(variants.map { existing ->
+                if ((existing as? JsonObject)?.get("id")?.jsonPrimitive?.contentOrNull == variantId) {
+                    replaced = true
+                    variant
+                } else existing
+            })))
+        }
+        if (!replaced) return null
+        return json.encodeToString(JsonObject.serializer(), JsonObject(chat + ("messages" to JsonArray(messages))))
     }
 
     @Synchronized
@@ -339,5 +416,9 @@ internal class SnapshotFileStorage(
 
     private fun deleteFile(file: File) {
         if (file.exists() && !file.delete()) throw IOException("Unable to remove obsolete snapshot: " + file.name)
+    }
+
+    private companion object {
+        const val LIVE_TURN_FILE = "live.json"
     }
 }

@@ -289,7 +289,7 @@ internal suspend fun AiProviderEngine.executeAnthropicMessagesLoop(
                     if (!response.status.isSuccess()) {
                         val err = response.bodyAsText()
                         onRawWire(reqStr, err)
-                        error("Anthropic Messages HTTP ${response.status.value}: $err")
+                        throw providerHttpError("Anthropic Messages", response, err)
                     }
 
 
@@ -583,7 +583,7 @@ internal suspend fun AiProviderEngine.executeAnthropicMessagesLoop(
                         waitWithRetryCountdown(
                             attempt = stepRetryAttempt,
                             maxAttempts = MAX_PRE_TOKEN_RETRIES,
-                            waitSeconds = RETRY_WAIT_SECONDS,
+                            waitMs = retryDelayMs(stepRetryAttempt, e),
                             reasonSummary = e.message ?: "Transient API error in step $loopStep",
                             onStatus = onStatus
                         )

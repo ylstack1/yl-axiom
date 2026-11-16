@@ -220,10 +220,14 @@ internal fun McpServersCard(prefs: PreferencesConfig, onUpdatePreferences: (Pref
                     }
                     statuses[server.id]?.let { status ->
                         BasicText(when (status.state) {
-                            McpServerState.CONNECTING -> Strings.connecting
+                            McpServerState.CONNECTING -> status.message.ifBlank { Strings.connecting }
                             McpServerState.READY -> Strings.connected(plural(status.toolCount, "tool"))
                             McpServerState.FAILED -> status.message
                         }, style = p.uiLabelStyle)
+                        if (status.state == McpServerState.FAILED && server.enabled) {
+                            SepiaButton(Strings.restartServer, compact = true, style = SepiaButtonStyle.OUTLINE, hint = Strings.restartServerHint,
+                                onClick = { McpRegistry.restartNow(server.id) })
+                        }
                     }
                     SepiaButton(Strings.remove, compact = true, style = SepiaButtonStyle.GHOST, onClick = {
                         onUpdatePreferences(prefs.copy(mcpServers = prefs.mcpServers.filter { it.id != server.id }))

@@ -92,9 +92,8 @@ internal suspend fun AiProviderEngine.executeOpenAiAudioSpeechEndpoint(
         }
     )
 
-    var lastStatus = 0
-    var lastErrorBody = ""
-    for ((idx, candidateObj) in payloadCandidates.withIndex()) {
+    var lastFailure: ProviderHttpException? = null
+    for (candidateObj in payloadCandidates) {
         val finalPayload = mergeRawJsonExtraBody(candidateObj, profile.rawJsonExtraBody)
         val reqStr = json.encodeToString(JsonObject.serializer(), finalPayload)
         onStatus(Strings.synthesizingSpeech(model, voice))
@@ -107,7 +106,6 @@ internal suspend fun AiProviderEngine.executeOpenAiAudioSpeechEndpoint(
             contentType(ContentType.Application.Json)
             setBody(reqStr)
         }
-        lastStatus = resp.status.value
         val contentTypeHeader = resp.headers["Content-Type"].orEmpty().lowercase()
         if (resp.status.isSuccess() && (contentTypeHeader.contains("audio") || contentTypeHeader.contains("octet-stream"))) {
             onFirstToken()
@@ -131,7 +129,6 @@ internal suspend fun AiProviderEngine.executeOpenAiAudioSpeechEndpoint(
         }
 
         val bodyText = resp.bodyAsText()
-        lastErrorBody = bodyText
         onRawWire(reqStr, bodyText)
         if (resp.status.isSuccess()) {
             onFirstToken()
@@ -163,11 +160,12 @@ internal suspend fun AiProviderEngine.executeOpenAiAudioSpeechEndpoint(
             onContent("Generated speech audio (`$model` • voice: `$voice`).")
             return
         }
-        if (lastStatus != 400 && lastStatus != 422 || idx == payloadCandidates.lastIndex) {
-            break
-        }
+        val failure = providerHttpError("Audio Speech", resp, bodyText)
+        lastFailure = failure
+        // Only a rejected payload shape is worth trying the next candidate for.
+        if (failure.status != 400 && failure.status != 422) break
     }
-    error("Audio Speech HTTP $lastStatus: $lastErrorBody")
+    throw lastFailure ?: IllegalStateException("Audio Speech request was not sent.")
 }
 
 /** "video-task:<endpoint index>:<id>", checked against this profile's own endpoints before it is polled. */
@@ -310,6 +308,7 @@ internal suspend fun AiProviderEngine.executeByteDanceArkGeneration(
         var activeTaskUrl = candidateTaskUrls.first()
         var createBody = ""
         var createStatus = 0
+        var createFailure: ProviderHttpException? = null
         var reqStr = ""
         // A job the provider accepted before the app closed is picked up again rather than paid for twice.
         val resumed = RESUMABLE_VIDEO_TASK.matchEntire(resumeTask)?.takeIf { it.groupValues[1].toInt() in candidateTaskUrls.indices }
@@ -349,6 +348,7 @@ internal suspend fun AiProviderEngine.executeByteDanceArkGeneration(
                 createStatus = createResp.status.value
                 onRawWire(reqStr, createBody)
                 if (createResp.status.isSuccess()) break@outerUrlLoop
+                createFailure = providerHttpError("Video Generation", createResp, createBody)
                 if (createStatus == 404 || createStatus == 405 || createStatus == 501) {
                     break // Try next URL in candidateTaskUrls
                 }
@@ -388,7 +388,7 @@ internal suspend fun AiProviderEngine.executeByteDanceArkGeneration(
         }
 
         if (createStatus !in 200..299) {
-            error("Video Generation HTTP $createStatus: $createBody")
+            throw createFailure ?: IllegalStateException("Video Generation HTTP $createStatus: $createBody")
         }
 
         val createObj = json.parseToJsonElement(createBody).jsonObject
@@ -451,7 +451,7 @@ internal suspend fun AiProviderEngine.executeByteDanceArkGeneration(
                     }
                     val pollBody = pollResp.bodyAsText()
                     onRawWire(reqStr, pollBody)
-                    check(pollResp.status.isSuccess()) { "HTTP ${pollResp.status.value}: $pollBody" }
+                    if (!pollResp.status.isSuccess()) throw providerHttpError("", pollResp, pollBody)
                     json.parseToJsonElement(pollBody).jsonObject
                 } catch (e: kotlinx.coroutines.CancellationException) {
                     throw e
@@ -583,6 +583,7 @@ internal suspend fun AiProviderEngine.executeByteDanceArkGeneration(
 
         var bodyText = ""
         var lastStatus = 0
+        var imageFailure: ProviderHttpException? = null
         var reqStr = ""
         var imageUsageReqId = ""
         outerImgLoop@ for (candidateUrl in candidateImgUrls) {
@@ -606,6 +607,7 @@ internal suspend fun AiProviderEngine.executeByteDanceArkGeneration(
                 lastStatus = resp.status.value
                 onRawWire(reqStr, bodyText)
                 if (resp.status.isSuccess()) break@outerImgLoop
+                imageFailure = providerHttpError("Image Generation", resp, bodyText)
                 if (lastStatus == 404 || lastStatus == 405 || lastStatus == 501) {
                     break // Try next URL
                 }
@@ -666,7 +668,7 @@ internal suspend fun AiProviderEngine.executeByteDanceArkGeneration(
                 )
                 return
             }
-            error("Image Generation HTTP $lastStatus: $bodyText")
+            throw imageFailure ?: IllegalStateException("Image Generation HTTP $lastStatus: $bodyText")
         }
 
         onFirstToken()

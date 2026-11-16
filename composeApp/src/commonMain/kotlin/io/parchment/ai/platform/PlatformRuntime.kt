@@ -3,6 +3,9 @@ package io.parchment.ai.platform
 /** Devices with less physical memory than this count as low-memory (a nominal 4 GB device reports a little less). */
 internal const val LOW_MEMORY_BYTES = 4L * 1024L * 1024L * 1024L
 
+/** What the previous run left when an error escaped it: the redacted details, and whether its saves finished. */
+data class CrashReport(val text: String, val saved: Boolean)
+
 expect object PlatformRuntime {
     val platformName: String
     val isAndroid: Boolean
@@ -16,6 +19,8 @@ expect object PlatformRuntime {
 
     fun registerStateFlushCallback(callback: (blocking: Boolean) -> Unit)
     fun flushPendingStateNow()
+    /** The report an uncaught error left in the previous run, once: reading it removes it. */
+    fun takeCrashReport(): CrashReport?
     fun flushPendingStateAsync()
     fun registerBackHandler(handler: (() -> Boolean)?)
     fun handleSystemBackPressed(): Boolean

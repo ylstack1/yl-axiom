@@ -23,6 +23,7 @@ import io.parchment.ai.model.AgentPermissionResolver
 import io.parchment.ai.model.asOverrides
 import io.parchment.ai.model.unclaimedStepText
 import io.parchment.ai.network.AiProviderEngine
+import io.parchment.ai.network.RetryControl
 import io.parchment.ai.network.StreamUpdate
 import io.parchment.ai.platform.PlatformRuntime
 import io.parchment.ai.platform.PlatformStorage
@@ -35,6 +36,9 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
+
+/** How often a streaming run saves the whole chat; checkpoints in between save the reply alone. */
+private const val FULL_CHECKPOINT_INTERVAL_MS = 30_000L
 
 internal fun GenerationHost.beginGeneration(
     sessionId: String,
@@ -139,7 +143,9 @@ internal fun GenerationHost.beginGeneration(
     fun updateOwnedStream(updater: (SessionStreamRuntime?) -> SessionStreamRuntime?) {
         processState.runs.update(identity) { current -> updater(current) ?: current }
     }
-    val newJob = appRunLeases.launch(appProcessScope, modelName, AgentToolRunContext(approvalBroker),
+    // In the run's context, so the engine (and any helper it starts) shows its retry waits here and Retry now ends them.
+    val retryControl = RetryControl()
+    val newJob = appRunLeases.launch(appProcessScope, modelName, AgentToolRunContext(approvalBroker) + retryControl,
         start = kotlinx.coroutines.CoroutineStart.LAZY) { activity ->
         var terminalPhase = AgentRunPhase.INTERRUPTED
         updateOwnedStream { it?.copy(phase = AgentRunPhase.RUNNING) }
@@ -151,6 +157,9 @@ internal fun GenerationHost.beginGeneration(
                     else -> current.phase
                 }) }
             }
+        }
+        val retryObserver = launch {
+            retryControl.waiting.collect { wait -> updateOwnedStream { it?.copy(retryWait = wait) } }
         }
         val contentWords = StreamWordCounter()
         val thinkingWords = StreamWordCounter()
@@ -181,6 +190,10 @@ internal fun GenerationHost.beginGeneration(
         var liveTokensPerSec = 0.0
         var lastStopwatchTickMs = 0L
         var lastDiskCheckpointMs = turnRequestStartMs
+        // Checkpoints save the reply alone (live.json); the whole chat is saved at most every 30 s and at the end,
+        // so a long chat costs the reply's size per checkpoint instead of its own. The run starts from a full save.
+        val liveTurn = LiveTurnRef(targetAssistantNodeId, targetVariantId)
+        var lastFullCheckpointMs = PlatformRuntime.monotonicTimeMillis()
         fun pauseActiveThinkingStopwatch() {
             if (activeThinkingPhaseStartMs >= 0L) {
                 val now = activity.elapsedMs
@@ -195,7 +208,7 @@ internal fun GenerationHost.beginGeneration(
             // the pacer has nothing new to publish.
             var patched: MessageVariant? = null
             val updater: (MessageVariant) -> MessageVariant = { v -> eventUpdate(v).also { patched = it } }
-            updateActiveSessionInMemoryOnly(sessionId) { sess ->
+            updateLiveTurnInMemory(sessionId, liveTurn) { sess ->
                 val msgs = sess.messages
                 val lastIdx = msgs.lastIndex
                 if (lastIdx >= 0 && msgs[lastIdx].id == targetAssistantNodeId) {
@@ -250,7 +263,15 @@ internal fun GenerationHost.beginGeneration(
             val curGoal = latestGoalTracker
             val curMedia = accumulatedMedia.toList()
             val curWebSources = accumulatedWebSources
-            updateSessionById(sessionId, immediate = true) { sess ->
+            val now = PlatformRuntime.monotonicTimeMillis()
+            val replyOnly = !isFinal && now - lastFullCheckpointMs < FULL_CHECKPOINT_INTERVAL_MS
+            if (!replyOnly) lastFullCheckpointMs = now
+            val save: (String, SessionUpdate) -> Unit = if (replyOnly) {
+                { id, transform -> updateLiveTurnById(id, liveTurn, transform) }
+            } else {
+                { id, transform -> updateSessionById(id, immediate = true, transform = transform) }
+            }
+            save(sessionId) { sess ->
                 sess.copy(
                     messages = sess.messages.map { node ->
                         val shouldAutoMute = isFinal && terminalPhase == AgentRunPhase.COMPLETED && node.id in autoMuteNodeIdsOnFinish
@@ -401,7 +422,7 @@ internal fun GenerationHost.beginGeneration(
                         val thinkWords = cachedThinkWords
                         val toolSuffix = if (accumulatedTools.isNotEmpty()) " • ${accumulatedTools.size} tools" else ""
                         updateOwnedStream { cur ->
-                            if (cur != null && cur.isThinkingPhase && !cur.statusText.startsWith("Auto-retrying") && !cur.statusText.startsWith("Context ")) {
+                            if (cur != null && cur.isThinkingPhase && cur.retryWait == null && !cur.statusText.startsWith("Context ")) {
                                 cur.copy(
                                     statusText = Strings.thinkingWords(modelName, thinkWords, toolSuffix, formatDurationFromMs(thinkingDurationMs))
                                 )
@@ -956,6 +977,11 @@ internal fun GenerationHost.beginGeneration(
                                         rawResponsePreview = update.rawDetails.ifBlank { rawResp }.take(4096)
                                     )
                                 }
+                                // A cause the person can fix gets a notice that leads there, instead of an attempt to retry.
+                                update.kind?.let { kind ->
+                                    runErrorNotice = RunErrorNotice(sessionId, kind)
+                                    bannerNotification = Strings.runErrorNotice(kind)
+                                }
                             }
                         }
                     }
@@ -1020,6 +1046,7 @@ internal fun GenerationHost.beginGeneration(
         } finally {
             LiveTurns.end(targetVariantId)
             approvalObserver.cancel()
+            retryObserver.cancel()
             networkDone = true
             if (processState.runs.isStopRequested(identity) || activeStreamsBySession[sessionId]?.phase == AgentRunPhase.STOPPED) {
                 terminalPhase = AgentRunPhase.STOPPED
@@ -1053,6 +1080,7 @@ internal fun GenerationHost.beginGeneration(
             interactionId = "",
             job = newJob,
             toolApprovalBroker = approvalBroker,
+            retryControl = retryControl,
             phase = AgentRunPhase.PREPARING,
             providerContext = RunProviderContext(effectiveProfileForApi),
             actualWireDialect = identity.declaredWireDialect

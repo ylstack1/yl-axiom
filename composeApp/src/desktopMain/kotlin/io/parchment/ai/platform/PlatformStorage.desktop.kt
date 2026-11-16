@@ -59,6 +59,7 @@ actual object PlatformStorage {
     actual fun loadChatIndexJson(): String? = snapshotStorage.loadChatIndex()
     actual fun saveChatIndexJson(json: String) = snapshotStorage.saveChatIndex(json)
     actual fun saveChatSessionJson(sessionId: String, json: String) = snapshotStorage.saveChat(sessionId, json)
+    actual fun saveChatLiveTurnJson(sessionId: String, json: String) = snapshotStorage.saveLiveTurn(sessionId, json)
     actual fun deleteChatSessionFile(sessionId: String) = snapshotStorage.deleteChat(sessionId)
 
     actual fun wipeAllLocalData(): Boolean =

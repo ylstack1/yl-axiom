@@ -9,6 +9,7 @@ import io.parchment.ai.model.ProviderProfile
 import io.parchment.ai.model.ProviderProtocol
 import io.parchment.ai.ui.compactStateJson
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonPrimitive
 import java.io.File
 import java.io.IOException
 import java.nio.file.Files
@@ -234,6 +235,61 @@ class SnapshotFileStorageTest {
         assertEquals(stub.messages, restored.messages)
         assertTrue(decoded.matches(ChatFileStamp(10, 20)))
         assertFalse(decoded.matches(ChatFileStamp(10, 21)))
+    }
+
+    private fun liveTurn(text: String, nodeId: String = "message") =
+        """{"nodeId":"$nodeId","variant":{"id":"variant","content":${JsonPrimitive(text)}}}"""
+
+    private fun contentOf(raw: String?) =
+        compactStateJson.decodeFromString(ChatSession.serializer(), checkNotNull(raw)).messages.single().activeVariant.content
+
+    @Test
+    fun aLiveReplyIsFoldedIntoItsChatOnLoadAndThenRemoved() = withStorage { root, storage ->
+        storage.saveChat("chat", chat("chat", "start"))
+        storage.saveLiveTurn("chat", liveTurn("start and more"))
+        val sidecar = File(root, "chats/chat/live.json")
+        assertTrue(sidecar.isFile)
+        assertEquals(emptyMap(), storage.chatFileStamps(), "A chat with a live reply is read in full, not from the index")
+        assertEquals("start and more", contentOf(storage.loadChat("chat")))
+        assertFalse(sidecar.exists(), "Folding saves the chat and drops the sidecar")
+        assertEquals("start and more", contentOf(File(root, "chats/chat/chat.json").readText()))
+        assertEquals(setOf("chat"), storage.chatFileStamps().keys)
+    }
+
+    @Test
+    fun aFullSaveSupersedesTheLiveReply() = withStorage { root, storage ->
+        storage.saveChat("chat", chat("chat", "start"))
+        storage.saveLiveTurn("chat", liveTurn("partial"))
+        storage.saveChat("chat", chat("chat", "the final answer"))
+        assertFalse(File(root, "chats/chat/live.json").exists())
+        assertEquals("the final answer", contentOf(storage.loadChat("chat")))
+    }
+
+    @Test
+    fun staleOrphanedOrBrokenLiveRepliesAreDroppedNotFolded() = withStorage { root, storage ->
+        storage.saveChat("chat", chat("chat", "start"))
+        storage.saveLiveTurn("chat", liveTurn("old partial"))
+        val sidecar = File(root, "chats/chat/live.json")
+        val stale = sidecar.readText()
+        storage.saveChat("chat", chat("chat", "a newer full save"))
+        sidecar.writeText(stale) // As if the full save could not remove it.
+        assertEquals("a newer full save", contentOf(storage.loadChat("chat")), "Written against an older chat.json, it must not win")
+        assertFalse(sidecar.exists())
+        storage.saveLiveTurn("chat", liveTurn("from a deleted reply", nodeId = "gone"))
+        assertEquals("a newer full save", contentOf(storage.loadChat("chat")))
+        assertFalse(sidecar.exists(), "A reply the chat no longer has is dropped")
+        sidecar.writeText("{broken")
+        assertEquals("a newer full save", contentOf(storage.loadChat("chat")))
+        assertFalse(sidecar.exists())
+        storage.saveLiveTurn("unsaved", liveTurn("nothing to extend"))
+        assertFalse(File(root, "chats/unsaved/live.json").exists(), "No sidecar without a chat.json")
+    }
+
+    @Test
+    fun startUpReadsFoldLiveReplies() = withStorage { _, storage ->
+        storage.saveChat("chat", chat("chat", "start"))
+        storage.saveLiveTurn("chat", liveTurn("start and more"))
+        assertEquals("start and more", contentOf(storage.chats().single()))
     }
 
     private fun withStorage(block: (File, SnapshotFileStorage) -> Unit) {

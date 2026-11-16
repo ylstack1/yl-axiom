@@ -23,6 +23,8 @@ import androidx.compose.ui.window.WindowPlacement
 import androidx.compose.ui.window.WindowPosition
 import androidx.compose.ui.window.application
 import androidx.compose.ui.window.rememberWindowState
+import io.parchment.ai.platform.CrashRecorder
+import io.parchment.ai.platform.DesktopPlatformHost
 import io.parchment.ai.platform.PlatformPickers
 import io.parchment.ai.platform.PlatformRuntime
 import io.parchment.ai.platform.PlatformStorage
@@ -161,6 +163,8 @@ internal fun windowCaption(runStatus: String, captionTitle: String): String {
 @OptIn(kotlinx.coroutines.FlowPreview::class)
 fun main(args: Array<String>) {
     if (CDS_WARMUP_FLAG in args) runCdsWarmup()
+    // After the warm-up check: the installer's headless run never records a crash into a throwaway folder.
+    CrashRecorder.install({ DesktopPlatformHost.resolveStorageDir() }) { PlatformRuntime.flushPendingStateNow() }
     // Enable hardware VSync so Skia renders smoothly at the monitor's native refresh rate (60Hz / 120Hz / 144Hz / 240Hz)
     System.setProperty("skiko.vsync.enabled", "true")
     preloadProcessStateInBackground()

@@ -440,7 +440,7 @@ private class GeminiInteractionsSession(
             if (!response.status.isSuccess()) {
                 val errText = response.bodyAsText()
                 onRawWire(requestJsonStr, errText)
-                error("Gemini Interactions HTTP ${response.status.value}: $errText")
+                throw providerHttpError("Gemini Interactions", response, errText)
             }
 
             engine.readSseOrJsonFallback(
@@ -488,17 +488,14 @@ private class GeminiInteractionsSession(
             } else {
                 AiProviderEngine.MAX_PRE_TOKEN_RETRIES
             }
-            val waitSec = if (profile.useLegacyFallbackEndpoint) {
-                AiProviderEngine.LEGACY_FALLBACK_PRIMARY_WAIT_SECONDS
-            } else {
-                AiProviderEngine.RETRY_WAIT_SECONDS
-            }
+            // The legacy-endpoint probe waits briefly before handing over; a server's own hint still wins.
+            val probeWaitMs = if (profile.useLegacyFallbackEndpoint) AiProviderEngine.LEGACY_FALLBACK_PRIMARY_WAIT_SECONDS * 1000L else null
             val attempt = stepRetryAttemptProvider()
             if (attempt <= maxPrimaryRetries) {
                 engine.waitWithRetryCountdown(
                     attempt = attempt,
                     maxAttempts = maxPrimaryRetries,
-                    waitSeconds = waitSec,
+                    waitMs = retryDelayMs(attempt, error, fixedMs = probeWaitMs),
                     reasonSummary = error.message ?: "Transient API error in step $loopStep",
                     onStatus = { msg -> onStatus(msg, currentRoundInteractionId) }
                 )
