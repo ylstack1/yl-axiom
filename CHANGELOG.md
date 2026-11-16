@@ -2,6 +2,19 @@
 
 What changed in each release, newest first. From 2.1.7 on, release-please writes these entries from commit messages that follow [Conventional Commits](https://www.conventionalcommits.org/) (`feat:` and `fix:` appear here and set the next version); edit wording in its release PR before merging it.
 
+## [2.2.4](https://github.com/baros4294/parchment/compare/v2.2.3...v2.2.4) (2026-11-16)
+
+
+### Fixes
+
+* **protocol,registry:** harden reasoning fallback, background catalog sync, and EDT UI tests ([08b06e9](https://github.com/baros4294/parchment/commit/08b06e96333412d81f233705e0cdfaf9c01992ea))
+* **protocol:** align reasoning fallback, Anthropic tool replay, and MCP 2026-07-28 ([3fa7f58](https://github.com/baros4294/parchment/commit/3fa7f582e528783c3a20e939c2f56b915a786c4f))
+
+
+### Faster and lighter
+
+* **registry:** warm model catalog in background with models.dev gap-fill and cooldown ([720c509](https://github.com/baros4294/parchment/commit/720c50925bba9277a09f72094f450da040d73d86))
+
 ## [2.2.3](https://github.com/baros4294/parchment/compare/v2.2.2...v2.2.3) (2026-11-15)
 
 
