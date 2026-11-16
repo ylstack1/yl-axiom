@@ -17,7 +17,7 @@ Thanks for helping. This page covers the principles, the setup and how to land a
 |---|---|---|
 | JDK 25 (Temurin) | [adoptium.net](https://adoptium.net/temurin/releases/?version=25) | Set `JAVA_HOME` to the JDK folder and add its `bin` to `PATH` |
 | Android SDK command-line tools | [developer.android.com](https://developer.android.com/studio#command-tools) | Unzip to `%LOCALAPPDATA%\Android\Sdk\cmdline-tools\latest`, set `ANDROID_HOME` and `ANDROID_SDK_ROOT` to the `Sdk` folder, add `cmdline-tools\latest\bin` and `platform-tools` to `PATH` |
-| Android packages | `sdkmanager --licenses`, then `sdkmanager "platform-tools" "platforms;android-36" "build-tools;36.0.0"` | |
+| Android packages | `sdkmanager --licenses`, then `sdkmanager "platform-tools" "platforms;android-37.0" "build-tools;37.0.0"` | |
 | Python 3.10 or later | [python.org](https://www.python.org/downloads/) | Standard library only |
 
 Gradle and Kotlin need no install: `gradlew.bat` fetches the right versions.

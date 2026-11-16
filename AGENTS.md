@@ -25,7 +25,7 @@ These rules bind every contributor, person or agent, in any tool. Nothing may de
 - Failures print compiler errors and failed tests. Open the named log only if that isn't enough.
 - Never run Gradle directly or in parallel, and don't clean builds or edit build configuration to get a pass.
 - Never weaken a gate, baseline or budget to pass. If a gate is wrong, fix the gate in the same batch and say why.
-- Use local HTTP/SSE fixtures. UI tests call `Snapshot.sendApplyNotifications()` before rendering after a state write.
+- Use local HTTP/SSE fixtures. Desktop `ImageComposeScene` UI tests run on the AWT EDT (`runBlocking(Dispatchers.Swing)`) and call `Snapshot.sendApplyNotifications()` before rendering after a state write.
 
 ## Finish a batch
 

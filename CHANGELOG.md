@@ -7,7 +7,6 @@ What changed in each release, newest first. From 2.1.7 on, release-please writes
 
 ### Fixes
 
-* **protocol,registry:** harden reasoning fallback, background catalog sync, and EDT UI tests ([08b06e9](https://github.com/baros4294/parchment/commit/08b06e96333412d81f233705e0cdfaf9c01992ea))
 * **protocol:** align reasoning fallback, Anthropic tool replay, and MCP 2026-07-28 ([3fa7f58](https://github.com/baros4294/parchment/commit/3fa7f582e528783c3a20e939c2f56b915a786c4f))
 
 

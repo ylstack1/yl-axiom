@@ -51,10 +51,10 @@ All Kotlin files below sit under `composeApp/src/commonMain/kotlin/io/parchment/
 
 - **Engine & streaming:** `AiProviderEngine.kt` (request dispatch and retry orchestration), `GenerationStreamSession.kt`, `GenerationStreamAccumulator.kt`, `SseStreamReader.kt`.
 - **Provider protocol wires:** `OpenAiResponsesProtocol.kt`, `OpenAiChatProtocol.kt`, `AnthropicMessagesProtocol.kt`, `GeminiInteractionsProtocol.kt`, `GeminiInteractionsStreamParser.kt`, `GeminiInteractionsWire.kt`, `GeminiGenerateContentProtocol.kt`.
-- **Shared provider support:** `ProviderContextHistory.kt` (history/branch/lorebook assembly), `ProviderReasoning.kt`, `ProviderToolExecution.kt` (tool loop, parallel execution, approvals), `ToolScreenshots.kt`, `ProviderCitations.kt`, `ProviderMediaGeneration.kt`, `ProviderModelDiscovery.kt`, `ModelsDevClient.kt` (remote model catalog & pricing sync), `ProviderTransportSupport.kt`, `ProviderErrorPolicy.kt`, `ProviderUsage.kt`, `UsageCharges.kt`.
+- **Shared provider support:** `ProviderContextHistory.kt` (history/branch/lorebook assembly), `ProviderReasoning.kt`, `ProviderToolExecution.kt` (tool loop, parallel execution, approvals), `ToolScreenshots.kt`, `ProviderCitations.kt`, `ProviderMediaGeneration.kt`, `ProviderModelDiscovery.kt`, `ModelsDevClient.kt` (single-flight background model catalog & pricing sync), `ProviderTransportSupport.kt`, `ProviderErrorPolicy.kt`, `ProviderUsage.kt`, `UsageCharges.kt`.
 - **Extensions & updates:** `McpClient.kt`, `McpRegistry.kt`, `ExtensionSources.kt` (skills & extension discovery), `Subagents.kt` (`agent_delegate` orchestration), `OtaUpdateEngine.kt` (GitHub Release update checks and download staging).
 
-### `ui` package (49 files)
+### `ui` package (50 files)
 
 - **Shell, state & runs:** `ParchmentApp.kt`, `ParchmentAppController.kt`, `AgentRunCoordinator.kt`, `ChatRunHosts.kt`, `GenerationRun.kt`, `StorySummaryRun.kt`, `AppShortcuts.kt`, `CommandPalette.kt`.
 - **Persistence, usage & search:** `ParchmentStatePersistence.kt`, `ParchmentDiskWriter.kt`, `SessionSpend.kt`, `UtilityUsage.kt`, `PinnedReplies.kt`, `ChatHistorySearch.kt`.
@@ -108,8 +108,8 @@ Never run Gradle directly or in parallel; use `python scripts/verify.py`:
 Conventions enforced by tests and quality gates:
 
 - **Search portably:** use `git grep -n` (Windows environments may not have `rg` installed).
-- **UI tests:** use Compose Skiko `ImageComposeScene` with `Snapshot.sendApplyNotifications()` after mutating state before rendering. See `desktopTest/kotlin/io/parchment/ai/ui/` (`UiBehaviorRegressionTest.kt`, `KeyboardShortcutTest.kt`, `SharedActionSemanticsUiTest.kt`, `UiGalleryTest.kt`, `PerformanceBaselineTest.kt`).
-- **Network tests:** use local HTTP/SSE fixtures (`desktopTest/network/`), never live endpoints.
+- **UI tests:** use Compose Skiko `ImageComposeScene` on the AWT EDT (`runBlocking(Dispatchers.Swing)` with `Dispatchers.Swing` / `Dispatchers.Swing.immediate` so tests serialize with Compose Desktop's internal `SwingDispatcher`), calling `Snapshot.sendApplyNotifications()` after mutating state before rendering. See `desktopTest/kotlin/io/parchment/ai/ui/` (`AgentPermissionUiTest.kt`, `TurnUsageUiTest.kt`, `UiBehaviorRegressionTest.kt`, `KeyboardShortcutTest.kt`, `SharedActionSemanticsUiTest.kt`, `UiGalleryTest.kt`, `PerformanceBaselineTest.kt`).
+- **Network tests:** use local HTTP/SSE fixtures (`desktopTest/network/`, including `StreamRecoveryHttpTest.kt`, `McpEndToEndTest.kt`, `ModelRegistrySyncTest.kt`), never live endpoints.
 - **Static checks (`scripts/quality.py`):** enforces LF line endings (except `.bat`/`.iss`), UTF-8 without BOM, ASCII `.ps1` scripts, no unused imports or dead code outside `scripts/quality-baseline.json`, 3000-line limit per main Kotlin file, banned APIs (`androidx.compose.material`, `GlobalScope`, `println(`, `FIXME`, `TODO(`, `.clickable(enabled = false)`), valid relative Markdown links and `#heading` anchors, no tracked secrets, and strict doc byte budgets (`AGENTS.md`, `MEMORY.md`, `TODO.md`).
 
 ## Where to change what

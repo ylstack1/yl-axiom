@@ -1,6 +1,6 @@
 # Parchment Memory
 
-Updated 2026-11-15. Stable contracts only; read the section you need. AGENTS.md owns workflow, TODO progress.
+Updated 2026-11-16. Stable contracts only; read the section you need. AGENTS.md owns workflow, TODO progress.
 
 ## Standing decisions
 
@@ -14,22 +14,23 @@ Updated 2026-11-15. Stable contracts only; read the section you need. AGENTS.md 
 - scripts/verify.py is the only entry point: saved JAVA_HOME/ANDROID_HOME (skips stale inherited JDK 8), version 2.1.0 (CI: VERSION_LINE/VERSION_BASE_RUN), two workers, config cache except final; logs in .parchment-local/verification/.
 - Keep org.gradle.daemon=false (memory bloat); Gradle heap 2560 MB.
 - PowerShell scripts stay ASCII.
-- Never copy builds into %LOCALAPPDATA%/Programs/Parchment. Only CI builds (-PofficialRelease=true) check for or install OTA updates. Dev runs keep data in ignored parchment-portable-data.
-- AGP 9 split: composeApp (KMP library) holds all code, manifest and res; androidApp only builds the APK (id io.parchment.ai, signing, R8 rules, font assets). Keep class names in io.parchment.ai: the Accessibility component depends on them.
+- Never copy builds into %LOCALAPPDATA%/Programs/Parchment; only CI (-PofficialRelease=true) enables OTA. Dev runs use ignored parchment-portable-data.
+- AGP 9: composeApp owns code/manifest/res; androidApp builds the APK (id io.parchment.ai, signing, R8, fonts). Keep io.parchment.ai class names (Accessibility binding).
 - Android: keep big suspend bodies split into local suspend functions (cancelling a 565-register coroutine aborted).
-- Android signing is private-env-only: dot-source scripts/load-private-signer.ps1; never regenerate the ignored key (fingerprint 95d9804cfd9c80313440ed97619100c9e9f741c27943f61700fa802d0dbe4574). Legacy key rejected (docs/RELEASE_SIGNING.md); blank key password uses store password.
+- Android signing is private-env-only: dot-source scripts/load-private-signer.ps1; keep key 95d9804cfd9c80313440ed97619100c9e9f741c27943f61700fa802d0dbe4574 (legacy rejected, docs/RELEASE_SIGNING.md); blank key password uses store.
 - Packaged desktop uses AppCDS: jlink base archive + `$APPDIR/parchment.jsa`, rebuilt after updates.
 
 ## Protocols and harness
 
-- AiProviderEngine holds shared state and streamGeneration; each protocol and concern (media, citations, reasoning, tools, discovery, history, errors) is a `network/` extension file.
+- AiProviderEngine holds shared state/streamGeneration; each protocol and concern lives in a `network/` extension file.
 - Big three: GEMINI_INTERACTIONS, OPENAI_RESPONSES, ANTHROPIC_MESSAGES. CUSTOM needs an explicit dialect and verbatim URL, sends only its declared wire, never falls back; unresolved Custom blocks Send.
 - useStatefulChaining and storeServerSide default to false; storage, chaining and background execution are separate (Gemini background needs compatible storage). keepsProviderState drives `store`, polling and cancel.
 - Chains require matching protocol, non-blank normalized model and stamped dialect. Keep chronological call/result batches and closing prose; ToolCallRecord.startsToolStep separates steps.
 - Stamp turns via resolveWireProtocol/resolveWireDialect (not Custom base). Native reasoning and reasoning_content replay only for matching dialect/model (else handoff shifts step text). ReplayToolCallIds owns tool IDs.
-- Reasoning signatures are opaque: preserve, never translate. Cross-provider handoff keeps 8000 chars (head + tail). User, system and continuity instructions stay uncapped.
+- Reasoning signatures are opaque: preserve verbatim. Cross-provider handoff keeps 8000 chars (head + tail); user/system/continuity instructions stay uncapped.
 - Keep request beginnings stable: stale tool output compacts in batches of 8; keyword lore goes in the late note, not the system prompt.
-- Discover models and capabilities from live metadata and registries; no model-name, version or vendor branches.
+- Discover models and capabilities from live metadata/registries; no hardcoded models or branches. ModelsDevClient (`RegistryCatalogClient`) runs single-flight Dispatchers.IO sync (`2.5 s` modality wait never cancels download), fills gaps via `models.dev`, and backs off `60 s` on empty failures unless bypassed manually.
+- Reasoning HTTP 400 retries step `max -> xhigh -> high` or `minimal -> low` and strip Anthropic adaptive `display` before abandoning reasoning; Anthropic tool replay preserves signed thinking blocks without text.
 - AgentPermissionResolver owns defaults and overrides: null inherits; explicit Off, empty path or false revoke. New chats inherit; imports disable local tools, paths, web and Shell.
 - Shared dispatch covers disabled, unknown, unadvertised, read-only and parallel paths. Raw provider options can't grant tools. Provider-managed code needs approval mode Never.
 - ToolApprovalBroker is run/chat scoped: exact previews, one-use permits, denial suppression, synchronous invalidation, memory-only grants.
@@ -37,13 +38,13 @@ Updated 2026-11-15. Stable contracts only; read the section you need. AGENTS.md 
 - WorkspacePathGuard checks real ancestors and rejects escaping links and junctions. PublicWebTransport binds to validated public DNS addresses and checks each redirect; provider transport is separate.
 - SSE closing without finish or `[DONE]` is interrupted. AcceptedJobException polls with bounded transient retries, never resubmits; non-retryable 4xx/policy SSE/JSON errors throw NoRetryException.
 - Utility requests mask inherited tool context, disable tools and goal loops, and propagate cancellation.
-- computer_use is off by default; every action needs approval, no run-wide grants, pre/post action settle, Android overlay when off-screen. Screenshots stay out of chat state; only the newest is resent. Permits claim against permit.scope.
+- computer_use is off by default; each action needs approval (no run-wide grants), pre/post settle, Android off-screen overlay. Keep screenshots out of state (resend newest only); claim permits on permit.scope.
 - MCP tools are `mcp__<server>__<tool>` and need approval like file changes; imports drop local commands and disable the rest. Spec 2025-11-25 handshake, fallback 2026-07-28.
 
 ## Runs and timing
 
 - Process state keeps chats, jobs, queues and approvals across UI recreation. New runs await draining workers and refresh saved history.
-- RunActivity and RunLeaseRegistry own elapsed time and owners: acquire before replacing/queueing workers, close only that lease when its job ends, skip approval waits, subtract tool-interval unions once. Android keeps its promoted service visible while waiting (CPU/Wi-Fi holds released, synced in-process); heartbeats reconcile every 15 s.
+- RunActivity/RunLeaseRegistry track elapsed time and owners: acquire before replacing/queueing, close owned lease only, skip approval waits, subtract tool unions once; Android foreground service stays active while waiting with 15 s heartbeats.
 - Durations use Android uptime and desktop nanoTime, skipping unseen gaps over 5 s.
 - Windows power helper: synchronized owners, validated heartbeat, independent restart. Sleep, Modern Standby and battery policy can still suspend runs.
 - Device: OnePlus PLZ110 (Android 17/API 37) can cut the network ~2 s after the app leaves the screen; the stall watch retries on return.
@@ -56,20 +57,20 @@ Updated 2026-11-15. Stable contracts only; read the section you need. AGENTS.md 
 ## Persistence
 
 - Keep safe legacy migration and portable relative export paths (layout: ARCHITECTURE.md).
-- ChatSession.isCompactStub is transient. Hydrate from the pending full payload before disk; never save, generate or export from an unavailable full chat. Merge background loads without replacing edits or resurrecting deletions.
+- ChatSession.isCompactStub is transient: hydrate pending full payload before disk/gen/export; merge background loads without overwriting edits or deletions.
 - Stub message ids stay unique (the chat list keys on them). Pinned messages keep their real id and a preview in stubs, so the Pinned list never loads chats. `pinned` is saved only when true.
 - appDiskWriter keeps the latest dirty revision per chat, settings and deletion, clears only matching successes and retries failures with backoff.
-- AtomicFileStorage and SnapshotFileStorage stage, sync and atomically replace, never truncate. Keep valid backups and failed migration inputs; reject dot IDs, escapes and collisions. Close NIO readers before decoding (Windows replace starvation).
+- AtomicFileStorage/SnapshotFileStorage stage, sync and replace atomically (never truncate); keep backups and failed migrations; reject dot IDs/escapes/collisions; close NIO readers before decode.
 - Strip attachment base64 only when the local file is readable and nonempty.
 - Tests use owned temp dirs and clean up. `todo_write` writes per-chat `chats/<id>/TODO.md` (plus turn `goalTracker`); `agent_memory` uses on-demand global `memory/AGENT.md` (never project files).
 
 ## Imports, exports and updates
 
 - Imports are untrusted. withImportedPermissions reduces media references to `chats/<id>/media/<name>` or `media/<name>`, drops network font paths and keeps this device's OTA repository.
-- ChatArchiveExtractor is all-or-nothing: validate and stage, decode, then commit only new files, never replacing different media. importChatFile streams and detects truncation from the stream's end. Chat JSON stays in memory (256 MiB total).
+- ChatArchiveExtractor is atomic (validate, stage, decode, commit new files only); importChatFile detects truncated streams; chat JSON stays in memory (256 MiB max).
 - ChatArchiveWriter streams one chat at a time. Desktop exports replace only after a complete write; Android removes a partial document on failure.
 - Links from model output or imports open only through openWebLink (http/https). Desktop openOrPlayMedia refuses executables.
-- OTA streams to OtaStagedFile and installs only after size/SHA-256 match (Windows needs GitHub `sha256:<hex>`; Android relies on APK signature). Refuses before and after download while a chat runs or queues.
+- OTA verifies size + SHA-256 (Windows GitHub digest; Android APK sig) via OtaStagedFile; blocks install while runs are active or queued.
 - Limits: attachments 50 MiB (pick/drop/paste), inline text 8 MiB, card/settings picks 256 MiB, desktop images 100 MP/128 MiB (downscaled past 2560 px). Shell output keeps head+tail. workspaceRead caps lines at 4k chars, 10k lines, 250k chars: never rewrite from it.
 - Android clipboard images use FileProvider content URIs (ClipData.newUri).
 

@@ -4,8 +4,8 @@ Updated 2026-11-15. AGENTS.md owns workflow; MEMORY holds contracts. Task IDs st
 
 ## Current status
 
-- **Source:** 2026-11-16: Protocol/reasoning alignment (preserve OpenAI `max` level, step down `max`/`xhigh`/`minimal` on HTTP 400 before dropping reasoning, strip Anthropic adaptive `display` and step effort before abandoning `adaptive`, preserve omitted-text signed tool replay blocks, MCP `2026-07-28` stateless + `_meta.clientInfo` fallback on init `400/404/405/422`/`-32600`), non-cancelling background model catalog sync (2.5s modality wait, incremental snapshot publishing, `models.dev` gap-filling, 60s empty-failure cooldown with manual bypass), and AWT EDT (`Dispatchers.Swing`) alignment across all 10 `ImageComposeScene` desktop UI suites (resolving the `RectList` concurrency race and removing the `UiGalleryTest` retry suppression).
-- **Last verified:** 2026-11-16, `verify.py affected` (499 desktop tests + Android compile clean across code batches, 2m29s), `verify.py test` across all 10 UI suites + gallery (50 tests, 2m22s), and `verify.py review`.
+- **Source:** 2026-11-16: Released `v2.2.4` (reasoning fallback step-down & omitted-text Anthropic tool replay, MCP `2026-07-28` stateless fallback, non-cancelling background `ModelsDevClient` sync with `models.dev` gap-fill & cooldown, and AWT EDT alignment resolving the `RectList` race), then cleaned code comments/KDoc (`ProviderReasoning`, `ProviderContextHistory`, `McpClient`, `ModelsDevClient`), synced `docs/ARCHITECTURE.md` (50 UI files & EDT rule), `CONTRIBUTING.md` (`android-37.0`), `MEMORY.md` (9755/10000 chars), `AGENTS.md`, `CHANGELOG.md` and `## Sources`.
+- **Last verified:** 2026-11-16, `verify.py affected` (499 desktop tests clean, 2m33s), `verify.py review`, `verify.py test` across 10 UI suites + gallery (50 tests, 2m22s), `unittest` (34 `scripts/` + 16 `.github/scripts/` Python tests), and `v2.2.4` CI release assets.
 - **Next action:** Re-test Android `computer_use` on device and check `13.6 Screen readers` when the user tests NVDA and TalkBack.
 
 ## Open tasks
@@ -24,12 +24,12 @@ Reuse these; consult a changed external contract once.
 
 - **OpenAI:** developers.openai.com/api/reference/resources/responses/methods/create; /api/reference/resources/chat/subresources/completions/methods/create; /api/docs/guides/reasoning; /api/docs/guides/prompt-caching.md; /api/docs/pricing; /codex/agent-approvals-security; /codex/sandboxing
 - **Gemini:** aistudio.google.com/api-reference/interactions-api; /docs/interactions-overview; /docs/background-execution; /docs/thinking; ai.google.dev/api/generate-content; ai.google.dev/gemini-api/docs/generate-content/thought-signatures
-- **Anthropic:** platform.claude.com/docs/en/api/messages; /build-with-claude/streaming; /build-with-claude/prompt-caching; /build-with-claude/extended-thinking; /build-with-claude/thinking-tool-workflows; /about-claude/pricing; /agents-and-tools/tool-use/web-search-tool
+- **Anthropic:** platform.claude.com/docs/en/api/messages; /build-with-claude/streaming; /build-with-claude/prompt-caching; /build-with-claude/extended-thinking; /build-with-claude/adaptive-thinking; /build-with-claude/effort; /build-with-claude/thinking-tool-workflows; /about-claude/pricing; /agents-and-tools/tool-use/web-search-tool
 - **DeepSeek:** api-docs.deepseek.com/guides/thinking_mode
 - **Rates:** models.dev/api.json; openrouter.ai/api/v1/models; vercel.com/docs/ai-gateway/models-and-providers; raw.githubusercontent.com/BerriAI/litellm/main/model_prices_and_context_window.json
 - **Windows:** learn.microsoft.com/en-us/windows/win32/api/winbase/nf-winbase-setthreadexecutionstate; /nf-winbase-powersetrequest
 - **Android:** developer.android.com/develop/background-work/services/fgs/service-types; /fgs/timeout; /training/monitoring-device-state/doze-standby; /tools/adb; /reference/android/system/Os; /develop/ui/views/notifications/notification-permission
 - **JVM and processes:** docs.oracle.com/en/java/javase/21/docs/api/java.base/java/nio/file/Path.html; /java/lang/Process.html; pubs.opengroup.org/onlinepubs/9799919799/functions/kill.html
-- **Formats:** modelcontextprotocol.io/specification/latest/server/tools; github.com/kwaroran/character-card-spec-v3/blob/main/SPEC_V3.md
+- **Formats:** modelcontextprotocol.io/specification/latest/server/tools; /2026-07-28/basic/lifecycle; github.com/kwaroran/character-card-spec-v3/blob/main/SPEC_V3.md
 - **Security and GitHub:** cheatsheetseries.owasp.org/cheatsheets/Server_Side_Request_Forgery_Prevention_Cheat_Sheet.html; docs.github.com/en/rest/releases/assets (asset digest is nullable, observed as `sha256:<hex>`)
 - **Build:** kotlinlang.org/docs/gradle-compilation-and-caches.html; docs.gradle.org/8.13/userguide/configuration_cache.html; docs.oracle.com/en/java/javase/21/vm/class-data-sharing.html
