@@ -93,5 +93,6 @@ Interface text lives in `strings/Strings.kt`, one table for translation: a `val`
 | Reasoning | Thinking |
 | Cache read, cache write | Reused, saved for reuse |
 | Utility requests | Background requests |
+| Auto-retrying, backoff | Trying again |
 
 Keep "API key", "tokens", "Markdown" and "World Book": people meet these terms outside Parchment. Show a term of art such as temperature beside a plain description.
