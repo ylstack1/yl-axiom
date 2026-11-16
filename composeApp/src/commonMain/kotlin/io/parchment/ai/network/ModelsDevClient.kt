@@ -46,6 +46,7 @@ private const val CACHE_TTL_MS = 30 * 60 * 1000L // 30 minutes
 private const val FAILED_FETCH_COOLDOWN_MS = 60 * 1000L // 1 minute cooldown when all registries fail
 private const val DEFAULT_MODALITY_WAIT_MS = 2_500L
 
+/** Endpoints queried sequentially during a catalog refresh, ordered from highest-detail primary catalogs to gap-fillers. */
 internal data class RegistryEndpoints(
     val openRouterModelsUrl: String = OPENROUTER_MODELS_URL,
     val openRouterVideosUrl: String = OPENROUTER_VIDEOS_URL,
@@ -201,6 +202,10 @@ internal class RegistryCatalogClient(
         return ModelsDevClient.lookupSpecInCatalog(cachedCatalog, modelId)?.outputModalities.orEmpty()
     }
 
+    /**
+     * Resolves a model spec from the cached or freshly synced catalog. Automatic callers honor the empty-failure
+     * cooldown; manual user actions pass [bypassFailureCooldown] = true to retry immediately.
+     */
     suspend fun fetchModelSpec(
         modelId: String,
         bypassFailureCooldown: Boolean = false

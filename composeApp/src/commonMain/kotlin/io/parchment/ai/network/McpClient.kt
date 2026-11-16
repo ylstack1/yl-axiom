@@ -37,6 +37,8 @@ import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.put
 
 internal open class McpException(message: String) : Exception(message)
+
+/** HTTP error returned before a JSON-RPC payload could be decoded; used to detect stateless 2026-07-28 endpoints. */
 internal class McpHttpException(val statusCode: Int, message: String) : McpException(message)
 
 internal data class McpToolInfo(val name: String, val description: String, val inputSchema: JsonObject)

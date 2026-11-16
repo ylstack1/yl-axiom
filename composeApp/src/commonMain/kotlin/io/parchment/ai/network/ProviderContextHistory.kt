@@ -290,8 +290,7 @@ internal fun AiProviderEngine.buildFoldedToolHistoryText(
 }.trim()
 
 // ============================================================================================
-// Shared helpers: the system prompt builder, the cache-friendly author's note placement,
-// Auth Header Builder, SSE Stream Reader, and Raw JSON Merger.
+// Shared helpers: compiled system prompt builder and cache-friendly author's note placement.
 // ============================================================================================
 private fun ChatSession.expandMacros(text: String): String {
     val charName = activeCard?.name?.ifBlank { "Character" } ?: "Character"
