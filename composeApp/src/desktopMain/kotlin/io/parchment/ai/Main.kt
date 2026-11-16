@@ -133,6 +133,20 @@ private fun attachDropTargetRecursively(component: Component, createTarget: () -
     }
 }
 
+@Volatile private var lastHeapTrimMs = 0L
+
+/**
+ * The serial collector returns memory to Windows only after a full collection, which it rarely needs on its own.
+ * While the window is minimized nobody sees the pause, so run one then (at most once a minute) and the heap shrinks
+ * back after a long turn or a large attachment.
+ */
+private fun trimHeapWhileHidden() {
+    val now = System.nanoTime() / 1_000_000L
+    if (now - lastHeapTrimMs < 60_000L) return
+    lastHeapTrimMs = now
+    Thread({ System.gc() }, "parchment-heap-trim").apply { isDaemon = true; start() }
+}
+
 /** "Chat — Parchment" while idle; a run's progress text (which starts with the app name) replaces it. */
 internal fun windowCaption(runStatus: String, captionTitle: String): String {
     val idle = runStatus.isBlank() || runStatus == "Parchment"
@@ -315,7 +329,10 @@ fun main(args: Array<String>) {
             }
             DisposableEffect(window) {
                 val listener = object : WindowAdapter() {
-                    override fun windowIconified(e: WindowEvent?) = AppForeground.markLeft()
+                    override fun windowIconified(e: WindowEvent?) {
+                        AppForeground.markLeft()
+                        trimHeapWhileHidden()
+                    }
                     override fun windowDeiconified(e: WindowEvent?) = AppForeground.markResumed()
                 }
                 window.addWindowListener(listener)

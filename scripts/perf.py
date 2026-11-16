@@ -133,34 +133,46 @@ def desktop_run(exe: Path, work: Path) -> dict[str, float]:
     return {"window_ms": round(window_ms), "title_ms": round(title_ms), "idle_private_mb": memory}
 
 
+def warm_up(exe: Path, work: Path) -> tuple[int, bool]:
+    """The installer's hidden --cds-warmup run. -Xshare:on makes the JVM exit instead of silently running unshared
+    when the base archive cannot be used (for example a classes_coh.jsa missing under compact object headers)."""
+    archive = exe.parent / "app" / "parchment.jsa"
+    archive.unlink(missing_ok=True)  # A new version arrives without an archive.
+    started = time.perf_counter()
+    run = subprocess.run([str(exe), "--cds-warmup"], cwd=work, timeout=120, check=False,
+                         env=dict(os.environ, JAVA_TOOL_OPTIONS="-Xshare:on"))
+    return round((time.perf_counter() - started) * 1000), run.returncode == 0 and archive.is_file()
+
+
 def measure_desktop(repo: Path, runs: int = 3) -> dict[str, object]:
     app_dir = repo.joinpath(*APP_DIR_PARTS)
     exe = app_dir / "Parchment.exe"
     if os.name != "nt" or not exe.is_file():
         return {"desktop": "skipped: needs Windows and a built package"}
     close_app(app_dir)
+    fresh = Path(tempfile.mkdtemp(prefix="parchment-perf-"))
     work = Path(tempfile.mkdtemp(prefix="parchment-perf-"))
     try:
+        # Chats without settings (an unusual first start): every chat is read before the first frame.
+        seed_chats(fresh / "parchment-portable-data")
+        warm_up(exe, fresh)
+        first_fresh = desktop_run(exe, fresh)
+        # An update as installed users get it: a previous session has written its settings and chat index, the
+        # new version brings no class archive, the installer runs the warm-up, and then the app starts.
         seed_chats(work / "parchment-portable-data")
-        # Like the installer, build the class archive with the hidden warm-up run first; the first launch after it is
-        # what an installed user sees after an update, and is reported apart from steady launches.
-        # -Xshare:on makes the JVM exit instead of silently running unshared when the base archive cannot be used
-        # (for example a classes_coh.jsa missing under -XX:+UseCompactObjectHeaders).
-        warm_started = time.perf_counter()
-        warm = subprocess.run([str(exe), "--cds-warmup"], cwd=work, timeout=60, check=False,
-                              env=dict(os.environ, JAVA_TOOL_OPTIONS="-Xshare:on"))
-        warmup_ms = round((time.perf_counter() - warm_started) * 1000)
-        app_archive = app_dir / "app" / "parchment.jsa"
-        cds_ok = warm.returncode == 0 and app_archive.is_file()
+        desktop_run(exe, work)  # the previous version's last session
+        warmup_ms, cds_ok = warm_up(exe, work)
         first = desktop_run(exe, work)
         steady = [desktop_run(exe, work) for _ in range(runs)]
     finally:
         close_app(app_dir)
+        shutil.rmtree(fresh, ignore_errors=True)
         shutil.rmtree(work, ignore_errors=True)
     return {
         "desktop_cds_warmup_ms": warmup_ms,
         "desktop_cds_archives_ok": cds_ok,
         "desktop_first_launch_title_ms": first["title_ms"],
+        "desktop_first_launch_fresh_ms": first_fresh["title_ms"],
         "desktop_window_ms": statistics.median(r["window_ms"] for r in steady),
         "desktop_title_ms": statistics.median(r["title_ms"] for r in steady),
         "desktop_idle_private_mb": statistics.median(r["idle_private_mb"] for r in steady),

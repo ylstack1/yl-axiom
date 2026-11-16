@@ -155,19 +155,20 @@ compose.desktop {
     application {
         mainClass = "io.parchment.ai.MainKt"
 
-        // Lean JVM ergonomics & automatic OS RAM page uncommit:
-        // - Starts at 32 MB and aggressively uncommits freed pages back to Windows every 10s (so idle RAM stays ~130-190 MB),
-        // - Allows up to 1024 MB (-Xmx1024m) ceiling so massive 100-step agent tool turns & multi-MB attachments NEVER hit OutOfMemoryError!
+        // Lean JVM: a 32 MB starting heap with a 1 GB ceiling for 100-step tool turns and large attachments.
+        // Serial GC, measured 2026-11-16 on the packaged app with 300 chats: idle private memory 269 -> 216 MB and
+        // start 1.59 -> 1.40 s against G1, whose own bookkeeping (50 MB) outweighed the 33 MB heap. Pauses while
+        // starting and hydrating stayed under 11 ms; a full collection only grows long near the 1 GB ceiling
+        // (about 0.4 s with ~3 million live objects). The heap shrinks after full collections (MaxHeapFreeRatio),
+        // and minimizing the window runs one (Main.kt), so a finished long turn hands its memory back.
         jvmArgs(
             "-Xms32m",
             "-Xmx1024m",
-            "-XX:+UseG1GC",
+            "-XX:+UseSerialGC",
             "-XX:+UseStringDeduplication",
             "-XX:MinHeapFreeRatio=10",
             "-XX:MaxHeapFreeRatio=20",
             "-XX:-ShrinkHeapInSteps",
-            "-XX:G1PeriodicGCInterval=8000",
-            "-XX:+G1PeriodicGCInvokesConcurrent",
             "-XX:SoftRefLRUPolicyMSPerMB=250",
             // JDK 25 (JEP 519): 8-byte object headers instead of 12, a few percent less heap for the same chats.
             // The base class archive must be dumped with the same flag (classes_coh.jsa, made after jlink below).
