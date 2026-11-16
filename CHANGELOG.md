@@ -2,6 +2,15 @@
 
 What changed in each release, newest first. From 2.1.7 on, release-please writes these entries from commit messages that follow [Conventional Commits](https://www.conventionalcommits.org/) (`feat:` and `fix:` appear here and set the next version); edit wording in its release PR before merging it.
 
+## [2.2.5](https://github.com/baros4294/parchment/compare/v2.2.4...v2.2.5) (2026-11-16)
+
+
+### Faster and lighter
+
+* **scripts:** skip reading binary asset bytes in quality checks ([001b45c](https://github.com/baros4294/parchment/commit/001b45cf7cc7f72c9b1149f6d05341ae7eaed44d))
+* **storage,network,ui:** cross-stack startup, memory, streaming, and cache efficiency ([2972db4](https://github.com/baros4294/parchment/commit/2972db4d3875e3bad6dd75868a2d970489c804f4))
+* **storage,network,ui:** optimize snapshot JSON, DTO streaming, prefix caching, and 120 Hz UI ([c4156e9](https://github.com/baros4294/parchment/commit/c4156e9a53f70f10e434cc313e9ba7cf4933cc97))
+
 ## [2.2.4](https://github.com/baros4294/parchment/compare/v2.2.3...v2.2.4) (2026-11-16)
 
 
