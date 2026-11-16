@@ -29,6 +29,7 @@ import kotlinx.coroutines.async
 import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.swing.Swing
 import java.io.File
 import kotlin.test.*
 
@@ -87,7 +88,7 @@ class AgentPermissionUiTest {
         scene.render(frameTimeNanos).use { image -> file.writeBytes(requireNotNull(image.encodeToData()).bytes) }
     }
 
-    @Test fun editorChoicesWrapAndRetainInheritanceAcrossNarrowAndLargeFonts() {
+    @Test fun editorChoicesWrapAndRetainInheritanceAcrossNarrowAndLargeFonts() = runBlocking<Unit>(Dispatchers.Swing) {
         val cases = listOf(Triple(380, 1f, "portrait"), Triple(740, 1f, "landscape"),
             Triple(320, 1.8f, "large-font"), Triple(380, 1f, "dark"))
         cases.forEach { (width, scale, name) ->
@@ -97,7 +98,7 @@ class AgentPermissionUiTest {
                 canvasBgHex = "181411", sheetBgHex = "211B16", cardBgHex = "29221C", elevatedBgHex = "352B22",
                 primaryInkHex = "F4ECD8", narrationInkHex = "D5C4A1", mutedInkHex = "B9A88A", accentHex = "E6A887"
             ) else ThemeConfig())
-            val scene = ImageComposeScene(width, 3_800, density = Density(1f, scale), coroutineContext = Dispatchers.Unconfined)
+            val scene = ImageComposeScene(width, 3_800, density = Density(1f, scale), coroutineContext = Dispatchers.Swing.immediate)
             try {
                 scene.setContent {
                     CompositionLocalProvider(LocalParchmentPalette provides palette,
@@ -123,10 +124,10 @@ class AgentPermissionUiTest {
         }
     }
 
-    @Test fun registryTogglesSavedChoicesWithoutGrantingAccessAndSearchesDescriptions() {
+    @Test fun registryTogglesSavedChoicesWithoutGrantingAccessAndSearchesDescriptions() = runBlocking<Unit>(Dispatchers.Swing) {
         val overrides = mutableStateOf(AgentPermissionOverrides())
         val defaults = AgentPermissionPolicy(toolsEnabled = false)
-        val scene = ImageComposeScene(360, 900, coroutineContext = Dispatchers.Unconfined)
+        val scene = ImageComposeScene(360, 900, coroutineContext = Dispatchers.Swing.immediate)
         try {
             scene.setContent {
                 Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(12.dp)) {
@@ -154,13 +155,13 @@ class AgentPermissionUiTest {
         } finally { scene.close() }
     }
 
-    @Test fun owningChatApprovalActionsWrapAtLargeFont() = runBlocking {
+    @Test fun owningChatApprovalActionsWrapAtLargeFont() = runBlocking<Unit>(Dispatchers.Swing) {
         val broker = ToolApprovalBroker("run", "chat", {
             ToolAccessScope(AgentPermissionPolicy(approvalMode = ToolApprovalMode.ASK_EVERY_TOOL), goalModeActive = true)
         })
         val waiting = async { broker.authorize("call", "calc_eval", """{"expression":"2+2"}""") }
         broker.requests.first { it.isNotEmpty() }
-        val scene = ImageComposeScene(320, 720, density = Density(1f, 1.8f), coroutineContext = Dispatchers.Unconfined)
+        val scene = ImageComposeScene(320, 720, density = Density(1f, 1.8f), coroutineContext = Dispatchers.Swing.immediate)
         try {
             scene.setContent { ToolApprovalPanel(broker, "Owning chat with a long project title") }
             settle(scene, 0L)
@@ -180,7 +181,7 @@ class AgentPermissionUiTest {
         } finally { scene.close(); waiting.cancelAndJoin(); broker.close() }
     }
 
-    @Test fun substantialSettingsFieldsStackAndTextFits() {
+    @Test fun substantialSettingsFieldsStackAndTextFits() = runBlocking<Unit>(Dispatchers.Swing) {
         val profile = ProviderProfile("fixture", "Fixture", ProviderProtocol.OPENAI_RESPONSES, defaultModel = "explicit-model")
         val assistant = AssistantAgent("assistant", "Fixture assistant")
         val session = ChatSession("chat", "Fixture", 1L, 1L, profile.id)
@@ -192,7 +193,7 @@ class AgentPermissionUiTest {
         listOf(320 to 1.8f, 740 to 1f).forEach { (width, scale) ->
             listOf("provider", "assistant", "fonts").forEach { page ->
                 val selectedTheme = mutableStateOf(ThemeConfig())
-                val scene = ImageComposeScene(width, 3_800, density = Density(1f, scale), coroutineContext = Dispatchers.Unconfined)
+                val scene = ImageComposeScene(width, 3_800, density = Density(1f, scale), coroutineContext = Dispatchers.Swing.immediate)
                 try {
                     scene.setContent {
                         CompositionLocalProvider(LocalParchmentWindowSize provides ParchmentWindowSize(width.dp, 720.dp)) {
@@ -253,13 +254,13 @@ class AgentPermissionUiTest {
         }
     }
 
-    @Test fun providerChoicesWrapAndPreserveExplicitSettings() {
+    @Test fun providerChoicesWrapAndPreserveExplicitSettings() = runBlocking<Unit>(Dispatchers.Swing) {
         val labels = ProviderProtocol.entries.map { it.displayName } + CUSTOM_DIALECTS.map(::customDialectLabel) +
             AuthHeaderMode.entries.map { it.label }
         listOf(320 to 1.8f, 740 to 1f).forEach { (width, scale) ->
             val profile = mutableStateOf(ProviderProfile("fixture", "Fixture", ProviderProtocol.CUSTOM,
                 customDialect = CUSTOM_DIALECTS.first(), baseUrl = "https://example.invalid/exact-endpoint"))
-            val scene = ImageComposeScene(width, 3_800, density = Density(1f, scale), coroutineContext = Dispatchers.Unconfined)
+            val scene = ImageComposeScene(width, 3_800, density = Density(1f, scale), coroutineContext = Dispatchers.Swing.immediate)
             try {
                 scene.setContent {
                     CompositionLocalProvider(LocalParchmentWindowSize provides ParchmentWindowSize(width.dp, 720.dp)) {
@@ -292,7 +293,7 @@ class AgentPermissionUiTest {
         }
     }
 
-    @Test fun sharedSettingsSwitchesHaveOneLabelledTargetAndExposeState() {
+    @Test fun sharedSettingsSwitchesHaveOneLabelledTargetAndExposeState() = runBlocking<Unit>(Dispatchers.Swing) {
         listOf(320 to 1.8f, 740 to 1f).forEach { (width, scale) ->
             val rowState = mutableStateOf(false)
             val standaloneState = mutableStateOf(false)
@@ -300,7 +301,7 @@ class AgentPermissionUiTest {
             var standaloneChanges = 0
             val title = "Auto-fetch models when the saved provider model list is empty"
             val label = "Enable provider fixture"
-            val scene = ImageComposeScene(width, 720, density = Density(1f, scale), coroutineContext = Dispatchers.Unconfined)
+            val scene = ImageComposeScene(width, 720, density = Density(1f, scale), coroutineContext = Dispatchers.Swing.immediate)
             try {
                 scene.setContent {
                     CompositionLocalProvider(LocalParchmentWindowSize provides ParchmentWindowSize(width.dp, 720.dp)) {

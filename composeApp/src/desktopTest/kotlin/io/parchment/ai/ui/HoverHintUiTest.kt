@@ -13,6 +13,9 @@ import androidx.compose.ui.input.pointer.PointerEventType
 import androidx.compose.ui.input.pointer.PointerType
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.swing.Swing
 import kotlin.test.Test
 import kotlin.test.assertEquals
 
@@ -20,18 +23,18 @@ import kotlin.test.assertEquals
 class HoverHintUiTest {
     private var frame = 0L
 
-    private fun pump(scene: ImageComposeScene, millis: Long = 800) {
+    private suspend fun pump(scene: ImageComposeScene, millis: Long = 800) {
         val end = System.currentTimeMillis() + millis
         while (System.currentTimeMillis() < end) {
             Snapshot.sendApplyNotifications()
             frame += 16_000_000L
             scene.render(frame).close()
-            Thread.sleep(16)
+            delay(16)
         }
     }
 
-    private fun withButton(windowWidth: Int, check: (ImageComposeScene) -> Unit) {
-        val scene = ImageComposeScene(600, 400, coroutineContext = Dispatchers.Unconfined)
+    private fun withButton(windowWidth: Int, check: suspend (ImageComposeScene) -> Unit) = runBlocking<Unit>(Dispatchers.Swing) {
+        val scene = ImageComposeScene(600, 400, coroutineContext = Dispatchers.Swing.immediate)
         try {
             scene.setContent {
                 CompositionLocalProvider(LocalParchmentWindowSize provides ParchmentWindowSize(windowWidth.dp, 400.dp)) {

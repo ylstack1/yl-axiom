@@ -12,6 +12,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.swing.Swing
 import java.io.File
 import kotlin.test.Test
 import kotlin.test.assertTrue
@@ -30,9 +32,9 @@ class FrameTimeProbeTest {
 
     private fun percentile(sorted: List<Long>, p: Double) = sorted[((sorted.size - 1) * p).toInt()]
 
-    @Test fun streamingReplyFrameTimes() {
+    @Test fun streamingReplyFrameTimes() = runBlocking<Unit>(Dispatchers.Swing) {
         val text = mutableStateOf("")
-        val scene = ImageComposeScene(760, 860, density = Density(1f), coroutineContext = Dispatchers.Unconfined)
+        val scene = ImageComposeScene(760, 860, density = Density(1f), coroutineContext = Dispatchers.Swing.immediate)
         val frames = mutableListOf<Long>()
         try {
             scene.setContent {

@@ -69,6 +69,9 @@ import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.swing.Swing
 
 @OptIn(ExperimentalComposeUiApi::class, InternalComposeUiApi::class)
 class UiBehaviorRegressionTest {
@@ -106,9 +109,9 @@ class UiBehaviorRegressionTest {
         width: Int = 1040,
         height: Int = 780,
         content: @androidx.compose.runtime.Composable ColumnScope.() -> Unit,
-        check: (ImageComposeScene) -> Unit
-    ) {
-        val scene = ImageComposeScene(width, height, density = Density(1f), coroutineContext = Dispatchers.Unconfined)
+        check: suspend (ImageComposeScene) -> Unit
+    ) = runBlocking<Unit>(Dispatchers.Swing) {
+        val scene = ImageComposeScene(width, height, density = Density(1f), coroutineContext = Dispatchers.Swing.immediate)
         try {
             scene.setContent {
                 CompositionLocalProvider(LocalParchmentWindowSize provides ParchmentWindowSize(width.dp, height.dp)) {
@@ -209,7 +212,7 @@ class UiBehaviorRegressionTest {
                         finished = true
                         return@repeat
                     }
-                    Thread.sleep(15)
+                    delay(15)
                 }
                 assertTrue(finished, "Test button must return to enabled '$testLabel' after onSuccess; notices=$notices")
                 val restoredBtn = nodes(scene).single { text(it) == testLabel }
@@ -221,7 +224,7 @@ class UiBehaviorRegressionTest {
                     frameNanos += 25_000_000L
                     settle(scene, frameNanos)
                     if (notices.size >= 2 && requestCount.get() >= 2) return@repeat
-                    Thread.sleep(15)
+                    delay(15)
                 }
                 assertEquals(2, requestCount.get(), "Second Test click should trigger another request")
             }
@@ -1262,8 +1265,8 @@ class UiBehaviorRegressionTest {
             theme: ThemeConfig,
             content: @androidx.compose.runtime.Composable () -> Unit,
             inspect: (ImageComposeScene, java.awt.image.BufferedImage) -> Unit
-        ) {
-            val scene = ImageComposeScene(width, height, density = Density(1f), coroutineContext = Dispatchers.Unconfined)
+        ) = runBlocking<Unit>(Dispatchers.Swing) {
+            val scene = ImageComposeScene(width, height, density = Density(1f), coroutineContext = Dispatchers.Swing.immediate)
             try {
                 scene.setContent {
                     CompositionLocalProvider(LocalParchmentWindowSize provides ParchmentWindowSize(width.dp, height.dp)) {
