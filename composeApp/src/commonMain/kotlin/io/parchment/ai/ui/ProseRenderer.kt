@@ -61,6 +61,25 @@ internal sealed class ProseBlock {
  * Keeps completed paragraphs/code-fences/tables cached in `stableBlocks` and only parses the active
  * trailing <600-character tail on each frame, turning $O(N)$ per-frame parsing into $O(1)$.
  */
+/**
+ * CRLF and lone CR become LF so fences, tables and headings parse the same on Windows-style replies; without it
+ * a `\r` left at each line end keeps a fence open and disables the cache's fast paths. A trailing CR is dropped
+ * until its LF arrives, so the result only ever grows by appending while a reply streams.
+ */
+internal fun normalizeLineEndings(raw: String): String {
+    if (raw.indexOf('\r') == -1) return raw
+    val out = StringBuilder(raw.length)
+    for (i in raw.indices) {
+        val c = raw[i]
+        if (c != '\r') {
+            out.append(c)
+        } else if (i + 1 < raw.length && raw[i + 1] != '\n') {
+            out.append('\n')
+        }
+    }
+    return out.toString()
+}
+
 internal class IncrementalProseBlockCache {
     private var lastEnableMath: Boolean = true
     private var stablePrefixLen: Int = 0
@@ -124,7 +143,8 @@ internal class IncrementalProseBlockCache {
         }
     }
 
-    fun parseIncremental(raw: String, enableMath: Boolean = true): List<ProseBlock> {
+    fun parseIncremental(text: String, enableMath: Boolean = true): List<ProseBlock> {
+        val raw = normalizeLineEndings(text)
         if (raw.isBlank()) return emptyList()
         if (raw == lastFullText && enableMath == lastEnableMath) {
             return lastFullBlocks
@@ -668,6 +688,7 @@ fun LiteraryProseRenderer(
                                     SepiaDivider()
                                 }
                                 block.rows.forEachIndexed { rIdx, rowCells ->
+                                    key(rIdx) {
                                     Row(
                                         modifier = Modifier
                                             .fillMaxWidth()
@@ -692,6 +713,7 @@ fun LiteraryProseRenderer(
                                     }
                                     if (rIdx < block.rows.lastIndex) {
                                         SepiaDivider()
+                                    }
                                     }
                                 }
                             }

@@ -148,12 +148,20 @@ internal class GenerationStreamAccumulator(
 
     suspend fun attachSubagentRunner() {
         currentCoroutineContext()[AgentToolRunContext]?.broker?.takeIf { usagePurpose != SUBAGENT_PURPOSE }?.let { broker ->
+            // Parallel helpers call this from their own coroutines: the ledger read and the counter are locked, and
+            // usage is applied and emitted on the flow's coroutine (onFlowCoroutine), the only place emit() is legal.
             broker.subagentRunner = { task, onProgress ->
-                val spent = spendBeforeRunUsd + spendTowardLimit(usageLedger.snapshots()) - ledgerSpendAtStart
-                engine.runSubagent(profile, session, broker, ++helperCount, task, spendLimitUsd, spent, onProgress) { record ->
-                    usageLedger.adopt(record)
-                    latestUsageMetrics = usageLedger.metrics()
-                    emit(StreamUpdate.UsageUpdated(record, latestUsageMetrics))
+                val (number, spent) = synchronized(usageLedger) {
+                    ++helperCount to spendBeforeRunUsd + spendTowardLimit(usageLedger.snapshots()) - ledgerSpendAtStart
+                }
+                engine.runSubagent(profile, session, broker, number, task, spendLimitUsd, spent, onProgress) { record ->
+                    onFlowCoroutine {
+                        synchronized(usageLedger) {
+                            usageLedger.adopt(record)
+                            latestUsageMetrics = usageLedger.metrics()
+                        }
+                        emit(StreamUpdate.UsageUpdated(record, latestUsageMetrics))
+                    }
                 }
             }
         }

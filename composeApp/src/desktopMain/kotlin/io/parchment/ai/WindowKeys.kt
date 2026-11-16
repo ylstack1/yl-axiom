@@ -22,12 +22,9 @@ internal fun handleUnconsumedWindowKey(event: KeyEvent, shortcuts: AppShortcutDi
         (((event.isCtrlPressed || event.isMetaPressed) && event.key == Key.V) ||
             (event.isShiftPressed && event.key == Key.Insert))
     if (isPasteShortcut) {
-        val pastedFiles = PlatformPickers.readClipboardFiles()
-        if (pastedFiles.isNotEmpty()) {
+        return PlatformPickers.pasteClipboardMediaAsync { pastedFiles ->
             PlatformPickers.filesDroppedCallback?.invoke(pastedFiles)
-            return true
         }
-        return false
     }
     return shortcuts.dispatch(event)
 }

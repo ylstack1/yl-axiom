@@ -21,8 +21,12 @@ import java.util.concurrent.ConcurrentHashMap
 import javax.imageio.ImageIO
 import javax.swing.ImageIcon
 import javax.swing.JFileChooser
+import io.parchment.ai.ui.appProcessScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+
+private val RAW_IMAGE_MIMES = setOf("image/gif", "image/webp", "image/png", "image/jpeg")
 
 actual object PlatformPickers {
     private val fontCache = ConcurrentHashMap<String, FontFamily>()
@@ -243,8 +247,7 @@ actual object PlatformPickers {
         // 2. Check for raw binary image InputStream flavors (preserves animated GIFs & WebP from browsers)
         val rawImageFlavor = contents.transferDataFlavors.firstOrNull { flavor ->
             val mime = "${flavor.primaryType}/${flavor.subType}".lowercase()
-            (mime == "image/gif" || mime == "image/webp" || mime == "image/png" || mime == "image/jpeg") &&
-                InputStream::class.java.isAssignableFrom(flavor.representationClass)
+            mime in RAW_IMAGE_MIMES && InputStream::class.java.isAssignableFrom(flavor.representationClass)
         }
         if (rawImageFlavor != null) {
             val mime = "${rawImageFlavor.primaryType}/${rawImageFlavor.subType}".lowercase()
@@ -304,6 +307,23 @@ actual object PlatformPickers {
         val contents = clipboard.getContents(null) ?: return@runCatching emptyList()
         extractTransferableFiles(contents)
     }.getOrDefault(emptyList())
+
+    actual fun pasteClipboardMediaAsync(onFiles: (List<PickedBinaryFile>) -> Unit): Boolean {
+        // Listing formats does not copy the clipboard data; getContents() reads every format up front.
+        val flavors = runCatching { Toolkit.getDefaultToolkit().systemClipboard.availableDataFlavors }.getOrNull()
+        if (flavors == null || flavors.none(::isMediaFlavor)) return false
+        appProcessScope.launch {
+            val files = withContext(Dispatchers.IO) { readClipboardFiles() }
+            if (files.isNotEmpty()) onFiles(files)
+        }
+        return true
+    }
+
+    private fun isMediaFlavor(flavor: DataFlavor): Boolean {
+        if (flavor == DataFlavor.javaFileListFlavor || flavor == DataFlavor.imageFlavor) return true
+        val mime = "${flavor.primaryType}/${flavor.subType}".lowercase()
+        return mime in RAW_IMAGE_MIMES && InputStream::class.java.isAssignableFrom(flavor.representationClass)
+    }
 
     actual fun registerFileDropCallbacks(
         onDragHover: (Boolean) -> Unit,

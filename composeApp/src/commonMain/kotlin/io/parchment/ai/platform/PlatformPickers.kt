@@ -186,6 +186,13 @@ expect object PlatformPickers {
 
     // Clipboard Image/Video/File Paste & Native Drag-and-Drop Support
     fun readClipboardFiles(): List<PickedBinaryFile>
+
+    /**
+     * Paste without blocking the UI: a cheap format check decides whether the clipboard holds files or an image;
+     * if so the (possibly 50 MiB) read and PNG encode run on [kotlinx.coroutines.Dispatchers.IO] and [onFiles]
+     * receives the result on the main thread. Returns false for plain text so the text field pastes it.
+     */
+    fun pasteClipboardMediaAsync(onFiles: (List<PickedBinaryFile>) -> Unit): Boolean
     fun registerFileDropCallbacks(
         onDragHover: (Boolean) -> Unit,
         onFilesDropped: (List<PickedBinaryFile>) -> Unit

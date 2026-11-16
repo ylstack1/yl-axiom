@@ -3,6 +3,9 @@ package io.parchment.ai.platform
 import androidx.compose.ui.graphics.ImageBitmap
 import io.parchment.ai.model.StoredAppFileItem
 
+/** A chat file's identity for the stub index: any write changes its size or modification time. */
+data class ChatFileStamp(val length: Long, val lastModifiedMs: Long)
+
 expect object PlatformStorage {
     // Local persistent storage (split into parchment-settings.json + per-chat files in chats/)
     fun getAppStorageDirectoryPath(): String
@@ -11,8 +14,18 @@ expect object PlatformStorage {
     fun saveAppStateJson(json: String)
     fun loadChatSessionJsonById(sessionId: String): String?
     fun loadAllChatSessionJsons(): List<String>
-    /** The same chats one at a time, so start-up never holds every chat's text at once. */
-    fun chatSessionJsons(): Sequence<String>
+    /**
+     * The same chats one at a time, so start-up never holds every chat's text at once. Folders named in
+     * [skipFolders] (see [chatFolderName]) are not read: their stubs came from the chat index.
+     */
+    fun chatSessionJsons(skipFolders: Set<String> = emptySet()): Sequence<String>
+    /** Size and modification time of each chat folder's `chat.json`, by folder name; chats awaiting migration are left out. */
+    fun chatFileStamps(): Map<String, ChatFileStamp>
+    /** The folder under `chats/` that holds [sessionId]. */
+    fun chatFolderName(sessionId: String): String
+    /** `chat-index.json`: sidebar stubs cached by chat file stamp. A cache only; `chats/<id>/chat.json` is the truth. */
+    fun loadChatIndexJson(): String?
+    fun saveChatIndexJson(json: String)
     fun saveChatSessionJson(sessionId: String, json: String)
     fun deleteChatSessionFile(sessionId: String)
     fun wipeAllLocalData(): Boolean

@@ -62,6 +62,7 @@ import io.parchment.ai.model.keepsProviderState
 import io.parchment.ai.network.AiProviderEngine
 import io.parchment.ai.network.ModelsDevClient
 import io.parchment.ai.network.fetchAvailableModels
+import io.parchment.ai.network.stripInvisibleCredentialChars
 import io.parchment.ai.platform.PlatformRuntime
 import kotlinx.coroutines.launch
 
@@ -642,7 +643,7 @@ internal fun ProvidersSubpage(
                     SepiaTextField(
                         value = activeProfile.apiKey,
                         onValueChange = { newVal ->
-                            val clean = newVal.trim()
+                            val clean = stripInvisibleCredentialChars(newVal)
                             onUpdateProfileById(activeProfile.id) { it.copy(apiKey = clean) }
                         },
                         placeholder = Strings.pasteApiKeyToggleVisibility,

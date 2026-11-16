@@ -59,8 +59,15 @@ private val DISALLOWED_EXTRA_BODY_KEYS = setOf(
     "functioncall"
 )
 
-private fun sanitizeHeaderToken(raw: String): String =
-    raw.trim().replace("\r", "").replace("\n", "")
+/**
+ * Removes characters a paste can smuggle into a credential or header: zero-width spaces and joiners, BOMs
+ * and other format characters, CR/LF and other controls, then outer whitespace (including no-break spaces).
+ * They are invisible in the key field yet make the provider reject the request.
+ */
+internal fun stripInvisibleCredentialChars(raw: String): String =
+    raw.filterNot { it.category == CharCategory.FORMAT || it.category == CharCategory.CONTROL }.trim()
+
+private fun sanitizeHeaderToken(raw: String): String = stripInvisibleCredentialChars(raw)
 
 /** Resolves the concrete wire dialect for a profile (Custom delegates to its explicit [ProviderProfile.customDialect]). */
 internal fun resolveProviderWireProtocol(profile: ProviderProfile): ProviderProtocol =

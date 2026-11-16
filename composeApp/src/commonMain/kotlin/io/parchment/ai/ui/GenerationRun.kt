@@ -28,7 +28,9 @@ import io.parchment.ai.platform.PlatformRuntime
 import io.parchment.ai.platform.PlatformStorage
 import io.parchment.ai.platform.PlatformVoice
 import io.parchment.ai.protocol.O200kTokenizer
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -267,6 +269,8 @@ internal fun GenerationHost.beginGeneration(
             }
         }
 
+        // Wakes the pacer when the stream delivers anything; conflated, so a burst of updates is one wake.
+        val pacerWake = Channel<Unit>(Channel.CONFLATED)
         // Reveals text in step with the display's frame clock, carrying fractional characters between frames,
         // so text and thoughts appear smoothly instead of in word-sized jumps.
         val pacerJob = launch {
@@ -320,20 +324,31 @@ internal fun GenerationHost.beginGeneration(
             // Low-memory devices publish every other frame (about 30 a second): each publish redraws the chat.
             val framesPerPublish = if (PlatformRuntime.isLowMemoryDevice) 2 else 1
             while (!networkDone || displayedContentLen < networkContentTarget.length || displayedThinkingLen < networkThinkingTarget.length) {
-                var frameNanos = processState.nextFrameNanos()
-                for (skipped in 1 until framesPerPublish) {
-                    if (frameNanos == null) break
-                    frameNanos = processState.nextFrameNanos() ?: frameNanos
-                }
-
-                val dtMs = if (frameNanos != null) {
-                    val delta = if (lastFrameNanos > 0L) ((frameNanos - lastFrameNanos) / 1_000_000L).coerceIn(2L, 32L) else 8L
-                    lastFrameNanos = frameNanos
-                    delta
-                } else {
-                    delay(if (processState.frameClock.value == null && !networkDone) 100L else 8L)
+                val caughtUp = displayedContentLen >= networkContentTarget.length &&
+                    displayedThinkingLen >= networkThinkingTarget.length &&
+                    displayedStepThinkingLen >= currentStepThinkingTarget.length &&
+                    displayedContentLen == cachedVisibleContLen
+                val dtMs = if (caughtUp && !networkDone) {
+                    // Nothing left to reveal (a tool or the server is working): sleep until the stream delivers more,
+                    // waking every 100 ms only for the stopwatch, instead of ticking the frame clock at the display rate.
+                    withTimeoutOrNull(100L) { pacerWake.receive() }
                     lastFrameNanos = 0L
                     8L
+                } else {
+                    var frameNanos = processState.nextFrameNanos()
+                    for (skipped in 1 until framesPerPublish) {
+                        if (frameNanos == null) break
+                        frameNanos = processState.nextFrameNanos() ?: frameNanos
+                    }
+                    if (frameNanos != null) {
+                        val delta = if (lastFrameNanos > 0L) ((frameNanos - lastFrameNanos) / 1_000_000L).coerceIn(2L, 32L) else 8L
+                        lastFrameNanos = frameNanos
+                        delta
+                    } else {
+                        delay(if (processState.frameClock.value == null && !networkDone) 100L else 8L)
+                        lastFrameNanos = 0L
+                        8L
+                    }
                 }
                 var changed = false
                 val now = activity.elapsedMs
@@ -481,22 +496,29 @@ internal fun GenerationHost.beginGeneration(
 
             class MidStreamAutoCompactSignal(val usagePct: Long) : Exception(Strings.autoCompactTriggeredAt(usagePct))
 
-            fun computeBaseContextTokens(): Int {
-                return O200kTokenizer.computeContextWindowBreakdown(
-                    session = finalSessionForCall.copy(messages = finalHistoryForCall),
-                    assistant = assistantSnap,
-                    profile = effectiveProfileForApi,
-                    draftPrompt = "",
-                    draftPrefill = "",
-                    pendingAttachments = emptyList(),
-                    goalModeActive = latestGoalTracker != null,
-                    globalWorldBook = appState.globalWorldBook
-                ).totalUsedTokens
+            // Token counting runs regexes over the whole chat, so it happens on Dispatchers.Default from inputs
+            // captured here; the live StringBuilders are only ever touched on this coroutine.
+            suspend fun computeBaseContextTokens(): Int {
+                val session = finalSessionForCall.copy(messages = finalHistoryForCall)
+                val goalModeActive = latestGoalTracker != null
+                val worldBook = appState.globalWorldBook
+                return withContext(Dispatchers.Default) {
+                    O200kTokenizer.computeContextWindowBreakdown(
+                        session = session,
+                        assistant = assistantSnap,
+                        profile = effectiveProfileForApi,
+                        draftPrompt = "",
+                        draftPrefill = "",
+                        pendingAttachments = emptyList(),
+                        goalModeActive = goalModeActive,
+                        globalWorldBook = worldBook
+                    ).totalUsedTokens
+                }
             }
 
             var cachedBaseTokens = computeBaseContextTokens()
 
-            fun computeLiveTurnAndContextTokens(forceExact: Boolean = false): Int {
+            suspend fun computeLiveTurnAndContextTokens(forceExact: Boolean = false): Int {
                 if (!forceExact) {
                     // Fast O(1) upper-bound check (~3 chars/token) so 1.5s mid-stream checks skip regex tokenization when well below threshold
                     val approxToolsChars = accumulatedTools.sumOf { 24 + it.name.length + it.argumentsJson.length + it.resultText.length }
@@ -505,24 +527,34 @@ internal fun GenerationHost.beginGeneration(
                         return approxUpperBound
                     }
                 }
-                val liveAssistantTokens = O200kTokenizer.countTokens(networkContentTarget.toString()) +
-                    O200kTokenizer.countTokens(networkThinkingTarget.toString()) +
-                    accumulatedTools.sumOf { tc ->
-                        6 + O200kTokenizer.countTokens(tc.name) +
-                            O200kTokenizer.countTokens(tc.argumentsJson) +
-                            O200kTokenizer.countTokens(tc.resultText)
-                    }
+                val content = networkContentTarget.toString()
+                val thinking = networkThinkingTarget.toString()
+                val tools = accumulatedTools.toList()
+                val liveAssistantTokens = withContext(Dispatchers.Default) {
+                    O200kTokenizer.countTokens(content) + O200kTokenizer.countTokens(thinking) +
+                        tools.sumOf { tc ->
+                            6 + O200kTokenizer.countTokens(tc.name) +
+                                O200kTokenizer.countTokens(tc.argumentsJson) +
+                                O200kTokenizer.countTokens(tc.resultText)
+                        }
+                }
                 return cachedBaseTokens + liveAssistantTokens
             }
 
             suspend fun executeAutoCompactionInPlace(usagePct: Long, isMidStream: Boolean): Boolean {
-                val plan = O200kTokenizer.prepareCompactionPlan(
-                    existingStorySummary = finalSessionForCall.storySummary,
-                    historyNodes = finalHistoryForCall,
-                    keepRecentTurnsCount = 2,
-                    liveTargetTools = accumulatedTools.toList(),
-                    liveTargetThinking = networkThinkingTarget.toString()
-                )
+                val summarySnap = finalSessionForCall.storySummary
+                val historySnap = finalHistoryForCall
+                val liveToolsSnap = accumulatedTools.toList()
+                val liveThinkingSnap = networkThinkingTarget.toString()
+                val plan = withContext(Dispatchers.Default) {
+                    O200kTokenizer.prepareCompactionPlan(
+                        existingStorySummary = summarySnap,
+                        historyNodes = historySnap,
+                        keepRecentTurnsCount = 2,
+                        liveTargetTools = liveToolsSnap,
+                        liveTargetThinking = liveThinkingSnap
+                    )
+                }
                 if (!plan.didCompactAnything) return false
 
                 val statusPrefix = if (isMidStream) {
@@ -607,7 +639,7 @@ internal fun GenerationHost.beginGeneration(
                 return true
             }
 
-            fun checkMidStreamAutoCompactAndThrowIfNeeded() {
+            suspend fun checkMidStreamAutoCompactAndThrowIfNeeded() {
                 if (!appState.preferences.autoCompactWhenNearContextLimit || effectiveCtxLimit <= 0) return
                 if (accumulatedTools.any { it.isRunning }) return
                 val liveTokens = computeLiveTurnAndContextTokens()
@@ -662,6 +694,8 @@ internal fun GenerationHost.beginGeneration(
                         initialApiUsageRecords = accumulatedUsageRecords,
                         initialTokenMetrics = latestTokenMetrics
                     ).collect { update ->
+                        // The pacer runs on this dispatcher too, so it reads the targets after this update is applied.
+                        pacerWake.trySend(Unit)
                         when (update) {
                             is StreamUpdate.Status -> {
                                 if (update.interactionId.isNotBlank()) {
@@ -841,6 +875,7 @@ internal fun GenerationHost.beginGeneration(
                                     latestGoalTracker = update.goalTracker
                                 }
                                 networkDone = true
+                                pacerWake.trySend(Unit)
                                 pacerJob.join()
                                 flushCheckpointToDisk(isFinal = true) { v ->
                                     v.copy(

@@ -265,6 +265,26 @@ internal fun MessageTurnActionFooter(
     }
 }
 
+/**
+ * Reasoning tokens for the footer: a constant-time estimate while streaming or until the exact count is ready,
+ * then the exact o200k count from the shared per-variant cache, computed on [Dispatchers.Default] because a long
+ * reasoning summary takes a regex pass the UI thread should never run.
+ */
+@Composable
+private fun rememberThinkingTokens(variant: MessageVariant, reportedReasoningTokens: Long): Long {
+    val thinking = variant.thinkingSummary
+    val bucketKey = if (variant.isStreaming) thinking.length / 64 else thinking.length
+    val estimate = remember(bucketKey, variant.isStreaming, reportedReasoningTokens) {
+        if (thinking.isBlank()) reportedReasoningTokens else O200kTokenizer.estimateTokensFast(thinking).toLong()
+    }
+    val exact by produceState<Long?>(null, variant.id, thinking, variant.isStreaming) {
+        value = if (variant.isStreaming || thinking.isBlank()) null else withContext(Dispatchers.Default) {
+            O200kTokenizer.completedVariantTokenBreakdown(variant).thinkingTokens.toLong()
+        }
+    }
+    return exact ?: estimate
+}
+
 @Composable
 private fun rememberVariantProseTokens(
     role: MessageRole,
@@ -314,18 +334,7 @@ private fun AssistantTurnUsageStats(
             O200kTokenizer.countToolCallTokens(tc, isLiveOverride = activeVar.isStreaming)
         }
     }
-    val thinkTokenKey = if (activeVar.isStreaming) activeVar.thinkingSummary.length / 64 else activeVar.thinkingSummary.hashCode()
-    val thinkTok = remember(thinkTokenKey, activeVar.isStreaming, m.reasoningTokens) {
-        if (activeVar.thinkingSummary.isNotBlank()) {
-            if (activeVar.isStreaming) {
-                O200kTokenizer.estimateTokensFast(activeVar.thinkingSummary).toLong()
-            } else {
-                O200kTokenizer.countTokens(activeVar.thinkingSummary).toLong()
-            }
-        } else {
-            m.reasoningTokens
-        }
-    }
+    val thinkTok = rememberThinkingTokens(activeVar, m.reasoningTokens)
     val costVal = if (m.reportedRequests > 0 || m.estimatedCostUsd > 0.0) {
         m.estimatedCostUsd
     } else {

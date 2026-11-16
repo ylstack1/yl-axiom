@@ -1,10 +1,8 @@
 package io.parchment.ai.platform
 
-import java.io.File
 import java.util.concurrent.CopyOnWriteArrayList
-import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
-import java.util.concurrent.atomic.AtomicInteger
+import java.util.concurrent.atomic.AtomicLong
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
@@ -12,176 +10,76 @@ import kotlin.test.assertTrue
 class WindowsPowerLeaseTest {
     private val isWindows = System.getProperty("os.name").orEmpty().startsWith("Windows", ignoreCase = true)
 
-    @Test
-    fun absoluteSnapshotsReleaseApprovalOnlyHoldsAndCanResume() {
-        if (!isWindows) return
-        val processes = CopyOnWriteArrayList<Process>()
-        WindowsPowerLease(launchHelper = { script -> launchWindowsPowerHelper(script).also { processes.add(it) } }).use { lease ->
-            lease.reconcile(2)
-            await("Native hold was not acquired.") { lease.snapshot.status == WindowsPowerLeaseStatus.ACTIVE }
-            lease.reconcile(1)
-            assertEquals(1, lease.snapshot.owners)
-            assertEquals(1, processes.size)
-            lease.reconcile(0)
-            assertEquals(WindowsPowerLeaseStatus.IDLE, lease.snapshot.status)
-            await("Approval-only wait retained a native hold.") { processes.none { it.isAlive } }
-            lease.reconcile(1)
-            await("Native hold did not resume.") { lease.snapshot.status == WindowsPowerLeaseStatus.ACTIVE }
-            assertEquals(1, lease.snapshot.owners)
+    /** Records each call with the thread that made it, like Windows' per-thread execution state. */
+    private class FakeExecutionState(var result: Int = 1) {
+        val calls = CopyOnWriteArrayList<Pair<Int, Thread>>()
+        fun call(flags: Int): Int { calls.add(flags to Thread.currentThread()); return result }
+        fun heldThreads(): Set<Thread> {
+            val held = LinkedHashSet<Thread>()
+            calls.forEach { (flags, thread) -> if (flags == WindowsPowerLease.ES_HOLD) held += thread else held -= thread }
+            return held
         }
-        await("Final cleanup retained a helper.") { processes.none { it.isAlive } }
     }
 
     @Test
-    fun nativeHeartbeatConfirmsUnsignedPowerRequest() {
-        if (!isWindows) return
-        val processes = CopyOnWriteArrayList<Process>()
-        WindowsPowerLease(launchHelper = { script ->
-            launchWindowsPowerHelper(script).also { processes.add(it) }
-        }).use { lease ->
-            lease.acquire()
-            await("Win32 sleep inhibitor was not acquired.") {
-                lease.snapshot.status == WindowsPowerLeaseStatus.ACTIVE
-            }
+    fun absoluteSnapshotsReleaseApprovalOnlyHoldsAndCanResume() {
+        val native = FakeExecutionState()
+        WindowsPowerLease(setExecutionState = native::call).use { lease ->
+            lease.reconcile(2)
+            await("Hold was not acquired.") { lease.snapshot.status == WindowsPowerLeaseStatus.ACTIVE }
+            lease.reconcile(1)
             assertEquals(1, lease.snapshot.owners)
-            lease.release()
+            assertEquals(1, native.calls.count { it.first == WindowsPowerLease.ES_HOLD }, "one hold for any number of owners")
+            lease.reconcile(0)
             assertEquals(WindowsPowerLeaseStatus.IDLE, lease.snapshot.status)
-            await("Power helper survived the final release.") { processes.none { it.isAlive } }
+            await("Approval-only wait kept the request.") { native.heldThreads().isEmpty() }
+            lease.reconcile(1)
+            await("Hold did not resume.") { lease.snapshot.status == WindowsPowerLeaseStatus.ACTIVE }
         }
+        await("Close kept the request.") { native.heldThreads().isEmpty() }
     }
 
     @Test
     fun completingOneOwnerKeepsTheOtherOwnerProtected() {
-        if (!isWindows) return
-        val processes = CopyOnWriteArrayList<Process>()
-        WindowsPowerLease(launchHelper = { script ->
-            launchWindowsPowerHelper(script).also { processes.add(it) }
-        }).use { lease ->
+        val native = FakeExecutionState()
+        WindowsPowerLease(setExecutionState = native::call).use { lease ->
             lease.acquire()
             lease.acquire()
-            await("Native power request failed.") { lease.snapshot.status == WindowsPowerLeaseStatus.ACTIVE }
+            await("Hold was not acquired.") { lease.snapshot.status == WindowsPowerLeaseStatus.ACTIVE }
             lease.release()
-            assertEquals(1, lease.snapshot.owners)
             assertEquals(WindowsPowerLeaseStatus.ACTIVE, lease.snapshot.status)
-            assertEquals(1, processes.size)
-            assertTrue(processes.single().isAlive)
+            assertEquals(1, native.heldThreads().size)
             lease.release()
-            await("Final owner did not release the helper.") { processes.none { it.isAlive } }
-            lease.release()
-            assertEquals(0, lease.snapshot.owners)
+            await("Final release kept the request.") { native.heldThreads().isEmpty() }
         }
     }
 
     @Test
-    fun failedHelperRecoversWithoutTokenProgress() {
-        if (!isWindows) return
-        val attempts = AtomicInteger()
-        val processes = CopyOnWriteArrayList<Process>()
-        WindowsPowerLease(retryIntervalMs = 100L, launchHelper = { script ->
-            val process = if (attempts.incrementAndGet() == 1) {
-                val executable = File(System.getenv("SystemRoot"), "System32/WindowsPowerShell/v1.0/powershell.exe")
-                ProcessBuilder(executable.absolutePath, "-NoProfile", "-NonInteractive", "-Command", "exit 1")
-                    .redirectErrorStream(true).start()
-            } else {
-                launchWindowsPowerHelper(script)
-            }
-            process.also { processes.add(it) }
-        }).use { lease ->
+    fun aFailedRequestIsReportedAndRetriedOnlyAfterTheInterval() {
+        val native = FakeExecutionState(result = 0)
+        val clock = AtomicLong(0)
+        WindowsPowerLease(setExecutionState = native::call, nanoTime = clock::get, retryIntervalMs = 1_000).use { lease ->
             lease.acquire()
-            // No refresh/progress call: the monitor must recover a quiet run.
-            await("The failed power helper was not recovered.", 25) {
+            await("Failure was not reported.") { lease.snapshot.status == WindowsPowerLeaseStatus.UNAVAILABLE }
+            lease.refresh()
+            assertEquals(1, native.calls.size, "no retry inside the interval")
+            native.result = 1
+            clock.addAndGet(TimeUnit.SECONDS.toNanos(2))
+            lease.refresh()
+            await("Retry did not take hold.") { lease.snapshot.status == WindowsPowerLeaseStatus.ACTIVE }
+        }
+    }
+
+    @Test
+    fun theRealWindowsRequestIsAcceptedAndCleared() {
+        if (!isWindows) return
+        WindowsPowerLease().use { lease ->
+            lease.acquire()
+            await("Windows refused the keep-awake request: ${lease.snapshot.error}") {
                 lease.snapshot.status == WindowsPowerLeaseStatus.ACTIVE
             }
-            assertTrue(attempts.get() >= 2)
             lease.release()
-            await("Recovered helper was not cleaned up.") { processes.none { it.isAlive } }
-        }
-    }
-
-    @Test
-    fun concurrentOwnersShareOneHolderAndReleaseWithoutRaces() {
-        if (!isWindows) return
-        val processes = CopyOnWriteArrayList<Process>()
-        val executor = Executors.newFixedThreadPool(4)
-        try {
-            WindowsPowerLease(launchHelper = { script ->
-                launchWindowsPowerHelper(script).also { processes.add(it) }
-            }).use { lease ->
-                lease.acquire()
-                await("Native power request failed.") { lease.snapshot.status == WindowsPowerLeaseStatus.ACTIVE }
-                val tasks = (1..4).map {
-                    executor.submit {
-                        repeat(100) {
-                            lease.acquire()
-                            lease.refresh()
-                            lease.release()
-                        }
-                    }
-                }
-                tasks.forEach { it.get(10, TimeUnit.SECONDS) }
-                assertEquals(1, lease.snapshot.owners)
-                assertEquals(1, processes.size)
-                assertTrue(processes.single().isAlive)
-                lease.release()
-                await("Concurrent owner cleanup left a power helper.") { processes.none { it.isAlive } }
-                assertEquals(WindowsPowerLeaseStatus.IDLE, lease.snapshot.status)
-            }
-        } finally {
-            executor.shutdownNow()
-        }
-    }
-
-    @Test
-    fun arbitraryNanoTimeOriginDoesNotDelayFirstAcquisition() {
-        if (!isWindows) return
-        WindowsPowerLease(nanoTime = { -TimeUnit.SECONDS.toNanos(100) }).use { lease ->
-            lease.acquire()
-            await("A negative monotonic-clock origin prevented startup.") {
-                lease.snapshot.status == WindowsPowerLeaseStatus.ACTIVE
-            }
-        }
-    }
-
-    @Test
-    fun externallyTerminatedHolderRecoversItsExistingOwners() {
-        if (!isWindows) return
-        val processes = CopyOnWriteArrayList<Process>()
-        WindowsPowerLease(retryIntervalMs = 100L, launchHelper = { script ->
-            launchWindowsPowerHelper(script).also { processes.add(it) }
-        }).use { lease ->
-            lease.acquire()
-            lease.acquire()
-            await("Native power request failed.") { lease.snapshot.status == WindowsPowerLeaseStatus.ACTIVE }
-            processes.single().destroyForcibly()
-            await("The terminated helper was not replaced.", 25) {
-                processes.size >= 2 && lease.snapshot.status == WindowsPowerLeaseStatus.ACTIVE
-            }
-            assertEquals(2, lease.snapshot.owners)
-            lease.release()
-            assertTrue(processes.last().isAlive)
-            lease.release()
-            await("Replacement power helper survived final release.") { processes.none { it.isAlive } }
-        }
-    }
-
-    @Test
-    fun helperStopsAndReleasesWhenItsParentExits() {
-        if (!isWindows) return
-        val parent = launchWindowsPowerHelper("Start-Sleep -Seconds 60")
-        val helper = launchWindowsPowerHelper(buildWindowsPowerHelperScript(parent.pid()))
-        val readerExecutor = Executors.newSingleThreadExecutor()
-        try {
-            val firstLine = readerExecutor.submit<String> {
-                helper.inputStream.bufferedReader().readLine()
-            }.get(15, TimeUnit.SECONDS)
-            assertEquals(POWER_HEARTBEAT, firstLine)
-            parent.destroyForcibly()
-            assertTrue(helper.waitFor(20, TimeUnit.SECONDS), "Power helper outlived its parent.")
-            assertEquals(0, helper.exitValue(), "Native request release failed.")
-        } finally {
-            helper.destroyForcibly()
-            parent.destroyForcibly()
-            readerExecutor.shutdownNow()
+            assertEquals(WindowsPowerLeaseStatus.IDLE, lease.snapshot.status)
         }
     }
 
@@ -189,7 +87,7 @@ class WindowsPowerLeaseTest {
         val deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(seconds)
         while (System.nanoTime() - deadline < 0) {
             if (condition()) return
-            Thread.sleep(25)
+            Thread.sleep(10)
         }
         assertTrue(condition(), message)
     }

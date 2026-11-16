@@ -1,6 +1,6 @@
 package io.parchment.ai.platform
 
-import java.io.File
+import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 
 internal enum class WindowsPowerLeaseStatus {
@@ -14,26 +14,24 @@ internal data class WindowsPowerLeaseSnapshot(
 )
 
 /**
- * Owns one monitored native sleep inhibitor for active generation calls.
- * Heartbeats confirm the Win32 call, not merely that PowerShell is alive.
+ * Keeps Windows from sleeping while generations run. One daemon thread holds
+ * `SetThreadExecutionState(ES_CONTINUOUS | ES_SYSTEM_REQUIRED)` (an FFM downcall, [WindowsNative]) and clears it when
+ * the last owner leaves. Windows ties the request to that thread, so it cannot outlive the app: no child process,
+ * no heartbeat. A failed request is reported as UNAVAILABLE and retried at most every [retryIntervalMs].
  * Windows power policy and explicit suspend can still override the request.
  */
 internal class WindowsPowerLease(
-    private val parentPid: Long = ProcessHandle.current().pid(),
-    private val launchHelper: (String) -> Process = ::launchWindowsPowerHelper,
+    private val setExecutionState: (Int) -> Int = WindowsNative::setThreadExecutionState,
     private val nanoTime: () -> Long = System::nanoTime,
     private val retryIntervalMs: Long = RETRY_INTERVAL_MS
 ) : AutoCloseable {
-    private val retryIntervalNs = TimeUnit.MILLISECONDS.toNanos(retryIntervalMs)
     private val lock = Any()
     private var owners = 0
     private var closed = false
-    private var helper: Process? = null
-    private var monitor: Thread? = null
-    private var monitorGeneration = 0L
-    private var launchedAt = 0L
-    private var heartbeatAt = 0L
-    private var lastAttemptAt: Long? = null
+    /** Released to end the current hold; the holder thread then clears the request on its own thread. */
+    private var holdRelease: CountDownLatch? = null
+    private var holder: Thread? = null
+    private var lastFailureAt: Long? = null
 
     @Volatile
     var snapshot = WindowsPowerLeaseSnapshot(0, WindowsPowerLeaseStatus.IDLE)
@@ -42,30 +40,19 @@ internal class WindowsPowerLease(
     fun acquire() = synchronized(lock) {
         check(!closed) { "Windows power lease is closed." }
         owners++
-        startOrRefreshLocked()
+        ensureHolderLocked()
     }
 
     fun reconcile(activeOwners: Int) = synchronized(lock) {
         check(!closed) { "Windows power lease is closed." }
         require(activeOwners >= 0)
         owners = activeOwners
-        if (owners == 0) stopLocked() else startOrRefreshLocked()
+        if (owners == 0) stopLocked() else ensureHolderLocked()
     }
 
-    private fun startOrRefreshLocked() {
-        if (monitor == null) {
-            val generation = ++monitorGeneration
-            monitor = Thread({ monitorLoop(generation) }, "parchment-power-monitor").apply {
-                isDaemon = true
-                start()
-            }
-        }
-        maintainHelper()
-        publish(snapshot.status, snapshot.error)
-    }
-
+    /** Called on long-decode progress: restarts a hold that failed, once the retry interval has passed. */
     fun refresh() = synchronized(lock) {
-        if (owners > 0 && !closed) maintainHelper()
+        if (owners > 0 && !closed) ensureHolderLocked()
     }
 
     fun release() = synchronized(lock) {
@@ -73,95 +60,58 @@ internal class WindowsPowerLease(
         if (owners == 0) stopLocked() else publish(snapshot.status, snapshot.error)
     }
 
-    override fun close() = synchronized(lock) {
-        closed = true
-        owners = 0
-        stopLocked()
+    override fun close() {
+        val thread = synchronized(lock) {
+            closed = true
+            owners = 0
+            stopLocked()
+        }
+        // On shutdown, give the holder a moment to clear its request before the process exits.
+        thread?.join(TimeUnit.SECONDS.toMillis(2))
     }
 
-    private fun monitorLoop(generation: Long) {
-        try {
-            while (true) {
-                Thread.sleep(retryIntervalMs)
-                synchronized(lock) {
-                    if (owners == 0 || closed || generation != monitorGeneration) return
-                    maintainHelper()
+    private fun ensureHolderLocked() {
+        if (holder?.isAlive == true) {
+            publish(snapshot.status, snapshot.error)
+            return
+        }
+        val failedAt = lastFailureAt
+        if (failedAt != null && nanoTime() - failedAt < TimeUnit.MILLISECONDS.toNanos(retryIntervalMs)) {
+            publish(WindowsPowerLeaseStatus.UNAVAILABLE, snapshot.error)
+            return
+        }
+        val release = CountDownLatch(1)
+        holdRelease = release
+        publish(WindowsPowerLeaseStatus.STARTING)
+        holder = Thread({ hold(release) }, "parchment-keep-awake").apply {
+            isDaemon = true
+            start()
+        }
+    }
+
+    private fun hold(release: CountDownLatch) {
+        val previous = runCatching { setExecutionState(ES_HOLD) }
+        synchronized(lock) {
+            val current = holdRelease === release
+            if (previous.getOrNull()?.let { it != 0 } == true) {
+                if (current) publish(WindowsPowerLeaseStatus.ACTIVE)
+            } else {
+                if (current) {
+                    lastFailureAt = nanoTime()
+                    val reason = previous.exceptionOrNull()?.message ?: "SetThreadExecutionState failed."
+                    publish(WindowsPowerLeaseStatus.UNAVAILABLE, reason.take(512))
+                    holdRelease = null
+                    holder = null // This thread is ending; the next refresh after the interval starts a new one.
                 }
+                return
             }
+        }
+        try {
+            release.await()
         } catch (_: InterruptedException) {
             Thread.currentThread().interrupt()
-        }
-    }
-
-    private fun maintainHelper() {
-        val now = nanoTime()
-        val current = helper
-        if (current?.isAlive == true) {
-            val healthy = when (snapshot.status) {
-                WindowsPowerLeaseStatus.ACTIVE -> now - heartbeatAt < HEARTBEAT_TIMEOUT_NS
-                WindowsPowerLeaseStatus.STARTING -> now - launchedAt < START_TIMEOUT_NS
-                else -> false
-            }
-            if (healthy) return
-            helper = null
-            current.destroyForcibly()
-            publish(WindowsPowerLeaseStatus.UNAVAILABLE, "Native power heartbeat was not confirmed.")
-        } else if (current != null) {
-            helper = null
-            publish(WindowsPowerLeaseStatus.UNAVAILABLE, snapshot.error.ifBlank { "Power helper exited." })
-        }
-        val lastAttempt = lastAttemptAt
-        if (lastAttempt != null && now - lastAttempt < retryIntervalNs) return
-        lastAttemptAt = now
-        try {
-            val process = launchHelper(buildWindowsPowerHelperScript(parentPid))
-            helper = process
-            launchedAt = now
-            heartbeatAt = 0L
-            publish(WindowsPowerLeaseStatus.STARTING)
-            Thread({ readHeartbeats(process) }, "parchment-power-reader").apply {
-                isDaemon = true
-                start()
-            }
-        } catch (error: Exception) {
-            publish(
-                WindowsPowerLeaseStatus.UNAVAILABLE,
-                error.message?.take(512) ?: "Unable to start the Windows power helper."
-            )
-        }
-    }
-
-    private fun readHeartbeats(process: Process) {
-        try {
-            process.inputStream.bufferedReader().use { reader ->
-                while (true) {
-                    val line = reader.readLine() ?: break
-                    synchronized(lock) {
-                        if (helper !== process || owners == 0) return
-                        if (line.trim() == POWER_HEARTBEAT) {
-                            heartbeatAt = nanoTime()
-                            publish(WindowsPowerLeaseStatus.ACTIVE)
-                        } else if (line.isNotBlank()) {
-                            publish(WindowsPowerLeaseStatus.UNAVAILABLE, line.take(512))
-                        }
-                    }
-                }
-            }
-        } catch (error: Exception) {
-            synchronized(lock) {
-                if (helper === process && owners > 0) {
-                    publish(
-                        WindowsPowerLeaseStatus.UNAVAILABLE,
-                        error.message?.take(512) ?: "Power helper output was interrupted."
-                    )
-                }
-            }
         } finally {
-            synchronized(lock) {
-                if (helper === process && owners > 0) {
-                    publish(WindowsPowerLeaseStatus.UNAVAILABLE, snapshot.error.ifBlank { "Power helper exited." })
-                }
-            }
+            runCatching { setExecutionState(ES_CLEAR) }
         }
     }
 
@@ -169,59 +119,20 @@ internal class WindowsPowerLease(
         snapshot = WindowsPowerLeaseSnapshot(owners, status, error)
     }
 
-    private fun stopLocked() {
-        ++monitorGeneration
-        monitor?.interrupt()
-        monitor = null
-        val current = helper
-        helper = null
-        current?.destroyForcibly()
-        heartbeatAt = 0L
-        lastAttemptAt = null
+    /** Ends the current hold; returns the holder thread so [close] can wait for it. */
+    private fun stopLocked(): Thread? {
+        holdRelease?.countDown()
+        holdRelease = null
+        val thread = holder
+        holder = null
+        lastFailureAt = null
         publish(WindowsPowerLeaseStatus.IDLE)
+        return thread
     }
 
-    private companion object {
+    internal companion object {
         const val RETRY_INTERVAL_MS = 5_000L
-        val START_TIMEOUT_NS = TimeUnit.SECONDS.toNanos(20)
-        val HEARTBEAT_TIMEOUT_NS = TimeUnit.SECONDS.toNanos(60)
+        val ES_HOLD = WindowsNative.ES_CONTINUOUS or WindowsNative.ES_SYSTEM_REQUIRED
+        const val ES_CLEAR = WindowsNative.ES_CONTINUOUS
     }
-}
-
-internal const val POWER_HEARTBEAT = "PARCHMENT_POWER_ACTIVE"
-
-internal fun buildWindowsPowerHelperScript(parentPid: Long): String = buildString {
-    append("\$ProgressPreference = 'SilentlyContinue'; ")
-    append("\$ErrorActionPreference = 'Stop'; ")
-    append("\$code = '[DllImport(\"kernel32.dll\", SetLastError = true)] public static extern uint SetThreadExecutionState(uint esFlags);'; ")
-    append("\$ste = Add-Type -MemberDefinition \$code -Name 'Win32Ste' -Namespace 'Parchment' -PassThru; ")
-    append("try { while (\$true) { ")
-    if (parentPid > 0L) {
-        append("if (-not (Get-Process -Id ")
-        append(parentPid)
-        append(" -ErrorAction SilentlyContinue)) { break }; ")
-    }
-    // Explicit UInt32 values prevent PowerShell's signed hexadecimal conversion.
-    append("\$previous = \$ste::SetThreadExecutionState([uint32]2147483649); ")
-    append("if (\$previous -eq 0) { throw ('SetThreadExecutionState failed: ' + [Runtime.InteropServices.Marshal]::GetLastWin32Error()) }; ")
-    append("[Console]::Out.WriteLine('")
-    append(POWER_HEARTBEAT)
-    if (parentPid > 0L) {
-        append("'); for (\$i = 0; \$i -lt 15; \$i++) { Start-Sleep -Seconds 1; if (-not (Get-Process -Id ")
-        append(parentPid)
-        append(" -ErrorAction SilentlyContinue)) { break } } ")
-    } else {
-        append("'); Start-Sleep -Seconds 15 ")
-    }
-    append("} } finally { [void]\$ste::SetThreadExecutionState([uint32]2147483648) }")
-}
-
-internal fun launchWindowsPowerHelper(script: String): Process {
-    val systemRoot = System.getenv("SystemRoot") ?: throw IllegalStateException("Windows system directory is unavailable.")
-    val executable = File(systemRoot, "System32/WindowsPowerShell/v1.0/powershell.exe")
-    require(executable.isFile) { "Windows PowerShell is unavailable." }
-    val encodedCommand = java.util.Base64.getEncoder().encodeToString(script.toByteArray(Charsets.UTF_16LE))
-    return ProcessBuilder(
-        executable.absolutePath, "-NoProfile", "-NonInteractive", "-WindowStyle", "Hidden", "-EncodedCommand", encodedCommand
-    ).redirectErrorStream(true).start()
 }

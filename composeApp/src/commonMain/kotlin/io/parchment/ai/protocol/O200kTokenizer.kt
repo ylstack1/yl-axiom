@@ -98,7 +98,7 @@ object O200kTokenizer {
         val toolsSignature: Long
     )
 
-    private data class VariantTokenBreakdown(
+    internal data class VariantTokenBreakdown(
         val proseTokens: Int,
         val attachmentsTokens: Int,
         val thinkingTokens: Int,
@@ -286,7 +286,8 @@ object O200kTokenizer {
         return computed
     }
 
-    private fun completedVariantTokenBreakdown(variant: MessageVariant): VariantTokenBreakdown {
+    /** Cached per completed variant (bounded LRU); call off the main thread for long content. */
+    internal fun completedVariantTokenBreakdown(variant: MessageVariant): VariantTokenBreakdown {
         val key = CompletedVariantTokenKey(
             id = variant.id,
             contentHash = textFingerprint64(variant.content),

@@ -40,6 +40,9 @@ Name: "{autoprograms}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"
 Name: "{autodesktop}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; Tasks: desktopicon
 
 [Run]
+; Builds the app's class archive at the installed path (headless, exits within 10 s) so the first launch after an
+; install or update starts at full speed. Runs in silent updates too; a failure only leaves that first launch slower.
+Filename: "{app}\{#MyAppExeName}"; Parameters: "--cds-warmup"; StatusMsg: "Preparing Parchment for a fast first start..."; Flags: runhidden waituntilterminated
 Filename: "{app}\{#MyAppExeName}"; Description: "{cm:LaunchProgram,{#StringChange(MyAppName, '&', '&&')}}"; Flags: nowait postinstall skipifsilent
 
 ; ==============================================================================

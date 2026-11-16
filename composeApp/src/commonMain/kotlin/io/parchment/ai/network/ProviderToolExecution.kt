@@ -19,9 +19,18 @@ import io.parchment.ai.model.ToolCallRecord
 import io.parchment.ai.network.AiProviderEngine.ToolStepBatch
 import io.parchment.ai.platform.PlatformRuntime
 import io.parchment.ai.runtime.RunActivityContext
+import kotlin.coroutines.AbstractCoroutineContextElement
+import kotlin.coroutines.CoroutineContext
 import kotlin.coroutines.EmptyCoroutineContext
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.channels.SendChannel
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.selects.select
+import kotlinx.coroutines.sync.Semaphore
+import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.Flow
@@ -227,6 +236,45 @@ private suspend fun AiProviderEngine.executeWorkspaceToolWithLiveProgress(
     }
 }
 
+/** At most this many helpers run at once; more in one step wait for a free slot. */
+private const val MAX_PARALLEL_HELPERS = 4
+
+/**
+ * Marks coroutines that run beside the generation flow's own coroutine. Flow forbids emitting from another
+ * coroutine, and the stream accumulator's usage ledger is not thread-safe, so such coroutines hand every update
+ * to the owner through [channel] instead (see [onFlowCoroutine]). Only parallel helper batches install it;
+ * helpers cannot delegate further, so a nested flow never meets a relay it does not own.
+ */
+internal class ParentFlowRelay(val channel: SendChannel<suspend () -> Unit>) : AbstractCoroutineContextElement(Key) {
+    companion object Key : CoroutineContext.Key<ParentFlowRelay>
+}
+
+/** Runs [block] on the generation flow's own coroutine: directly when already there, queued from a parallel helper. */
+internal suspend fun onFlowCoroutine(block: suspend () -> Unit) {
+    val relay = currentCoroutineContext()[ParentFlowRelay]
+    if (relay == null) block() else relay.channel.send(block)
+}
+
+/**
+ * Runs [count] tasks concurrently (at most [MAX_PARALLEL_HELPERS] at a time) while this coroutine executes the
+ * updates they relay, then returns their results in task order. Cancelling the caller cancels every task.
+ */
+internal suspend fun <T> runConcurrentlyRelayingToFlow(count: Int, task: suspend (Int) -> T): List<T> = coroutineScope {
+    val relay = Channel<suspend () -> Unit>(Channel.UNLIMITED)
+    val slots = Semaphore(MAX_PARALLEL_HELPERS)
+    val tasks = (0 until count).map { idx -> async(ParentFlowRelay(relay)) { slots.withPermit { task(idx) } } }
+    val all = async { tasks.awaitAll() }
+    while (!all.isCompleted) {
+        select<Unit> {
+            relay.onReceive { it() }
+            all.onAwait { }
+        }
+    }
+    relay.close()
+    for (pending in relay) pending()
+    all.await()
+}
+
 internal suspend fun AiProviderEngine.executeWorkspaceToolBatchWithLiveProgress(
     workspaceRoot: String,
     mode: io.parchment.ai.model.WorkspaceMode,
@@ -248,9 +296,40 @@ internal suspend fun AiProviderEngine.executeWorkspaceToolBatchWithLiveProgress(
     val canRunBatchInParallel = calls.size > 1 && calls.all { (_, fnName, _) ->
         WorkspaceHarness.isParallelSafeReadOnlyTool(fnName)
     }
+    // Helpers only read (subagentPolicy), so several asked for in one step can work side by side.
+    val canRunHelpersInParallel = calls.size > 1 && calls.all { (_, fnName, _) -> fnName == "agent_delegate" }
     val activity = currentCoroutineContext()[RunActivityContext]?.activity
-    val batch = activity?.beginTools(if (canRunBatchInParallel) calls.size else 1)
+    val batch = activity?.beginTools(if (canRunBatchInParallel || canRunHelpersInParallel) calls.size else 1)
     try {
+        if (canRunHelpersInParallel) {
+            onStatus(Strings.runningHelpersInParallel(calls.size))
+            val rawCompleted = runConcurrentlyRelayingToFlow(calls.size) { idx ->
+                val (callId, fnName, argsJson) = calls[idx]
+                val work = activity?.let { RunActivityContext(it, requireNotNull(batch).branches[idx]) }
+                try {
+                    executeWorkspaceToolWithLiveProgress(
+                        workspaceRoot = workspaceRoot,
+                        mode = mode,
+                        allowShell = allowShell,
+                        accessScope = accessScope,
+                        callId = callId,
+                        toolName = fnName,
+                        argumentsJson = argsJson,
+                        thoughtSignature = if (idx == 0) firstThoughtSignature else "",
+                        precedingThinking = if (idx == 0) firstPrecedingThinking else "",
+                        onStatus = { message -> onFlowCoroutine { onStatus(message) } },
+                        onToolCall = { record -> onFlowCoroutine { onStepToolCall(record) } },
+                        activityContext = work
+                    )
+                } finally { work?.let { it.activity.completeBranch(it.branch) } }
+            }
+            return rawCompleted.map { rawRec ->
+                val rec = circuitBreaker.onToolExecuted(rawRec)
+                circuitBreaker.goalState?.let { onGoalProgress(it) }
+                onStepToolCall(rec)
+                rec
+            }
+        }
         if (!canRunBatchInParallel) {
             val results = mutableListOf<ToolCallRecord>()
             for ((idx, triple) in calls.withIndex()) {

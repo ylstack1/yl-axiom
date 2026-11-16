@@ -133,6 +133,8 @@ internal class ParchmentAppController(
     var pendingUndo by mutableStateOf<DeletedChats?>(null)
 
     var showCommandPalette by mutableStateOf(false)
+    /** Ctrl+G: the palette listing this chat's prompts. */
+    var showPromptJump by mutableStateOf(false)
 
     // OTA Update state
     var otaState by mutableStateOf<OtaUpdateState>(OtaUpdateState.Idle)

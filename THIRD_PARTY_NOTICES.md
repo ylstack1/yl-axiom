@@ -11,4 +11,4 @@ Parchment is MIT licensed (see [LICENSE](LICENSE)). It bundles these fonts, each
 
 The JetBrains Mono files are a subset of the originals. Under the OFL a modified font may not use a reserved font name; JetBrains Mono declares none.
 
-Libraries the app is built with (Kotlin, Compose Multiplatform, Ktor, kotlinx, OkHttp, JNA) keep their own licences, listed in each project's repository.
+Libraries the app is built with (Kotlin, Compose Multiplatform, Ktor, kotlinx, OkHttp) keep their own licences, listed in each project's repository.
