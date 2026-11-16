@@ -2,6 +2,27 @@
 
 What changed in each release, newest first. From 2.1.7 on, release-please writes these entries from commit messages that follow [Conventional Commits](https://www.conventionalcommits.org/) (`feat:` and `fix:` appear here and set the next version); edit wording in its release PR before merging it.
 
+## [2.4.0](https://github.com/baros4294/parchment/compare/v2.3.0...v2.4.0) (2026-11-16)
+
+
+### New
+
+* **ui:** Retry now during retry waits, and failures you can fix lead to the fix ([e1d3486](https://github.com/baros4294/parchment/commit/e1d34862630f185d557abe8d6f122924b080ae48))
+
+
+### Fixes
+
+* **app:** save pending changes and keep a redacted report when an error escapes ([e1d3486](https://github.com/baros4294/parchment/commit/e1d34862630f185d557abe8d6f122924b080ae48))
+* **mcp:** start a stopped server again with the same tools, and renew a lost HTTP session ([e1d3486](https://github.com/baros4294/parchment/commit/e1d34862630f185d557abe8d6f122924b080ae48))
+* **network:** stop at once on spend caps, billing limits and daily quotas ([e1d3486](https://github.com/baros4294/parchment/commit/e1d34862630f185d557abe8d6f122924b080ae48))
+* **network:** wait as long as the provider asks, otherwise 2 to 60 s, instead of 60 s after every failure ([e1d3486](https://github.com/baros4294/parchment/commit/e1d34862630f185d557abe8d6f122924b080ae48))
+
+
+### Faster and lighter
+
+* **network:** stop copying the request on every stream event ([e1d3486](https://github.com/baros4294/parchment/commit/e1d34862630f185d557abe8d6f122924b080ae48))
+* **storage:** streaming checkpoints save the reply, not the whole chat ([e1d3486](https://github.com/baros4294/parchment/commit/e1d34862630f185d557abe8d6f122924b080ae48))
+
 ## [2.3.0](https://github.com/baros4294/parchment/compare/v2.2.6...v2.3.0) (2026-11-16)
 
 
