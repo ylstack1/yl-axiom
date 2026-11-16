@@ -27,6 +27,9 @@ import io.parchment.ai.model.PreferencesConfig
 import io.parchment.ai.model.ThemeConfig
 import io.parchment.ai.model.ViewMode
 import io.parchment.ai.strings.Strings
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.swing.Swing
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
@@ -66,13 +69,13 @@ class Batch17HotPathUiTest {
     }
 
     @Test
-    fun svgPreviewReactsToPaletteInkChange() {
+    fun svgPreviewReactsToPaletteInkChange() = runBlocking<Unit>(Dispatchers.Swing) {
         val rawSvg = "<svg viewBox='0 0 100 100'><rect x='10' y='10' width='80' height='80' fill='currentColor'/></svg>"
         val lightPalette = buildPaletteFromConfig(ThemeConfig(primaryInkHex = "#261C14"))
         val accentPalette = buildPaletteFromConfig(ThemeConfig(primaryInkHex = "#00E5FF"))
         val paletteState = mutableStateOf(lightPalette)
 
-        val scene = ImageComposeScene(width = 180, height = 180, density = Density(1f)) {
+        val scene = ImageComposeScene(width = 180, height = 180, density = Density(1f), coroutineContext = Dispatchers.Swing.immediate) {
             CompositionLocalProvider(LocalParchmentPalette provides paletteState.value) {
                 Box(Modifier.size(180.dp).background(Color.Black)) {
                     InlineSvgArtifactPreview(rawSvg = rawSvg)
@@ -93,7 +96,7 @@ class Batch17HotPathUiTest {
     }
 
     @Test
-    fun lazyMessageEditBufferLoadsFreshContentAfterStreamingAndClearsOnCancel() {
+    fun lazyMessageEditBufferLoadsFreshContentAfterStreamingAndClearsOnCancel() = runBlocking<Unit>(Dispatchers.Swing) {
         val palette = buildPaletteFromConfig(ThemeConfig())
         val initialNode = MessageNode(
             id = "n-lazy-edit",
@@ -105,7 +108,7 @@ class Batch17HotPathUiTest {
         val nodeState = mutableStateOf(initialNode)
         val savedEdits = mutableListOf<String>()
 
-        val scene = ImageComposeScene(width = 900, height = 600, density = Density(1f)) {
+        val scene = ImageComposeScene(width = 900, height = 600, density = Density(1f), coroutineContext = Dispatchers.Swing.immediate) {
             CompositionLocalProvider(
                 LocalParchmentPalette provides palette,
                 LocalParchmentWindowSize provides ParchmentWindowSize(900.dp, 600.dp)

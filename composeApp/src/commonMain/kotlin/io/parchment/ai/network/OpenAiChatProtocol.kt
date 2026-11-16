@@ -76,6 +76,7 @@ internal suspend fun AiProviderEngine.executeOpenAiChatCompletionsLoop(
     val fullTextAccumulator = StringBuilder()
     var stripSamplingOnRetry = false
     var omitReasoningEffortOnRetry = false
+    var reasoningEffortOverride: String? = null
     var maxTokensDialectOverride = "auto" // "auto" | "max_completion_tokens" | "max_tokens" | "omit"
     var omitStreamOptionsOnRetry = false
     var omitModalitiesOnRetry = false
@@ -156,11 +157,8 @@ internal suspend fun AiProviderEngine.executeOpenAiChatCompletionsLoop(
                     }
                 }
                 if (sentReasoningEffort) {
-                    val normalizedEffort = when (lowerEffort) {
-                        "max" -> "high"
-                        else -> lowerEffort
-                    }
-                    put("reasoning_effort", normalizedEffort)
+                    val effectiveEffort = reasoningEffortOverride ?: lowerEffort
+                    put("reasoning_effort", effectiveEffort)
                 }
                 if (modelOutputsImages && !omitModalitiesOnRetry) {
                     putJsonArray("modalities") {
@@ -375,8 +373,18 @@ internal suspend fun AiProviderEngine.executeOpenAiChatCompletionsLoop(
                         continue
                     }
                     if (!omitReasoningEffortOnRetry && sentReasoningEffort &&
-                        (errMsg.contains("reasoning_effort") || (errMsg.contains("reasoning") && !errMsg.contains("reasoning_content")))
+                        (errMsg.contains("reasoning_effort") ||
+                            ((errMsg.contains("reasoning") || errMsg.contains("effort") ||
+                                errMsg.contains("unsupported_value") || errMsg.contains("invalid_value")) &&
+                                !errMsg.contains("reasoning_content")))
                     ) {
+                        val currentEffort = reasoningEffortOverride ?: lowerEffort
+                        val stepped = stepDownReasoningEffort(currentEffort, errMsg)
+                        if (stepped != null) {
+                            reasoningEffortOverride = stepped.first
+                            onStatus(stepped.second)
+                            continue
+                        }
                         omitReasoningEffortOnRetry = true
                         onStatus(Strings.endpointRejectedReasoningEffortRetryingWithout)
                         continue

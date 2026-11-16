@@ -93,6 +93,7 @@ internal suspend fun AiProviderEngine.executeOpenAiResponsesLoop(
     var stripSamplingOnRetry = false
     var omitReasoningSummaryOnRetry = false
     var omitReasoningOnRetry = false
+    var reasoningEffortOverride: String? = null
     var useLegacyWebSearchPreviewOnRetry = false
     var omitOpenAiNativeWebSearchOnRetry = AgentPermissionResolver.resolve(session, profile = profile).approvalMode != ToolApprovalMode.NEVER
     var omitEncryptedContentIncludeOnRetry = false
@@ -206,13 +207,10 @@ internal suspend fun AiProviderEngine.executeOpenAiResponsesLoop(
                 val lowerEffort = effort.lowercase()
                 val isReasoningEnabled = !omitReasoningOnRetry && effort.isNotEmpty() &&
                     lowerEffort != "none" && lowerEffort != "off" && lowerEffort != "default"
+                val effectiveEffort = if (isReasoningEnabled) (reasoningEffortOverride ?: lowerEffort) else ""
                 if (isReasoningEnabled) {
-                    val normalizedEffort = when (lowerEffort) {
-                        "max" -> "high"
-                        else -> lowerEffort
-                    }
                     putJsonObject("reasoning") {
-                        put("effort", normalizedEffort)
+                        put("effort", effectiveEffort)
                         if (!omitReasoningSummaryOnRetry) put("summary", "auto")
                     }
                     if (!useChainedId && !omitEncryptedContentIncludeOnRetry) {
@@ -550,7 +548,16 @@ internal suspend fun AiProviderEngine.executeOpenAiResponsesLoop(
                         onStatus(Strings.endpointRejectedReasoningSummaryRetryingWithout)
                         continue
                     }
-                    if (!omitReasoningOnRetry && (errMsg.contains("reasoning") || errMsg.contains("effort") || errMsg.contains("summary"))) {
+                    if (reasoningWasSent && (errMsg.contains("reasoning") || errMsg.contains("effort") || errMsg.contains("summary") ||
+                            errMsg.contains("unsupported_value") || errMsg.contains("invalid_value"))
+                    ) {
+                        val currentEffort = reasoningEffortOverride ?: lowerEffortRetry
+                        val stepped = stepDownReasoningEffort(currentEffort, errMsg)
+                        if (stepped != null) {
+                            reasoningEffortOverride = stepped.first
+                            onStatus(stepped.second)
+                            continue
+                        }
                         omitReasoningOnRetry = true
                         onStatus(Strings.endpointRejectedReasoningParameterRetryingWithout)
                         continue

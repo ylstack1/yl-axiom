@@ -1430,7 +1430,7 @@ private fun ModelConfigSubpage(
                         isSyncingCatalog = true
                         scope.launch {
                             try {
-                                ModelsDevClient.fetchModelSpec(modelId).fold(
+                                ModelsDevClient.fetchModelSpec(modelId, bypassFailureCooldown = true).fold(
                                     onSuccess = { spec ->
                                         ctxText = spec.contextWindowTokens.toString()
                                         maxOutText = spec.maxOutputTokens?.toString() ?: ""

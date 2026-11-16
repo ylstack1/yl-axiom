@@ -4,8 +4,8 @@ Updated 2026-11-15. AGENTS.md owns workflow; MEMORY holds contracts. Task IDs st
 
 ## Current status
 
-- **Source:** 2026-11-15: Screen-reader & UI polish (filled-field placeholder naming, modal/drawer accessibility isolation, `CommandPalette` selection/Back parity, Slider range semantics, deduped button/chip/title labels, 200%-text phone title row, compact horizontal Providers bar) plus protocol/harness hardening (query-key URL encoding, raw-body tool-key guard, bounded SSE/fallback buffers, non-redirecting MCP HTTP, cancellable `computer_use` settle, Android WebView/Compose focused-input lookup & post-capture overlay restore).
-- **Last verified:** 2026-11-15, `verify.py affected` (492 desktop tests, 2m33s), `verify.py android` (1m05s), `verify.py test SharedActionSemanticsUiTest UiGalleryTest` (14 tests, 2m49s), and `verify.py perf` (1520 ms title).
+- **Source:** 2026-11-16: Protocol/reasoning alignment (preserve OpenAI `max` level, step down `max`/`xhigh`/`minimal` on HTTP 400 before dropping reasoning, strip Anthropic adaptive `display` and step effort before abandoning `adaptive`, preserve omitted-text signed tool replay blocks, MCP `2026-07-28` stateless + `_meta.clientInfo` fallback on init `400/404/405/422`/`-32600`), non-cancelling background model catalog sync (2.5s modality wait, incremental snapshot publishing, `models.dev` gap-filling, 60s empty-failure cooldown with manual bypass), and AWT EDT (`Dispatchers.Swing`) alignment across all 10 `ImageComposeScene` desktop UI suites (resolving the `RectList` concurrency race and removing the `UiGalleryTest` retry suppression).
+- **Last verified:** 2026-11-16, `verify.py affected` (499 desktop tests + Android compile clean across code batches, 2m29s), `verify.py test` across all 10 UI suites + gallery (50 tests, 2m22s), and `verify.py review`.
 - **Next action:** Re-test Android `computer_use` on device and check `13.6 Screen readers` when the user tests NVDA and TalkBack.
 
 ## Open tasks
@@ -14,13 +14,9 @@ Updated 2026-11-15. AGENTS.md owns workflow; MEMORY holds contracts. Task IDs st
 
 - [ ] **13.6 Screen readers:** go through the app with NVDA on Windows and TalkBack on Android (chat, composer, sidebar, settings, Ctrl+K palette) and report anything unlabeled, read in the wrong order, or unreachable.
 
-### Paused
-
-- [ ] **RectList crash in UI tests (paused 2026-11-12):** `AgentPermissionUiTest.substantialSettingsFieldsStackAndTextFits` fails intermittently in CI ("Coverage and UI gallery") with `IllegalArgumentException: LayoutNode N not found in RectList`, thrown from `ImageComposeScene.close()` (`CompositionImpl.dispose` → `LayoutNode.detach` → `RectManager.remove`) after every assertion passed. Traces: runs 43145027121 (PR #8), 43147823103 (PR #9, both retry attempts), 43160848842 (full stack). Not suppressed while the cause is unknown; #9's retry can't help (each attempt ends in the same `close()`) and is reverted in #12. A rerun of 43147823103 (code equal to `main`) passed. Ruled out: `Dispatchers.Unconfined` moving scene work off the test thread (0 of 83,500 scene tasks off-thread; 0 hits in 480 local runs of the class under CPU load). Remaining leads: (1) CI test order: log it, and check whether failures follow `KeyboardShortcutTest` or other tests that render the whole `ParchmentApp` in the same JVM (local runs with and without it: 0 hits each, inconclusive); (2) a Compose Multiplatform release after 1.12.2 that fixes RectList (needs `verify.py final`).
-
 ## Known gaps
 
-Not planned; open a task first. Compose 1.12 can fail in its own layout bookkeeping ("not found in RectList"; about half of gallery runs; desktop UI tests retry it once): watch for it in the app and update Compose when fixed. No JDK AOT cache (16.6, dropped 2026-11): AppCDS already meets the start budget, and a cache built in CI may not match installed paths. No CHARX archives; cards over 512 KB of data lose their original copy. No persona profiles. No full-duplex voice. Android MCP is HTTP-only. Shell is not sandboxed.
+Not planned; open a task first. No JDK AOT cache (16.6, dropped 2026-11): AppCDS already meets the start budget, and a cache built in CI may not match installed paths. No CHARX archives; cards over 512 KB of data lose their original copy. No persona profiles. No full-duplex voice. Android MCP is HTTP-only. Shell is not sandboxed.
 
 ## Sources
 

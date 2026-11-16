@@ -16,10 +16,11 @@ import androidx.compose.ui.unit.Density
 import io.parchment.ai.handleUnconsumedWindowKey
 import io.parchment.ai.platform.PlatformRuntime
 import io.parchment.ai.platform.PlatformStorage
-import kotlinx.coroutines.CoroutineDispatcher
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.swing.Swing
 import kotlinx.serialization.encodeToString
-import java.util.concurrent.ConcurrentLinkedQueue
-import kotlin.coroutines.CoroutineContext
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
@@ -28,21 +29,13 @@ import kotlin.test.assertTrue
 /** Shortcuts must work with nothing focused: at launch and after a click on empty space (2026-11-12 regression). */
 @OptIn(ExperimentalComposeUiApi::class, InternalComposeUiApi::class)
 class KeyboardShortcutTest {
-    /** Keeps the app's coroutines on the rendering thread, as they are in a real window. */
-    private class RenderThreadDispatcher : CoroutineDispatcher() {
-        private val tasks = ConcurrentLinkedQueue<Runnable>()
-        override fun dispatch(context: CoroutineContext, block: Runnable) { tasks.add(block) }
-        fun drain() { while (true) (tasks.poll() ?: break).run() }
-    }
-    private val renderThread = RenderThreadDispatcher()
     private var frame = 0L
 
-    private fun settle(scene: ImageComposeScene, frames: Int = 40) = repeat(frames) {
-        renderThread.drain()
+    private suspend fun settle(scene: ImageComposeScene, frames: Int = 40) = repeat(frames) {
         Snapshot.sendApplyNotifications()
         frame += 16_000_000L
         scene.render(frame).close()
-        Thread.sleep(5)
+        delay(5)
     }
 
     private fun nodes(scene: ImageComposeScene): List<SemanticsNode> {
@@ -57,7 +50,7 @@ class KeyboardShortcutTest {
         nodes(scene).any { node -> node.config.getOrNull(SemanticsProperties.Text).orEmpty().any { it.text == Strings.typeACommandOrA } }
 
     /** What the desktop window does with a key: the focused element first, then the window's own fallback. */
-    private fun pressInWindow(scene: ImageComposeScene, shortcuts: AppShortcutDispatcher, key: Key, ctrl: Boolean) {
+    private suspend fun pressInWindow(scene: ImageComposeScene, shortcuts: AppShortcutDispatcher, key: Key, ctrl: Boolean) {
         for (type in listOf(KeyEventType.KeyDown, KeyEventType.KeyUp)) {
             val event = KeyEvent(key, type, isCtrlPressed = ctrl)
             scene.sendKeyEvent(event) || handleUnconsumedWindowKey(event, shortcuts)
@@ -65,11 +58,11 @@ class KeyboardShortcutTest {
         settle(scene)
     }
 
-    @Test fun ctrlKOpensThePaletteWithNothingFocused() {
+    @Test fun ctrlKOpensThePaletteWithNothingFocused() = runBlocking<Unit>(Dispatchers.Swing) {
         PlatformStorage.saveAppStateJson(compactStateJson.encodeToString(createDefaultAppState().copy(autoCheckOtaOnStartup = false)))
         parchmentProcessState.snapshot.value = loadFastInitialAppState().first
         val shortcuts = AppShortcutDispatcher()
-        val scene = ImageComposeScene(1360, 860, density = Density(1f), coroutineContext = renderThread)
+        val scene = ImageComposeScene(1360, 860, density = Density(1f), coroutineContext = Dispatchers.Swing)
         try {
             scene.setContent { ParchmentApp(shortcutDispatcher = shortcuts) }
             settle(scene, 120)

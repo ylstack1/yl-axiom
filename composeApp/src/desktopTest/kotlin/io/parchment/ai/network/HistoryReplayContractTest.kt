@@ -337,4 +337,23 @@ class HistoryReplayContractTest {
         )
         assertTrue(repaired[1].activeVariant.content.contains("Reasoned before tool without signature."))
     }
+
+    @Test fun multiBatchAnthropicToolTurnKeepsSignedThinkingWhenTextIsOmitted() {
+        val turn = MessageVariant(
+            id = "v-omitted",
+            content = "Done.",
+            providerProtocol = ProviderProtocol.ANTHROPIC_MESSAGES,
+            providerWireDialect = CUSTOM_DIALECT_ANTHROPIC,
+            modelUsed = "claude-opus",
+            toolCalls = listOf(
+                ToolCallRecord("c1", "fs_read", "{}", resultText = "a", thoughtSignature = "sig_batch_1", startsToolStep = true),
+                ToolCallRecord("c2", "fs_read", "{}", resultText = "b", thoughtSignature = "sig_batch_2", startsToolStep = true)
+            )
+        )
+        val blocks = AiProviderEngine.buildAnthropicBaseMessages(
+            history(turn), session, "", currentModel = "claude-opus"
+        ).flatMap { it.second }
+        val sigs = blocks.filter { it.field("type") == "thinking" }.map { it.field("signature") }
+        assertEquals(listOf("sig_batch_1", "sig_batch_2"), sigs)
+    }
 }

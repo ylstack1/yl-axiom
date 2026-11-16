@@ -33,6 +33,7 @@ import kotlin.test.assertTrue
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.swing.Swing
 
 @OptIn(ExperimentalComposeUiApi::class)
 class TurnUsageUiTest {
@@ -68,7 +69,7 @@ class TurnUsageUiTest {
         scene.render(frameTimeNanos).close()
     }
 
-    private fun waitForSemanticsOwnerCount(
+    private suspend fun waitForSemanticsOwnerCount(
         scene: ImageComposeScene,
         expectedCount: Int,
         startNanos: Long
@@ -76,7 +77,7 @@ class TurnUsageUiTest {
         var nanos = startNanos
         repeat(20) {
             if (scene.semanticsOwners.size == expectedCount) return nanos
-            runBlocking { delay(50L) }
+            delay(50L)
             nanos += 50_000_000L
             settle(scene, nanos)
         }
@@ -84,7 +85,7 @@ class TurnUsageUiTest {
     }
 
     @Test
-    fun unavailableCostTurnUsesWarningBadgeAndMovesBreakdownToHoverAndPopup() {
+    fun unavailableCostTurnUsesWarningBadgeAndMovesBreakdownToHoverAndPopup() = runBlocking<Unit>(Dispatchers.Swing) {
         val node = MessageNode(
             id = "turn-unavailable",
             role = MessageRole.ASSISTANT,
@@ -112,7 +113,7 @@ class TurnUsageUiTest {
             width = 900,
             height = 600,
             density = Density(1f, 1f),
-            coroutineContext = Dispatchers.Unconfined
+            coroutineContext = Dispatchers.Swing.immediate
         )
         try {
             scene.setContent {
@@ -214,7 +215,7 @@ class TurnUsageUiTest {
     }
 
     @Test
-    fun knownCostWholeTurnStaysSingleLineAndOpensBreakdownPopup() {
+    fun knownCostWholeTurnStaysSingleLineAndOpensBreakdownPopup() = runBlocking<Unit>(Dispatchers.Swing) {
         val node = MessageNode(
             id = "turn-known",
             role = MessageRole.ASSISTANT,
@@ -244,7 +245,7 @@ class TurnUsageUiTest {
             width = 900,
             height = 600,
             density = Density(1f, 1f),
-            coroutineContext = Dispatchers.Unconfined
+            coroutineContext = Dispatchers.Swing.immediate
         )
         try {
             scene.setContent {
@@ -326,13 +327,13 @@ class TurnUsageUiTest {
     }
 
     @Test
-    fun contextGaugeRingUsesWarningIconAndHoverHintWhenCostUnavailable() {
+    fun contextGaugeRingUsesWarningIconAndHoverHintWhenCostUnavailable() = runBlocking<Unit>(Dispatchers.Swing) {
         val palette = buildPaletteFromConfig(ThemeConfig())
         val scene = ImageComposeScene(
             width = 900,
             height = 300,
             density = Density(1f, 1f),
-            coroutineContext = Dispatchers.Unconfined
+            coroutineContext = Dispatchers.Swing.immediate
         )
         try {
             scene.setContent {

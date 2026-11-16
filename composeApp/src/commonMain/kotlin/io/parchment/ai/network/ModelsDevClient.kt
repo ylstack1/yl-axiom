@@ -10,7 +10,16 @@ import io.parchment.ai.model.ChargePricing
 import io.parchment.ai.model.legacyTokenPricing
 import io.parchment.ai.platform.PlatformRuntime
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CoroutineStart
+import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.async
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
@@ -26,6 +35,194 @@ import kotlinx.serialization.json.doubleOrNull
 import kotlinx.serialization.json.intOrNull
 import kotlinx.serialization.json.jsonPrimitive
 
+private const val OPENROUTER_MODELS_URL = "https://openrouter.ai/api/v1/models?output_modalities=all"
+private const val OPENROUTER_VIDEOS_URL = "https://openrouter.ai/api/v1/videos/models"
+private const val VERCEL_MODELS_URL = "https://ai-gateway.vercel.sh/v1/models"
+private const val AIMLAPI_MODELS_URL = "https://api.aimlapi.com/models"
+private const val LITELLM_PRICES_URL = "https://raw.githubusercontent.com/BerriAI/litellm/main/model_prices_and_context_window.json"
+private const val MODELS_DEV_API_URL = "https://models.dev/api.json"
+
+private const val CACHE_TTL_MS = 30 * 60 * 1000L // 30 minutes
+private const val FAILED_FETCH_COOLDOWN_MS = 60 * 1000L // 1 minute cooldown when all registries fail
+private const val DEFAULT_MODALITY_WAIT_MS = 2_500L
+
+internal data class RegistryEndpoints(
+    val openRouterModelsUrl: String = OPENROUTER_MODELS_URL,
+    val openRouterVideosUrl: String = OPENROUTER_VIDEOS_URL,
+    val vercelModelsUrl: String = VERCEL_MODELS_URL,
+    val aimlApiModelsUrl: String = AIMLAPI_MODELS_URL,
+    val liteLlmPricesUrl: String = LITELLM_PRICES_URL,
+    val modelsDevApiUrl: String = MODELS_DEV_API_URL
+)
+
+/**
+ * Coordinates single-flight background catalog synchronization so bounded send-time waits never cancel
+ * multi-megabyte registry downloads mid-flight, publishes partial snapshots incrementally, and backs off
+ * briefly when every registry is unreachable.
+ */
+internal class RegistryCatalogClient(
+    private val endpoints: RegistryEndpoints = RegistryEndpoints(),
+    private val modalityWaitTimeoutMs: Long = DEFAULT_MODALITY_WAIT_MS,
+    private val failureCooldownMs: Long = FAILED_FETCH_COOLDOWN_MS,
+    private val cacheTtlMs: Long = CACHE_TTL_MS,
+    private val nowMs: () -> Long = { PlatformRuntime.currentTimeMillis() }
+) {
+    private val catalogScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    private val syncMutex = Mutex()
+    private val catalogGeneration = MutableStateFlow(0L)
+    private var inFlightSync: Deferred<Map<String, ModelPricingSpec>>? = null
+
+    @Volatile
+    var cachedCatalog: Map<String, ModelPricingSpec> = emptyMap()
+        private set
+
+    @Volatile
+    private var lastFetchEpochMs: Long = Long.MIN_VALUE
+
+    @Volatile
+    private var lastFailureEpochMs: Long = Long.MIN_VALUE
+
+    private fun isCacheFreshLocked(now: Long): Boolean =
+        cachedCatalog.isNotEmpty() &&
+            lastFetchEpochMs != Long.MIN_VALUE &&
+            (now - lastFetchEpochMs) in 0L until cacheTtlMs
+
+    private fun isFailureInCooldownLocked(now: Long): Boolean =
+        lastFailureEpochMs != Long.MIN_VALUE &&
+            (now - lastFailureEpochMs) in 0L until failureCooldownMs
+
+    private suspend fun getOrStartSync(
+        bypassFailureCooldown: Boolean
+    ): Pair<Map<String, ModelPricingSpec>, Deferred<Map<String, ModelPricingSpec>>?> = syncMutex.withLock {
+        val now = nowMs()
+        if (isCacheFreshLocked(now)) {
+            return@withLock cachedCatalog to null
+        }
+
+        inFlightSync?.takeIf { it.isActive }?.let { active ->
+            return@withLock cachedCatalog to active
+        }
+
+        if (!bypassFailureCooldown && isFailureInCooldownLocked(now)) {
+            return@withLock cachedCatalog to null
+        }
+
+        lateinit var created: Deferred<Map<String, ModelPricingSpec>>
+        created = catalogScope.async(start = CoroutineStart.LAZY) {
+            try {
+                runSyncPass()
+            } finally {
+                withContext(NonCancellable) {
+                    syncMutex.withLock {
+                        if (inFlightSync === created) {
+                            inFlightSync = null
+                        }
+                    }
+                }
+            }
+        }
+        inFlightSync = created
+        created.invokeOnCompletion {
+            catalogGeneration.update { it + 1L }
+        }
+        created.start()
+        cachedCatalog to created
+    }
+
+    private suspend fun fetchSourceText(url: String, timeoutMs: Long): String? = withTimeoutOrNull(timeoutMs) {
+        runCatching {
+            val resp = AiProviderEngine.httpClient.get(url)
+            if (resp.status.isSuccess()) resp.bodyAsText() else null
+        }.getOrNull()
+    }
+
+    private suspend fun runSyncPass(): Map<String, ModelPricingSpec> {
+        val staleCatalog = cachedCatalog
+        val catalog = mutableMapOf<String, ModelPricingSpec>()
+
+        fun publishIncrementalSnapshot() {
+            if (catalog.isEmpty()) return
+            // Publish an immutable overlay snapshot so fast sources become queryable before slower downloads end.
+            cachedCatalog = if (staleCatalog.isEmpty()) catalog.toMap() else staleCatalog + catalog
+            catalogGeneration.update { it + 1L }
+        }
+
+        val sources: List<Pair<String, Pair<Long, (String, MutableMap<String, ModelPricingSpec>) -> Unit>>> = listOf(
+            endpoints.openRouterModelsUrl to (15_000L to { raw, dest ->
+                ModelsDevClient.parseOpenRouterModelsIntoCatalog(raw, dest, forceVideoOutput = false)
+            }),
+            endpoints.openRouterVideosUrl to (12_000L to { raw, dest ->
+                ModelsDevClient.parseOpenRouterModelsIntoCatalog(raw, dest, forceVideoOutput = true)
+            }),
+            endpoints.vercelModelsUrl to (12_000L to ModelsDevClient::parseVercelModelsIntoCatalog),
+            endpoints.aimlApiModelsUrl to (15_000L to ModelsDevClient::parseAimlApiModelsIntoCatalog),
+            endpoints.liteLlmPricesUrl to (18_000L to ModelsDevClient::parseLiteLlmModelsIntoCatalog),
+            endpoints.modelsDevApiUrl to (15_000L to ModelsDevClient::parseModelsDevIntoCatalog)
+        )
+
+        // Fetch sequentially to keep peak raw JSON memory low while still filling niche gaps from models.dev.
+        for ((url, config) in sources) {
+            val (timeoutMs, parse) = config
+            fetchSourceText(url, timeoutMs)?.let { raw ->
+                runCatching { parse(raw, catalog) }
+                publishIncrementalSnapshot()
+            }
+        }
+
+        val completedAt = nowMs()
+        if (catalog.isNotEmpty()) {
+            cachedCatalog = catalog.toMap()
+            lastFetchEpochMs = completedAt
+            lastFailureEpochMs = Long.MIN_VALUE
+        } else {
+            lastFailureEpochMs = completedAt
+        }
+        catalogGeneration.update { it + 1L }
+        return cachedCatalog
+    }
+
+    suspend fun resolveOutputModalities(modelId: String): List<String> {
+        ModelsDevClient.lookupSpecInCatalog(cachedCatalog, modelId)
+            ?.outputModalities
+            ?.takeIf { it.isNotEmpty() }
+            ?.let { return it }
+
+        val (readyCatalog, deferred) = getOrStartSync(bypassFailureCooldown = false)
+        if (deferred == null) {
+            return ModelsDevClient.lookupSpecInCatalog(readyCatalog, modelId)?.outputModalities.orEmpty()
+        }
+
+        withTimeoutOrNull(modalityWaitTimeoutMs) {
+            catalogGeneration.first {
+                ModelsDevClient.lookupSpecInCatalog(cachedCatalog, modelId)?.outputModalities?.isNotEmpty() == true ||
+                    deferred.isCompleted
+            }
+        }
+        return ModelsDevClient.lookupSpecInCatalog(cachedCatalog, modelId)?.outputModalities.orEmpty()
+    }
+
+    suspend fun fetchModelSpec(
+        modelId: String,
+        bypassFailureCooldown: Boolean = false
+    ): Result<ModelPricingSpec> = withContext(Dispatchers.IO) {
+        try {
+            val cleanTarget = modelId.trim().lowercase().removePrefix("models/")
+            require(cleanTarget.isNotBlank()) { "Model ID is empty." }
+
+            val (readyCatalog, deferred) = getOrStartSync(bypassFailureCooldown = bypassFailureCooldown)
+            val catalog = deferred?.await() ?: readyCatalog
+            val matched = ModelsDevClient.lookupSpecInCatalog(catalog, cleanTarget)
+                ?: error("Model '$modelId' was not found in the unified model registry.")
+
+            Result.success(matched.copy(modelId = modelId.trim()))
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (t: Throwable) {
+            Result.failure(t)
+        }
+    }
+}
+
 /**
  * Multi-Source Unified Model Registry Client.
  *
@@ -37,30 +234,15 @@ import kotlinx.serialization.json.jsonPrimitive
  * 3. Vercel AI Gateway Catalog (`https://ai-gateway.vercel.sh/v1/models`)
  * 4. AIMLAPI Multimodal & Video Catalog (`https://api.aimlapi.com/models`)
  * 5. LiteLLM Official Registry (`https://raw.githubusercontent.com/BerriAI/litellm/main/model_prices_and_context_window.json`)
- * 6. Fallback `models.dev` (`https://models.dev/api.json`)
+ * 6. `models.dev` (`https://models.dev/api.json`) for gap-filling and fallback
  */
 object ModelsDevClient {
-    private const val OPENROUTER_MODELS_URL = "https://openrouter.ai/api/v1/models?output_modalities=all"
-    private const val OPENROUTER_VIDEOS_URL = "https://openrouter.ai/api/v1/videos/models"
-    private const val VERCEL_MODELS_URL = "https://ai-gateway.vercel.sh/v1/models"
-    private const val AIMLAPI_MODELS_URL = "https://api.aimlapi.com/models"
-    private const val LITELLM_PRICES_URL = "https://raw.githubusercontent.com/BerriAI/litellm/main/model_prices_and_context_window.json"
-    private const val MODELS_DEV_API_URL = "https://models.dev/api.json"
+    private val defaultCatalogClient = RegistryCatalogClient()
 
     private val json = Json {
         ignoreUnknownKeys = true
         isLenient = true
     }
-
-    private val fetchMutex = Mutex()
-
-    @Volatile
-    private var cachedCatalog: Map<String, ModelPricingSpec> = emptyMap()
-
-    @Volatile
-    private var lastFetchEpochMs: Long = 0L
-
-    private const val CACHE_TTL_MS = 30 * 60 * 1000L // 30 minutes
     private val CONTEXT_TIER_PATTERN = Regex("context_over_([0-9]+)([km]?)")
     private val LITELLM_CONTEXT_TIER_PATTERN = Regex("(input_cost_per_token|output_cost_per_token|cache_read_input_token_cost|cache_creation_input_token_cost|cache_creation_input_token_cost_above_(?:1|12)hr)_above_([0-9]+)([km]?)_tokens")
 
@@ -265,109 +447,36 @@ object ModelsDevClient {
      * Returns the cached `outputModalities` (`text`, `image`, `video`, `audio`) for [modelId]
      * if the registry has already been fetched during this session, or an empty list otherwise.
      */
-    fun getCachedOutputModalities(modelId: String): List<String> {
-        return lookupSpecInCatalog(cachedCatalog, modelId)?.outputModalities.orEmpty()
-    }
+    fun getCachedOutputModalities(modelId: String): List<String> =
+        lookupSpecInCatalog(defaultCatalogClient.cachedCatalog, modelId)?.outputModalities.orEmpty()
 
-    internal fun getCachedSpec(modelId: String): ModelPricingSpec? = lookupSpecInCatalog(cachedCatalog, modelId)
+    internal fun getCachedSpec(modelId: String): ModelPricingSpec? =
+        lookupSpecInCatalog(defaultCatalogClient.cachedCatalog, modelId)
 
     /**
      * Returns the cached `inputModalities` for [modelId] if already loaded.
      */
-    fun getCachedInputModalities(modelId: String): List<String> {
-        return lookupSpecInCatalog(cachedCatalog, modelId)?.inputModalities.orEmpty()
-    }
+    fun getCachedInputModalities(modelId: String): List<String> =
+        lookupSpecInCatalog(defaultCatalogClient.cachedCatalog, modelId)?.inputModalities.orEmpty()
 
     /**
      * Returns the cached vendor/creator name for [modelId] if known in the registry.
      */
-    fun getCachedVendorSlug(modelId: String): String? {
-        val spec = lookupSpecInCatalog(cachedCatalog, modelId) ?: return null
-        return spec.providerName.takeIf { it.isNotBlank() }
-    }
+    fun getCachedVendorSlug(modelId: String): String? =
+        lookupSpecInCatalog(defaultCatalogClient.cachedCatalog, modelId)?.providerName?.takeIf { it.isNotBlank() }
 
     /**
-     * Ensures the registry catalog is loaded (warming it with a bounded timeout if empty)
-     * and returns the output modalities for [modelId].
+     * Ensures the registry catalog is warming in the background (waiting only up to a short bound
+     * without cancelling the in-flight sync) and returns any known output modalities for [modelId].
      */
-    suspend fun resolveOutputModalities(modelId: String): List<String> {
-        getCachedOutputModalities(modelId).takeIf { it.isNotEmpty() }?.let { return it }
-        return withTimeoutOrNull(6_500L) {
-            fetchModelSpec(modelId).getOrNull()?.outputModalities
-        }.orEmpty()
-    }
+    suspend fun resolveOutputModalities(modelId: String): List<String> =
+        defaultCatalogClient.resolveOutputModalities(modelId)
 
-    suspend fun fetchModelSpec(modelId: String): Result<ModelPricingSpec> = withContext(Dispatchers.IO) {
-        try {
-            val cleanTarget = modelId.trim().lowercase().removePrefix("models/")
-            require(cleanTarget.isNotBlank()) { "Model ID is empty." }
-
-            val now = PlatformRuntime.currentTimeMillis()
-            val catalog = if (cachedCatalog.isNotEmpty() && (now - lastFetchEpochMs) in 0L until CACHE_TTL_MS) {
-                cachedCatalog
-            } else {
-                fetchEntireCatalog()
-            }
-
-            val matched = lookupSpecInCatalog(catalog, cleanTarget)
-                ?: error("Model '$modelId' was not found in the unified model registry.")
-
-            Result.success(matched.copy(modelId = modelId.trim()))
-        } catch (cancelled: CancellationException) {
-            throw cancelled
-        } catch (t: Throwable) {
-            Result.failure(t)
-        }
-    }
-
-    private suspend fun fetchEntireCatalog(): Map<String, ModelPricingSpec> = fetchMutex.withLock {
-        withContext(Dispatchers.IO) {
-            val now = PlatformRuntime.currentTimeMillis()
-            if (cachedCatalog.isNotEmpty() && (now - lastFetchEpochMs) in 0L until CACHE_TTL_MS) {
-                return@withContext cachedCatalog
-            }
-
-            val httpClient = AiProviderEngine.httpClient
-            val catalog = mutableMapOf<String, ModelPricingSpec>()
-
-            suspend fun fetchSourceText(url: String, timeoutMs: Long): String? = withTimeoutOrNull(timeoutMs) {
-                runCatching {
-                    val resp = httpClient.get(url)
-                    if (resp.status.isSuccess()) resp.bodyAsText() else null
-                }.getOrNull()
-            }
-
-            // Fetch and parse each registry sequentially so each raw JSON buffer can be reclaimed before the next download.
-            fetchSourceText(OPENROUTER_MODELS_URL, 15_000L)?.let { raw ->
-                runCatching { parseOpenRouterModelsIntoCatalog(raw, catalog, forceVideoOutput = false) }
-            }
-            fetchSourceText(OPENROUTER_VIDEOS_URL, 12_000L)?.let { raw ->
-                runCatching { parseOpenRouterModelsIntoCatalog(raw, catalog, forceVideoOutput = true) }
-            }
-            fetchSourceText(VERCEL_MODELS_URL, 12_000L)?.let { raw ->
-                runCatching { parseVercelModelsIntoCatalog(raw, catalog) }
-            }
-            fetchSourceText(AIMLAPI_MODELS_URL, 15_000L)?.let { raw ->
-                runCatching { parseAimlApiModelsIntoCatalog(raw, catalog) }
-            }
-            fetchSourceText(LITELLM_PRICES_URL, 18_000L)?.let { raw ->
-                runCatching { parseLiteLlmModelsIntoCatalog(raw, catalog) }
-            }
-
-            // Fallback to models.dev if primary sources failed or to fill niche gaps
-            if (catalog.isEmpty()) {
-                fetchSourceText(MODELS_DEV_API_URL, 15_000L)?.let { raw ->
-                    runCatching { parseModelsDevIntoCatalog(raw, catalog) }
-                }
-            }
-
-            if (catalog.isNotEmpty()) {
-                cachedCatalog = catalog
-                lastFetchEpochMs = PlatformRuntime.currentTimeMillis()
-            }
-            catalog
-        }
-    }
+    suspend fun fetchModelSpec(
+        modelId: String,
+        bypassFailureCooldown: Boolean = false
+    ): Result<ModelPricingSpec> =
+        defaultCatalogClient.fetchModelSpec(modelId, bypassFailureCooldown = bypassFailureCooldown)
 
     internal fun parseOpenRouterModelsIntoCatalog(
         rawJson: String,

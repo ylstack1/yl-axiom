@@ -26,12 +26,12 @@ import androidx.compose.ui.unit.Density
 import io.parchment.ai.model.*
 import io.parchment.ai.platform.PlatformRuntime
 import io.parchment.ai.platform.PlatformStorage
-import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.swing.Swing
 import kotlinx.serialization.encodeToString
 import java.io.File
-import java.util.concurrent.ConcurrentLinkedQueue
-import kotlin.coroutines.CoroutineContext
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNotEquals
@@ -110,43 +110,20 @@ class UiGalleryTest {
             node.config.getOrNull(SemanticsProperties.Text).orEmpty().map { it.text }
         ).joinToString(" ")
 
-    /** Keeps the app's coroutines on the rendering thread, as they are in a real window. */
-    private class RenderThreadDispatcher : CoroutineDispatcher() {
-        private val tasks = ConcurrentLinkedQueue<Runnable>()
-        override fun dispatch(context: CoroutineContext, block: Runnable) { tasks.add(block) }
-        fun drain() { while (true) (tasks.poll() ?: break).run() }
-    }
-    private val renderThread = RenderThreadDispatcher()
-
     private var conversationCopies = 1
     private var frame = 0L
-    private fun settle(scene: ImageComposeScene, frames: Int = 40) = repeat(frames) {
-        renderThread.drain()
+    private suspend fun settle(scene: ImageComposeScene, frames: Int = 40) = repeat(frames) {
         Snapshot.sendApplyNotifications()
         frame += 16_000_000L
         scene.render(frame).close()
-        Thread.sleep(12)
+        delay(12)
     }
 
-    /**
-     * Compose 1.12 sometimes fails inside its own layout bookkeeping ("LayoutNode … not found in RectList"), at a
-     * different screen each time and in about half the runs (2026-11-11). Retry that one error once with a fresh
-     * scene; anything else, or a second failure, still fails the test. TODO.md tracks it for the real app.
-     */
-    private fun capture(viewport: Viewport, theme: ThemeConfig, name: String, steps: List<String> = emptyList()) {
-        try {
-            captureOnce(viewport, theme, name, steps)
-        } catch (e: IllegalArgumentException) {
-            if (e.message?.contains("RectList") != true) throw e
-            captureOnce(viewport, theme, name, steps)
-        }
-    }
-
-    private fun captureOnce(viewport: Viewport, theme: ThemeConfig, name: String, steps: List<String>) {
+    private suspend fun capture(viewport: Viewport, theme: ThemeConfig, name: String, steps: List<String> = emptyList()) {
         seed(theme)
         val scene = ImageComposeScene(
             (viewport.widthDp * viewport.density).toInt(), (viewport.heightDp * viewport.density).toInt(),
-            density = Density(viewport.density, viewport.fontScale), coroutineContext = renderThread
+            density = Density(viewport.density, viewport.fontScale), coroutineContext = Dispatchers.Swing
         )
         try {
             val process = parchmentProcessState
@@ -169,9 +146,9 @@ class UiGalleryTest {
         } finally { scene.close() }
     }
 
-    @Test fun yourMessagesSitRightAndRepliesLeft() {
+    @Test fun yourMessagesSitRightAndRepliesLeft() = runBlocking<Unit>(Dispatchers.Swing) {
         seed(ThemeConfig())
-        val scene = ImageComposeScene(desktop.widthDp, desktop.heightDp, density = Density(1f), coroutineContext = renderThread)
+        val scene = ImageComposeScene(desktop.widthDp, desktop.heightDp, density = Density(1f), coroutineContext = Dispatchers.Swing)
         try {
             parchmentProcessState.snapshot.value = loadFastInitialAppState().first
             scene.setContent { ParchmentApp() }
@@ -193,34 +170,36 @@ class UiGalleryTest {
 
     @Test fun renderIconSheet() {
         assumeGalleryRequested()
-        val icons = KissIcon.entries
-        val columns = 12
-        val rows = (icons.size + columns - 1) / columns
-        val scene = ImageComposeScene(columns * 92, rows * 72, density = Density(2f), coroutineContext = Dispatchers.Unconfined)
-        try {
-            scene.setContent {
-                val palette = buildPaletteFromConfig(ThemeConfig())
-                FlowRow(Modifier.fillMaxSize().background(palette.canvasBg).padding(10.dp), maxItemsInEachRow = columns) {
-                    icons.forEach { icon ->
-                        Row(Modifier.width(36.dp).height(34.dp), verticalAlignment = Alignment.CenterVertically) {
-                            KissVectorIcon(icon, palette.primaryInk, size = 22.dp)
-                            Spacer(Modifier.width(2.dp))
-                            KissVectorIcon(icon, palette.narrationInk, size = 12.dp)
+        runBlocking<Unit>(Dispatchers.Swing) {
+            val icons = KissIcon.entries
+            val columns = 12
+            val rows = (icons.size + columns - 1) / columns
+            val scene = ImageComposeScene(columns * 92, rows * 72, density = Density(2f), coroutineContext = Dispatchers.Swing.immediate)
+            try {
+                scene.setContent {
+                    val palette = buildPaletteFromConfig(ThemeConfig())
+                    FlowRow(Modifier.fillMaxSize().background(palette.canvasBg).padding(10.dp), maxItemsInEachRow = columns) {
+                        icons.forEach { icon ->
+                            Row(Modifier.width(36.dp).height(34.dp), verticalAlignment = Alignment.CenterVertically) {
+                                KissVectorIcon(icon, palette.primaryInk, size = 22.dp)
+                                Spacer(Modifier.width(2.dp))
+                                KissVectorIcon(icon, palette.narrationInk, size = 12.dp)
+                            }
                         }
                     }
                 }
-            }
-            settle(scene, 4)
-            frame += 16_000_000L
-            scene.render(frame).use { File(output, "icons.png").writeBytes(requireNotNull(it.encodeToData()).bytes) }
-        } finally { scene.close() }
+                settle(scene, 4)
+                frame += 16_000_000L
+                scene.render(frame).use { File(output, "icons.png").writeBytes(requireNotNull(it.encodeToData()).bytes) }
+            } finally { scene.close() }
+        }
     }
 
-    @Test fun wheelScrollsTheChatFromThePageMargin() {
+    @Test fun wheelScrollsTheChatFromThePageMargin() = runBlocking<Unit>(Dispatchers.Swing) {
         conversationCopies = 8
         seed(ThemeConfig())
-        val scene = ImageComposeScene(desktop.widthDp, desktop.heightDp, density = Density(1f), coroutineContext = renderThread)
-        fun image(): List<Byte> {
+        val scene = ImageComposeScene(desktop.widthDp, desktop.heightDp, density = Density(1f), coroutineContext = Dispatchers.Swing)
+        suspend fun image(): List<Byte> {
             settle(scene)
             frame += 16_000_000L
             return scene.render(frame).use { requireNotNull(it.encodeToData()).bytes.toList() }
@@ -243,35 +222,37 @@ class UiGalleryTest {
 
     @Test fun renderGallery() {
         assumeGalleryRequested()
-        val night = ThemeConfig.PRESETS.first { it.name == "Lapis at Night" }
-        try {
-            for (viewport in listOf(phone, desktop)) {
-                val closeDrawer = if (viewport == phone) listOf("Close sidebar") else emptyList()
-                capture(viewport, ThemeConfig(), "chat", closeDrawer)
-                capture(viewport, night, "chat-dark", closeDrawer)
-                capture(viewport, ThemeConfig(), "sidebar")
-                capture(viewport, ThemeConfig(), "settings", listOf("Settings"))
-                capture(viewport, ThemeConfig(), "thought", closeDrawer + listOf("Thought"))
-                capture(viewport, ThemeConfig(), "models", closeDrawer + listOf("gemini-3-pro"))
-                capture(viewport, ThemeConfig(), "notes", closeDrawer + listOf("Chat notes"))
-                capture(viewport, night, "sidebar-dark")
-                capture(viewport, night, "settings-dark", listOf("Settings"))
+        runBlocking<Unit>(Dispatchers.Swing) {
+            val night = ThemeConfig.PRESETS.first { it.name == "Lapis at Night" }
+            try {
+                for (viewport in listOf(phone, desktop)) {
+                    val closeDrawer = if (viewport == phone) listOf("Close sidebar") else emptyList()
+                    capture(viewport, ThemeConfig(), "chat", closeDrawer)
+                    capture(viewport, night, "chat-dark", closeDrawer)
+                    capture(viewport, ThemeConfig(), "sidebar")
+                    capture(viewport, ThemeConfig(), "settings", listOf("Settings"))
+                    capture(viewport, ThemeConfig(), "thought", closeDrawer + listOf("Thought"))
+                    capture(viewport, ThemeConfig(), "models", closeDrawer + listOf("gemini-3-pro"))
+                    capture(viewport, ThemeConfig(), "notes", closeDrawer + listOf("Chat notes"))
+                    capture(viewport, night, "sidebar-dark")
+                    capture(viewport, night, "settings-dark", listOf("Settings"))
+                }
+                for (viewport in listOf(phoneLargeText, desktopLargeText)) {
+                    capture(viewport, ThemeConfig(), "chat", if (viewport.name.startsWith("phone")) listOf("Close sidebar") else emptyList())
+                    capture(viewport, ThemeConfig(), "settings", listOf("Settings"))
+                }
+                for (page in listOf("Providers", "Assistant", "Workspace", "World Book & Cards", "Storage & Updates")) {
+                    capture(desktop, ThemeConfig(), "page-${page.take(5).trim().lowercase()}", listOf("Settings", page))
+                }
+                for (viewport in listOf(phone, desktop)) {
+                    // On a phone, New chat already closes the sidebar.
+                    capture(viewport, ThemeConfig(), "empty", listOf("New chat"))
+                }
+            } finally {
+                (1..4).forEach { PlatformStorage.deleteChatSessionFile("gallery-$it") }
+                PlatformStorage.saveAppStateJson(compactStateJson.encodeToString(createDefaultAppState()))
             }
-            for (viewport in listOf(phoneLargeText, desktopLargeText)) {
-                capture(viewport, ThemeConfig(), "chat", if (viewport.name.startsWith("phone")) listOf("Close sidebar") else emptyList())
-                capture(viewport, ThemeConfig(), "settings", listOf("Settings"))
-            }
-            for (page in listOf("Providers", "Assistant", "Workspace", "World Book & Cards", "Storage & Updates")) {
-                capture(desktop, ThemeConfig(), "page-${page.take(5).trim().lowercase()}", listOf("Settings", page))
-            }
-            for (viewport in listOf(phone, desktop)) {
-                // On a phone, New chat already closes the sidebar.
-                capture(viewport, ThemeConfig(), "empty", listOf("New chat"))
-            }
-        } finally {
-            (1..4).forEach { PlatformStorage.deleteChatSessionFile("gallery-$it") }
-            PlatformStorage.saveAppStateJson(compactStateJson.encodeToString(createDefaultAppState()))
+            assertTrue(File(output, "phone-chat.png").isFile)
         }
-        assertTrue(File(output, "phone-chat.png").isFile)
     }
 }

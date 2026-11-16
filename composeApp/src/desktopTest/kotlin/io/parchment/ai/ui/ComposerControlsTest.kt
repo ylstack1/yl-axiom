@@ -11,6 +11,9 @@ import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.semantics.getOrNull
 import androidx.compose.ui.unit.Density
 import androidx.compose.runtime.CompositionLocalProvider
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.swing.Swing
 import kotlin.test.*
 
 @OptIn(androidx.compose.ui.ExperimentalComposeUiApi::class)
@@ -43,11 +46,11 @@ class ComposerControlsTest {
     }
 
     private fun scene(content: @androidx.compose.runtime.Composable () -> Unit) =
-        ImageComposeScene(900, 700, Density(1f)) {
+        ImageComposeScene(900, 700, Density(1f), coroutineContext = Dispatchers.Swing.immediate) {
             CompositionLocalProvider(LocalParchmentPalette provides buildPaletteFromConfig(io.parchment.ai.model.ThemeConfig())) { content() }
         }
 
-    @Test fun theThinkingSliderSendsExactStopsAndShowsCustomValues() {
+    @Test fun theThinkingSliderSendsExactStopsAndShowsCustomValues() = runBlocking<Unit>(Dispatchers.Swing) {
         var value by mutableStateOf("none")
         scene { ThinkingControl("🧠 Thinking", value) { value = it } }.use { scene ->
             settle(scene, 1_000_000_000L)
@@ -65,7 +68,7 @@ class ComposerControlsTest {
         }
     }
 
-    @Test fun theDurationSliderCoversEverySecond() {
+    @Test fun theDurationSliderCoversEverySecond() = runBlocking<Unit>(Dispatchers.Swing) {
         var seconds by mutableStateOf(5)
         scene { DurationControl(seconds) { seconds = it } }.use { scene ->
             settle(scene, 1_000_000_000L)
@@ -77,7 +80,7 @@ class ComposerControlsTest {
         }
     }
 
-    @Test fun aspectTilesPickTheirShape() {
+    @Test fun aspectTilesPickTheirShape() = runBlocking<Unit>(Dispatchers.Swing) {
         var ratio by mutableStateOf("1:1")
         scene { AspectControl("🖼", ratio, IMAGE_ASPECTS) { ratio = it } }.use { scene ->
             settle(scene, 1_000_000_000L)
@@ -101,7 +104,7 @@ class ComposerControlsTest {
         assertEquals(0, sliderIndexAt(40f, 100f, 10f, 0))
     }
 
-    @Test fun speechSpeedCustomFieldToleratesClampedInputAndClearsOnSlider() {
+    @Test fun speechSpeedCustomFieldToleratesClampedInputAndClearsOnSlider() = runBlocking<Unit>(Dispatchers.Swing) {
         var speed by mutableStateOf(1.0)
         scene { SpeechSpeedControl(speed) { speed = it } }.use { scene ->
             settle(scene, 1_000_000_000L)

@@ -25,6 +25,8 @@ import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.dp
 import io.parchment.ai.model.ThemeConfig
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.swing.Swing
 import java.io.File
 import kotlin.test.*
 
@@ -44,8 +46,8 @@ class SharedActionSemanticsUiTest {
     private fun withScene(
         width: Int = 320, height: Int = 320, fontScale: Float = 1f,
         content: @Composable () -> Unit, check: (ImageComposeScene) -> Unit
-    ) {
-        val scene = ImageComposeScene(width, height, density = Density(1f, fontScale), coroutineContext = Dispatchers.Unconfined)
+    ) = runBlocking<Unit>(Dispatchers.Swing) {
+        val scene = ImageComposeScene(width, height, density = Density(1f, fontScale), coroutineContext = Dispatchers.Swing.immediate)
         try {
             scene.setContent {
                 CompositionLocalProvider(LocalParchmentWindowSize provides ParchmentWindowSize(width.dp, height.dp)) {
