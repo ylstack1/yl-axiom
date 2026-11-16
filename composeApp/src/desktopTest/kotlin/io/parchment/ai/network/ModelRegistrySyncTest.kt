@@ -3,7 +3,9 @@ package io.parchment.ai.network
 import com.sun.net.httpserver.HttpServer
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
+import java.io.ByteArrayOutputStream
 import java.net.InetSocketAddress
+import java.util.zip.GZIPOutputStream
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
@@ -206,6 +208,62 @@ class ModelRegistrySyncTest {
                 client.fetchModelSpec("vendor/recovered", bypassFailureCooldown = true).getOrThrow()
             }
             assertEquals(128_000, manual.contextWindowTokens)
+        } finally {
+            server.stop(0)
+        }
+    }
+
+    @Test
+    fun syncStreamsGzippedCatalogsThroughSlimDtoDecoders() = runBlocking {
+        fun respondGzipJson(exchange: com.sun.net.httpserver.HttpExchange, body: String) {
+            val gz = ByteArrayOutputStream().use { raw ->
+                GZIPOutputStream(raw).use { it.write(body.toByteArray(Charsets.UTF_8)) }
+                raw.toByteArray()
+            }
+            exchange.responseHeaders.set("Content-Type", "application/json")
+            exchange.responseHeaders.set("Content-Encoding", "gzip")
+            exchange.sendResponseHeaders(200, gz.size.toLong())
+            exchange.responseBody.use { it.write(gz) }
+        }
+
+        val ignoredBlob = "x".repeat(4096)
+        val server = HttpServer.create(InetSocketAddress("127.0.0.1", 0), 0)
+        server.executor = Executors.newCachedThreadPool()
+        server.createContext("/openrouter") { ex ->
+            respondGzipJson(
+                ex,
+                """{"data":[{"id":"vendor/gzip-chat","name":"Gzip Chat","description":"$ignoredBlob","supported_parameters":["temperature","tools"],"context_length":"131072","architecture":{"input_modalities":["text"],"output_modalities":["text"]},"pricing":{"prompt":"0.000001","completion":"0.000002","weird":{}}}]}"""
+            )
+        }
+        server.createContext("/openrouter-videos") { ex -> respondJson(ex, 404, "{}") }
+        server.createContext("/vercel") { ex -> respondJson(ex, 404, "{}") }
+        server.createContext("/aimlapi") { ex -> respondJson(ex, 404, "{}") }
+        server.createContext("/litellm") { ex -> respondJson(ex, 200, """{"sample_spec":{"max_tokens":"ignored"}}""") }
+        server.createContext("/models-dev") { ex ->
+            respondGzipJson(
+                ex,
+                """{"gzipvendor":{"name":"GzipVendor","doc":"$ignoredBlob","models":{"vendor/gzip-audio":{"id":"vendor/gzip-audio","name":"Gzip Audio","release_date":"2026-01-01","modalities":{"input":["text"],"output":["audio"]},"limit":{"context":64000,"output":8192}}}}}"""
+            )
+        }
+        server.start()
+        try {
+            val base = "http://127.0.0.1:${server.address.port}"
+            val client = RegistryCatalogClient(
+                endpoints = RegistryEndpoints(
+                    openRouterModelsUrl = "$base/openrouter",
+                    openRouterVideosUrl = "$base/openrouter-videos",
+                    vercelModelsUrl = "$base/vercel",
+                    aimlApiModelsUrl = "$base/aimlapi",
+                    liteLlmPricesUrl = "$base/litellm",
+                    modelsDevApiUrl = "$base/models-dev"
+                )
+            )
+            val chatSpec = withTimeout(5_000L) { client.fetchModelSpec("vendor/gzip-chat").getOrThrow() }
+            val audioSpec = withTimeout(5_000L) { client.fetchModelSpec("vendor/gzip-audio").getOrThrow() }
+            assertEquals(131_072, chatSpec.contextWindowTokens)
+            assertEquals(1.0, chatSpec.inputPricePerM)
+            assertEquals(listOf("audio"), audioSpec.outputModalities)
+            assertEquals(64_000, audioSpec.contextWindowTokens)
         } finally {
             server.stop(0)
         }

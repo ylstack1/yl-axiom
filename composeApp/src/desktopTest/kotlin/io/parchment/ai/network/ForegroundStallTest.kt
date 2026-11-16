@@ -10,9 +10,9 @@ import kotlin.test.*
 class ForegroundStallTest {
     private val events = mutableListOf<String>()
 
-    private fun CoroutineScope.read(channel: ByteChannel) = async(Dispatchers.Default + SupervisorJob()) {
+    private fun CoroutineScope.read(channel: ByteChannel, returnGraceMs: Long = 200L) = async(Dispatchers.Default + SupervisorJob()) {
         runCatching {
-            AiProviderEngine.readSseOrJsonFallback(channel, { true }, { _, data -> events += data }, {})
+            AiProviderEngine.readSseOrJsonFallback(channel, { true }, { _, data -> events += data }, {}, returnGraceMs = returnGraceMs)
         }
     }
 
@@ -54,9 +54,9 @@ class ForegroundStallTest {
         channel.line("first")
         delay(300)
         leaveAndReturn()
-        delay(500)
+        delay(50)
         channel.line("second")
-        delay(4_000)
+        delay(350)
         channel.line("third")
         channel.close()
         assertNull(withTimeout(5_000) { reading.await() }.exceptionOrNull())
@@ -66,9 +66,9 @@ class ForegroundStallTest {
     @Test fun aSlowFirstReplyIsNotMistakenForACutConnection() = runBlocking<Unit> {
         val channel = ByteChannel(autoFlush = true)
         val reading = read(channel)
-        delay(100)
+        delay(50)
         leaveAndReturn()
-        delay(4_000)
+        delay(350)
         assertFalse(reading.isCompleted, "Silent thinking before the first line is normal")
         channel.line("first")
         channel.close()

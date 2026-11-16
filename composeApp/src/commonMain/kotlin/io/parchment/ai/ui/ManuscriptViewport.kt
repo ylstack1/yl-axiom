@@ -45,6 +45,7 @@ import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.runtime.withFrameNanos
@@ -347,8 +348,20 @@ internal fun ManuscriptViewport(
         sessionSpendSummary(activeSession, activeProfile)
     }
     val sessionTotalCostUsd = sessionSpend.estimateUsd
-    val baseContextBreakdown = remember(
+    val streamingPrefixSignature = if (isStreaming) {
+        var acc = activeSession.messages.size.toLong()
+        for (i in 0 until (activeSession.messages.size - 1).coerceAtLeast(0)) {
+            val node = activeSession.messages[i]
+            acc = acc * 31L + node.id.hashCode()
+            acc = acc * 31L + node.activeVariantIndex
+            acc = acc * 31L + node.activeVariant.id.hashCode()
+            if (node.includedInContext) acc += 17L
+        }
+        acc
+    } else 0L
+    val baseContextPrefix = remember(
         activeSession.messages.takeUnless { isStreaming },
+        streamingPrefixSignature,
         activeSession.id,
         activeSession.modelOverride,
         activeSession.storySummary,
@@ -363,17 +376,20 @@ internal fun ManuscriptViewport(
         activeProfile,
         appState.globalWorldBook,
         activeSession.messages.size,
-        throttledBreakdownTrigger,
         isGoalModeEnabled,
         isStreaming
     ) {
-        O200kTokenizer.computeBaseContextWindowBreakdown(
+        O200kTokenizer.computeBaseContextPrefixBreakdown(
             session = activeSession,
             assistant = activeAssistant,
             profile = activeProfile,
             goalModeActive = isGoalModeEnabled,
-            globalWorldBook = appState.globalWorldBook
+            globalWorldBook = appState.globalWorldBook,
+            excludeLastFromKeywords = isStreaming
         )
+    }
+    val baseContextBreakdown = remember(baseContextPrefix, throttledBreakdownTrigger, isStreaming) {
+        O200kTokenizer.applyLastTurnToBreakdown(baseContextPrefix, activeSession.messages.lastOrNull())
     }
     val pendingAttachmentsTokens = remember(pendingAttachments) {
         O200kTokenizer.countAttachmentsTokens(pendingAttachments)
@@ -475,6 +491,13 @@ internal fun ManuscriptViewport(
             contentAlignment = Alignment.TopCenter
         ) {
             val pageGutter = if (win.isCompact) 12.dp else 18.dp
+            val resolvedUserName = remember(activeSession.userName, preferences.profileName) {
+                activeSession.withProfileName(preferences).userName
+            }
+            val resolvedCharacterName = remember(activeSession.activeCard?.name, activeAssistant.id, activeAssistant.name) {
+                activeSession.activeCard?.name?.takeIf { it.isNotBlank() }
+                    ?: activeAssistant.name.takeIf { activeAssistant.id.isNotBlank() }.orEmpty()
+            }
             LazyColumn(
                 state = listState,
                 contentPadding = PaddingValues(horizontal = maxOf(pageGutter, (maxWidth - p.maxReadingWidth) / 2 + pageGutter)),
@@ -516,27 +539,17 @@ internal fun ManuscriptViewport(
                     key = { _, node -> node.id },
                     contentType = { _, node -> node.role }
                 ) { index, node ->
-                    MessageTurnItem(
-                        node = node,
-                        nodeIndex = index,
-                        isLatestTurn = index >= activeSession.messages.lastIndex - 1,
-                        userPicture = userPicture,
-                        viewMode = preferences.defaultViewMode,
-                        preferences = preferences,
-                        userName = activeSession.withProfileName(preferences).userName,
-                        characterName = activeSession.activeCard?.name?.takeIf { it.isNotBlank() }
-                            ?: activeAssistant.name.takeIf { activeAssistant.id.isNotBlank() }.orEmpty(),
-                        assistantIconEmoji = activeAssistant.iconEmoji,
-                        providerName = activeProfile.name,
-                        inputPricePerM = activeProfile.inputPricePerM,
-                        outputPricePerM = activeProfile.outputPricePerM,
-                        isActivelyThinkingThisNode = isStreaming && isCurrentlyThinkingPhase && streamingTargetNodeId == node.id,
-                        onTogglePin = { onTogglePinnedReply(node.id) },
-                        onSelectVariant = { newIdx ->
+                    val latestIndex = rememberUpdatedState(index)
+                    val itemOnTogglePin = remember(node.id, onTogglePinnedReply) {
+                        { onTogglePinnedReply(node.id) }
+                    }
+                    val itemOnSelectVariant = remember(node.id, onUpdateSession) {
+                        { newIdx: Int ->
+                            val targetIdx = latestIndex.value
                             onUpdateSession { sess ->
                                 sess.copy(
                                     messages = sess.messages.mapIndexed { i, n ->
-                                        if (i == index && n.variants.isNotEmpty()) {
+                                        if (i == targetIdx && n.variants.isNotEmpty()) {
                                             n.copy(activeVariantIndex = newIdx.coerceIn(0, n.variants.lastIndex))
                                         } else {
                                             n
@@ -544,13 +557,16 @@ internal fun ManuscriptViewport(
                                     }
                                 )
                             }
-                        },
-                        onSaveEditedText = { newText, asNewBranch, alsoRegenerate ->
+                        }
+                    }
+                    val itemOnSaveEditedText = remember(node.id, onUpdateSession, onRegenerateNode) {
+                        { newText: String, asNewBranch: Boolean, alsoRegenerate: Boolean ->
+                            val targetIdx = latestIndex.value
                             val now = PlatformRuntime.currentTimeMillis()
                             onUpdateSession { sess ->
                                 sess.copy(
                                     messages = sess.messages.mapIndexed { i, n ->
-                                        if (i != index) n
+                                        if (i != targetIdx) n
                                         else if (asNewBranch) {
                                             val branched = n.activeVariant.copy(
                                                 id = "var-$now-branch",
@@ -572,45 +588,80 @@ internal fun ManuscriptViewport(
                                 )
                             }
                             if (alsoRegenerate) {
-                                onRegenerateNode(index)
+                                onRegenerateNode(targetIdx)
                             }
-                        },
-                        onToggleContextMute = {
+                        }
+                    }
+                    val itemOnToggleContextMute = remember(node.id, onUpdateSession) {
+                        {
+                            val targetIdx = latestIndex.value
                             onUpdateSession { sess ->
                                 sess.copy(
                                     messages = sess.messages.mapIndexed { i, n ->
-                                        if (i == index) n.copy(includedInContext = !n.includedInContext) else n
+                                        if (i == targetIdx) n.copy(includedInContext = !n.includedInContext) else n
                                     }
                                 )
                             }
-                        },
-                        onDeleteCurrentVariant = {
+                        }
+                    }
+                    val itemOnDeleteCurrentVariant = remember(node.id, onUpdateSession) {
+                        {
+                            val targetIdx = latestIndex.value
                             onUpdateSession { sess ->
-                                val target = sess.messages.getOrNull(index) ?: return@onUpdateSession sess
+                                val target = sess.messages.getOrNull(targetIdx) ?: return@onUpdateSession sess
                                 if (target.variants.size <= 1) {
-                                    sess.copy(messages = sess.messages.filterIndexed { i, _ -> i != index })
+                                    sess.copy(messages = sess.messages.filterIndexed { i, _ -> i != targetIdx })
                                 } else {
                                     val curVarIdx = target.activeVariantIndex.coerceIn(0, target.variants.lastIndex)
                                     val remainingVars = target.variants.filterIndexed { vIdx, _ -> vIdx != curVarIdx }
                                     val nextVarIdx = curVarIdx.coerceAtMost(remainingVars.lastIndex)
                                     sess.copy(
                                         messages = sess.messages.mapIndexed { i, n ->
-                                            if (i == index) n.copy(variants = remainingVars, activeVariantIndex = nextVarIdx) else n
+                                            if (i == targetIdx) n.copy(variants = remainingVars, activeVariantIndex = nextVarIdx) else n
                                         }
                                     )
                                 }
                             }
-                        },
-                        onDeleteNode = {
+                        }
+                    }
+                    val itemOnDeleteNode = remember(node.id, onUpdateSession) {
+                        {
+                            val targetIdx = latestIndex.value
                             onUpdateSession { sess ->
-                                sess.copy(messages = sess.messages.filterIndexed { i, _ -> i != index })
+                                sess.copy(messages = sess.messages.filterIndexed { i, _ -> i != targetIdx })
                             }
-                        },
-                        onForkHere = { onForkSessionFromNode(index) },
-                        onRewindHere = { onRewindToNode(index) },
-                        onRegenerate = { onRegenerateNode(index) },
-                        onTranslate = { onTranslateNode(index) },
-                        onContinue = { onContinueAssistantNode(index) },
+                        }
+                    }
+                    val itemOnForkHere = remember(node.id, onForkSessionFromNode) { { onForkSessionFromNode(latestIndex.value) } }
+                    val itemOnRewindHere = remember(node.id, onRewindToNode) { { onRewindToNode(latestIndex.value) } }
+                    val itemOnRegenerate = remember(node.id, onRegenerateNode) { { onRegenerateNode(latestIndex.value) } }
+                    val itemOnTranslate = remember(node.id, onTranslateNode) { { onTranslateNode(latestIndex.value) } }
+                    val itemOnContinue = remember(node.id, onContinueAssistantNode) { { onContinueAssistantNode(latestIndex.value) } }
+                    MessageTurnItem(
+                        node = node,
+                        nodeIndex = index,
+                        isLatestTurn = index >= activeSession.messages.lastIndex - 1,
+                        userPicture = userPicture,
+                        viewMode = preferences.defaultViewMode,
+                        preferences = preferences,
+                        userName = resolvedUserName,
+                        characterName = resolvedCharacterName,
+                        assistantIconEmoji = activeAssistant.iconEmoji,
+                        providerName = activeProfile.name,
+                        inputPricePerM = activeProfile.inputPricePerM,
+                        outputPricePerM = activeProfile.outputPricePerM,
+                        isActivelyThinkingThisNode = isStreaming && isCurrentlyThinkingPhase && streamingTargetNodeId == node.id,
+                        onTogglePin = itemOnTogglePin,
+                        onSelectVariant = itemOnSelectVariant,
+                        onSaveEditedText = itemOnSaveEditedText,
+                        onToggleContextMute = itemOnToggleContextMute,
+                        onDeleteCurrentVariant = itemOnDeleteCurrentVariant,
+                        onDeleteNode = itemOnDeleteNode,
+                        onForkHere = itemOnForkHere,
+                        onRewindHere = itemOnRewindHere,
+                        onRegenerate = itemOnRegenerate,
+                        onTranslate = itemOnTranslate,
+                        onContinue = itemOnContinue,
                         onInspectAttachment = onInspectAttachment,
                         onInspectGeneratedImage = onInspectGeneratedImage
                     )

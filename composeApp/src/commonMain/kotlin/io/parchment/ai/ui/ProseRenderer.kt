@@ -214,6 +214,45 @@ internal fun countLinesFast(s: String): Int {
 }
 
 /**
+ * Splits long fenced code bodies into ~[chunkLines]-line segments at exact newline boundaries so
+ * Compose skips Skia paragraph relayout on settled leading chunks while streaming.
+ */
+internal fun splitCodeFenceChunks(
+    code: String,
+    chunkLines: Int = 40,
+    minLinesToChunk: Int = 60
+): List<String> {
+    if (code.isEmpty()) return listOf(code)
+    var totalNewlines = 0
+    var scan = 0
+    while (totalNewlines < minLinesToChunk) {
+        val nl = code.indexOf('\n', scan)
+        if (nl == -1) return listOf(code)
+        totalNewlines++
+        scan = nl + 1
+    }
+    val chunks = ArrayList<String>((totalNewlines / chunkLines) + 4)
+    var chunkStart = 0
+    var linesInChunk = 0
+    var pos = 0
+    while (pos < code.length) {
+        val nl = code.indexOf('\n', pos)
+        if (nl == -1) break
+        linesInChunk++
+        if (linesInChunk == chunkLines && nl + 1 < code.length) {
+            chunks.add(code.substring(chunkStart, nl))
+            chunkStart = nl + 1
+            linesInChunk = 0
+        }
+        pos = nl + 1
+    }
+    if (chunkStart < code.length) {
+        chunks.add(code.substring(chunkStart))
+    }
+    return chunks
+}
+
+/**
  * Strips Markdown syntax (`**bold**`, `*italic*`, `# Heading`, `` `code` ``) to clean plain text
  * for the 1-tap `📋 Copy (Text)` button.
  */
@@ -496,16 +535,31 @@ fun LiteraryProseRenderer(
                                             modifier = Modifier.padding(vertical = Space.s4)
                                         )
                                     } else {
+                                        val codeChunks = remember(block.code) { splitCodeFenceChunks(block.code) }
                                         Box(
                                             modifier = Modifier
                                                 .fillMaxWidth()
                                                 .horizontalScroll(rememberScrollState())
                                                 .padding(11.dp)
                                         ) {
-                                            BasicText(
-                                                text = block.code,
-                                                style = p.monoStyle
-                                            )
+                                            if (codeChunks.size == 1) {
+                                                BasicText(
+                                                    text = codeChunks[0],
+                                                    style = p.monoStyle
+                                                )
+                                            } else {
+                                                // Chunk long code blocks into ~40-line paragraphs so settled prefixes skip Skia relayout while streaming.
+                                                Column {
+                                                    codeChunks.forEachIndexed { chunkIdx, chunk ->
+                                                        key(chunkIdx) {
+                                                            BasicText(
+                                                                text = chunk,
+                                                                style = p.monoStyle
+                                                            )
+                                                        }
+                                                    }
+                                                }
+                                            }
                                         }
                                     }
                                 }

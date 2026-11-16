@@ -4,8 +4,8 @@ Updated 2026-11-15. AGENTS.md owns workflow; MEMORY holds contracts. Task IDs st
 
 ## Current status
 
-- **Source:** 2026-11-16: Released `v2.2.4` (reasoning fallback step-down & omitted-text Anthropic tool replay, MCP `2026-07-28` stateless fallback, non-cancelling background `ModelsDevClient` sync with `models.dev` gap-fill & cooldown, and AWT EDT alignment resolving the `RectList` race), then cleaned code comments/KDoc (`ProviderReasoning`, `ProviderContextHistory`, `McpClient`, `ModelsDevClient`), synced `docs/ARCHITECTURE.md` (50 UI files & EDT rule), `CONTRIBUTING.md` (`android-37.0`), `MEMORY.md` (9755/10000 chars), `AGENTS.md`, `CHANGELOG.md` and `## Sources`.
-- **Last verified:** 2026-11-16, `verify.py affected` (499 desktop tests clean, 2m33s), `verify.py review`, `verify.py test` across 10 UI suites + gallery (50 tests, 2m22s), `unittest` (34 `scripts/` + 16 `.github/scripts/` Python tests), and `v2.2.4` CI release assets.
+- **Source:** 2026-11-16: Cross-stack perf & efficiency batch (`ChatIdentity` snapshot checks, `compactStateJson` default/null omission, async Android `onPause` flush & smaller image cache, desktop iconify `AppForeground`, `ModelsDevClient` streaming DTOs, incremental tokenizer prefix, static `tools` wire prefix & 16-step compaction, chunked `CodeFence` + stable item lambdas, stale `.tmp`/OTA pruning, parameterized test waits & `quality.py` binary skip).
+- **Last verified:** 2026-11-16, `verify.py affected` (505 desktop tests + Android compile clean, 3m34s), `verify.py perf` (`desktop_title_ms=1403`, `desktop_idle_private_mb=265.9`, `p50_ms=3.7`, `p95_ms=5.8`, `average_shared_prefix=0.908..0.909`, `apk_mb=4.3`), and `unittest` (`test_workflow_tools.py`).
 - **Next action:** Re-test Android `computer_use` on device and check `13.6 Screen readers` when the user tests NVDA and TalkBack.
 
 ## Open tasks

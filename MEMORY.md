@@ -28,7 +28,7 @@ Updated 2026-11-16. Stable contracts only; read the section you need. AGENTS.md 
 - Chains require matching protocol, non-blank normalized model and stamped dialect. Keep chronological call/result batches and closing prose; ToolCallRecord.startsToolStep separates steps.
 - Stamp turns via resolveWireProtocol/resolveWireDialect (not Custom base). Native reasoning and reasoning_content replay only for matching dialect/model (else handoff shifts step text). ReplayToolCallIds owns tool IDs.
 - Reasoning signatures are opaque: preserve verbatim. Cross-provider handoff keeps 8000 chars (head + tail); user/system/continuity instructions stay uncapped.
-- Keep request beginnings stable: stale tool output compacts in batches of 8; keyword lore goes in the late note, not the system prompt.
+- Keep request beginnings stable: send `tools` before `messages`/`input`/`contents`, compact stale tool output in batches of 16, and keep keyword lore in late note.
 - Discover models and capabilities from live metadata/registries; no hardcoded models or branches. ModelsDevClient (`RegistryCatalogClient`) runs single-flight Dispatchers.IO sync (`2.5 s` modality wait never cancels download), fills gaps via `models.dev`, and backs off `60 s` on empty failures unless bypassed manually.
 - Reasoning HTTP 400 retries step `max -> xhigh -> high` or `minimal -> low` and strip Anthropic adaptive `display` before abandoning reasoning; Anthropic tool replay preserves signed thinking blocks without text.
 - AgentPermissionResolver owns defaults and overrides: null inherits; explicit Off, empty path or false revoke. New chats inherit; imports disable local tools, paths, web and Shell.
@@ -58,7 +58,7 @@ Updated 2026-11-16. Stable contracts only; read the section you need. AGENTS.md 
 
 - Keep safe legacy migration and portable relative export paths (layout: ARCHITECTURE.md).
 - ChatSession.isCompactStub is transient: hydrate pending full payload before disk/gen/export; merge background loads without overwriting edits or deletions.
-- Stub message ids stay unique (the chat list keys on them). Pinned messages keep their real id and a preview in stubs, so the Pinned list never loads chats. `pinned` is saved only when true.
+- Stub ids stay unique. Pinned messages keep real id and preview in stubs. `compactStateJson` omits defaults/nulls (`@EncodeDefault` preserves `profiles`, `assistants`, `providerStorageReset`, `storeServerSide`).
 - appDiskWriter keeps the latest dirty revision per chat, settings and deletion, clears only matching successes and retries failures with backoff.
 - AtomicFileStorage/SnapshotFileStorage stage, sync and replace atomically (never truncate); keep backups and failed migrations; reject dot IDs/escapes/collisions; close NIO readers before decode.
 - Strip attachment base64 only when the local file is readable and nonempty.

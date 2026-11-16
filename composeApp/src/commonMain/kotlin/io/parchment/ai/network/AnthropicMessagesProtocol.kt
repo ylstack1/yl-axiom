@@ -201,6 +201,29 @@ internal suspend fun AiProviderEngine.executeAnthropicMessagesLoop(
                     }
                 }
 
+                val wsTools = WorkspaceHarness.buildAnthropicTools(
+                    session.workspaceMode,
+                    session.workspacePath,
+                    AgentPermissionResolver.resolve(session, profile = profile).allowShell,
+                    goalModeActive = circuitBreaker.goalState != null,
+                    enableWebTools = profile.enableWebSearch || profile.enableUrlContext,
+                    includeLocalWebSearchTool = profile.enableWebSearch && omitNativeWebSearchOnRetry,
+                    policy = AgentPermissionResolver.resolve(session, profile = profile)
+                )
+                val allAnthropicTools = buildJsonArray {
+                    if (profile.enableWebSearch && !omitNativeWebSearchOnRetry) {
+                        add(buildJsonObject {
+                            put("type", "web_search_20250305")
+                            put("name", "web_search")
+                            put("max_uses", 5)
+                        })
+                    }
+                    wsTools.forEach { add(it) }
+                }
+                if (allAnthropicTools.isNotEmpty()) {
+                    put("tools", allAnthropicTools)
+                }
+
                 // Messages array with strict user-first / alternating role validation & cache_control breakpoint
                 val coalescedBaseMessages = withBinaryAttachmentIo(activeNodes) {
                     buildAnthropicBaseMessages(activeNodes, session, continuePrefix, foldHistoricalToolsOnRetry, currentModel = model)
@@ -236,29 +259,6 @@ internal suspend fun AiProviderEngine.executeAnthropicMessagesLoop(
                     compactedAnthropicExtras.forEachIndexed { index, extraMsg ->
                         add(if (index == compactedAnthropicExtras.lastIndex) extraMsg.withCacheMarkerOnLastBlock() else extraMsg)
                     }
-                }
-
-                val wsTools = WorkspaceHarness.buildAnthropicTools(
-                    session.workspaceMode,
-                    session.workspacePath,
-                    AgentPermissionResolver.resolve(session, profile = profile).allowShell,
-                    goalModeActive = circuitBreaker.goalState != null,
-                    enableWebTools = profile.enableWebSearch || profile.enableUrlContext,
-                    includeLocalWebSearchTool = profile.enableWebSearch && omitNativeWebSearchOnRetry,
-                    policy = AgentPermissionResolver.resolve(session, profile = profile)
-                )
-                val allAnthropicTools = buildJsonArray {
-                    if (profile.enableWebSearch && !omitNativeWebSearchOnRetry) {
-                        add(buildJsonObject {
-                            put("type", "web_search_20250305")
-                            put("name", "web_search")
-                            put("max_uses", 5)
-                        })
-                    }
-                    wsTools.forEach { add(it) }
-                }
-                if (allAnthropicTools.isNotEmpty()) {
-                    put("tools", allAnthropicTools)
                 }
             }
 
@@ -977,7 +977,7 @@ internal fun AiProviderEngine.buildAnthropicBaseMessages(
 }
 
 private fun AiProviderEngine.compactAnthropicExtraMessages(messages: List<JsonObject>): List<JsonObject> {
-    if (messages.size <= 16) return messages
+    if (messages.size < 24) return messages
     val total = messages.size
     return messages.mapIndexed { idx, obj ->
         val role = obj["role"]?.jsonPrimitive?.contentOrNull

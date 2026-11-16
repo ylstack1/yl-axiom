@@ -214,7 +214,8 @@ object AiProviderEngine {
         initialTokenMetrics: TokenMetrics = TokenMetrics(),
         usageOwnerSessionId: String = session.id,
         usageOwnerRunId: String = "",
-        usagePurpose: String = "chat"
+        usagePurpose: String = "chat",
+        pollDelayMsOverride: Long? = null
     ): Flow<StreamUpdate> = runActivityFlow(session.modelOverride.ifBlank { profile.defaultModel }) { activity ->
         val model = session.modelOverride.ifBlank { profile.defaultModel }.trim()
         if (model.isBlank()) {
@@ -251,7 +252,8 @@ object AiProviderEngine {
             initialTokenMetrics = initialTokenMetrics,
             usageOwnerSessionId = usageOwnerSessionId,
             resolvedUsageRunId = resolvedRunId,
-            usagePurpose = usagePurpose
+            usagePurpose = usagePurpose,
+            pollDelayMsOverride = pollDelayMsOverride
         ).run()
     }.flowOn(Dispatchers.IO)
 
@@ -572,8 +574,9 @@ object AiProviderEngine {
         streamFinished: () -> Boolean,
         onSseEvent: suspend (eventType: String, data: String) -> Unit,
         onPlainJsonFallback: suspend (fullJson: String) -> Unit,
-        maxBufferedChars: Int = DEFAULT_MAX_SSE_BUFFER_CHARS
-    ) = readProviderSseOrJsonFallback(channel, streamFinished, onSseEvent, onPlainJsonFallback, maxBufferedChars)
+        maxBufferedChars: Int = DEFAULT_MAX_SSE_BUFFER_CHARS,
+        returnGraceMs: Long = DEFAULT_RETURN_GRACE_MS
+    ) = readProviderSseOrJsonFallback(channel, streamFinished, onSseEvent, onPlainJsonFallback, maxBufferedChars, returnGraceMs)
 
     internal data class RawWebCitation(
         val url: String,

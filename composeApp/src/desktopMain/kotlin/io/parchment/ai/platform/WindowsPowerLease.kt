@@ -21,8 +21,10 @@ internal data class WindowsPowerLeaseSnapshot(
 internal class WindowsPowerLease(
     private val parentPid: Long = ProcessHandle.current().pid(),
     private val launchHelper: (String) -> Process = ::launchWindowsPowerHelper,
-    private val nanoTime: () -> Long = System::nanoTime
+    private val nanoTime: () -> Long = System::nanoTime,
+    private val retryIntervalMs: Long = RETRY_INTERVAL_MS
 ) : AutoCloseable {
+    private val retryIntervalNs = TimeUnit.MILLISECONDS.toNanos(retryIntervalMs)
     private val lock = Any()
     private var owners = 0
     private var closed = false
@@ -80,7 +82,7 @@ internal class WindowsPowerLease(
     private fun monitorLoop(generation: Long) {
         try {
             while (true) {
-                Thread.sleep(RETRY_INTERVAL_MS)
+                Thread.sleep(retryIntervalMs)
                 synchronized(lock) {
                     if (owners == 0 || closed || generation != monitorGeneration) return
                     maintainHelper()
@@ -109,7 +111,7 @@ internal class WindowsPowerLease(
             publish(WindowsPowerLeaseStatus.UNAVAILABLE, snapshot.error.ifBlank { "Power helper exited." })
         }
         val lastAttempt = lastAttemptAt
-        if (lastAttempt != null && now - lastAttempt < RETRY_INTERVAL_NS) return
+        if (lastAttempt != null && now - lastAttempt < retryIntervalNs) return
         lastAttemptAt = now
         try {
             val process = launchHelper(buildWindowsPowerHelperScript(parentPid))
@@ -181,7 +183,6 @@ internal class WindowsPowerLease(
 
     private companion object {
         const val RETRY_INTERVAL_MS = 5_000L
-        val RETRY_INTERVAL_NS = TimeUnit.MILLISECONDS.toNanos(RETRY_INTERVAL_MS)
         val START_TIMEOUT_NS = TimeUnit.SECONDS.toNanos(20)
         val HEARTBEAT_TIMEOUT_NS = TimeUnit.SECONDS.toNanos(60)
     }
@@ -205,7 +206,13 @@ internal fun buildWindowsPowerHelperScript(parentPid: Long): String = buildStrin
     append("if (\$previous -eq 0) { throw ('SetThreadExecutionState failed: ' + [Runtime.InteropServices.Marshal]::GetLastWin32Error()) }; ")
     append("[Console]::Out.WriteLine('")
     append(POWER_HEARTBEAT)
-    append("'); Start-Sleep -Seconds 15 ")
+    if (parentPid > 0L) {
+        append("'); for (\$i = 0; \$i -lt 15; \$i++) { Start-Sleep -Seconds 1; if (-not (Get-Process -Id ")
+        append(parentPid)
+        append(" -ErrorAction SilentlyContinue)) { break } } ")
+    } else {
+        append("'); Start-Sleep -Seconds 15 ")
+    }
     append("} } finally { [void]\$ste::SetThreadExecutionState([uint32]2147483648) }")
 }
 

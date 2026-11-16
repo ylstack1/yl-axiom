@@ -77,7 +77,7 @@ class WindowsPowerLeaseTest {
         if (!isWindows) return
         val attempts = AtomicInteger()
         val processes = CopyOnWriteArrayList<Process>()
-        WindowsPowerLease(launchHelper = { script ->
+        WindowsPowerLease(retryIntervalMs = 100L, launchHelper = { script ->
             val process = if (attempts.incrementAndGet() == 1) {
                 val executable = File(System.getenv("SystemRoot"), "System32/WindowsPowerShell/v1.0/powershell.exe")
                 ProcessBuilder(executable.absolutePath, "-NoProfile", "-NonInteractive", "-Command", "exit 1")
@@ -146,7 +146,7 @@ class WindowsPowerLeaseTest {
     fun externallyTerminatedHolderRecoversItsExistingOwners() {
         if (!isWindows) return
         val processes = CopyOnWriteArrayList<Process>()
-        WindowsPowerLease(launchHelper = { script ->
+        WindowsPowerLease(retryIntervalMs = 100L, launchHelper = { script ->
             launchWindowsPowerHelper(script).also { processes.add(it) }
         }).use { lease ->
             lease.acquire()

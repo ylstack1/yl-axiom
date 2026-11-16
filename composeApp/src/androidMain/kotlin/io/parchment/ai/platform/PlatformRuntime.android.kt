@@ -25,7 +25,7 @@ actual object PlatformRuntime {
     }
 
     @Volatile
-    private var stateFlushCallback: (() -> Unit)? = null
+    private var stateFlushCallback: ((Boolean) -> Unit)? = null
     @Volatile
     private var backHandlerCallback: (() -> Boolean)? = null
     @Volatile
@@ -34,12 +34,16 @@ actual object PlatformRuntime {
     actual fun currentTimeMillis(): Long = System.currentTimeMillis()
     actual fun monotonicTimeMillis(): Long = android.os.SystemClock.uptimeMillis()
 
-    actual fun registerStateFlushCallback(callback: () -> Unit) {
+    actual fun registerStateFlushCallback(callback: (blocking: Boolean) -> Unit) {
         stateFlushCallback = callback
     }
 
     actual fun flushPendingStateNow() {
-        runCatching { stateFlushCallback?.invoke() }
+        runCatching { stateFlushCallback?.invoke(true) }
+    }
+
+    actual fun flushPendingStateAsync() {
+        runCatching { stateFlushCallback?.invoke(false) }
     }
 
     actual fun registerBackHandler(handler: (() -> Boolean)?) {
@@ -128,6 +132,12 @@ actual object PlatformRuntime {
         // Android verifies the APK signature against the installed app before updating it.
         return OtaStagedFile(File(File(ctx.cacheDir, "ota"), "update.apk"), requireDigest = false, installer = ::installOtaApk)
     }
+
+    actual suspend fun <T> decodeJsonStream(
+        channel: io.ktor.utils.io.ByteReadChannel,
+        json: kotlinx.serialization.json.Json,
+        deserializer: kotlinx.serialization.DeserializationStrategy<T>
+    ): T = decodeByteChannelJson(channel, json, deserializer)
 
     private fun installOtaApk(apk: File): Result<String> = runCatching {
         // Save everything pending before the package installer starts.

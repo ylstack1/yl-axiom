@@ -7,6 +7,7 @@ import io.parchment.ai.model.MessageRole
 import io.parchment.ai.model.MessageVariant
 import io.parchment.ai.model.ProviderProfile
 import io.parchment.ai.model.ProviderProtocol
+import io.parchment.ai.ui.compactStateJson
 import kotlinx.serialization.json.Json
 import java.io.File
 import java.io.IOException
@@ -112,8 +113,50 @@ class SnapshotFileStorageTest {
         val original = chat("chat", "original")
         storage.saveChat("chat", original)
         assertFailsWith<IllegalArgumentException> { storage.saveChat("chat", "{broken") }
+        assertFailsWith<IllegalArgumentException> { storage.saveChat("chat", "{\"id\":\"chat\",\"messages\":[broken") }
         assertFailsWith<IllegalArgumentException> { storage.saveChat("chat", chat("different", "wrong ID")) }
         assertEquals(original, storage.loadChat("chat"))
+    }
+
+    @Test
+    fun compactDefaultSettingsKeepStructuralAndResetMarkersForSave() = withStorage { _, storage ->
+        val encoded = compactStateJson.encodeToString(AppStateSnapshot.serializer(), AppStateSnapshot())
+        assertTrue("\"profiles\":[]" in encoded)
+        assertTrue("\"assistants\":[]" in encoded)
+        assertTrue("\"providerStorageReset\":true" in encoded)
+        storage.saveSettings(encoded)
+        assertEquals(encoded, storage.loadSettings())
+    }
+
+    @Test
+    fun staleTempPruningCleansOldArtifactsAndKeepsSoleRecoverySnapshots() {
+        val root = Files.createTempDirectory("parchment-prune-test-").toFile()
+        val otaDir = Files.createTempDirectory("parchment-prune-ota-").toFile()
+        try {
+            val oldMs = 1_000_000L
+            val nowMs = oldMs + 48L * 60L * 60L * 1000L
+            val freshMs = nowMs - 60_000L
+
+            val staleOta = File(otaDir, "old-setup.exe").apply { writeText("old"); setLastModified(oldMs) }
+            val freshOta = File(otaDir, "fresh-setup.exe").apply { writeText("new"); setLastModified(freshMs) }
+            val intactPrimary = File(root, "parchment-settings.json").apply { writeText("{}"); setLastModified(nowMs) }
+            val orphanTmpBesidePrimary = File(root, "parchment-settings.json.tmp").apply { writeText("{old"); setLastModified(oldMs) }
+            val subChatDir = File(root, "chats/sole-tmp").apply { mkdirs() }
+            val soleRecoveryTmp = File(subChatDir, "chat.json.tmp").apply { writeText("""{"id":"sole-tmp"}"""); setLastModified(oldMs) }
+            val freshTmp = File(root, "recent.tmp").apply { writeText("active"); setLastModified(freshMs) }
+
+            val removed = AppStorageInventory.pruneStaleTempFiles(root, listOf(otaDir), nowMs = nowMs)
+            assertEquals(2, removed)
+            assertFalse(staleOta.exists())
+            assertTrue(freshOta.exists())
+            assertTrue(intactPrimary.exists())
+            assertFalse(orphanTmpBesidePrimary.exists())
+            assertTrue(soleRecoveryTmp.exists(), "Lone .json.tmp recovery file must survive without an intact primary .json")
+            assertTrue(freshTmp.exists())
+        } finally {
+            AtomicFileStorage.deleteTree(root.toPath())
+            AtomicFileStorage.deleteTree(otaDir.toPath())
+        }
     }
 
     @Test

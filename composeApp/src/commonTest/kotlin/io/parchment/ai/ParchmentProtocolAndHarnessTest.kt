@@ -1519,6 +1519,14 @@ class ParchmentProtocolAndHarnessTest {
             goalModeActive = true
         )
         assertEquals(fullDirect, combinedFast)
+        val splitPrefix = O200kTokenizer.computeBaseContextPrefixBreakdown(
+            session = fullSession,
+            assistant = dummyAssistant,
+            profile = dummyProfile,
+            goalModeActive = true,
+            excludeLastFromKeywords = false
+        )
+        assertEquals(baseBreakdown, O200kTokenizer.applyLastTurnToBreakdown(splitPrefix, fullSession.messages.lastOrNull()))
 
         // 6. Verify countLinesFast and cached parseKissLabelIcons
         assertEquals(1, io.parchment.ai.ui.countLinesFast(""))
@@ -1786,25 +1794,38 @@ class ParchmentProtocolAndHarnessTest {
         assertEquals("kling-3-0-pro", io.parchment.ai.network.ModelsDevClient.normalizeCanonicalModelSlug("kwaivgi/kling-v3.0-pro"))
 
         val testCatalog = mutableMapOf<String, io.parchment.ai.model.ModelPricingSpec>()
-        io.parchment.ai.network.ModelsDevClient.parseOpenRouterModelsIntoCatalog(
-            rawJson = """{"data":[{"id":"bytedance-seed/seedream-5-0-flash","name":"Seedream 5.0 Flash","context_length":0,"architecture":{"modality":"text->image","input_modalities":["text","image"],"output_modalities":["image"]},"pricing":{"prompt":"0.000001","completion":"0.000002"}}]}""",
+        val catalogJson = io.parchment.ai.network.ModelsDevClient.catalogJson
+        io.parchment.ai.network.ModelsDevClient.indexOpenRouterCatalog(
+            dto = catalogJson.decodeFromString(
+                io.parchment.ai.network.OpenRouterCatalogDto.serializer(),
+                """{"data":[{"id":"bytedance-seed/seedream-5-0-flash","name":"Seedream 5.0 Flash","context_length":0,"architecture":{"modality":"text->image","input_modalities":["text","image"],"output_modalities":["image"]},"pricing":{"prompt":"0.000001","completion":"0.000002"}}]}"""
+            ),
             catalog = testCatalog
         )
-        io.parchment.ai.network.ModelsDevClient.parseOpenRouterModelsIntoCatalog(
-            rawJson = """{"data":[{"id":"bytedance/seedance-2.5","name":"Seedance 2.5","input_modalities":["text","image"],"output_modalities":["video"]}]}""",
+        io.parchment.ai.network.ModelsDevClient.indexOpenRouterCatalog(
+            dto = catalogJson.decodeFromString(
+                io.parchment.ai.network.OpenRouterCatalogDto.serializer(),
+                """{"data":[{"id":"bytedance/seedance-2.5","name":"Seedance 2.5","input_modalities":["text","image"],"output_modalities":["video"]}]}"""
+            ),
             catalog = testCatalog,
             forceVideoOutput = true
         )
-        io.parchment.ai.network.ModelsDevClient.parseVercelModelsIntoCatalog(
-            rawJson = """{"data":[{"id":"bytedance/seedream-5.0-flash","name":"Seedream 5.0 Flash","owned_by":"bytedance","type":"image","context_window":0,"modalities":{"input":["text"],"output":["image"]}}]}""",
+        io.parchment.ai.network.ModelsDevClient.indexVercelCatalog(
+            dto = catalogJson.decodeFromString(
+                io.parchment.ai.network.VercelCatalogDto.serializer(),
+                """{"data":[{"id":"bytedance/seedream-5.0-flash","name":"Seedream 5.0 Flash","owned_by":"bytedance","type":"image","context_window":0,"modalities":{"input":["text"],"output":["image"]}}]}"""
+            ),
             catalog = testCatalog
         )
-        io.parchment.ai.network.ModelsDevClient.parseAimlApiModelsIntoCatalog(
-            rawJson = """{"data":[{"id":"bytedance/dreamina-seedance-2-5","type":"internal/video-generations/submit","info":{"name":"Dreamina Seedance 2.5","developer":"ByteDance"},"tags":["playground:video"],"aliases":["seedance-2-5-pro"]}]}""",
+        io.parchment.ai.network.ModelsDevClient.indexAimlApiCatalog(
+            dto = catalogJson.decodeFromString(
+                io.parchment.ai.network.AimlApiCatalogDto.serializer(),
+                """{"data":[{"id":"bytedance/dreamina-seedance-2-5","type":"internal/video-generations/submit","info":{"name":"Dreamina Seedance 2.5","developer":"ByteDance"},"tags":["playground:video"],"aliases":["seedance-2-5-pro"]}]}"""
+            ),
             catalog = testCatalog
         )
-        io.parchment.ai.network.ModelsDevClient.parseLiteLlmModelsIntoCatalog(
-            rawJson = """{"volcengine/doubao-seedream-5-0-260128":{"litellm_provider":"volcengine","mode":"image_generation"},"google/veo-3.1-generate-preview":{"litellm_provider":"vertex_ai","mode":"video_generation"},"openai/tts-1-hd":{"litellm_provider":"openai","mode":"audio_speech"}}""",
+        io.parchment.ai.network.ModelsDevClient.indexLiteLlmCatalog(
+            root = kotlinx.serialization.json.Json.parseToJsonElement("""{"volcengine/doubao-seedream-5-0-260128":{"litellm_provider":"volcengine","mode":"image_generation"},"google/veo-3.1-generate-preview":{"litellm_provider":"vertex_ai","mode":"video_generation"},"openai/tts-1-hd":{"litellm_provider":"openai","mode":"audio_speech"}}""") as kotlinx.serialization.json.JsonObject,
             catalog = testCatalog
         )
 

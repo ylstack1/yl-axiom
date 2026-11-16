@@ -153,8 +153,11 @@ class HistoryReplayContractTest {
 
     @Test fun modelRegistrySurvivesUnexpectedNonPrimitiveTags() {
         val catalog = mutableMapOf<String, ModelPricingSpec>()
-        ModelsDevClient.parseAimlApiModelsIntoCatalog(
-            """{"data":[{"id":"acme/video-gen","type":"video","tags":[{"nested":1},"video"]},{"id":"acme/good-chat","type":"chat","tags":["chat"]}]}""",
+        ModelsDevClient.indexAimlApiCatalog(
+            ModelsDevClient.catalogJson.decodeFromString(
+                AimlApiCatalogDto.serializer(),
+                """{"data":[{"id":"acme/video-gen","type":"video","tags":[{"nested":1},"video"]},{"id":"acme/good-chat","type":"chat","tags":["chat"]}]}"""
+            ),
             catalog
         )
         assertNotNull(catalog["good-chat"])

@@ -63,17 +63,19 @@ object O200kTokenizer {
      * 4. Punctuation / operator clusters (` ?[^\s\p{L}\p{N}]+[\r\n/]*`)
      * 5. Line breaks and whitespace runs
      */
-    private val O200K_PAT_REGEX = Regex(
-        pattern = listOf(
-            """[^\r\n\p{L}\p{N}]?[\p{Lu}\p{Lt}\p{Lm}\p{Lo}\p{M}]*[\p{Ll}\p{Lm}\p{Lo}\p{M}]+(?:'s|'t|'re|'ve|'m|'ll|'d|'S|'T|'RE|'VE|'M|'LL|'D)?""",
-            """[^\r\n\p{L}\p{N}]?[\p{Lu}\p{Lt}\p{Lm}\p{Lo}\p{M}]+[\p{Ll}\p{Lm}\p{Lo}\p{M}]*(?:'s|'t|'re|'ve|'m|'ll|'d|'S|'T|'RE|'VE|'M|'LL|'D)?""",
-            """\p{N}{1,3}""",
-            """ ?[^\s\p{L}\p{N}]+[\r\n/]*""",
-            """\s*[\r\n]+""",
-            """\s+(?!\S)""",
-            """\s+"""
-        ).joinToString("|")
-    )
+    private val O200K_PAT_REGEX by lazy(LazyThreadSafetyMode.PUBLICATION) {
+        Regex(
+            pattern = listOf(
+                """[^\r\n\p{L}\p{N}]?[\p{Lu}\p{Lt}\p{Lm}\p{Lo}\p{M}]*[\p{Ll}\p{Lm}\p{Lo}\p{M}]+(?:'s|'t|'re|'ve|'m|'ll|'d|'S|'T|'RE|'VE|'M|'LL|'D)?""",
+                """[^\r\n\p{L}\p{N}]?[\p{Lu}\p{Lt}\p{Lm}\p{Lo}\p{M}]+[\p{Ll}\p{Lm}\p{Lo}\p{M}]*(?:'s|'t|'re|'ve|'m|'ll|'d|'S|'T|'RE|'VE|'M|'LL|'D)?""",
+                """\p{N}{1,3}""",
+                """ ?[^\s\p{L}\p{N}]+[\r\n/]*""",
+                """\s*[\r\n]+""",
+                """\s+(?!\S)""",
+                """\s+"""
+            ).joinToString("|")
+        )
+    }
 
     private val WHITESPACE_RUN_REGEX = Regex("\\s+")
 
@@ -352,16 +354,59 @@ object O200kTokenizer {
         return total
     }
 
+    private data class TurnTokenContribution(
+        val proseAndToolsTokens: Int,
+        val uploadedFilesCount: Int,
+        val uploadedFilesTokens: Int
+    )
+
+    private fun countSingleTurnTokens(
+        node: MessageNode,
+        isLastInEffective: Boolean
+    ): TurnTokenContribution {
+        val v = node.activeVariant
+        val isLive = v.isStreaming
+        if (!isLive && v.toolCalls.none { it.isRunning }) {
+            val b = completedVariantTokenBreakdown(v)
+            var turnProseAndTools = 4 + b.proseTokens
+            if (node.role == MessageRole.ASSISTANT) {
+                turnProseAndTools += b.toolCallsTokens
+                if (v.content.isBlank() || isLastInEffective) {
+                    turnProseAndTools += b.thinkingTokens
+                }
+            }
+            return TurnTokenContribution(turnProseAndTools, v.attachments.size, b.attachmentsTokens)
+        }
+        var turnProseAndTools = 4
+        if (v.content.isNotBlank()) {
+            turnProseAndTools += if (isLive) estimateTokensFast(v.content) else countTokens(v.content)
+        }
+        if (node.role == MessageRole.ASSISTANT) {
+            for (tc in v.toolCalls) {
+                turnProseAndTools += countToolCallTokens(tc, isLiveOverride = isLive)
+            }
+            if ((v.content.isBlank() || isLive || isLastInEffective) && v.thinkingSummary.isNotBlank()) {
+                turnProseAndTools += if (isLive) estimateTokensFast(v.thinkingSummary) else countTokens(v.thinkingSummary)
+            }
+        }
+        var attachmentsTokens = 0
+        for (att in v.attachments) {
+            attachmentsTokens += countAttachmentTokens(att)
+        }
+        return TurnTokenContribution(turnProseAndTools, v.attachments.size, attachmentsTokens)
+    }
+
     /**
-     * Computes the session/system/history portion of `ContextWindowBreakdown` (excluding the live Composer draft).
-     * Kept separate so the UI can cache it: typing in the composer then never re-scans history or tool schemas.
+     * Computes static context sections plus all history turns except the final live turn.
+     * During streaming, the UI reuses this prefix across frames and applies only the active final turn.
      */
-    fun computeBaseContextWindowBreakdown(
+    fun computeBaseContextPrefixBreakdown(
         session: ChatSession,
         assistant: AssistantAgent,
         profile: ProviderProfile,
         goalModeActive: Boolean = false,
-        globalWorldBook: List<io.parchment.ai.model.ContextFragment> = emptyList()
+        globalWorldBook: List<io.parchment.ai.model.ContextFragment> = emptyList(),
+        excludeLastFromKeywords: Boolean = true
     ): ContextWindowBreakdown {
         val activeModelId = session.modelOverride.ifBlank {
             assistant.defaultModelId.ifBlank { profile.defaultModel }
@@ -386,7 +431,12 @@ object O200kTokenizer {
                 session.activeCard?.embeddedFragments.orEmpty() +
                 assistant.activeCard?.embeddedFragments.orEmpty()
             ).distinctBy { it.id }
-        val recentWindowText = session.messages.takeLast(8).joinToString("\n") { it.activeVariant.content }
+        val keywordMessages = if (excludeLastFromKeywords && session.messages.isNotEmpty()) {
+            session.messages.dropLast(1).takeLast(8)
+        } else {
+            session.messages.takeLast(8)
+        }
+        val recentWindowText = keywordMessages.joinToString("\n") { it.activeVariant.content }
         val activeFragments = allFragments.filter { frag ->
             when (frag.mode) {
                 FragmentActivationMode.PINNED -> true
@@ -422,7 +472,7 @@ object O200kTokenizer {
         val goalModeTokens = if (goalModeActive) 110 else 0
         val workspaceAndToolsTokens = toolSchemaTokens + wsContextTokens + goalModeTokens
 
-        // 4 & 5. Active Unmuted Conversation Turns (honoring assistant.contextMessageLimit)
+        // 4 & 5. Active Unmuted Conversation Turns prior to the final turn (honoring assistant.contextMessageLimit)
         val effectiveMessages = if (assistant.contextMessageLimit > 0 && session.messages.size > assistant.contextMessageLimit) {
             session.messages.takeLast(assistant.contextMessageLimit)
         } else {
@@ -434,46 +484,18 @@ object O200kTokenizer {
         var activeTurnsCount = 0
         var mutedTurnsCount = (session.messages.size - effectiveMessages.size).coerceAtLeast(0)
 
-        for (node in effectiveMessages) {
+        val prefixEndExclusive = (effectiveMessages.size - 1).coerceAtLeast(0)
+        for (i in 0 until prefixEndExclusive) {
+            val node = effectiveMessages[i]
             if (!node.includedInContext) {
                 mutedTurnsCount++
                 continue
             }
             activeTurnsCount++
-            val v = node.activeVariant
-            val isLive = v.isStreaming
-            if (!isLive && v.toolCalls.none { it.isRunning }) {
-                val b = completedVariantTokenBreakdown(v)
-                var turnProseAndTools = 4 + b.proseTokens
-                if (node.role == MessageRole.ASSISTANT) {
-                    turnProseAndTools += b.toolCallsTokens
-                    if (v.content.isBlank() || node == effectiveMessages.lastOrNull()) {
-                        turnProseAndTools += b.thinkingTokens
-                    }
-                }
-                chatHistoryTokens += turnProseAndTools
-                uploadedFilesCount += v.attachments.size
-                uploadedFilesTokens += b.attachmentsTokens
-            } else {
-                var turnProseAndTools = 4
-                if (v.content.isNotBlank()) {
-                    turnProseAndTools += if (isLive) estimateTokensFast(v.content) else countTokens(v.content)
-                }
-                if (node.role == MessageRole.ASSISTANT) {
-                    for (tc in v.toolCalls) {
-                        turnProseAndTools += countToolCallTokens(tc, isLiveOverride = isLive)
-                    }
-                    if ((v.content.isBlank() || isLive || node == effectiveMessages.lastOrNull()) && v.thinkingSummary.isNotBlank()) {
-                        turnProseAndTools += if (isLive) estimateTokensFast(v.thinkingSummary) else countTokens(v.thinkingSummary)
-                    }
-                }
-                chatHistoryTokens += turnProseAndTools
-
-                for (att in v.attachments) {
-                    uploadedFilesCount++
-                    uploadedFilesTokens += countAttachmentTokens(att)
-                }
-            }
+            val contribution = countSingleTurnTokens(node, isLastInEffective = false)
+            chatHistoryTokens += contribution.proseAndToolsTokens
+            uploadedFilesCount += contribution.uploadedFilesCount
+            uploadedFilesTokens += contribution.uploadedFilesTokens
         }
 
         return ContextWindowBreakdown(
@@ -488,6 +510,49 @@ object O200kTokenizer {
             composerDraftTokens = 0,
             contextLimitTokens = contextLimit
         )
+    }
+
+    /**
+     * Adds the final turn (`effectiveMessages.lastOrNull()`) onto a cached [prefixBreakdown] in $O(1)$
+     * while streaming, using [countSingleTurnTokens] consistently with full-history scans.
+     */
+    fun applyLastTurnToBreakdown(
+        prefixBreakdown: ContextWindowBreakdown,
+        lastNode: MessageNode?
+    ): ContextWindowBreakdown {
+        if (lastNode == null) return prefixBreakdown
+        if (!lastNode.includedInContext) {
+            return prefixBreakdown.copy(mutedTurnsCount = prefixBreakdown.mutedTurnsCount + 1)
+        }
+        val contribution = countSingleTurnTokens(lastNode, isLastInEffective = true)
+        return prefixBreakdown.copy(
+            uploadedFilesTokens = prefixBreakdown.uploadedFilesTokens + contribution.uploadedFilesTokens,
+            uploadedFilesCount = prefixBreakdown.uploadedFilesCount + contribution.uploadedFilesCount,
+            chatHistoryTokens = prefixBreakdown.chatHistoryTokens + contribution.proseAndToolsTokens,
+            activeTurnsCount = prefixBreakdown.activeTurnsCount + 1
+        )
+    }
+
+    /**
+     * Computes the session/system/history portion of `ContextWindowBreakdown` (excluding the live Composer draft).
+     * Kept separate so the UI can cache it: typing in the composer then never re-scans history or tool schemas.
+     */
+    fun computeBaseContextWindowBreakdown(
+        session: ChatSession,
+        assistant: AssistantAgent,
+        profile: ProviderProfile,
+        goalModeActive: Boolean = false,
+        globalWorldBook: List<io.parchment.ai.model.ContextFragment> = emptyList()
+    ): ContextWindowBreakdown {
+        val prefix = computeBaseContextPrefixBreakdown(
+            session = session,
+            assistant = assistant,
+            profile = profile,
+            goalModeActive = goalModeActive,
+            globalWorldBook = globalWorldBook,
+            excludeLastFromKeywords = false
+        )
+        return applyLastTurnToBreakdown(prefix, session.messages.lastOrNull())
     }
 
     fun countAttachmentsTokens(pendingAttachments: List<PromptAttachment>): Int {

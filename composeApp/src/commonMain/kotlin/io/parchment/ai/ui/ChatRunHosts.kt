@@ -46,13 +46,14 @@ internal class GenerationHost(
 internal class StorySummaryHost(
     processState: ParchmentProcessState,
     val activeProfile: ProviderProfile,
-    val activeSession: ChatSession,
+    private val activeSessionProvider: () -> ChatSession,
     private val completeAction: (ChatSession) -> ChatSession?,
     val continueAssistantNodeAt: (Int, String) -> Unit,
     val updateSessionStreamState: (String, (SessionStreamRuntime?) -> SessionStreamRuntime?) -> Unit,
     private val updateSession: (String, Boolean, SessionUpdate) -> Unit,
     private val trackedUtility: TrackedUtility
 ) : AppRunState(processState) {
+    val activeSession: ChatSession get() = activeSessionProvider()
     fun completeSessionForAction(session: ChatSession): ChatSession? = completeAction(session)
     fun updateSessionById(sessionId: String, immediate: Boolean = false, transform: SessionUpdate) = updateSession(sessionId, immediate, transform)
     suspend fun generateTrackedUtility(sessionId: String, purpose: String, profile: ProviderProfile, model: String, prompt: String, maxOutputTokens: Int? = null): Result<String> =

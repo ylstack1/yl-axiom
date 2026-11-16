@@ -12,7 +12,9 @@ import io.parchment.ai.platform.PlatformStorage
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withTimeout
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
@@ -285,5 +287,22 @@ class ParchmentHydrationPersistenceTest {
         assertFalse(merged.isCompactStub)
         assertEquals(0, merged.stubMessageCount)
         assertEquals(6, merged.displayMessageCount)
+    }
+
+    @Test
+    fun urgentAsyncFlushWritesPendingStateWithoutWaitingForDebounce() = runBlocking {
+        val scope = CoroutineScope(SupervisorJob())
+        var saved: ChatSession? = null
+        try {
+            val writer = ParchmentDiskWriter(scope, {}, { saved = it }, {}, debounceMs = 60_000)
+            writer.enqueue(sessions = listOf(full("test-urgent-async")), urgent = false, notify = true)
+            writer.flushUrgentlyAsync()
+            withTimeout(2_000) {
+                while (saved == null) delay(10)
+            }
+            assertEquals("test-urgent-async", saved?.id)
+        } finally {
+            scope.cancel()
+        }
     }
 }

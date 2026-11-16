@@ -14,7 +14,7 @@ actual object PlatformRuntime {
     @Volatile
     var windowStatusCallback: ((String) -> Unit)? = null
     @Volatile
-    private var stateFlushCallback: (() -> Unit)? = null
+    private var stateFlushCallback: ((Boolean) -> Unit)? = null
     @Volatile
     private var backHandlerCallback: (() -> Boolean)? = null
 
@@ -42,12 +42,16 @@ actual object PlatformRuntime {
     actual fun currentTimeMillis(): Long = System.currentTimeMillis()
     actual fun monotonicTimeMillis(): Long = System.nanoTime() / 1_000_000L
 
-    actual fun registerStateFlushCallback(callback: () -> Unit) {
+    actual fun registerStateFlushCallback(callback: (blocking: Boolean) -> Unit) {
         stateFlushCallback = callback
     }
 
     actual fun flushPendingStateNow() {
-        runCatching { stateFlushCallback?.invoke() }
+        runCatching { stateFlushCallback?.invoke(true) }
+    }
+
+    actual fun flushPendingStateAsync() {
+        runCatching { stateFlushCallback?.invoke(false) }
     }
 
     actual fun registerBackHandler(handler: (() -> Boolean)?) {
@@ -87,6 +91,12 @@ actual object PlatformRuntime {
         // The installer runs silently and is not signature-checked by the system, so a published checksum is required.
         return OtaStagedFile(File(File(DesktopPlatformHost.resolveStorageDir(), "ota"), safeName), requireDigest = true, installer = ::installOtaExecutable)
     }
+
+    actual suspend fun <T> decodeJsonStream(
+        channel: io.ktor.utils.io.ByteReadChannel,
+        json: kotlinx.serialization.json.Json,
+        deserializer: kotlinx.serialization.DeserializationStrategy<T>
+    ): T = decodeByteChannelJson(channel, json, deserializer)
 
     private fun installOtaExecutable(installerFile: File): Result<String> = runCatching {
         // Save everything pending before the installer starts.

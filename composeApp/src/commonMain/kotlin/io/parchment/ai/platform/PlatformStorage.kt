@@ -16,6 +16,7 @@ expect object PlatformStorage {
     fun saveChatSessionJson(sessionId: String, json: String)
     fun deleteChatSessionFile(sessionId: String)
     fun wipeAllLocalData(): Boolean
+    fun pruneStaleTempFiles(maxAgeMs: Long = 24L * 60L * 60L * 1000L): Int
     fun listAppStorageFiles(): List<StoredAppFileItem>
     fun deleteAppStorageFile(fullPath: String): Boolean
     fun writeSessionTodoMarkdown(sessionId: String, markdown: String, storageRootOverride: String = ""): Result<String>

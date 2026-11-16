@@ -46,6 +46,9 @@ class EncodingRules(unittest.TestCase):
 
     def test_binary_files_are_skipped(self):
         self.assertEqual([], check({"font.ttf": b"\x00\xff\xef\r\n"}))
+        # Binary suffixes skip UTF-8 decoding while remaining indexed as paths for Markdown links and secret checks.
+        self.assertEqual([], check({"assets/preview.png": b"\xff\xfe", "docs/A.md": "[img](../assets/preview.png)\n"}))
+        self.assertIn("secrets", rules(check({"bad/app.jks": b""})))
 
 
 class KotlinRules(unittest.TestCase):

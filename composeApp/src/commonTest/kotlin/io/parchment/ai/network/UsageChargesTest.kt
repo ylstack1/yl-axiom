@@ -135,9 +135,15 @@ class UsageChargesTest {
 
     @Test fun catalogPricesKeepPerTokenAndPerSearchUnitsDistinctFromPerImagePrices() {
         val catalog = linkedMapOf<String, ModelPricingSpec>()
-        ModelsDevClient.parseOpenRouterModelsIntoCatalog("""{"data":[{"id":"vendor/model","pricing":{
+        ModelsDevClient.indexOpenRouterCatalog(
+            ModelsDevClient.catalogJson.decodeFromString(
+                OpenRouterCatalogDto.serializer(),
+                """{"data":[{"id":"vendor/model","pricing":{
             "prompt":"0.000001","completion":"0.000002","audio":"0.00001","audio_output":"0.00002",
-            "input_audio_cache":"0","web_search":"0.01","request":"0.001","image_output":"0.04"}}]}""", catalog)
+            "input_audio_cache":"0","web_search":"0.01","request":"0.001","image_output":"0.04"}}]}"""
+            ),
+            catalog
+        )
         val fees = ModelsDevClient.lookupSpecInCatalog(catalog, "vendor/model")!!.chargePricing
         assertEquals(0.00001, fees.perUnitUsd["input_audio"])
         assertEquals(0.0, fees.perUnitUsd["cached_input_audio"])

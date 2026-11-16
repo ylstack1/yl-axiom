@@ -1,7 +1,7 @@
 package io.parchment.ai.network
 
-import io.ktor.client.request.get
-import io.ktor.client.statement.bodyAsText
+import io.ktor.client.request.prepareGet
+import io.ktor.client.statement.bodyAsChannel
 import io.ktor.http.isSuccess
 import io.parchment.ai.model.ModelPricingSpec
 import io.parchment.ai.model.TokenPricing
@@ -24,6 +24,11 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
+import kotlinx.serialization.DeserializationStrategy
+import kotlinx.serialization.SerialName
+import kotlinx.serialization.Serializable
+import kotlinx.serialization.builtins.MapSerializer
+import kotlinx.serialization.builtins.serializer
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
@@ -130,11 +135,25 @@ internal class RegistryCatalogClient(
         cachedCatalog to created
     }
 
-    private suspend fun fetchSourceText(url: String, timeoutMs: Long): String? = withTimeoutOrNull(timeoutMs) {
-        runCatching {
-            val resp = AiProviderEngine.httpClient.get(url)
-            if (resp.status.isSuccess()) resp.bodyAsText() else null
-        }.getOrNull()
+    private suspend fun <T> syncSource(
+        url: String,
+        timeoutMs: Long,
+        deserializer: DeserializationStrategy<T>,
+        catalog: MutableMap<String, ModelPricingSpec>,
+        publishIncrementalSnapshot: () -> Unit,
+        apply: (T, MutableMap<String, ModelPricingSpec>) -> Unit
+    ) {
+        val decoded = withTimeoutOrNull(timeoutMs) {
+            runCatching {
+                AiProviderEngine.httpClient.prepareGet(url).execute { resp ->
+                    if (resp.status.isSuccess()) {
+                        PlatformRuntime.decodeJsonStream(resp.bodyAsChannel(), ModelsDevClient.catalogJson, deserializer)
+                    } else null
+                }
+            }.getOrNull()
+        } ?: return
+        runCatching { apply(decoded, catalog) }
+        publishIncrementalSnapshot()
     }
 
     private suspend fun runSyncPass(): Map<String, ModelPricingSpec> {
@@ -148,26 +167,24 @@ internal class RegistryCatalogClient(
             catalogGeneration.update { it + 1L }
         }
 
-        val sources: List<Pair<String, Pair<Long, (String, MutableMap<String, ModelPricingSpec>) -> Unit>>> = listOf(
-            endpoints.openRouterModelsUrl to (15_000L to { raw, dest ->
-                ModelsDevClient.parseOpenRouterModelsIntoCatalog(raw, dest, forceVideoOutput = false)
-            }),
-            endpoints.openRouterVideosUrl to (12_000L to { raw, dest ->
-                ModelsDevClient.parseOpenRouterModelsIntoCatalog(raw, dest, forceVideoOutput = true)
-            }),
-            endpoints.vercelModelsUrl to (12_000L to ModelsDevClient::parseVercelModelsIntoCatalog),
-            endpoints.aimlApiModelsUrl to (15_000L to ModelsDevClient::parseAimlApiModelsIntoCatalog),
-            endpoints.liteLlmPricesUrl to (18_000L to ModelsDevClient::parseLiteLlmModelsIntoCatalog),
-            endpoints.modelsDevApiUrl to (15_000L to ModelsDevClient::parseModelsDevIntoCatalog)
-        )
-
-        // Fetch sequentially to keep peak raw JSON memory low while still filling niche gaps from models.dev.
-        for ((url, config) in sources) {
-            val (timeoutMs, parse) = config
-            fetchSourceText(url, timeoutMs)?.let { raw ->
-                runCatching { parse(raw, catalog) }
-                publishIncrementalSnapshot()
-            }
+        // Stream sequentially to skip unreferenced metadata fields and avoid retaining multi-MB raw strings in heap.
+        syncSource(endpoints.openRouterModelsUrl, 15_000L, OpenRouterCatalogDto.serializer(), catalog, ::publishIncrementalSnapshot) { dto, dest ->
+            ModelsDevClient.indexOpenRouterCatalog(dto, dest, forceVideoOutput = false)
+        }
+        syncSource(endpoints.openRouterVideosUrl, 12_000L, OpenRouterCatalogDto.serializer(), catalog, ::publishIncrementalSnapshot) { dto, dest ->
+            ModelsDevClient.indexOpenRouterCatalog(dto, dest, forceVideoOutput = true)
+        }
+        syncSource(endpoints.vercelModelsUrl, 12_000L, VercelCatalogDto.serializer(), catalog, ::publishIncrementalSnapshot) { dto, dest ->
+            ModelsDevClient.indexVercelCatalog(dto, dest)
+        }
+        syncSource(endpoints.aimlApiModelsUrl, 15_000L, AimlApiCatalogDto.serializer(), catalog, ::publishIncrementalSnapshot) { dto, dest ->
+            ModelsDevClient.indexAimlApiCatalog(dto, dest)
+        }
+        syncSource(endpoints.liteLlmPricesUrl, 18_000L, MapSerializer(String.serializer(), JsonElement.serializer()), catalog, ::publishIncrementalSnapshot) { dto, dest ->
+            ModelsDevClient.indexLiteLlmCatalog(dto, dest)
+        }
+        syncSource(endpoints.modelsDevApiUrl, 15_000L, MapSerializer(String.serializer(), ModelsDevProviderDto.serializer()), catalog, ::publishIncrementalSnapshot) { dto, dest ->
+            ModelsDevClient.indexModelsDevCatalog(dto, dest)
         }
 
         val completedAt = nowMs()
@@ -241,12 +258,99 @@ internal class RegistryCatalogClient(
  * 5. LiteLLM Official Registry (`https://raw.githubusercontent.com/BerriAI/litellm/main/model_prices_and_context_window.json`)
  * 6. `models.dev` (`https://models.dev/api.json`) for gap-filling and fallback
  */
+@Serializable
+internal class OpenRouterArchDto(
+    val modality: String? = null,
+    @SerialName("input_modalities") val inputModalities: JsonElement? = null,
+    @SerialName("output_modalities") val outputModalities: JsonElement? = null
+)
+
+@Serializable
+internal class OpenRouterTopProviderDto(
+    @SerialName("max_completion_tokens") val maxCompletionTokens: JsonElement? = null
+)
+
+@Serializable
+internal class OpenRouterModelDto(
+    val id: String? = null,
+    val name: String? = null,
+    val architecture: OpenRouterArchDto? = null,
+    @SerialName("input_modalities") val inputModalities: JsonElement? = null,
+    @SerialName("output_modalities") val outputModalities: JsonElement? = null,
+    @SerialName("context_length") val contextLength: JsonElement? = null,
+    @SerialName("top_provider") val topProvider: OpenRouterTopProviderDto? = null,
+    val pricing: JsonObject? = null
+)
+
+@Serializable
+internal class OpenRouterCatalogDto(val data: List<OpenRouterModelDto> = emptyList())
+
+@Serializable
+internal class VercelModalitiesDto(val input: JsonElement? = null, val output: JsonElement? = null)
+
+@Serializable
+internal class VercelModelDto(
+    val id: String? = null,
+    val name: String? = null,
+    @SerialName("owned_by") val ownedBy: String? = null,
+    val type: String? = null,
+    val modalities: VercelModalitiesDto? = null,
+    @SerialName("context_window") val contextWindow: JsonElement? = null,
+    @SerialName("max_tokens") val maxTokens: JsonElement? = null,
+    val pricing: JsonObject? = null
+)
+
+@Serializable
+internal class VercelCatalogDto(val data: List<VercelModelDto> = emptyList())
+
+@Serializable
+internal class AimlApiInfoDto(
+    val name: String? = null,
+    val developer: String? = null,
+    val contextLength: JsonElement? = null,
+    val maxTokens: JsonElement? = null
+)
+
+@Serializable
+internal class AimlApiModelDto(
+    val id: String? = null,
+    val type: String? = null,
+    val tags: JsonElement? = null,
+    val aliases: JsonElement? = null,
+    val info: AimlApiInfoDto? = null
+)
+
+@Serializable
+internal class AimlApiCatalogDto(val data: List<AimlApiModelDto> = emptyList())
+
+@Serializable
+internal class ModelsDevLimitDto(val context: JsonElement? = null, val output: JsonElement? = null)
+
+@Serializable
+internal class ModelsDevModalitiesDto(val input: JsonElement? = null, val output: JsonElement? = null)
+
+@Serializable
+internal class ModelsDevModelDto(
+    val id: String? = null,
+    val name: String? = null,
+    val cost: JsonObject? = null,
+    val limit: ModelsDevLimitDto? = null,
+    val modalities: ModelsDevModalitiesDto? = null
+)
+
+@Serializable
+internal class ModelsDevProviderDto(
+    val name: String? = null,
+    val models: Map<String, ModelsDevModelDto> = emptyMap()
+)
+
 object ModelsDevClient {
     private val defaultCatalogClient = RegistryCatalogClient()
 
-    private val json = Json {
+    internal val catalogJson = Json {
         ignoreUnknownKeys = true
         isLenient = true
+        coerceInputValues = true
     }
     private val CONTEXT_TIER_PATTERN = Regex("context_over_([0-9]+)([km]?)")
     private val LITELLM_CONTEXT_TIER_PATTERN = Regex("(input_cost_per_token|output_cost_per_token|cache_read_input_token_cost|cache_creation_input_token_cost|cache_creation_input_token_cost_above_(?:1|12)hr)_above_([0-9]+)([km]?)_tokens")
@@ -483,23 +587,20 @@ object ModelsDevClient {
     ): Result<ModelPricingSpec> =
         defaultCatalogClient.fetchModelSpec(modelId, bypassFailureCooldown = bypassFailureCooldown)
 
-    internal fun parseOpenRouterModelsIntoCatalog(
-        rawJson: String,
+    internal fun indexOpenRouterCatalog(
+        dto: OpenRouterCatalogDto,
         catalog: MutableMap<String, ModelPricingSpec>,
         forceVideoOutput: Boolean = false
     ) {
-        val root = json.parseToJsonElement(rawJson) as? JsonObject ?: return
-        val dataArr = root["data"] as? JsonArray ?: return
-        for (item in dataArr) {
-            val obj = item as? JsonObject ?: continue
-            val rawId = obj["id"]?.jsonPrimitive?.contentOrNull?.trim().orEmpty()
+        for (model in dto.data) {
+            val rawId = model.id?.trim().orEmpty()
             if (rawId.isEmpty()) continue
-            val name = obj["name"]?.jsonPrimitive?.contentOrNull ?: rawId
+            val name = model.name ?: rawId
             val vendorFromId = rawId.substringBefore('/', "").trim()
 
-            val archObj = obj["architecture"] as? JsonObject
-            val modalityStr = archObj?.get("modality")?.jsonPrimitive?.contentOrNull?.lowercase().orEmpty()
-            val inMods = parseStringList(archObj?.get("input_modalities") ?: obj["input_modalities"]).ifEmpty {
+            val archObj = model.architecture
+            val modalityStr = archObj?.modality?.lowercase().orEmpty()
+            val inMods = parseStringList(archObj?.inputModalities ?: model.inputModalities).ifEmpty {
                 if (modalityStr.contains("->")) {
                     modalityStr.substringBefore("->").split('+').map { it.trim() }.filter { it.isNotEmpty() }
                 } else emptyList()
@@ -507,7 +608,7 @@ object ModelsDevClient {
             val outMods = if (forceVideoOutput) {
                 listOf("video")
             } else {
-                parseStringList(archObj?.get("output_modalities") ?: obj["output_modalities"]).ifEmpty {
+                parseStringList(archObj?.outputModalities ?: model.outputModalities).ifEmpty {
                     when {
                         modalityStr.endsWith("->video") -> listOf("video")
                         modalityStr.endsWith("->image") -> listOf("image")
@@ -519,11 +620,9 @@ object ModelsDevClient {
                 }
             }
 
-            val contextLen = obj["context_length"]?.jsonPrimitive?.intOrNull ?: 0
-            val topProv = obj["top_provider"] as? JsonObject
-            val maxCompletion = topProv?.get("max_completion_tokens")?.jsonPrimitive?.intOrNull
-
-            val pricingObj = obj["pricing"] as? JsonObject
+            val contextLen = model.contextLength.intCompat() ?: 0
+            val maxCompletion = model.topProvider?.maxCompletionTokens.intCompat()
+            val pricingObj = model.pricing
             val inputPricePerM = parsePerTokenToPerMillion(pricingObj?.get("prompt"))
             val outputPricePerM = parsePerTokenToPerMillion(pricingObj?.get("completion"))
             val cacheReadPerM = parsePerTokenToPerMillion(pricingObj?.get("input_cache_read"))
@@ -558,24 +657,20 @@ object ModelsDevClient {
         }
     }
 
-    internal fun parseVercelModelsIntoCatalog(
-        rawJson: String,
+    internal fun indexVercelCatalog(
+        dto: VercelCatalogDto,
         catalog: MutableMap<String, ModelPricingSpec>
     ) {
-        val root = json.parseToJsonElement(rawJson) as? JsonObject ?: return
-        val dataArr = root["data"] as? JsonArray ?: return
-        for (item in dataArr) {
-            val obj = item as? JsonObject ?: continue
-            val rawId = obj["id"]?.jsonPrimitive?.contentOrNull?.trim().orEmpty()
+        for (model in dto.data) {
+            val rawId = model.id?.trim().orEmpty()
             if (rawId.isEmpty()) continue
-            val name = obj["name"]?.jsonPrimitive?.contentOrNull ?: rawId
-            val ownedBy = obj["owned_by"]?.jsonPrimitive?.contentOrNull
-                ?: rawId.substringBefore('/', "")
-            val typeStr = obj["type"]?.jsonPrimitive?.contentOrNull?.lowercase().orEmpty()
+            val name = model.name ?: rawId
+            val ownedBy = model.ownedBy ?: rawId.substringBefore('/', "")
+            val typeStr = model.type?.lowercase().orEmpty()
 
-            val modalitiesObj = obj["modalities"] as? JsonObject
-            val inMods = parseStringList(modalitiesObj?.get("input"))
-            val outMods = parseStringList(modalitiesObj?.get("output")).ifEmpty {
+            val modalitiesObj = model.modalities
+            val inMods = parseStringList(modalitiesObj?.input)
+            val outMods = parseStringList(modalitiesObj?.output).ifEmpty {
                 when (typeStr) {
                     "image" -> listOf("image")
                     "video" -> listOf("video")
@@ -585,9 +680,9 @@ object ModelsDevClient {
                 }
             }
 
-            val contextWin = obj["context_window"]?.jsonPrimitive?.intOrNull ?: 0
-            val maxTokens = obj["max_tokens"]?.jsonPrimitive?.intOrNull
-            val pricingObj = obj["pricing"] as? JsonObject
+            val contextWin = model.contextWindow.intCompat() ?: 0
+            val maxTokens = model.maxTokens.intCompat()
+            val pricingObj = model.pricing
             val inputPricePerM = parsePerTokenToPerMillion(pricingObj?.get("input"))
             val outputPricePerM = parsePerTokenToPerMillion(pricingObj?.get("output"))
             val cacheReadPerM = parsePerTokenToPerMillion(pricingObj?.get("input_cache_read"))
@@ -611,25 +706,21 @@ object ModelsDevClient {
         }
     }
 
-    internal fun parseAimlApiModelsIntoCatalog(
-        rawJson: String,
+    internal fun indexAimlApiCatalog(
+        dto: AimlApiCatalogDto,
         catalog: MutableMap<String, ModelPricingSpec>
     ) {
-        val root = json.parseToJsonElement(rawJson) as? JsonObject ?: return
-        val dataArr = root["data"] as? JsonArray ?: return
-        for (item in dataArr) {
-            val obj = item as? JsonObject ?: continue
-            val rawId = obj["id"]?.jsonPrimitive?.contentOrNull?.trim().orEmpty()
+        for (model in dto.data) {
+            val rawId = model.id?.trim().orEmpty()
             if (rawId.isEmpty()) continue
-            val typeStr = obj["type"]?.jsonPrimitive?.contentOrNull?.lowercase().orEmpty()
-            val tags = parseStringList(obj["tags"])
-            val aliases = parseStringList(obj["aliases"])
-            val infoObj = obj["info"] as? JsonObject
-            val name = infoObj?.get("name")?.jsonPrimitive?.contentOrNull ?: rawId
-            val developer = infoObj?.get("developer")?.jsonPrimitive?.contentOrNull
-                ?: rawId.substringBefore('/', "")
-            val contextLen = infoObj?.get("contextLength")?.jsonPrimitive?.intOrNull ?: 0
-            val maxTokens = infoObj?.get("maxTokens")?.jsonPrimitive?.intOrNull
+            val typeStr = model.type?.lowercase().orEmpty()
+            val tags = parseStringList(model.tags)
+            val aliases = parseStringList(model.aliases)
+            val infoObj = model.info
+            val name = infoObj?.name ?: rawId
+            val developer = infoObj?.developer ?: rawId.substringBefore('/', "")
+            val contextLen = infoObj?.contextLength.intCompat() ?: 0
+            val maxTokens = infoObj?.maxTokens.intCompat()
 
             val outMods = when {
                 typeStr.contains("video") || tags.any { it.contains("video") } -> listOf("video")
@@ -653,11 +744,10 @@ object ModelsDevClient {
         }
     }
 
-    internal fun parseLiteLlmModelsIntoCatalog(
-        rawJson: String,
+    internal fun indexLiteLlmCatalog(
+        root: Map<String, JsonElement>,
         catalog: MutableMap<String, ModelPricingSpec>
     ) {
-        val root = json.parseToJsonElement(rawJson) as? JsonObject ?: return
         for ((modelKey, element) in root) {
             if (modelKey == "sample_spec") continue
             val obj = element as? JsonObject ?: continue
@@ -713,37 +803,30 @@ object ModelsDevClient {
         }
     }
 
-    internal fun parseModelsDevIntoCatalog(
-        rawJson: String,
+    internal fun indexModelsDevCatalog(
+        rootObj: Map<String, ModelsDevProviderDto>,
         catalog: MutableMap<String, ModelPricingSpec>
     ) {
-        val rootElement = json.parseToJsonElement(rawJson)
-        val rootObj = rootElement as? JsonObject ?: return
+        for ((providerKey, providerDto) in rootObj) {
+            val providerName = providerDto.name ?: providerKey
+            for ((modelKey, modelDto) in providerDto.models) {
+                val id = modelDto.id ?: modelKey
+                val name = modelDto.name ?: id
 
-        for ((providerKey, providerVal) in rootObj) {
-            val providerObj = providerVal as? JsonObject ?: continue
-            val providerName = providerObj["name"]?.jsonPrimitive?.contentOrNull ?: providerKey
-            val modelsObj = providerObj["models"] as? JsonObject ?: continue
-
-            for ((modelKey, modelVal) in modelsObj) {
-                val mObj = modelVal as? JsonObject ?: continue
-                val id = mObj["id"]?.jsonPrimitive?.contentOrNull ?: modelKey
-                val name = mObj["name"]?.jsonPrimitive?.contentOrNull ?: id
-
-                val costObj = mObj["cost"] as? JsonObject
+                val costObj = modelDto.cost
                 val inputCost = readRate(costObj?.get("input")) ?: 0.0
                 val outputCost = readRate(costObj?.get("output")) ?: 0.0
                 val cacheReadCost = readRate(costObj?.get("cache_read")) ?: 0.0
                 val cacheWriteCost = readRate(costObj?.get("cache_write")) ?: 0.0
                 val reasoningCost = readRate(costObj?.get("reasoning")) ?: 0.0
 
-                val limitObj = mObj["limit"] as? JsonObject
-                val contextWindow = limitObj?.get("context")?.jsonPrimitive?.intOrNull ?: 0
-                val maxOutput = limitObj?.get("output")?.jsonPrimitive?.intOrNull
+                val limitObj = modelDto.limit
+                val contextWindow = limitObj?.context.intCompat() ?: 0
+                val maxOutput = limitObj?.output.intCompat()
 
-                val modalitiesObj = mObj["modalities"] as? JsonObject
-                val inModalities = parseStringList(modalitiesObj?.get("input"))
-                val outModalities = parseStringList(modalitiesObj?.get("output"))
+                val modalitiesObj = modelDto.modalities
+                val inModalities = parseStringList(modalitiesObj?.input)
+                val outModalities = parseStringList(modalitiesObj?.output)
 
                 val spec = ModelPricingSpec(
                     modelId = id,
@@ -768,6 +851,13 @@ object ModelsDevClient {
                 indexModelSpec(catalog, id, spec, aliases = listOf(modelKey))
             }
         }
+    }
+
+    private fun JsonElement?.intCompat(): Int? {
+        val primitive = this as? JsonPrimitive ?: return null
+        return primitive.intOrNull
+            ?: primitive.doubleOrNull?.takeIf { it.isFinite() }?.toInt()
+            ?: primitive.contentOrNull?.trim()?.toIntOrNull()
     }
 
     private fun parseStringList(element: JsonElement?): List<String> {

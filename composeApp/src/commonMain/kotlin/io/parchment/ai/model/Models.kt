@@ -132,6 +132,9 @@ data class ProviderProfile(
      * so full history is always serialized locally and nothing persists provider-side.
      */
     val useStatefulChaining: Boolean = false,
+    /** Encoded even when false so [migrateLegacyProviderJson] distinguishes current saves from legacy profiles lacking this key. */
+    @OptIn(ExperimentalSerializationApi::class)
+    @EncodeDefault(EncodeDefault.Mode.ALWAYS)
     val storeServerSide: Boolean = false,
     val useBackgroundLongDecode: Boolean = true,
     val useLegacyFallbackEndpoint: Boolean = true,
@@ -783,8 +786,12 @@ data class ThemeConfig(
 @Immutable
 @Serializable
 data class AppStateSnapshot(
+    @OptIn(ExperimentalSerializationApi::class)
+    @EncodeDefault(EncodeDefault.Mode.ALWAYS)
     val profiles: List<ProviderProfile> = emptyList(),
     val activeProfileId: String = "",
+    @OptIn(ExperimentalSerializationApi::class)
+    @EncodeDefault(EncodeDefault.Mode.ALWAYS)
     val assistants: List<AssistantAgent> = emptyList(),
     val activeAssistantId: String = "",
     val defaultModels: DefaultModelConfig = DefaultModelConfig(),
@@ -800,6 +807,8 @@ data class AppStateSnapshot(
     val otaGithubRepo: String = "baros4294/parchment",
     val autoCheckOtaOnStartup: Boolean = true,
     /** Present in saved settings once the one-time built-in profile storage reset has run. */
+    @OptIn(ExperimentalSerializationApi::class)
+    @EncodeDefault(EncodeDefault.Mode.ALWAYS)
     val providerStorageReset: Boolean = true,
     /** False in settings saved before the page design; those move to its defaults once on load. */
     val designDefaultsApplied: Boolean = false

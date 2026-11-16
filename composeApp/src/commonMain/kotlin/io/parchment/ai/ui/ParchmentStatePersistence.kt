@@ -34,6 +34,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.serialization.ExperimentalSerializationApi
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
@@ -57,10 +58,12 @@ internal val appDiskWriter by lazy {
     )
 }
 
+@OptIn(ExperimentalSerializationApi::class)
 internal val compactStateJson = Json {
     ignoreUnknownKeys = true
     isLenient = true
-    encodeDefaults = true
+    encodeDefaults = false
+    explicitNulls = false
     prettyPrint = false
 }
 

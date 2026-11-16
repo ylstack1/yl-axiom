@@ -4,6 +4,7 @@ import androidx.compose.foundation.Image
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -26,6 +27,7 @@ import io.parchment.ai.platform.PlatformPickers
 import io.parchment.ai.platform.PlatformRuntime
 import io.parchment.ai.platform.PlatformStorage
 import io.parchment.ai.platform.WindowsChrome
+import io.parchment.ai.runtime.AppForeground
 import io.parchment.ai.ui.AppShortcutDispatcher
 import io.parchment.ai.ui.LocalParchmentPalette
 import io.parchment.ai.ui.ParchmentApp
@@ -45,6 +47,8 @@ import java.awt.dnd.DropTargetDropEvent
 import java.awt.dnd.DropTargetEvent
 import java.awt.event.ContainerAdapter
 import java.awt.event.ContainerEvent
+import java.awt.event.WindowAdapter
+import java.awt.event.WindowEvent
 import java.io.File
 import java.util.Properties
 private data class SavedWindowGeometry(
@@ -281,6 +285,14 @@ fun main() {
                 }
                 attachDropTargetRecursively(window, makeDropTarget)
                 window.minimumSize = Dimension(640, 480)
+            }
+            DisposableEffect(window) {
+                val listener = object : WindowAdapter() {
+                    override fun windowIconified(e: WindowEvent?) = AppForeground.markLeft()
+                    override fun windowDeiconified(e: WindowEvent?) = AppForeground.markResumed()
+                }
+                window.addWindowListener(listener)
+                onDispose { window.removeWindowListener(listener) }
             }
             ParchmentApp(
                 shortcutDispatcher = shortcuts,

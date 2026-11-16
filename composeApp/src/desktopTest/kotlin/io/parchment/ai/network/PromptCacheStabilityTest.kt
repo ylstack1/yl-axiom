@@ -107,9 +107,10 @@ class PromptCacheStabilityTest {
             val average = shares.average()
             val (earlier, later) = requests.zipWithNext().minBy { (a, b) -> a.commonPrefixWith(b).length.toDouble() / a.length }
             val split = earlier.commonPrefixWith(later).length
-            assertTrue(average >= 0.65, "$dialect: most of each request must repeat the one before: $average. " +
+            assertTrue(average >= 0.85, "$dialect: most of each request must repeat the one before: $average. " +
                 "First difference at $split of ${earlier.length}: before «${earlier.substring(maxOf(0, split - 120), minOf(earlier.length, split + 80))}» " +
                 "after «${later.substring(maxOf(0, split - 120), minOf(later.length, split + 80))}»")
+            assertTrue(shares.count { it < 0.5 } <= 4, "$dialect: expected <= 4 cache-breaking compaction steps, got ${shares.count { it < 0.5 }}")
             "$dialect steps=$steps average_shared_prefix=${"%.3f".format(average)} steps_under_half=${shares.count { it < 0.5 }} " +
                 "total_request_chars=${requests.sumOf { it.length }} average_request_chars=${requests.sumOf { it.length } / requests.size} " +
                 "largest_request_chars=${requests.maxOf { it.length }}\n"

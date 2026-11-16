@@ -21,6 +21,11 @@ BASELINE_PATH = REPO / "scripts" / "quality-baseline.json"
 MAIN_SETS = ("commonMain", "desktopMain", "androidMain", "jvmShared")
 TEST_SETS = ("commonTest", "desktopTest")
 CRLF_SUFFIXES = (".bat", ".iss")
+BINARY_SUFFIXES = (
+    ".ttf", ".otf", ".woff", ".woff2", ".png", ".jpg", ".jpeg", ".webp", ".gif", ".ico", ".bmp",
+    ".mp3", ".wav", ".ogg", ".mp4", ".webm", ".pdf", ".zip", ".jar", ".apk", ".exe", ".dll",
+    ".so", ".dylib", ".jks", ".keystore", ".p12", ".pfx",
+)
 SECRET_SUFFIXES = (".jks", ".keystore", ".p12", ".pfx")
 SECRET_NAMES = ("local.properties", ".env")
 MAX_KOTLIN_LINES = 3000
@@ -118,7 +123,7 @@ def is_kotlin(path: str) -> bool:
 def check_encoding(files: dict[str, bytes]) -> list[Problem]:
     problems = []
     for path, data in files.items():
-        if b"\0" in data[:8000]:
+        if path.lower().endswith(BINARY_SUFFIXES) or b"\0" in data[:8000]:
             continue
         if data.startswith(b"\xef\xbb\xbf"):
             problems.append(Problem("encoding", path, 1, "Remove the UTF-8 byte-order mark."))
@@ -303,7 +308,10 @@ def repo_paths(repo: Path = REPO) -> list[str]:
 
 
 def load_files(repo: Path = REPO) -> dict[str, bytes]:
-    return {path: (repo / path).read_bytes() for path in repo_paths(repo)}
+    return {
+        path: (b"" if path.lower().endswith(BINARY_SUFFIXES) else (repo / path).read_bytes())
+        for path in repo_paths(repo)
+    }
 
 
 def load_baseline() -> dict:
