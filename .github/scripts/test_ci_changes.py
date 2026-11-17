@@ -157,6 +157,13 @@ class WorkflowSecurityAndOptimizationInvariantsTest(unittest.TestCase):
             r"-m\s+unittest\s+\.github/",
             f"{name} must not pass dot-prefixed .github/ file paths to python -m unittest",
         )
+        for expr_match in re.finditer(r"\$\{\{(.*?)\}\}", text, re.S):
+            expr = expr_match.group(1)
+            self.assertNotRegex(
+                expr,
+                r"\s[+*%]\s",
+                f"{name} uses unsupported arithmetic operator inside GitHub Actions expression: {expr.strip()}",
+            )
 
         for match in re.finditer(r"uses:\s*actions/checkout@[0-9a-f]{40}.*?(?=\n[ \t]*-\s|\Z)", text, re.S):
             block = match.group(0)
@@ -197,6 +204,7 @@ class WorkflowSecurityAndOptimizationInvariantsTest(unittest.TestCase):
             good.replace("    timeout-minutes: 15\n", ""),
             good.replace("concurrency:\n", "x:\n"),
             good + '          cache: "gradle"\n',
+            good.replace("${{ github.ref }}", "${{ matrix.shard + 1 }}"),
         ):
             with self.assertRaises(AssertionError):
                 self.check_workflow_bytes("broken.yml", broken.encode("utf-8"))

@@ -88,7 +88,7 @@ jobs:
           fi
 
   test-desktop:
-    name: Desktop Tests (Shard ${{ matrix.shard + 1 }}/2)
+    name: Desktop Tests (Shard ${{ matrix.label }})
     needs: preflight
     if: needs.preflight.outputs.desktop_tests == 'true'
     runs-on: ubuntu-latest
@@ -96,7 +96,11 @@ jobs:
     strategy:
       fail-fast: true
       matrix:
-        shard: [0, 1]
+        include:
+          - shard: 0
+            label: "1/2"
+          - shard: 1
+            label: "2/2"
     steps:
       - name: Checkout Repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1

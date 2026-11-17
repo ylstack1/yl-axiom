@@ -5,7 +5,7 @@ Updated 2026-11-17. AGENTS.md owns workflow; MEMORY holds contracts. Task IDs st
 ## Current status
 
 - **Source:** 2026-11-17 performance, native picker, UI consistency & CI batch: JDK 25 Generational Shenandoah + Compact Headers + build-time Leyden `parchment.aot`, `KissMotionNode` (`Modifier.Node`, 0 hover/press recompositions), `stability_config.conf` + `kotlinx-collections-immutable` 0.5.2, R8 Full Mode + `profileinstaller` 1.4.1, native Win32 COM `IFileOpenDialog`/`IFileSaveDialog` multi-file/save pickers, `ControlHeight` UI alignment across Settings/Providers/chat, and CI caching/sharding across all 8 workflows.
-- **Last verified:** 2026-11-17, `verify.py final` (558 tests + 37 UI gallery captures, signed APK, release package & service-loader checks), `verify.py perf` (`desktop_title_ms=1929`, first launch `1916`, `desktop_idle_private_mb=240.1`, `apk_mb=4.4`, `desktop_cds_archives_ok=True`).
+- **Last verified:** 2026-11-17, `verify.py final` (558 tests + 37 UI gallery captures, signed APK, release package & service-loader checks), `verify.py perf` (`desktop_title_ms=1929`, first launch `1916`, `desktop_idle_private_mb=240.1`, `apk_mb=4.4`, `desktop_cds_archives_ok=True`), `verify.py affected` (CI shard expression fix).
 - **Next action:** User checks 17.1 on the phone after the release.
 
 ## Open tasks
