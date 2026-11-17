@@ -36,20 +36,51 @@ actual object PlatformPickers {
     @Volatile
     var filesDroppedCallback: ((List<PickedBinaryFile>) -> Unit)? = null
 
+    private fun activeWindowHwnd(): Long =
+        (java.awt.KeyboardFocusManager.getCurrentKeyboardFocusManager().activeWindow
+            as? androidx.compose.ui.awt.ComposeWindow)?.windowHandle
+            ?: java.awt.Window.getWindows().firstOrNull { it.isVisible && it is androidx.compose.ui.awt.ComposeWindow }
+                ?.let { (it as androidx.compose.ui.awt.ComposeWindow).windowHandle }
+            ?: 0L
+
     actual suspend fun pickFileForImport(allowedExtensions: List<String>): PickedBinaryFile? =
         withContext(Dispatchers.IO) {
             runCatching {
-                chooseImportFiles(allowedExtensions).firstOrNull { it.isFile }?.let {
+                chooseImportFiles(allowedExtensions, allowMultiple = false).firstOrNull { it.isFile }?.let {
                     pickedFileFromDisk(it, maxPickedFileBytes(allowedExtensions), PlatformRuntime.currentTimeMillis())
                 }
             }.getOrNull()
         }
 
-    private fun chooseImportFiles(allowedExtensions: List<String>): List<File> {
+    actual suspend fun pickFilesForImport(allowedExtensions: List<String>): List<PickedBinaryFile> =
+        withContext(Dispatchers.IO) {
+            runCatching {
+                val maxBytes = maxPickedFileBytes(allowedExtensions)
+                val now = PlatformRuntime.currentTimeMillis()
+                chooseImportFiles(allowedExtensions, allowMultiple = true)
+                    .filter { it.isFile }
+                    .mapIndexed { idx, file -> pickedFileFromDisk(file, maxBytes, now + idx) }
+            }.getOrDefault(emptyList())
+        }
+
+    private fun chooseImportFiles(allowedExtensions: List<String>, allowMultiple: Boolean = true): List<File> {
         val allowAll = allowedExtensions.isEmpty() || allowedExtensions.contains("*")
-        val title = if (allowAll) "Attach Image, Video, or File(s)" else "Import File(s) into Parchment"
+        val title = when {
+            allowAll && allowMultiple -> "Attach Files to Parchment"
+            allowAll -> "Attach File to Parchment"
+            allowMultiple -> "Import Files into Parchment"
+            else -> "Import File into Parchment"
+        }
+        if (WindowsNative.isWindows) {
+            WindowsFolderDialog.pickFiles(
+                title = title,
+                filters = WindowsFolderDialog.buildOpenFilters(allowedExtensions),
+                allowMultiple = allowMultiple,
+                ownerHwnd = activeWindowHwnd()
+            ).onSuccess { paths -> return paths.map(::File) }
+        }
         val dialog = FileDialog(null as Frame?, title, FileDialog.LOAD)
-        dialog.isMultipleMode = true
+        dialog.isMultipleMode = allowMultiple
         if (!allowAll && allowedExtensions.isNotEmpty()) {
             dialog.file = allowedExtensions.joinToString(";") { "*.$it" }
             dialog.filenameFilter = FilenameFilter { _, name ->
@@ -66,7 +97,7 @@ actual object PlatformPickers {
 
     actual suspend fun <T> pickAndImportChatFiles(decode: (chatJsons: List<String>) -> T): List<ChatImportOutcome<T>> =
         withContext(Dispatchers.IO) {
-            chooseImportFiles(listOf("zip", "json")).filter { it.isFile }.map { file ->
+            chooseImportFiles(listOf("zip", "json"), allowMultiple = true).filter { it.isFile }.map { file ->
                 ChatImportOutcome(file.name, runCatching {
                     ChatArchiveExtractor.importChatFile(
                         file.name,
@@ -99,22 +130,34 @@ actual object PlatformPickers {
 
     private suspend fun exportStreamed(defaultFileName: String, write: (OutputStream) -> Unit): String? =
         withContext(Dispatchers.IO) {
-            val dialog = FileDialog(null as Frame?, "Export from Parchment", FileDialog.SAVE)
-            dialog.file = defaultFileName
-            dialog.isVisible = true
-            val dir = dialog.directory
-            val file = dialog.file
-            if (dir == null || file == null) return@withContext null
-            File(dir, file).also { AtomicFileStorage.writeStream(it, write = write) }.absolutePath
+            val chosenTarget = if (WindowsNative.isWindows) {
+                WindowsFolderDialog.saveFile(
+                    title = "Export from Parchment",
+                    defaultFileName = defaultFileName,
+                    ownerHwnd = activeWindowHwnd()
+                ).getOrElse {
+                    chooseSaveFallback(defaultFileName)
+                }?.let(::File)
+            } else {
+                chooseSaveFallback(defaultFileName)?.let(::File)
+            } ?: return@withContext null
+            chosenTarget.also { AtomicFileStorage.writeStream(it, write = write) }.absolutePath
         }
+
+    private fun chooseSaveFallback(defaultFileName: String): String? {
+        val dialog = FileDialog(null as Frame?, "Export from Parchment", FileDialog.SAVE)
+        dialog.file = defaultFileName
+        dialog.isVisible = true
+        val dir = dialog.directory
+        val file = dialog.file
+        return if (dir != null && file != null) File(dir, file).absolutePath else null
+    }
 
     actual suspend fun pickWorkspaceDirectory(currentPath: String): String? =
         withContext(Dispatchers.IO) {
             // The native Windows folder picker first (Quick access, OneDrive, search); Swing only if COM fails.
             if (WindowsNative.isWindows) {
-                val owner = (java.awt.KeyboardFocusManager.getCurrentKeyboardFocusManager().activeWindow
-                    as? androidx.compose.ui.awt.ComposeWindow)?.windowHandle ?: 0L
-                WindowsFolderDialog.pickFolder("Select Local Workspace Folder for Agent Harness", currentPath, owner)
+                WindowsFolderDialog.pickFolder("Select Local Workspace Folder for Agent Harness", currentPath, activeWindowHwnd())
                     .onSuccess { return@withContext it }
             }
             runCatching {
@@ -134,6 +177,19 @@ actual object PlatformPickers {
 
     actual suspend fun pickFontFile(dialogTitle: String): String? =
         withContext(Dispatchers.IO) {
+            if (WindowsNative.isWindows) {
+                WindowsFolderDialog.pickFiles(
+                    title = dialogTitle,
+                    filters = listOf(
+                        FileDialogFilter("Font Files (*.ttf; *.otf; *.ttc)", "*.ttf;*.otf;*.ttc"),
+                        FileDialogFilter("All Files (*.*)", "*.*")
+                    ),
+                    allowMultiple = false,
+                    ownerHwnd = activeWindowHwnd()
+                ).onSuccess { paths ->
+                    return@withContext paths.firstOrNull()?.let(::File)?.takeIf { it.isFile }?.absolutePath
+                }
+            }
             runCatching {
                 val dialog = FileDialog(null as Frame?, dialogTitle, FileDialog.LOAD)
                 dialog.file = "*.ttf;*.otf;*.ttc"

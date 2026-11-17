@@ -182,7 +182,7 @@ internal fun BackupAndOtaSubpage(
         modifier = Modifier
             .fillMaxSize()
             .verticalScroll(rememberScrollState())
-            .padding(if (win.isCompact) 12.dp else 20.dp),
+            .padding(if (win.isCompact) Space.s12 else Space.s16),
         verticalArrangement = Arrangement.spacedBy(Space.s16)
     ) {
         BasicText(text = Strings.storageBackupUpdates, style = p.uiHeaderStyle.copy(fontSize = 19.sp))
@@ -339,7 +339,7 @@ internal fun BackupAndOtaSubpage(
                     verticalArrangement = Arrangement.spacedBy(Space.s6)
                 ) {
                     if (filteredStorageFiles.isEmpty()) {
-                        item(key = "empty") {
+                        item(key = "empty", contentType = "empty") {
                             BasicText(
                                 text = if (isScanningStorage && allStoredFiles.isEmpty()) Strings.loading else Strings.noMatchingFilesInStorage,
                                 style = p.uiLabelStyle.copy(color = p.mutedInk),
@@ -347,7 +347,7 @@ internal fun BackupAndOtaSubpage(
                             )
                         }
                     }
-                    items(filteredStorageFiles, key = { it.fullPath }) { item ->
+                    items(filteredStorageFiles, key = { it.fullPath }, contentType = { it.category }) { item ->
                         val matchedSession = resolveSessionForStoredFile(item)
                         val isOrphan = remember(item.fullPath, referencedMediaPaths) { isOrphanOrTempFile(item) }
                         val itemIcon = when (item.category) {

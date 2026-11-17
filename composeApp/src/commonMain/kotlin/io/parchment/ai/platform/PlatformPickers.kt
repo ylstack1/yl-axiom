@@ -167,8 +167,10 @@ fun normalizePickedBinaryFile(
 }
 
 expect object PlatformPickers {
-    // System file pickers: card and system prompt import and export, and custom fonts.
+    // System file pickers: attachments, card and system prompt import and export, and custom fonts.
     suspend fun pickFileForImport(allowedExtensions: List<String>): PickedBinaryFile?
+    /** Lets the user choose one or more files at once with the native OS picker; empty when cancelled. */
+    suspend fun pickFilesForImport(allowedExtensions: List<String>): List<PickedBinaryFile>
     /** Lets the user choose chat exports and imports each one, streaming archives instead of loading them into memory. */
     suspend fun <T> pickAndImportChatFiles(decode: (chatJsons: List<String>) -> T): List<ChatImportOutcome<T>>
     suspend fun saveFileForExport(defaultFileName: String, bytes: ByteArray): String?

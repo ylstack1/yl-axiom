@@ -80,6 +80,13 @@ object IconSize {
     val xl = 20.dp
 }
 
+/** Standard interactive heights so buttons, tabs, chips, and inputs share one horizontal alignment grid. */
+object ControlHeight {
+    val compact = 34.dp
+    val regular = 38.dp
+    val touch = Space.s48
+}
+
 /** Shadow depth. Only things that float above the page (notifications, menus) cast one; everything else is flat. */
 object Elevation {
     val overlay = 8.dp

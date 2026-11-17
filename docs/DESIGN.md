@@ -27,6 +27,7 @@ Colors come from `ThemeConfig`, so every preset keeps working. Parchment & Espre
 Everything else lives in `ui/DesignTokens.kt`. New UI uses these names, not literal numbers; older screens move over when they are next reworked.
 
 - **Space:** 2, 4, 6, 8, 10, 12, 16, 24, 48 dp (`Space.s8`); 48 is also the smallest touch target. Related items sit closer than unrelated ones.
+- **Control heights:** 34 dp compact, 38 dp regular, 48 dp touch (`ControlHeight`), so toolbar buttons, tabs, chips and single-line inputs align on one horizontal row.
 - **Type:** 11, 12, 13, 14, 15, 16, 17, 19, 21 sp. Nothing below 11. Text grows with the system text size, up to 200%.
 - **Corners:** 4, 6, 8, 10, 12 dp, 16 for bubbles, or fully round (`Radius`).
 - **Lines:** hairline 0.75 dp, emphasis 1, selected 1.5, focus ring 2 (`LineWidth`).
@@ -69,7 +70,7 @@ The app icon is one nib over a line of ink. `installer/parchment-icon.ico`, `com
 
 ## Windows
 
-The window uses the native caption, so minimize, maximize, Snap Layouts and rounded corners are the system's own. `WindowsChrome` tints it and its text to the theme. The caption shows the app icon and "chat title — Parchment" (or "Settings — Parchment"); while a reply generates it shows the run's progress instead.
+The window uses the native caption, so minimize, maximize, Snap Layouts and rounded corners are the system's own. `WindowsChrome` tints it and its text to the theme. File open (with multi-select and filter presets), file save, and workspace folder dialogs use the native Windows COM `IFileOpenDialog` and `IFileSaveDialog` pickers modal to the window. The caption shows the app icon and "chat title — Parchment" (or "Settings — Parchment"); while a reply generates it shows the run's progress instead.
 
 ## Reviewing changes
 

@@ -37,6 +37,7 @@ import androidx.compose.ui.unit.sp
 import io.parchment.ai.model.AppStateSnapshot
 import io.parchment.ai.model.AssistantAgent
 import io.parchment.ai.model.ChatSession
+import kotlinx.collections.immutable.toImmutableList
 
 // Left sidebar: Assistants, Chats and Pinned.
 @Composable
@@ -83,7 +84,7 @@ internal fun ParchmentSidebar(
                     SidebarTab.PINNED -> Strings.searchPinned
                     SidebarTab.TOPICS -> Strings.searchChats
                 },
-                minHeight = 36.dp,
+                minHeight = ControlHeight.compact,
                 modifier = Modifier.weight(1f)
             )
             SepiaButton(
@@ -154,10 +155,11 @@ internal fun ParchmentSidebar(
         } else if (selectedTab == SidebarTab.ASSISTANTS) {
             val filteredAssistants = remember(appState.assistants, searchQuery) {
                 val q = searchQuery.trim()
-                if (q.isEmpty()) appState.assistants
+                val list = if (q.isEmpty()) appState.assistants
                 else appState.assistants.filter {
                     it.name.contains(q, ignoreCase = true) || it.systemPrompt.contains(q, ignoreCase = true)
                 }
+                list.toImmutableList()
             }
 
             LazyColumn(
@@ -165,7 +167,7 @@ internal fun ParchmentSidebar(
                 verticalArrangement = Arrangement.spacedBy(Space.s6)
             ) {
                 if (filteredAssistants.isEmpty()) {
-                    item {
+                    item(key = "empty-assistants", contentType = "empty") {
                         BasicText(
                             text = Strings.noMatchingAssistantsFoundTap,
                             style = p.uiLabelStyle,
@@ -173,7 +175,7 @@ internal fun ParchmentSidebar(
                         )
                     }
                 }
-                itemsIndexed(filteredAssistants, key = { _, a -> a.id }) { _, asst ->
+                itemsIndexed(filteredAssistants, key = { _, a -> a.id }, contentType = { _, _ -> "assistant" }) { _, asst ->
                     val isSel = asst.id == activeAssistant.id
                     val shape = RoundedCornerShape(Radius.r8)
                     val rowInteraction = remember { MutableInteractionSource() }
@@ -310,7 +312,7 @@ internal fun ParchmentSidebar(
                 modifier = Modifier.weight(1f).fillMaxWidth(),
                 verticalArrangement = Arrangement.spacedBy(Space.s2)
             ) {
-                itemsIndexed(assistantTopics, key = { _, s -> s.id }) { _, sess ->
+                itemsIndexed(assistantTopics, key = { _, s -> s.id }, contentType = { _, _ -> "topic" }) { _, sess ->
                     val selected = sess.id == activeSession.id
                     val shape = RoundedCornerShape(Radius.r8)
                     val rowInteraction = remember { MutableInteractionSource() }

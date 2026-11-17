@@ -10,6 +10,7 @@ on:
     paths:
       - "gradle/**"
       - "**/*.gradle.kts"
+      - "gradle.properties"
       - ".github/workflows/dependency-submission.yml"
   schedule:
     - cron: "11 2 * * 1"
@@ -19,33 +20,53 @@ permissions:
   contents: read
 
 concurrency:
-  group: ${{ github.workflow }}
+  group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
   submit:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 20
     permissions:
       contents: write
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Checkout Repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+          fetch-depth: 1
+          fetch-tags: false
 
-      - uses: actions/setup-java@77dd5b2ce225ea11469928ac317850245a74ae78 # v6.2.0
+      - name: Set up JDK 25 (Temurin)
+        uses: actions/setup-java@77dd5b2ce225ea11469928ac317850245a74ae78 # v6.2.0
         with:
           distribution: "temurin"
           java-version: "25"
 
+      - name: Cache Android SDK Packages
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            /usr/local/lib/android/sdk/licenses
+            /usr/local/lib/android/sdk/platforms/android-37*
+            /usr/local/lib/android/sdk/build-tools/35*
+            /usr/local/lib/android/sdk/build-tools/36*
+            /usr/local/lib/android/sdk/build-tools/37*
+          key: android-sdk-${{ runner.os }}-${{ hashFiles('gradle/libs.versions.toml') }}
+
       - name: Accept Android SDK Licenses
         run: |
-          SDKMGR=$(find "$ANDROID_HOME/cmdline-tools" -name sdkmanager | head -n 1)
-          if [ -n "$SDKMGR" ]; then
-            yes | "$SDKMGR" --licenses > /dev/null || true
+          if [ ! -f "$ANDROID_HOME/licenses/.parchment-accepted" ]; then
+            SDKMGR=$(find "$ANDROID_HOME/cmdline-tools" -name sdkmanager | head -n 1)
+            if [ -n "$SDKMGR" ]; then
+              yes | "$SDKMGR" --licenses > /dev/null || true
+              mkdir -p "$ANDROID_HOME/licenses"
+              touch "$ANDROID_HOME/licenses/.parchment-accepted"
+            fi
           fi
 
       - name: Submit shipped dependencies
         uses: gradle/actions/dependency-submission@8da46b539cd8fe6ab27ca75128919a18d757604c # v6.4.1
         with:
           dependency-graph-include-configurations: "^(desktopRuntimeClasspath|releaseRuntimeClasspath)$"
+          additional-arguments: "--no-daemon --max-workers=4"

@@ -134,14 +134,14 @@ def desktop_run(exe: Path, work: Path) -> dict[str, float]:
 
 
 def warm_up(exe: Path, work: Path) -> tuple[int, bool]:
-    """The installer's hidden --cds-warmup run. -Xshare:on makes the JVM exit instead of silently running unshared
-    when the base archive cannot be used (for example a classes_coh.jsa missing under compact object headers)."""
-    archive = exe.parent / "app" / "parchment.jsa"
-    archive.unlink(missing_ok=True)  # A new version arrives without an archive.
+    """Verifies the prebuilt JDK 25 Leyden AOT cache (`app/parchment.aot`) maps cleanly in `Parchment.exe`."""
+    archive = exe.parent / "app" / "parchment.aot"
     started = time.perf_counter()
-    run = subprocess.run([str(exe), "--cds-warmup"], cwd=work, timeout=120, check=False,
-                         env=dict(os.environ, JAVA_TOOL_OPTIONS="-Xshare:on"))
-    return round((time.perf_counter() - started) * 1000), run.returncode == 0 and archive.is_file()
+    run = subprocess.run([str(exe), "--aot-verify"], cwd=work, timeout=30, check=False,
+                         capture_output=True, text=True, encoding="utf-8", errors="replace",
+                         env=dict(os.environ, JAVA_TOOL_OPTIONS="-Xlog:aot"))
+    mapped = "Opened AOT cache" in (run.stdout + run.stderr)
+    return round((time.perf_counter() - started) * 1000), run.returncode == 0 and archive.is_file() and mapped
 
 
 def measure_desktop(repo: Path, runs: int = 3) -> dict[str, object]:

@@ -567,10 +567,10 @@ internal fun ManuscriptViewport(
                     if (preferences.defaultViewMode == ViewMode.MANUSCRIPT) 16.dp else if (win.isCompact) 20.dp else 12.dp
                 )
             ) {
-                item { Spacer(Modifier.height(Space.s10)) }
+                item(key = "top-spacer", contentType = "spacer") { Spacer(Modifier.height(Space.s10)) }
 
                 if (activeSession.messages.isEmpty()) {
-                    item {
+                    item(key = "empty-intro", contentType = "intro") {
                         EmptyChatIntro(activeSession, activeAssistant, activeProfile, preferences, onUpdateSession, onOpenProviderSettings)
                     }
                 }

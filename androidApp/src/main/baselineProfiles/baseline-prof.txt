@@ -1,9 +1,13 @@
-# Ahead-of-time compile Parchment's own code and the libraries every start runs through, so the first launches
-# after an install or update skip the interpreter. androidx.profileinstaller (already pulled in by activity) applies
-# this to sideloaded APKs too. Compose ships its own profiles. Wildcards are expanded against the final DEX by AGP.
+# Ahead-of-time compile Parchment's own code and the libraries every start and streaming turn runs through, so the
+# first launches after an install or update skip the interpreter. androidx.profileinstaller applies this to sideloaded
+# OTA APKs too. Compose ships its own profiles. Wildcards are expanded against the final DEX by AGP.
 HSPLio/parchment/ai/**->**(**)**
 Lio/parchment/ai/**;
+HSPLkotlinx/collections/immutable/**->**(**)**
+Lkotlinx/collections/immutable/**;
 HSPLkotlinx/serialization/json/**->**(**)**
 Lkotlinx/serialization/json/**;
 HSPLkotlinx/coroutines/**->**(**)**
 Lkotlinx/coroutines/**;
+HSPLio/ktor/client/**->**(**)**
+Lio/ktor/client/**;

@@ -1,12 +1,15 @@
 package io.parchment.ai.ui
 
-import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.Animatable
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.interaction.FocusInteraction
+import androidx.compose.foundation.interaction.HoverInteraction
+import androidx.compose.foundation.interaction.InteractionSource
 import androidx.compose.foundation.interaction.MutableInteractionSource
-import androidx.compose.foundation.interaction.collectIsFocusedAsState
+import androidx.compose.foundation.interaction.PressInteraction
 import androidx.compose.foundation.interaction.collectIsHoveredAsState
 import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.Arrangement
@@ -14,6 +17,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -22,6 +26,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.compositionLocalOf
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
@@ -30,15 +35,29 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.focus.FocusEventModifierNode
+import androidx.compose.ui.focus.FocusState
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.graphics.drawscope.ContentDrawScope
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.input.pointer.PointerEvent
+import androidx.compose.ui.input.pointer.PointerEventPass
+import androidx.compose.ui.input.pointer.PointerEventType
 import androidx.compose.ui.input.pointer.PointerIcon
 import androidx.compose.ui.input.pointer.pointerHoverIcon
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.Measurable
+import androidx.compose.ui.layout.MeasureResult
+import androidx.compose.ui.layout.MeasureScope
+import androidx.compose.ui.node.DrawModifierNode
+import androidx.compose.ui.node.LayoutModifierNode
+import androidx.compose.ui.node.ModifierNodeElement
+import androidx.compose.ui.node.PointerInputModifierNode
+import androidx.compose.ui.node.invalidateDraw
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.clearAndSetSemantics
@@ -48,6 +67,7 @@ import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.IntRect
@@ -60,7 +80,10 @@ import androidx.compose.ui.window.PopupPositionProvider
 import androidx.compose.ui.window.PopupProperties
 import io.parchment.ai.model.isWebLink
 import io.parchment.ai.platform.PlatformStorage
+import kotlinx.coroutines.CoroutineStart
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 
 /**
  * Adaptive Window Size Breakpoints (WindowSizeClass pattern for Mobile Portrait vs Tablet vs Desktop).
@@ -132,16 +155,264 @@ enum class SepiaButtonStyle {
 private val COMPACT_BTN_SHAPE = RoundedCornerShape(Radius.r8)
 private val REGULAR_BTN_SHAPE = RoundedCornerShape(Radius.r8)
 
+private data class KissMotionElement(
+    val interactionSource: InteractionSource,
+    val enabled: Boolean,
+    val reduceMotion: Boolean,
+    val pressScale: Float,
+    val hoverScale: Float,
+    val focusColor: Color
+) : ModifierNodeElement<KissMotionNode>() {
+    override fun create(): KissMotionNode = KissMotionNode(
+        interactionSource = interactionSource,
+        enabled = enabled,
+        reduceMotion = reduceMotion,
+        pressScale = pressScale,
+        hoverScale = hoverScale,
+        focusColor = focusColor
+    )
+
+    override fun update(node: KissMotionNode) {
+        node.update(
+            interactionSource = interactionSource,
+            enabled = enabled,
+            reduceMotion = reduceMotion,
+            pressScale = pressScale,
+            hoverScale = hoverScale,
+            focusColor = focusColor
+        )
+    }
+}
+
 /**
- * Clickable with feedback:
- * - Hover (pointer devices): hand cursor and a slight lift (1.018 scale, -0.75 dp).
- * - Press: a spring squeeze (0.945 scale) and haptic feedback.
+ * Drives hover lift, press squeeze, and keyboard-only focus rings purely in the GPU layer and draw phases
+ * (`Modifier.Node`), so pointer movement and focus traversal trigger zero Compose recompositions.
+ */
+private class KissMotionNode(
+    private var interactionSource: InteractionSource,
+    private var enabled: Boolean,
+    private var reduceMotion: Boolean,
+    private var pressScale: Float,
+    private var hoverScale: Float,
+    private var focusColor: Color
+) : Modifier.Node(), LayoutModifierNode, DrawModifierNode, FocusEventModifierNode, PointerInputModifierNode {
+    private val presses = HashSet<PressInteraction.Press>()
+    private val hovers = HashSet<HoverInteraction.Enter>()
+    private var hasFocus = false
+    private var focusFromPointer = false
+    private val showFocusRingState = mutableStateOf(false)
+
+    private val scaleState = mutableFloatStateOf(1f)
+    private val liftDpState = mutableFloatStateOf(0f)
+    private val scaleAnim = Animatable(1f)
+    private val liftAnim = Animatable(0f)
+    private var lastTargetScale = 1f
+    private var lastTargetLiftDp = 0f
+
+    private var collectJob: Job? = null
+    private var scaleJob: Job? = null
+    private var liftJob: Job? = null
+
+    private var cachedStrokePx = -1f
+    private var cachedFocusStroke: Stroke? = null
+
+    override fun onAttach() {
+        restartInteractionCollector()
+    }
+
+    override fun onDetach() {
+        resetState()
+    }
+
+    override fun onReset() {
+        resetState()
+    }
+
+    override fun onFocusEvent(focusState: FocusState) {
+        hasFocus = focusState.isFocused
+        if (!hasFocus) focusFromPointer = false
+        syncFocusRing()
+    }
+
+    override fun onPointerEvent(pointerEvent: PointerEvent, pass: PointerEventPass, bounds: IntSize) {
+        if (pass == PointerEventPass.Initial && pointerEvent.type == PointerEventType.Press) {
+            focusFromPointer = true
+            syncFocusRing()
+        }
+    }
+
+    override fun onCancelPointerInput() = Unit
+
+    fun update(
+        interactionSource: InteractionSource,
+        enabled: Boolean,
+        reduceMotion: Boolean,
+        pressScale: Float,
+        hoverScale: Float,
+        focusColor: Color
+    ) {
+        val sourceChanged = this.interactionSource !== interactionSource
+        val focusColorChanged = this.focusColor != focusColor
+        this.interactionSource = interactionSource
+        this.enabled = enabled
+        this.reduceMotion = reduceMotion
+        this.pressScale = pressScale
+        this.hoverScale = hoverScale
+        this.focusColor = focusColor
+        if (sourceChanged && isAttached) {
+            presses.clear()
+            hovers.clear()
+            restartInteractionCollector()
+        } else if (isAttached) {
+            syncTargets(animate = true)
+            if (focusColorChanged && showFocusRingState.value) invalidateDraw()
+        }
+    }
+
+    private fun resetState() {
+        collectJob?.cancel()
+        collectJob = null
+        scaleJob?.cancel()
+        scaleJob = null
+        liftJob?.cancel()
+        liftJob = null
+        presses.clear()
+        hovers.clear()
+        hasFocus = false
+        focusFromPointer = false
+        showFocusRingState.value = false
+        lastTargetScale = 1f
+        lastTargetLiftDp = 0f
+        scaleState.floatValue = 1f
+        liftDpState.floatValue = 0f
+    }
+
+    private fun syncFocusRing() {
+        val nextFocusRing = enabled && hasFocus && !focusFromPointer
+        if (nextFocusRing != showFocusRingState.value) {
+            showFocusRingState.value = nextFocusRing
+            if (isAttached) invalidateDraw()
+        }
+    }
+
+    private fun restartInteractionCollector() {
+        collectJob?.cancel()
+        val source = interactionSource
+        collectJob = coroutineScope.launch(start = CoroutineStart.UNDISPATCHED) {
+            source.interactions.collect { interaction ->
+                when (interaction) {
+                    is PressInteraction.Press -> {
+                        presses.add(interaction)
+                        focusFromPointer = true
+                    }
+                    is PressInteraction.Release -> presses.remove(interaction.press)
+                    is PressInteraction.Cancel -> presses.remove(interaction.press)
+                    is HoverInteraction.Enter -> hovers.add(interaction)
+                    is HoverInteraction.Exit -> hovers.remove(interaction.enter)
+                    is FocusInteraction.Focus -> hasFocus = true
+                    is FocusInteraction.Unfocus -> {
+                        hasFocus = false
+                        focusFromPointer = false
+                    }
+                }
+                syncTargets(animate = true)
+            }
+        }
+        syncTargets(animate = false)
+    }
+
+    private fun syncTargets(animate: Boolean) {
+        syncFocusRing()
+        val targetScale = when {
+            !enabled || reduceMotion -> 1f
+            presses.isNotEmpty() -> pressScale
+            hovers.isNotEmpty() -> hoverScale
+            else -> 1f
+        }
+        val targetLiftDp = when {
+            !enabled || reduceMotion -> 0f
+            hovers.isNotEmpty() && presses.isEmpty() -> -0.75f
+            else -> 0f
+        }
+        if (!animate || !enabled || reduceMotion || !isAttached) {
+            scaleJob?.cancel()
+            liftJob?.cancel()
+            lastTargetScale = targetScale
+            lastTargetLiftDp = targetLiftDp
+            scaleState.floatValue = targetScale
+            liftDpState.floatValue = targetLiftDp
+            return
+        }
+        if (targetScale != lastTargetScale) {
+            lastTargetScale = targetScale
+            scaleJob?.cancel()
+            scaleJob = coroutineScope.launch {
+                if (scaleAnim.value != scaleState.floatValue) scaleAnim.snapTo(scaleState.floatValue)
+                scaleAnim.animateTo(targetScale, Motion.SCALE_SPRING) {
+                    scaleState.floatValue = value
+                }
+            }
+        }
+        if (targetLiftDp != lastTargetLiftDp) {
+            lastTargetLiftDp = targetLiftDp
+            liftJob?.cancel()
+            liftJob = coroutineScope.launch {
+                if (liftAnim.value != liftDpState.floatValue) liftAnim.snapTo(liftDpState.floatValue)
+                liftAnim.animateTo(targetLiftDp, Motion.LIFT_SPRING) {
+                    liftDpState.floatValue = value
+                }
+            }
+        }
+    }
+
+    override fun MeasureScope.measure(measurable: Measurable, constraints: Constraints): MeasureResult {
+        val placeable = measurable.measure(constraints)
+        return layout(placeable.width, placeable.height) {
+            placeable.placeWithLayer(0, 0) {
+                val s = scaleState.floatValue
+                scaleX = s
+                scaleY = s
+                translationY = liftDpState.floatValue.dp.toPx()
+            }
+        }
+    }
+
+    override fun ContentDrawScope.draw() {
+        drawContent()
+        if (showFocusRingState.value && enabled) {
+            val strokePx = LineWidth.focus.toPx()
+            val stroke = if (strokePx == cachedStrokePx && cachedFocusStroke != null) {
+                cachedFocusStroke!!
+            } else {
+                Stroke(width = strokePx).also {
+                    cachedStrokePx = strokePx
+                    cachedFocusStroke = it
+                }
+            }
+            val half = strokePx / 2f
+            val r = Radius.r8.toPx()
+            drawRoundRect(
+                color = focusColor,
+                topLeft = Offset(half, half),
+                size = Size((size.width - strokePx).coerceAtLeast(0f), (size.height - strokePx).coerceAtLeast(0f)),
+                cornerRadius = CornerRadius(r, r),
+                style = stroke
+            )
+        }
+    }
+}
+
+/**
+ * Clickable with layer-phase feedback:
+ * - Hover (pointer devices): hand cursor and a slight GPU-layer lift (zero recomposition).
+ * - Press: spring squeeze and haptic feedback.
+ * - Keyboard focus: 2 dp accent focus ring drawn without layout shift.
  */
 @Composable
 fun Modifier.kissClickable(
     enabled: Boolean = true,
-    pressScale: Float = 0.945f,
-    hoverScale: Float = 1.018f,
+    pressScale: Float = 0.96f,
+    hoverScale: Float = 1.012f,
     strongHaptic: Boolean = false,
     interactionSource: MutableInteractionSource = remember { MutableInteractionSource() },
     role: Role? = Role.Button,
@@ -151,46 +422,20 @@ fun Modifier.kissClickable(
 ): Modifier {
     val haptics = LocalHapticFeedback.current
     val focusColor = LocalParchmentPalette.current.accent
-    val isPressed by interactionSource.collectIsPressedAsState()
-    val isHovered by interactionSource.collectIsHoveredAsState()
-    val isFocused by interactionSource.collectIsFocusedAsState()
     val reduceMotion = LocalReduceMotion.current
-    // A click also moves focus, so the ring is kept for focus that arrives from the keyboard.
-    var focusFromPointer by remember { mutableStateOf(false) }
-    LaunchedEffect(isPressed, isFocused) {
-        if (isPressed) focusFromPointer = true else if (!isFocused) focusFromPointer = false
-    }
-    val targetScale = when {
-        !enabled || reduceMotion -> 1f
-        isPressed -> pressScale
-        isHovered -> hoverScale
-        else -> 1f
-    }
-    val scale = if (reduceMotion || !enabled) {
-        1f
-    } else {
-        animateFloatAsState(
-            targetValue = targetScale,
-            animationSpec = Motion.SCALE_SPRING
-        ).value
-    }
-    val liftY = if (reduceMotion || !enabled) {
-        0f
-    } else {
-        animateFloatAsState(
-            targetValue = if (isHovered && !isPressed) -1.2f else 0f,
-            animationSpec = Motion.LIFT_SPRING
-        ).value
-    }
     return this
         .then(if (enabled) Modifier.pointerHoverIcon(PointerIcon.Hand) else Modifier)
-        .graphicsLayer {
-            scaleX = scale
-            scaleY = scale
-            translationY = liftY
-        }
+        .then(
+            KissMotionElement(
+                interactionSource = interactionSource,
+                enabled = enabled,
+                reduceMotion = reduceMotion,
+                pressScale = pressScale,
+                hoverScale = hoverScale,
+                focusColor = focusColor
+            )
+        )
         .then(if (selected != null) Modifier.semantics { this.selected = selected } else Modifier)
-        .sepiaFocusRing(isFocused && !focusFromPointer, focusColor)
         .clickable(
             interactionSource = interactionSource,
             indication = null,
@@ -252,7 +497,7 @@ fun SepiaButton(
     val baseBg = when (style) {
         SepiaButtonStyle.PRIMARY -> if (enabled) p.accent else p.border.copy(alpha = 0.55f)
         SepiaButtonStyle.SECONDARY -> if (enabled) p.elevatedBg else p.border.copy(alpha = 0.55f)
-        SepiaButtonStyle.OUTLINE -> if (enabled) p.cardBg else p.elevatedBg.copy(alpha = 0.4f)
+        SepiaButtonStyle.OUTLINE -> if (enabled) p.cardBg else p.elevatedBg.copy(alpha = 0.45f)
         SepiaButtonStyle.GHOST -> Color.Transparent
         SepiaButtonStyle.DANGER -> if (enabled) p.danger else p.border.copy(alpha = 0.55f)
     }
@@ -260,14 +505,14 @@ fun SepiaButton(
     val bgColor = when {
         !enabled -> baseBg
         isPressed -> when (style) {
-            SepiaButtonStyle.PRIMARY, SepiaButtonStyle.SECONDARY, SepiaButtonStyle.DANGER -> baseBg.copy(alpha = 0.82f)
-            SepiaButtonStyle.OUTLINE -> p.accent.copy(alpha = 0.18f)
-            SepiaButtonStyle.GHOST -> p.accent.copy(alpha = 0.16f)
+            SepiaButtonStyle.PRIMARY, SepiaButtonStyle.SECONDARY, SepiaButtonStyle.DANGER -> baseBg.copy(alpha = 0.84f)
+            SepiaButtonStyle.OUTLINE -> p.accent.copy(alpha = 0.16f)
+            SepiaButtonStyle.GHOST -> p.accent.copy(alpha = 0.14f)
         }
         isHovered -> when (style) {
-            SepiaButtonStyle.PRIMARY, SepiaButtonStyle.SECONDARY, SepiaButtonStyle.DANGER -> baseBg.copy(alpha = 0.91f)
-            SepiaButtonStyle.OUTLINE -> p.accent.copy(alpha = 0.09f)
-            SepiaButtonStyle.GHOST -> p.accent.copy(alpha = 0.09f)
+            SepiaButtonStyle.PRIMARY, SepiaButtonStyle.SECONDARY, SepiaButtonStyle.DANGER -> baseBg.copy(alpha = 0.92f)
+            SepiaButtonStyle.OUTLINE -> p.accent.copy(alpha = 0.08f)
+            SepiaButtonStyle.GHOST -> p.accent.copy(alpha = 0.08f)
         }
         else -> baseBg
     }
@@ -292,32 +537,32 @@ fun SepiaButton(
         SepiaButtonStyle.PRIMARY -> if (enabled) p.accent else p.border
         SepiaButtonStyle.SECONDARY -> p.border
         SepiaButtonStyle.OUTLINE -> when {
-            !enabled -> p.border.copy(alpha = 0.32f)
+            !enabled -> p.border.copy(alpha = 0.45f)
             isPressed -> p.accent
-            isHovered -> p.accent.copy(alpha = 0.65f)
-            else -> p.border.copy(alpha = 0.52f)
+            isHovered -> p.accent.copy(alpha = 0.78f)
+            else -> p.border
         }
-        SepiaButtonStyle.GHOST -> if (enabled && (isPressed || isHovered)) p.accent.copy(alpha = 0.28f) else Color.Transparent
+        SepiaButtonStyle.GHOST -> if (enabled && (isPressed || isHovered)) p.accent.copy(alpha = 0.30f) else Color.Transparent
         SepiaButtonStyle.DANGER -> if (enabled) p.danger else p.border
     }
 
     val win = LocalParchmentWindowSize.current
     val parsed = remember(text) { parseKissLabelIcons(text) }
+    val minHeight = if (compact) ControlHeight.compact else ControlHeight.regular
     val hPad = when {
-        compact && win.isCompact -> 8.dp
-        compact -> 10.dp
-        win.isCompact -> 11.dp
+        compact && win.isCompact -> Space.s8
+        compact -> Space.s10
+        win.isCompact -> Space.s12
         else -> 14.dp
     }
     val fontSize = when {
-        compact && win.isVeryNarrow -> 12.sp
         compact -> 12.sp
-        win.isCompact -> 13.sp
         else -> 13.sp
     }
 
     Box(
         modifier = modifier
+            .heightIn(min = minHeight)
             .kissClickable(
                 enabled = enabled,
                 strongHaptic = style == SepiaButtonStyle.PRIMARY || style == SepiaButtonStyle.DANGER,
@@ -329,17 +574,17 @@ fun SepiaButton(
             .background(bgColor)
             .then(
                 if (borderColor != Color.Transparent) {
-                    Modifier.border(LineWidth.hairline, borderColor, shape)
+                    Modifier.border(LineWidth.emphasis, borderColor, shape)
                 } else Modifier
             )
             .padding(
                 horizontal = hPad,
-                vertical = if (compact) 6.dp else 8.dp
+                vertical = if (compact) Space.s6 else Space.s8
             ),
         contentAlignment = Alignment.Center
     ) {
         Row(
-            horizontalArrangement = Arrangement.spacedBy(if (compact) 4.dp else 6.dp),
+            horizontalArrangement = Arrangement.spacedBy(if (compact) Space.s4 else Space.s6),
             verticalAlignment = Alignment.CenterVertically
         ) {
             if (parsed.leadingIcon != null) {
@@ -395,15 +640,15 @@ fun SepiaChip(
     val isPressed by interactionSource.collectIsPressedAsState()
     val shape = COMPACT_BTN_SHAPE
     val bg = when {
-        isPressed -> p.accent.copy(alpha = 0.24f)
-        selected -> p.accent.copy(alpha = 0.15f)
-        isHovered -> p.accent.copy(alpha = 0.09f)
-        else -> p.cardBg.copy(alpha = 0.78f)
+        isPressed -> p.accent.copy(alpha = 0.22f)
+        selected -> p.accent.copy(alpha = 0.14f)
+        isHovered -> p.accent.copy(alpha = 0.08f)
+        else -> p.cardBg
     }
     val borderCol = when {
         selected || isPressed -> p.accent
-        isHovered -> p.accent.copy(alpha = 0.6f)
-        else -> p.border.copy(alpha = 0.48f)
+        isHovered -> p.accent.copy(alpha = 0.7f)
+        else -> p.border
     }
     val txtCol = if (selected || isPressed || isHovered) p.accent else p.narrationInk
 
@@ -412,16 +657,17 @@ fun SepiaChip(
 
     Box(
         modifier = modifier
+            .heightIn(min = ControlHeight.compact)
             .kissClickable(interactionSource = interactionSource, selected = selected, onClick = onClick)
             .accessibilityLabel(contentDescription ?: parsed.iconOnlyName())
             .clip(shape)
             .background(bg)
-            .border(LineWidth.hairline, borderCol, shape)
-            .padding(horizontal = if (win.isCompact) 7.dp else 9.dp, vertical = 5.dp),
+            .border(if (selected) LineWidth.emphasis else LineWidth.hairline, borderCol, shape)
+            .padding(horizontal = if (win.isCompact) Space.s8 else Space.s10, vertical = Space.s6),
         contentAlignment = Alignment.Center
     ) {
         Row(
-            horizontalArrangement = Arrangement.spacedBy(5.dp),
+            horizontalArrangement = Arrangement.spacedBy(Space.s4),
             verticalAlignment = Alignment.CenterVertically
         ) {
             if (parsed.leadingIcon != null) {
@@ -440,7 +686,7 @@ fun SepiaChip(
                     overflow = TextOverflow.Ellipsis,
                     style = p.uiLabelStyle.copy(
                         color = txtCol,
-                        fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal
+                        fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Medium
                     )
                 )
             }
@@ -448,7 +694,7 @@ fun SepiaChip(
                 KissVectorIcon(
                     icon = parsed.trailingIcon,
                     tint = txtCol,
-                    size = if (parsed.trailingIcon == KissIcon.CIRCLE_DOT) 8.dp else IconSize.sm
+                    size = if (parsed.trailingIcon == KissIcon.CIRCLE_DOT) Space.s8 else IconSize.sm
                 )
             }
         }
@@ -498,7 +744,7 @@ internal fun HoverHint(text: String?, hovered: Boolean) {
                 .widthIn(max = 280.dp)
                 .clip(RoundedCornerShape(Radius.r6))
                 .background(p.primaryInk)
-                .padding(horizontal = 9.dp, vertical = 5.dp)
+                .padding(horizontal = Space.s10, vertical = Space.s6)
         ) {
             BasicText(text, style = p.uiLabelStyle.copy(color = p.canvasBg, fontWeight = FontWeight.Normal))
         }

@@ -64,6 +64,7 @@ import io.parchment.ai.network.ModelsDevClient
 import io.parchment.ai.network.fetchAvailableModels
 import io.parchment.ai.network.stripInvisibleCredentialChars
 import io.parchment.ai.platform.PlatformRuntime
+import kotlinx.collections.immutable.toImmutableList
 import kotlinx.coroutines.launch
 
 // ============================================================================================
@@ -122,8 +123,9 @@ internal fun ProvidersSubpage(
 
     val filteredProfiles = remember(appState.profiles, providerSearch) {
         val q = providerSearch.trim()
-        if (q.isEmpty()) appState.profiles
+        val list = if (q.isEmpty()) appState.profiles
         else appState.profiles.filter { it.name.contains(q, ignoreCase = true) || it.baseUrl.contains(q, ignoreCase = true) }
+        list.toImmutableList()
     }
 
     BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
@@ -255,8 +257,8 @@ internal fun ProvidersSubpage(
                     .weight(1f)
                     .fillMaxHeight()
                     .verticalScroll(rememberScrollState())
-                    .padding(if (win.isCompact) 12.dp else 20.dp),
-                verticalArrangement = Arrangement.spacedBy(14.dp)
+                    .padding(if (win.isCompact) Space.s12 else Space.s16),
+                verticalArrangement = Arrangement.spacedBy(Space.s12)
             ) {
                 if (!isWide) {
                     // Mobile Hierarchical Provider List -> Provider Detail Subpage Drill-Down
@@ -397,36 +399,37 @@ internal fun ProvidersSubpage(
                 } else if (!useProviderColumn && selectedModelForConfigSubpage == null) {
                     @OptIn(ExperimentalLayoutApi::class)
                     FlowRow(
-                        modifier = Modifier.fillMaxWidth(),
+                        modifier = Modifier.fillMaxWidth().selectableGroup(),
                         horizontalArrangement = Arrangement.spacedBy(Space.s8),
-                        verticalArrangement = Arrangement.spacedBy(Space.s8)
+                        verticalArrangement = Arrangement.spacedBy(Space.s8),
+                        itemVerticalAlignment = Alignment.CenterVertically
                     ) {
                         appState.profiles.forEach { prof ->
                             val isSel = prof.id == activeProfile.id
                             val statusOn = prof.enabled && (prof.apiKey.isNotBlank() || prof.baseUrl != prof.protocol.defaultBaseUrl)
-                            val shape = RoundedCornerShape(Radius.r10)
+                            val shape = RoundedCornerShape(Radius.r8)
                             Row(
                                 modifier = Modifier
-                                    .heightIn(min = 42.dp)
+                                    .heightIn(min = ControlHeight.compact)
                                     .clip(shape)
-                                    .background(if (isSel) p.cardBg else p.sheetBg.copy(alpha = 0.45f))
+                                    .background(if (isSel) p.cardBg else p.sheetBg.copy(alpha = 0.55f))
                                     .border(
-                                        width = if (isSel) LineWidth.selected else LineWidth.hairline,
-                                        color = if (isSel) p.accent else p.border,
+                                        width = LineWidth.emphasis,
+                                        color = p.border,
                                         shape = shape
                                     )
-                                    .then(if (isSel) Modifier.rubricMark(p.accent, verticalInset = 8.dp) else Modifier)
-                                    .kissClickable(pressScale = 0.99f, hoverScale = 1.004f, role = Role.Tab, selected = isSel) {
+                                    .then(if (isSel) Modifier.rubricMark(p.accent, verticalInset = Space.s6) else Modifier)
+                                    .kissClickable(pressScale = 0.985f, hoverScale = 1.008f, role = Role.Tab, selected = isSel) {
                                         onSelectProfile(prof.id)
                                     }
-                                    .padding(horizontal = Space.s12, vertical = Space.s8),
-                                horizontalArrangement = Arrangement.spacedBy(Space.s8),
+                                    .padding(horizontal = Space.s10, vertical = Space.s6),
+                                horizontalArrangement = Arrangement.spacedBy(Space.s6),
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
                                 ModelLabSvgIcon(
                                     modelOrProvider = prof.defaultModel.ifBlank { prof.name },
                                     tint = if (isSel) p.accent else p.narrationInk,
-                                    size = 14.dp,
+                                    size = IconSize.md,
                                     fallbackProtocolName = prof.protocol.displayName
                                 )
                                 BasicText(
@@ -434,14 +437,14 @@ internal fun ProvidersSubpage(
                                     maxLines = 1,
                                     overflow = TextOverflow.Ellipsis,
                                     style = p.uiBodyStyle.copy(
-                                        fontWeight = if (isSel) FontWeight.SemiBold else FontWeight.Normal,
-                                        fontSize = 13.sp,
+                                        fontWeight = if (isSel) FontWeight.SemiBold else FontWeight.Medium,
+                                        fontSize = 12.sp,
                                         color = if (isSel) p.primaryInk else p.narrationInk
                                     )
                                 )
                                 Box(
                                     modifier = Modifier
-                                        .clip(RoundedCornerShape(Radius.r6))
+                                        .clip(RoundedCornerShape(Radius.pill))
                                         .background(if (statusOn) p.success.copy(alpha = 0.14f) else p.accentSecondary.copy(alpha = 0.14f))
                                         .padding(horizontal = Space.s6, vertical = Space.s2)
                                 ) {
@@ -530,7 +533,8 @@ internal fun ProvidersSubpage(
                     FlowRow(
                         modifier = Modifier.weight(1f).padding(end = Space.s8),
                         horizontalArrangement = Arrangement.spacedBy(Space.s8),
-                        verticalArrangement = Arrangement.spacedBy(Space.s6)
+                        verticalArrangement = Arrangement.spacedBy(Space.s6),
+                        itemVerticalAlignment = Alignment.CenterVertically
                     ) {
                         if (isRenamingProvider) {
                             Row(
@@ -541,7 +545,7 @@ internal fun ProvidersSubpage(
                                     value = providerNameBuffer,
                                     onValueChange = { providerNameBuffer = it },
                                     placeholder = Strings.providerName,
-                                    minHeight = 32.dp,
+                                    minHeight = ControlHeight.compact,
                                     modifier = Modifier.width(210.dp)
                                 )
                                 SepiaButton(
@@ -554,17 +558,21 @@ internal fun ProvidersSubpage(
                                         isRenamingProvider = false
                                     }
                                 )
+                                SepiaButton(
+                                    text = Strings.cancel,
+                                    compact = true,
+                                    style = SepiaButtonStyle.GHOST,
+                                    onClick = {
+                                        providerNameBuffer = activeProfile.name
+                                        isRenamingProvider = false
+                                    }
+                                )
                             }
                         } else {
                             Row(
                                 verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(Space.s6),
-                                modifier = Modifier
-                                    .kissClickable {
-                                        providerNameBuffer = activeProfile.name
-                                        isRenamingProvider = true
-                                    }
-                                    .padding(top = Space.s2)
+                                horizontalArrangement = Arrangement.spacedBy(Space.s8),
+                                modifier = Modifier.heightIn(min = ControlHeight.compact)
                             ) {
                                 ModelLabSvgIcon(
                                     modelOrProvider = activeProfile.defaultModel.ifBlank { activeProfile.name },
@@ -576,12 +584,18 @@ internal fun ProvidersSubpage(
                                     text = activeProfile.name,
                                     style = p.uiHeaderStyle.copy(fontSize = 18.sp)
                                 )
-                                KissVectorIcon(
-                                    icon = KissIcon.EDIT,
-                                    tint = p.mutedInk,
-                                    size = IconSize.md
-                                )
                             }
+                            SepiaButton(
+                                text = "✎",
+                                contentDescription = Strings.renameProvider,
+                                hint = Strings.renameProvider,
+                                compact = true,
+                                style = SepiaButtonStyle.OUTLINE,
+                                onClick = {
+                                    providerNameBuffer = activeProfile.name
+                                    isRenamingProvider = true
+                                }
+                            )
                         }
                         SepiaButton(
                             text = Strings.advanced,
@@ -950,7 +964,7 @@ internal fun ProvidersSubpage(
                         contentPadding = PaddingValues(Space.s10),
                         verticalArrangement = Arrangement.spacedBy(Space.s6)
                     ) {
-                        items(visibleModels, key = { it }) { modelId ->
+                        items(visibleModels, key = { it }, contentType = { "provider-model" }) { modelId ->
                             val isSelectedModel = activeProfile.defaultModel == modelId
                             val customSpec = activeProfile.customModelSpecs[modelId]
                             val ctxTokens = customSpec?.contextWindowTokens ?: activeProfile.contextWindowTokens

@@ -109,4 +109,5 @@ androidComponents {
 
 dependencies {
     implementation(project(":composeApp"))
+    implementation(libs.androidx.profileinstaller)
 }

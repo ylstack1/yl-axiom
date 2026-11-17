@@ -16,7 +16,7 @@ Updated 2026-11-17. Stable contracts only; AGENTS.md owns workflow.
 - AGP 9: composeApp owns code/manifest/res; androidApp builds the APK (id io.parchment.ai, signing, R8, fonts). Keep io.parchment.ai class names (Accessibility binding).
 - Android: keep big suspend bodies split into local suspend functions (cancelling a 565-register coroutine crashed).
 - Android signing is private-env-only (scripts/load-private-signer.ps1, docs/RELEASE_SIGNING.md); keep key 95d9804cfd9c80313440ed97619100c9e9f741c27943f61700fa802d0dbe4574.
-- Packaged desktop: Serial GC (PERFORMANCE.md), compact headers + AppCDS (`classes_coh.jsa` after jlink, build fails without it; `parchment.jsa` from the installer's headless `--cds-warmup`, whose watchdog terminates without dumping). Win32 calls are FFM.
+- Packaged desktop: Generational Shenandoah (1 s uncommit), compact headers, build-time Leyden `$APPDIR/parchment.aot` (`--aot-verify`). Win32 Chrome, COM `IFileOpenDialog`/`IFileSaveDialog`, memory and power use FFM.
 
 ## Protocols and harness
 

@@ -4,8 +4,8 @@ Updated 2026-11-17. AGENTS.md owns workflow; MEMORY holds contracts. Task IDs st
 
 ## Current status
 
-- **Source:** 2026-11-17 recovery and checkpoint batch: typed provider errors with server retry hints and backoff (no flat 60 s), Retry now and notices that lead to the fix, reply-only streaming checkpoints (`live.json`), MCP restarts and session renewal, crash flush and report, no per-event request copy.
-- **Last verified:** 2026-11-17, `verify.py final` (557 tests, signed APK, package, release checks), `verify.py perf` (`desktop_title_ms=1456`, first launch after update `1499`, `desktop_idle_private_mb=218.8`, `apk_mb=4.4`, `desktop_cds_archives_ok=True`).
+- **Source:** 2026-11-17 performance, native picker, UI consistency & CI batch: JDK 25 Generational Shenandoah + Compact Headers + build-time Leyden `parchment.aot`, `KissMotionNode` (`Modifier.Node`, 0 hover/press recompositions), `stability_config.conf` + `kotlinx-collections-immutable` 0.5.2, R8 Full Mode + `profileinstaller` 1.4.1, native Win32 COM `IFileOpenDialog`/`IFileSaveDialog` multi-file/save pickers, `ControlHeight` UI alignment across Settings/Providers/chat, and CI caching/sharding across all 8 workflows.
+- **Last verified:** 2026-11-17, `verify.py final` (558 tests + 37 UI gallery captures, signed APK, release package & service-loader checks), `verify.py perf` (`desktop_title_ms=1929`, first launch `1916`, `desktop_idle_private_mb=240.1`, `apk_mb=4.4`, `desktop_cds_archives_ok=True`).
 - **Next action:** User checks 17.1 on the phone after the release.
 
 ## Open tasks

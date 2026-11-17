@@ -10,6 +10,11 @@ on:
     paths-ignore:
       - "**/*.md"
       - "docs/**"
+      - "LICENSE"
+      - ".release-please-manifest.json"
+      - "release-please-config.json"
+      - ".github/ISSUE_TEMPLATE/**"
+      - ".github/pull_request_template.md"
   pull_request:
     branches:
       - main
@@ -24,9 +29,10 @@ on:
 permissions:
   contents: read
 
+# Cancel superseded branch and PR builds immediately, while never cancelling version-tag or manual release runs.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}-${{ github.event_name == 'workflow_dispatch' && github.run_id || 'ci' }}
+  cancel-in-progress: ${{ !startsWith(github.ref, 'refs/tags/v') && github.event_name != 'workflow_dispatch' }}
 
 # Branch builds are VERSION_LINE.<run number - VERSION_BASE_RUN>: run 73 is 2.1.0, run 74 is 2.1.1.
 # Earlier runs keep 2.0.<run number>, so a Windows-only rebuild reusing one still matches its APK.
@@ -36,29 +42,131 @@ env:
   VERSION_BASE_RUN: "73"
 
 jobs:
-  build-android-apk:
-    name: Build Android .APK (Universal)
-    if: ${{ !inputs.reuse_android_run }}
+  preflight:
+    name: Preflight Gates & Path Filter
     runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      actions: read
+    outputs:
+      build_number: ${{ steps.plan.outputs.build_number }}
+      app_version: ${{ steps.plan.outputs.app_version }}
+      app_version_code: ${{ steps.plan.outputs.app_version_code }}
+      release_tag: ${{ steps.plan.outputs.release_tag }}
+      desktop_tests: ${{ steps.plan.outputs.desktop_tests }}
+      android: ${{ steps.plan.outputs.android }}
+      windows: ${{ steps.plan.outputs.windows }}
     steps:
       - name: Checkout Repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+          fetch-depth: 1
+          fetch-tags: false
+
+      - name: Run Quality Gates, Tool Tests, and Resolve Affected Jobs
+        id: plan
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BASE_SHA: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event.before }}
+          REUSE_ANDROID_RUN: ${{ inputs.reuse_android_run }}
+        run: |
+          python3 scripts/quality.py
+          git -c core.safecrlf=false diff --check
+          python3 -I -X utf8 scripts/test_workflow_tools.py
+          PYTHONPATH=.github/scripts python3 -m unittest \
+            test_run_gradle \
+            test_check_sbom \
+            test_shard_tests \
+            test_ci_changes
+          python3 .github/scripts/ci_changes.py installers
+          if grep -q '^signing_scripts=true$' "$GITHUB_OUTPUT"; then
+            PYTHONPATH=.github/scripts python3 .github/scripts/test_stage_android_signing.py
+          else
+            PYTHONPATH=.github/scripts python3 -m unittest test_stage_android_signing -k PrivateSignerTest
+          fi
+
+  test-desktop:
+    name: Desktop Tests (Shard ${{ matrix.shard + 1 }}/2)
+    needs: preflight
+    if: needs.preflight.outputs.desktop_tests == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: true
+      matrix:
+        shard: [0, 1]
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 1
+          fetch-tags: false
 
       - name: Set up JDK 25 (Temurin)
         uses: actions/setup-java@77dd5b2ce225ea11469928ac317850245a74ae78 # v6.2.0
         with:
           distribution: "temurin"
           java-version: "25"
-          cache: "gradle"
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@8da46b539cd8fe6ab27ca75128919a18d757604c # v6.4.1
+
+      - name: Run Desktop Test Shard
+        run: |
+          chmod +x ./gradlew
+          read -r -a SHARD_ARGS <<< "$(python3 .github/scripts/shard_tests.py --index "${{ matrix.shard }}" --total 2)"
+          python3 .github/scripts/run_gradle.py -- :composeApp:desktopTest "${SHARD_ARGS[@]}" \
+            -Dorg.gradle.jvmargs="-Xmx4g -XX:+UseParallelGC -XX:MaxMetaspaceSize=1g -Dfile.encoding=UTF-8" \
+            --no-daemon --configuration-cache --max-workers=4 \
+            -Pkotlin.compiler.execution.strategy=in-process
+
+  build-android-apk:
+    name: Build Android .APK (Universal)
+    needs: preflight
+    if: needs.preflight.outputs.android == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 1
+          fetch-tags: false
+
+      - name: Set up JDK 25 (Temurin)
+        uses: actions/setup-java@77dd5b2ce225ea11469928ac317850245a74ae78 # v6.2.0
+        with:
+          distribution: "temurin"
+          java-version: "25"
+
+      - name: Cache Android SDK Packages
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            /usr/local/lib/android/sdk/licenses
+            /usr/local/lib/android/sdk/platforms/android-37*
+            /usr/local/lib/android/sdk/build-tools/35*
+            /usr/local/lib/android/sdk/build-tools/36*
+            /usr/local/lib/android/sdk/build-tools/37*
+          key: android-sdk-${{ runner.os }}-${{ hashFiles('gradle/libs.versions.toml') }}
 
       - name: Accept Android SDK Licenses
         run: |
-          SDKMGR=$(find "$ANDROID_HOME/cmdline-tools" -name sdkmanager | head -n 1)
-          if [ -n "$SDKMGR" ]; then
-            yes | "$SDKMGR" --licenses > /dev/null || true
+          if [ ! -f "$ANDROID_HOME/licenses/.parchment-accepted" ]; then
+            SDKMGR=$(find "$ANDROID_HOME/cmdline-tools" -name sdkmanager | head -n 1)
+            if [ -n "$SDKMGR" ]; then
+              yes | "$SDKMGR" --licenses > /dev/null || true
+              mkdir -p "$ANDROID_HOME/licenses"
+              touch "$ANDROID_HOME/licenses/.parchment-accepted"
+            fi
           fi
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@8da46b539cd8fe6ab27ca75128919a18d757604c # v6.4.1
 
       - name: Stage Private Release Signer
         if: github.event_name != 'pull_request'
@@ -67,42 +175,34 @@ jobs:
           ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
           ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
           ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
-        run: |
-          python3 .github/scripts/test_stage_android_signing.py
-          python3 .github/scripts/stage_android_signing.py
+        run: python3 .github/scripts/stage_android_signing.py
 
       - name: Build Android APK
         env:
+          APP_VER: ${{ needs.preflight.outputs.app_version }}
+          APP_CODE: ${{ needs.preflight.outputs.app_version_code }}
           ANDROID_KEYSTORE_PASSWORD: ${{ github.event_name != 'pull_request' && secrets.ANDROID_KEYSTORE_PASSWORD || '' }}
           ANDROID_KEY_ALIAS: ${{ github.event_name != 'pull_request' && secrets.ANDROID_KEY_ALIAS || '' }}
           ANDROID_KEY_PASSWORD: ${{ github.event_name != 'pull_request' && secrets.ANDROID_KEY_PASSWORD || '' }}
         run: |
-          if (( GITHUB_RUN_NUMBER >= VERSION_BASE_RUN )); then
-            APP_VER="$VERSION_LINE.$((GITHUB_RUN_NUMBER - VERSION_BASE_RUN))"
-          else
-            APP_VER="2.0.$GITHUB_RUN_NUMBER"
-          fi
-          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
-            APP_VER="${GITHUB_REF#refs/tags/v}"
-          fi
-          [[ "$APP_VER" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "Invalid release version"; exit 1; }
           if [[ "$GITHUB_EVENT_NAME" == pull_request ]]; then
             BUILD_VARIANT=debug
             BUILD_TASK=:androidApp:assembleDebug
+            EXTRA_FLAGS=(--configuration-cache -PofficialRelease=false)
           else
             BUILD_VARIANT=release
             BUILD_TASK=:androidApp:assembleRelease
+            EXTRA_FLAGS=(-PofficialRelease=true)
           fi
           echo "ANDROID_BUILD_VARIANT=$BUILD_VARIANT" >> "$GITHUB_ENV"
           chmod +x ./gradlew
-          python3 .github/scripts/test_run_gradle.py
           python3 .github/scripts/run_gradle.py -- "$BUILD_TASK" \
-            -Dorg.gradle.jvmargs="-Xmx4g -XX:+UseG1GC -XX:MaxMetaspaceSize=1g -Dfile.encoding=UTF-8" \
+            -Dorg.gradle.jvmargs="-Xmx4g -XX:+UseParallelGC -XX:MaxMetaspaceSize=1g -Dfile.encoding=UTF-8" \
             -PappVersion="$APP_VER" \
-            -PappVersionCode="$((200 + GITHUB_RUN_NUMBER))" \
+            -PappVersionCode="$APP_CODE" \
             -PgithubRepo="$GITHUB_REPOSITORY" \
-            -PofficialRelease=true \
-            --no-daemon --max-workers=2 -Pkotlin.compiler.execution.strategy=in-process
+            "${EXTRA_FLAGS[@]}" \
+            --no-daemon --max-workers=4 -Pkotlin.compiler.execution.strategy=in-process
 
       - name: Rename APK for Clean Download
         run: |
@@ -121,8 +221,7 @@ jobs:
         run: |
           # No build cache: a cached SBOM outlives the dependency changes it should show.
           ./gradlew --init-script .github/scripts/sbom.init.gradle.kts cyclonedxBom \
-            --no-daemon --no-configuration-cache --no-build-cache -PappVersion=1.0.0
-          python3 .github/scripts/test_check_sbom.py
+            --no-daemon --no-configuration-cache --no-build-cache --max-workers=4 -PappVersion=1.0.0
           python3 .github/scripts/check_sbom.py build/reports/cyclonedx/bom.json
           cp build/reports/cyclonedx/bom.json dist/Parchment-SBOM.cdx.json
 
@@ -134,6 +233,8 @@ jobs:
             dist/Parchment-Android-Universal.apk
             dist/Parchment-Android-R8-mapping.txt
             dist/Parchment-SBOM.cdx.json
+          compression-level: 1
+          retention-days: ${{ github.event_name == 'pull_request' && 7 || 30 }}
           if-no-files-found: error
 
       - name: Remove Staged Private Signer
@@ -154,119 +255,79 @@ jobs:
 
   build-windows-exe:
     name: Build Windows .EXE Installer (Zero-Trace Uninstall & Silent OTA)
+    needs: preflight
+    if: needs.preflight.outputs.windows == 'true'
     runs-on: windows-latest
-    permissions:
-      contents: read
-      actions: read
-    outputs:
-      build_number: ${{ steps.build.outputs.number }}
+    timeout-minutes: 30
     steps:
-      - name: Resolve Build Number
-        id: build
-        shell: pwsh
-        env:
-          GH_TOKEN: ${{ github.token }}
-          REUSE_RUN: ${{ inputs.reuse_android_run }}
-        run: |
-          # A reused APK carries its own run's version, so the installer and release must match it.
-          $number = $env:GITHUB_RUN_NUMBER
-          if ($env:REUSE_RUN) {
-            if ($env:REUSE_RUN -notmatch '^\d+$') { throw "reuse_android_run must be a run ID" }
-            if ($env:GITHUB_REF.StartsWith("refs/tags/")) { throw "Reusing an APK is for branch runs only" }
-            $run = gh api "repos/$env:GITHUB_REPOSITORY/actions/runs/$env:REUSE_RUN" | ConvertFrom-Json
-            if ($LASTEXITCODE -ne 0) { throw "Could not read run $env:REUSE_RUN" }
-            if ($run.path -ne ".github/workflows/build-installers.yml") { throw "Run $env:REUSE_RUN is not an installer build" }
-            $number = $run.run_number
-          }
-          "number=$number" >> $env:GITHUB_OUTPUT
-
       - name: Checkout Repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+          fetch-depth: 1
+          fetch-tags: false
 
       - name: Set up JDK 25 (Temurin)
         uses: actions/setup-java@77dd5b2ce225ea11469928ac317850245a74ae78 # v6.2.0
         with:
           distribution: "temurin"
           java-version: "25"
-          cache: "gradle"
 
-      - name: Verify Regressions and Build Windows Runtime
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@8da46b539cd8fe6ab27ca75128919a18d757604c # v6.4.1
+
+      - name: Verify Windows Native Suites and Build Windows Runtime
         shell: pwsh
         env:
-          BUILD_NUMBER: ${{ steps.build.outputs.number }}
+          APP_VER: ${{ needs.preflight.outputs.app_version }}
+          APP_CODE: ${{ needs.preflight.outputs.app_version_code }}
+          OFFICIAL_RELEASE: ${{ github.event_name != 'pull_request' && 'true' || 'false' }}
         run: |
-          $number = [int]$env:BUILD_NUMBER
-          $base = [int]$env:VERSION_BASE_RUN
-          $appVer = if ($number -ge $base) { "$env:VERSION_LINE.$($number - $base)" } else { "2.0.$number" }
-          if ($env:GITHUB_REF.StartsWith("refs/tags/v")) {
-            $appVer = $env:GITHUB_REF.Substring(11)
-          }
-          if ($appVer -notmatch '^\d+\.\d+\.\d+$') { throw "Invalid release version" }
-          $appCode = 200 + [int]$env:BUILD_NUMBER
-          python .github/scripts/test_run_gradle.py
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          python scripts/test_workflow_tools.py
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          python scripts/quality.py
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          python .github/scripts/run_gradle.py -- :composeApp:desktopTest :composeApp:createReleaseDistributable `
-            "-PappVersion=$appVer" `
-            "-PappVersionCode=$appCode" `
+          $winTests = (python .github/scripts/shard_tests.py --windows-native) -split ' '
+          python .github/scripts/run_gradle.py -- :composeApp:desktopTest @winTests :composeApp:createReleaseDistributable `
+            "-PappVersion=$env:APP_VER" `
+            "-PappVersionCode=$env:APP_CODE" `
             "-PgithubRepo=$env:GITHUB_REPOSITORY" `
-            '-PofficialRelease=true' `
-            --no-daemon --max-workers=2 '-Pkotlin.compiler.execution.strategy=in-process'
+            "-PofficialRelease=$env:OFFICIAL_RELEASE" `
+            --no-daemon --configuration-cache --max-workers=4 '-Pkotlin.compiler.execution.strategy=in-process'
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python -c "import sys; sys.path.insert(0, 'scripts'); import verify; m = verify.missing_service_classes(); sys.exit('\n'.join(m) if m else 0)"
           exit $LASTEXITCODE
 
       - name: Package Minimal Zero-Trace .EXE Installer with Inno Setup
         shell: pwsh
         env:
-          BUILD_NUMBER: ${{ steps.build.outputs.number }}
-        run: |
-          $number = [int]$env:BUILD_NUMBER
-          $base = [int]$env:VERSION_BASE_RUN
-          $appVer = if ($number -ge $base) { "$env:VERSION_LINE.$($number - $base)" } else { "2.0.$number" }
-          if ($env:GITHUB_REF.StartsWith("refs/tags/v")) {
-            $appVer = $env:GITHUB_REF.Substring(11)
-          }
-          iscc.exe "/DMyAppVersion=$appVer" installer\windows-installer.iss
+          APP_VER: ${{ needs.preflight.outputs.app_version }}
+        run: iscc.exe "/DMyAppVersion=$env:APP_VER" installer\windows-installer.iss
 
       - name: Upload Windows EXE Installer Artifact
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: Parchment-Windows-EXE-Installer
           path: build/installer/Parchment-Windows-x64-Setup.exe
+          compression-level: 0
+          retention-days: ${{ github.event_name == 'pull_request' && 7 || 30 }}
           if-no-files-found: error
 
   publish-github-release:
     name: Publish OTA Release Assets (.APK & .EXE)
-    needs: [build-android-apk, build-windows-exe]
+    needs: [preflight, test-desktop, build-android-apk, build-windows-exe]
     # Releases come only from version tags (release-please starts this run for its tag) or a manual run; a push to
     # main just builds and tests, so merged updates reach users only when a release is cut.
     # A skipped job skips its dependents unless the condition says otherwise.
-    if: ${{ !cancelled() && (startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch') && needs.build-windows-exe.result == 'success' && (needs.build-android-apk.result == 'success' || (inputs.reuse_android_run && needs.build-android-apk.result == 'skipped')) }}
+    if: >-
+      !cancelled() &&
+      (startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch') &&
+      needs.preflight.result == 'success' &&
+      needs.test-desktop.result == 'success' &&
+      needs.build-windows-exe.result == 'success' &&
+      (needs.build-android-apk.result == 'success' || (inputs.reuse_android_run && needs.build-android-apk.result == 'skipped'))
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     permissions:
       contents: write
       actions: read
     steps:
-      - name: Determine Release Tag
-        id: rel
-        env:
-          BUILD_NUMBER: ${{ needs.build-windows-exe.outputs.build_number }}
-        run: |
-          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
-            TAG="${GITHUB_REF#refs/tags/}"
-          else
-            if (( BUILD_NUMBER >= VERSION_BASE_RUN )); then
-              TAG="v$VERSION_LINE.$((BUILD_NUMBER - VERSION_BASE_RUN))"
-            else
-              TAG="v2.0.$BUILD_NUMBER"
-            fi
-          fi
-          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
-
       - name: Download Android APK Artifact
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
@@ -297,8 +358,8 @@ jobs:
       - name: Create or Update GitHub Release for In-App OTA Updater
         uses: softprops/action-gh-release@8a0cd651e5b2365bd640854a3fa5dfc70e4875f3 # v3.0.4
         with:
-          tag_name: ${{ steps.rel.outputs.tag }}
-          name: ${{ steps.rel.outputs.tag }}
+          tag_name: ${{ needs.preflight.outputs.release_tag }}
+          name: ${{ needs.preflight.outputs.release_tag }}
           body_path: notes.md
           append_body: true
           files: |

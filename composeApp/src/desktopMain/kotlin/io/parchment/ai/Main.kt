@@ -1,11 +1,8 @@
 package io.parchment.ai
 
-import androidx.compose.foundation.Image
-import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.width
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
@@ -58,6 +55,7 @@ import java.awt.event.WindowAdapter
 import java.awt.event.WindowEvent
 import java.io.File
 import java.util.Properties
+import kotlin.system.exitProcess
 private data class SavedWindowGeometry(
     val isMaximized: Boolean,
     val widthDp: Int,
@@ -135,20 +133,6 @@ private fun attachDropTargetRecursively(component: Component, createTarget: () -
     }
 }
 
-@Volatile private var lastHeapTrimMs = 0L
-
-/**
- * The serial collector returns memory to Windows only after a full collection, which it rarely needs on its own.
- * While the window is minimized nobody sees the pause, so run one then (at most once a minute) and the heap shrinks
- * back after a long turn or a large attachment.
- */
-private fun trimHeapWhileHidden() {
-    val now = System.nanoTime() / 1_000_000L
-    if (now - lastHeapTrimMs < 60_000L) return
-    lastHeapTrimMs = now
-    Thread({ System.gc() }, "parchment-heap-trim").apply { isDaemon = true; start() }
-}
-
 /** "Chat — Parchment" while idle; a run's progress text (which starts with the app name) replaces it. */
 internal fun windowCaption(runStatus: String, captionTitle: String): String {
     val idle = runStatus.isBlank() || runStatus == "Parchment"
@@ -162,12 +146,15 @@ internal fun windowCaption(runStatus: String, captionTitle: String): String {
 
 @OptIn(kotlinx.coroutines.FlowPreview::class)
 fun main(args: Array<String>) {
+    if ("--aot-verify" in args) exitProcess(0)
     if (CDS_WARMUP_FLAG in args) runCdsWarmup()
-    // After the warm-up check: the installer's headless run never records a crash into a throwaway folder.
+    // After the warm-up check: headless AOT training runs never record a crash into a throwaway folder.
     CrashRecorder.install({ DesktopPlatformHost.resolveStorageDir() }) { PlatformRuntime.flushPendingStateNow() }
-    // Enable hardware VSync so Skia renders smoothly at the monitor's native refresh rate (60Hz / 120Hz / 144Hz / 240Hz)
+    // Enable hardware VSync and Swing frame pacing so Skia renders smoothly at 60Hz / 120Hz / 144Hz / 240Hz.
     System.setProperty("skiko.vsync.enabled", "true")
+    System.setProperty("skiko.swing.frame.pacing", "true")
     preloadProcessStateInBackground()
+    val startupGeometry = loadSavedWindowGeometry()
 
     application {
         // Idle, the caption names the open chat; during a run it shows the run's progress instead.
@@ -176,7 +163,7 @@ fun main(args: Array<String>) {
         PlatformRuntime.windowStatusCallback = { newTitle -> runStatus = newTitle }
         val windowTitle = windowCaption(runStatus, captionTitle)
 
-    val initialGeom = remember { loadSavedWindowGeometry() }
+    val initialGeom = remember { startupGeometry }
 
     val windowState = rememberWindowState(
         placement = if (initialGeom.isMaximized) WindowPlacement.Maximized else WindowPlacement.Floating,
@@ -335,17 +322,22 @@ fun main(args: Array<String>) {
                 val listener = object : WindowAdapter() {
                     override fun windowIconified(e: WindowEvent?) {
                         AppForeground.markLeft()
-                        trimHeapWhileHidden()
+                        Thread({ System.gc() }, "parchment-concurrent-uncommit").apply { isDaemon = true; start() }
                     }
                     override fun windowDeiconified(e: WindowEvent?) = AppForeground.markResumed()
                 }
                 window.addWindowListener(listener)
                 onDispose { window.removeWindowListener(listener) }
             }
+            // Concurrent post-hydration sweep so Generational Shenandoah uncommits startup allocation churn within ~2 s.
+            LaunchedEffect(Unit) {
+                kotlinx.coroutines.delay(2_200L)
+                withContext(Dispatchers.IO) { System.gc() }
+            }
             ParchmentApp(
                 shortcutDispatcher = shortcuts,
                 platformWindowChrome = { title ->
-                    LaunchedEffect(title) { captionTitle = title }
+                    SideEffect { if (captionTitle != title) captionTitle = title }
                     val p = LocalParchmentPalette.current
                     LaunchedEffect(window, p.canvasBg, p.primaryInk, p.border) {
                         WindowsChrome.applyCaption(

@@ -331,7 +331,7 @@ internal fun MobileTabSwitcherModal(
                 modifier = Modifier.heightIn(max = win.heightDp * 0.68f).fillMaxWidth(),
                 verticalArrangement = Arrangement.spacedBy(Space.s10)
             ) {
-                itemsIndexed(rows, key = { _, row -> row.joinToString("|") }) { _, rowPair ->
+                itemsIndexed(rows, key = { _, row -> row.joinToString("|") }, contentType = { _, _ -> "tab-row" }) { _, rowPair ->
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.spacedBy(Space.s10)
@@ -548,7 +548,7 @@ internal fun TopEditorialBar(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(Space.s4),
                 modifier = Modifier
-                    .heightIn(min = 32.dp)
+                    .heightIn(min = ControlHeight.compact)
                     .kissClickable(hoverScale = 1.01f) { onToggleQuickModelPopover() }
                     .accessibilityLabel(if (showQuickModelPopover) Strings.closeModelPicker else Strings.chooseAModel)
             ) {

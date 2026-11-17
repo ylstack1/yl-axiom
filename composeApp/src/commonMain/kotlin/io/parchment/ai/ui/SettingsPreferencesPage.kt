@@ -26,7 +26,6 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import io.parchment.ai.model.ChatSession
 import io.parchment.ai.model.MessageNavVisibility
@@ -146,7 +145,7 @@ internal fun PreferencesSubpage(
         modifier = Modifier
             .fillMaxSize()
             .verticalScroll(rememberScrollState())
-            .padding(if (win.isCompact) 12.dp else 20.dp),
+            .padding(if (win.isCompact) Space.s12 else Space.s16),
         verticalArrangement = Arrangement.spacedBy(Space.s16)
     ) {
         BasicText(text = Strings.preferences, style = p.uiHeaderStyle.copy(fontSize = 19.sp))

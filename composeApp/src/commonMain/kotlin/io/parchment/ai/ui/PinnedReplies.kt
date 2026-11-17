@@ -93,7 +93,7 @@ internal fun ColumnScope.PinnedRepliesPanel(
         return
     }
     LazyColumn(modifier = Modifier.weight(1f).fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(Space.s2)) {
-        items(pins, key = { "${it.sessionId}/${it.nodeId}" }) { pin ->
+        items(pins, key = { "${it.sessionId}/${it.nodeId}" }, contentType = { "pin" }) { pin ->
             val interaction = remember { MutableInteractionSource() }
             val hovered by interaction.collectIsHoveredAsState()
             Row(

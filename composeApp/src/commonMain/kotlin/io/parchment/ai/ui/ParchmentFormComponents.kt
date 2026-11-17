@@ -50,8 +50,15 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.draw.drawWithContent
+import androidx.compose.ui.geometry.CornerRadius
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.graphics.TransformOrigin
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyEvent
@@ -220,7 +227,7 @@ fun SepiaTextField(
     singleLine: Boolean = true,
     monospace: Boolean = false,
     borderless: Boolean = false,
-    minHeight: Dp = 36.dp,
+    minHeight: Dp = ControlHeight.regular,
     maxHeight: Dp = 260.dp,
     maxLines: Int = if (singleLine) 1 else Int.MAX_VALUE,
     onEnterKeySend: ((isCtrlOrMetaPressed: Boolean, isShiftPressed: Boolean) -> Boolean)? = null,
@@ -246,14 +253,17 @@ fun SepiaTextField(
         textFieldValueState = TextFieldValue(text = value, selection = TextRange(value.length))
     }
     val textFieldValue = textFieldValueState
-    val borderColor by animateColorAsState(
+    val borderColorState = animateColorAsState(
         targetValue = when {
             borderless -> Color.Transparent
-            isFocused -> p.accent.copy(alpha = 0.85f)
-            else -> p.border.copy(alpha = 0.75f)
+            isFocused -> p.accent
+            else -> p.border
         },
         animationSpec = motionSpring(Spring.StiffnessMedium)
     )
+    val density = androidx.compose.ui.platform.LocalDensity.current
+    val focusedStroke = remember(density) { Stroke(width = with(density) { LineWidth.selected.toPx() }) }
+    val restingStroke = remember(density) { Stroke(width = with(density) { LineWidth.emphasis.toPx() }) }
 
     Column(modifier = modifier) {
         if (label.isNotBlank()) {
@@ -367,7 +377,19 @@ fun SepiaTextField(
                         .background(if (borderless) Color.Transparent else p.cardBg)
                         .then(
                             if (!borderless) {
-                                Modifier.border(if (isFocused) 1.dp else LineWidth.hairline, borderColor, shape)
+                                Modifier.drawWithContent {
+                                    drawContent()
+                                    val stroke = if (isFocused) focusedStroke else restingStroke
+                                    val half = stroke.width / 2f
+                                    val r = Radius.r8.toPx()
+                                    drawRoundRect(
+                                        color = borderColorState.value,
+                                        topLeft = Offset(half, half),
+                                        size = Size((size.width - stroke.width).coerceAtLeast(0f), (size.height - stroke.width).coerceAtLeast(0f)),
+                                        cornerRadius = CornerRadius(r, r),
+                                        style = stroke
+                                    )
+                                }
                             } else Modifier
                         )
                         .padding(
@@ -604,11 +626,11 @@ fun SepiaToggleSwitch(
 @Composable
 private fun SepiaToggleTrack(checked: Boolean) {
     val p = LocalParchmentPalette.current
-    val trackColor by animateColorAsState(
-        targetValue = if (checked) p.accent else p.border.copy(alpha = 0.7f),
+    val trackColorState = animateColorAsState(
+        targetValue = if (checked) p.accent else p.border.copy(alpha = 0.78f),
         animationSpec = motionSpring(Spring.StiffnessMedium)
     )
-    val thumbBias by animateFloatAsState(
+    val thumbBiasState = animateFloatAsState(
         targetValue = if (checked) 1f else 0f,
         animationSpec = motionSpring(Spring.StiffnessMedium)
     )
@@ -618,14 +640,17 @@ private fun SepiaToggleTrack(checked: Boolean) {
             .width(42.dp)
             .height(24.dp)
             .clip(RoundedCornerShape(Radius.pill))
-            .background(trackColor)
+            .drawBehind {
+                val r = size.height / 2f
+                drawRoundRect(color = trackColorState.value, cornerRadius = CornerRadius(r, r))
+            }
             .padding(3.dp),
         contentAlignment = Alignment.CenterStart
     ) {
         Box(
             modifier = Modifier
                 .graphicsLayer {
-                    translationX = thumbBias * 18.dp.toPx()
+                    translationX = thumbBiasState.value * 18.dp.toPx()
                 }
                 .size(18.dp)
                 .clip(CircleShape)
@@ -649,7 +674,7 @@ fun SepiaToggleRow(
     val interactionSource = remember { MutableInteractionSource() }
     val isHovered by interactionSource.collectIsHoveredAsState()
     val isPressed by interactionSource.collectIsPressedAsState()
-    val rowBg by animateColorAsState(
+    val rowBgState = animateColorAsState(
         targetValue = when {
             isPressed -> p.accent.copy(alpha = 0.12f)
             isHovered -> p.accent.copy(alpha = 0.06f)
@@ -668,7 +693,13 @@ fun SepiaToggleRow(
             .fillMaxWidth()
             .heightIn(min = Space.s48)
             .clip(shape)
-            .background(rowBg)
+            .drawBehind {
+                val bg = rowBgState.value
+                if (bg.alpha > 0f) {
+                    val r = Radius.r8.toPx()
+                    drawRoundRect(color = bg, cornerRadius = CornerRadius(r, r))
+                }
+            }
             .sepiaFocusRing(isFocused && !focusFromPointer, p.accent)
             .pointerHoverIcon(PointerIcon.Hand)
             .toggleable(
@@ -744,22 +775,26 @@ internal fun SepiaProgressBar(
 ) {
     val p = LocalParchmentPalette.current
     val clampedFraction = fraction.coerceIn(0f, 1f)
-    val smoothFraction by animateFloatAsState(
+    val smoothFractionState = animateFloatAsState(
         targetValue = clampedFraction.coerceAtLeast(0.02f),
         animationSpec = motionTween(Motion.MEDIUM)
     )
     Box(
         modifier = modifier
             .fillMaxWidth()
-            .height(6.dp)
+            .height(Space.s6)
             .semantics { progressBarRangeInfo = ProgressBarRangeInfo(clampedFraction, 0f..1f) }
             .clip(RoundedCornerShape(Radius.pill))
             .background(p.border.copy(alpha = 0.45f))
     ) {
         Box(
             modifier = Modifier
-                .fillMaxWidth(smoothFraction)
-                .height(6.dp)
+                .fillMaxWidth()
+                .height(Space.s6)
+                .graphicsLayer {
+                    scaleX = smoothFractionState.value
+                    transformOrigin = TransformOrigin(0f, 0.5f)
+                }
                 .clip(RoundedCornerShape(Radius.pill))
                 .background(p.accent)
         )

@@ -86,7 +86,8 @@ kotlin {
             implementation(libs.compose.foundation)
             implementation(libs.compose.ui)
 
-            // Coroutines & JSON Serialization
+            // Coroutines, Immutable Collections & JSON Serialization
+            implementation(libs.kotlinx.collections.immutable)
             implementation(libs.kotlinx.coroutines.core)
             implementation(libs.kotlinx.serialization.json)
 
@@ -116,10 +117,11 @@ kotlin {
     }
 }
 
-// -Pparchment.composeMetrics=true writes the Compose compiler's stability and skippability reports to
-// build/compose-metrics, for checking that a hot composable (composer, streaming turn) can skip.
-if (providers.gradleProperty("parchment.composeMetrics").orNull == "true") {
-    composeCompiler {
+composeCompiler {
+    stabilityConfigurationFiles.add(project.layout.projectDirectory.file("stability_config.conf"))
+    // -Pparchment.composeMetrics=true writes the Compose compiler's stability and skippability reports to
+    // build/compose-metrics, for checking that a hot composable (composer, streaming turn) can skip.
+    if (providers.gradleProperty("parchment.composeMetrics").orNull == "true") {
         metricsDestination = layout.buildDirectory.dir("compose-metrics")
         reportsDestination = layout.buildDirectory.dir("compose-metrics")
     }
@@ -157,26 +159,25 @@ compose.desktop {
     application {
         mainClass = "io.parchment.ai.MainKt"
 
-        // Lean JVM: a 32 MB starting heap with a 1 GB ceiling for 100-step tool turns and large attachments.
-        // Serial GC, measured 2026-11-16 on the packaged app with 300 chats: idle private memory 269 -> 216 MB and
-        // start 1.59 -> 1.40 s against G1, whose own bookkeeping (50 MB) outweighed the 33 MB heap. Pauses while
-        // starting and hydrating stayed under 11 ms; a full collection only grows long near the 1 GB ceiling
-        // (about 0.4 s with ~3 million live objects). The heap shrinks after full collections (MaxHeapFreeRatio),
-        // and minimizing the window runs one (Main.kt), so a finished long turn hands its memory back.
+        // Lean, pause-free JDK 25 runtime:
+        // - Generational Shenandoah (JEP 521, -XX:+UseShenandoahGC -XX:ShenandoahGCMode=generational) keeps GC pauses
+        //   sub-1ms for 120Hz/240Hz frame pacing while keeping CompressedOops enabled so Project Leyden's AOTCache
+        //   archives heap objects, the full module graph, and AOT-linked classes (`Using AOT-linked classes: true`).
+        // - Compact object headers (JEP 519, -XX:+UseCompactObjectHeaders) shrink every object header from 12 to 8 bytes.
+        // - Skiko VSync + Swing frame pacing keep DirectX presentation locked to the display refresh cadence.
         jvmArgs(
             "-Xms32m",
-            "-Xmx1024m",
-            "-XX:+UseSerialGC",
-            "-XX:+UseStringDeduplication",
-            "-XX:MinHeapFreeRatio=10",
-            "-XX:MaxHeapFreeRatio=20",
-            "-XX:-ShrinkHeapInSteps",
-            "-XX:SoftRefLRUPolicyMSPerMB=250",
-            // JDK 25 (JEP 519): 8-byte object headers instead of 12, a few percent less heap for the same chats.
-            // The base class archive must be dumped with the same flag (classes_coh.jsa, made after jlink below).
+            "-Xmx512m",
+            "-XX:+UseShenandoahGC",
+            "-XX:ShenandoahGCMode=generational",
+            "-XX:SoftMaxHeapSize=48m",
+            "-XX:+UnlockExperimentalVMOptions",
+            "-XX:ShenandoahUncommitDelay=1000",
             "-XX:+UseCompactObjectHeaders",
-            // FFM downcalls (title bar, memory check, keep-awake: WindowsNative) and Skia call native code; JDK 25 warns
-            // without this and later JDKs will block it.
+            "-Dskiko.vsync.enabled=true",
+            "-Dskiko.swing.frame.pacing=true",
+            // FFM downcalls (title bar, file/folder COM dialogs, memory check, keep-awake: WindowsNative) and Skia call
+            // native code; JDK 25 warns without this and later JDKs will block it.
             "--enable-native-access=ALL-UNNAMED"
         )
 
@@ -218,38 +219,67 @@ compose.desktop {
     }
 }
 
-// Faster desktop start: the bundled runtime gets a base class-data-sharing archive, and the packaged app keeps
-// its own archive of the classes it loads beside its files (rebuilt automatically after an update).
-// Packaged app only; the dev run is unaffected. Measured 2026-11-11: about 3.1 s to 2.0 s with 300 chats.
+// Ahead-of-Time cache (Project Leyden JEP 483/514/515): jlink keeps java.exe temporarily so jpackage's doLast can run
+// a headless startup + UI training pass (-XX:AOTCacheOutput=$APPDIR/parchment.aot), baking parsed classes and JIT
+// method profiles directly into the shipped package before stripping CLI launchers and verifying -Xshare:on.
 tasks.withType<org.jetbrains.compose.desktop.application.tasks.AbstractJLinkTask>().configureEach {
-    freeArgs.add("--generate-cds-archive")
-    // jlink builds the archive with the image's own java.exe, which --strip-native-commands removes first.
-    // Compose has no public switch, so turn stripping off here (this fails loudly if Compose renames it)
-    // and delete the launchers afterwards: the app starts through Parchment.exe and jvm.dll.
     @Suppress("UNCHECKED_CAST")
     (javaClass.getMethod("getStripNativeCommands\$compose").invoke(this) as Property<Boolean>).set(false)
-    val runtimeBin = destinationDir.dir("bin")
-    doLast {
-        val bin = runtimeBin.get().asFile
-        // jlink dumps only the default-header archive (classes.jsa). With -XX:+UseCompactObjectHeaders the JVM looks
-        // for classes_coh.jsa and, missing it, silently runs without class sharing, so dump it here and fail loudly.
-        val javaExe = listOf("java.exe", "java").map { bin.resolve(it) }.firstOrNull { it.isFile }
-            ?: throw GradleException("jlink image has no java launcher to dump classes_coh.jsa with.")
-        // Dumped with the app's native-access flag too: a mismatch makes the JVM drop the archived module graph.
-        val dump = ProcessBuilder(
-            javaExe.path, "-XX:+UseCompactObjectHeaders", "--enable-native-access=ALL-UNNAMED", "-Xshare:dump"
-        ).redirectErrorStream(true).start()
-        val dumpLog = dump.inputStream.bufferedReader().readText()
-        if (dump.waitFor() != 0 || !bin.resolve("server/classes_coh.jsa").isFile) {
-            throw GradleException("Dumping classes_coh.jsa failed: " + dumpLog.takeLast(2000))
-        }
-        bin.listFiles { file -> file.extension.equals("exe", ignoreCase = true) }?.forEach { it.delete() }
-        // Unused at runtime: classes.jsa needs default headers and classes_nocoops.jsa needs compressed oops off
-        // (heaps over about 32 GB). The app always runs with compact headers and a 1 GB heap.
-        bin.resolve("server/classes.jsa").delete()
-        bin.resolve("server/classes_nocoops.jsa").delete()
-    }
 }
 tasks.withType<org.jetbrains.compose.desktop.application.tasks.AbstractJPackageTask>().configureEach {
-    freeArgs.addAll("--java-options", "-XX:+AutoCreateSharedArchive", "--java-options", "-XX:SharedArchiveFile=\$APPDIR/parchment.jsa")
+    freeArgs.addAll("--java-options", "-XX:AOTCache=\$APPDIR/parchment.aot")
+    val destDir = destinationDir
+    doLast {
+        val appRoot = destDir.get().asFile.resolve("Parchment")
+        val launcherExe = appRoot.resolve("Parchment.exe")
+        if (launcherExe.isFile) {
+            val appDir = appRoot.resolve("app")
+            val cfgLines = appDir.resolve("Parchment.cfg").readLines()
+            val mainJar = cfgLines.firstOrNull { it.startsWith("app.mainjar=") }?.substringAfter("app.mainjar=")?.trim().orEmpty()
+            val extraJars = cfgLines.filter { it.startsWith("app.classpath=") }.map { it.substringAfter("app.classpath=").trim() }
+            val orderedCp = (listOf(mainJar) + extraJars)
+                .filter { it.isNotEmpty() }
+                .joinToString(File.pathSeparator) { entry ->
+                    val rel = entry.replace("\$APPDIR\\", "").replace("\$APPDIR/", "")
+                    appDir.resolve(rel).absolutePath
+                }
+            val runtimeBin = appRoot.resolve("runtime/bin")
+            val javaExe = listOf("java.exe", "java").map { runtimeBin.resolve(it) }.firstOrNull { it.isFile }
+                ?: throw GradleException("jlink image has no java launcher to build parchment.aot.")
+            val aotFile = appDir.resolve("parchment.aot")
+            aotFile.delete()
+            val train = ProcessBuilder(
+                javaExe.absolutePath,
+                "-Xms32m",
+                "-Xmx512m",
+                "-XX:+UseShenandoahGC",
+                "-XX:ShenandoahGCMode=generational",
+                "-XX:SoftMaxHeapSize=48m",
+                "-XX:+UnlockExperimentalVMOptions",
+                "-XX:ShenandoahUncommitDelay=1000",
+                "-XX:+UseCompactObjectHeaders",
+                "-Dskiko.vsync.enabled=true",
+                "-Dskiko.swing.frame.pacing=true",
+                "--enable-native-access=ALL-UNNAMED",
+                "-XX:AOTCacheOutput=${aotFile.absolutePath}",
+                "-cp",
+                orderedCp,
+                "io.parchment.ai.MainKt",
+                "--cds-warmup"
+            ).redirectErrorStream(true).start()
+            val trainLog = train.inputStream.bufferedReader().readText()
+            if (train.waitFor() != 0 || !aotFile.isFile) {
+                throw GradleException("Building parchment.aot failed:\n" + trainLog.takeLast(3000))
+            }
+            runtimeBin.listFiles { file -> file.extension.equals("exe", ignoreCase = true) }?.forEach { it.delete() }
+            runtimeBin.resolve("server").listFiles { file -> file.extension.equals("jsa", ignoreCase = true) }?.forEach { it.delete() }
+            val verifyPb = ProcessBuilder(launcherExe.absolutePath, "--aot-verify").redirectErrorStream(true)
+            verifyPb.environment()["JAVA_TOOL_OPTIONS"] = "-Xlog:aot"
+            val verifyProc = verifyPb.start()
+            val verifyLog = verifyProc.inputStream.bufferedReader().readText()
+            if (verifyProc.waitFor() != 0 || "Opened AOT cache" !in verifyLog) {
+                throw GradleException("Parchment.exe failed to map parchment.aot:\n" + verifyLog.takeLast(2000))
+            }
+        }
+    }
 }

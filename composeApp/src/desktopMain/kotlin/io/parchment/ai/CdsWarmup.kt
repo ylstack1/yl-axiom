@@ -25,7 +25,7 @@ import java.io.File
 import java.nio.file.Files
 import kotlin.system.exitProcess
 
-/** The installer runs `Parchment.exe --cds-warmup` hidden, once, right after copying the files. */
+/** Packaging runs `MainKt --cds-warmup` under `-XX:AOTCacheOutput=$APPDIR/parchment.aot` to record classes & JIT profiles. */
 internal const val CDS_WARMUP_FLAG = "--cds-warmup"
 
 /** Generous for 2-core machines; this i5 needs about 13 s including the archive dump. */
@@ -74,7 +74,8 @@ internal fun runCdsWarmup(): Nothing {
 
 private fun seedWarmupData() {
     val base = createDefaultAppState().copy(autoCheckOtaOnStartup = false)
-    val chat = base.sessions.first().copy(
+    val template = base.sessions.first()
+    val primary = template.copy(
         title = "Warm-up",
         messages = listOf(
             MessageNode("u", MessageRole.USER, listOf(MessageVariant("uv", content = "Show me the formats."))),
@@ -84,9 +85,21 @@ private fun seedWarmupData() {
             )))
         )
     )
-    PlatformStorage.saveChatSessionJson(chat.id, compactStateJson.encodeToString(chat))
+    PlatformStorage.saveChatSessionJson(primary.id, compactStateJson.encodeToString(primary))
+    for (idx in 1..6) {
+        val extra = template.copy(
+            id = "warmup-$idx",
+            title = "Archived conversation $idx",
+            updatedAt = 1_700_000_000_000L + idx,
+            messages = listOf(
+                MessageNode("u$idx", MessageRole.USER, listOf(MessageVariant("uv$idx", content = "Question $idx"))),
+                MessageNode("a$idx", MessageRole.ASSISTANT, listOf(MessageVariant("av$idx", content = "Short reply $idx.")))
+            )
+        )
+        PlatformStorage.saveChatSessionJson(extra.id, compactStateJson.encodeToString(extra))
+    }
     PlatformStorage.saveAppStateJson(
-        compactStateJson.encodeToString(base.copy(sessions = emptyList(), activeSessionId = chat.id, openTabSessionIds = listOf(chat.id)))
+        compactStateJson.encodeToString(base.copy(sessions = emptyList(), activeSessionId = primary.id, openTabSessionIds = listOf(primary.id)))
     )
 }
 

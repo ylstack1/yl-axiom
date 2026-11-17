@@ -413,14 +413,22 @@ fun KissVectorIcon(
     modifier: Modifier = Modifier
 ) {
     // Icons sit beside text, so they grow with the system text size too (capped; see textGrowth).
-    Canvas(modifier = modifier.size(size * textGrowth())) {
+    val scaledSize = size * textGrowth()
+    val density = androidx.compose.ui.platform.LocalDensity.current
+    val glyph = remember(icon) { kissGlyph(icon) }
+    val strokeStyle = remember(scaledSize, strokeWidthDp, density) {
+        with(density) {
+            val dimPx = scaledSize.toPx().coerceAtLeast(1f)
+            val unit = dimPx / 24f
+            val strokePx = if (strokeWidthDp != Dp.Unspecified) strokeWidthDp.toPx()
+                else (unit * 1.85f).coerceIn(1.15.dp.toPx(), 2.dp.toPx())
+            Stroke(strokePx / unit, cap = StrokeCap.Round, join = StrokeJoin.Round)
+        }
+    }
+    Canvas(modifier = modifier.size(scaledSize)) {
         val unit = this.size.minDimension / 24f
-        // Weight follows size within limits, so small and large icons read as one family.
-        val strokePx = if (strokeWidthDp != Dp.Unspecified) strokeWidthDp.toPx()
-            else (unit * 1.85f).coerceIn(1.15.dp.toPx(), 2.dp.toPx())
-        val glyph = kissGlyph(icon)
         withTransform({ scale(unit, unit, pivot = Offset.Zero) }) {
-            drawPath(glyph.stroke, tint, style = Stroke(strokePx / unit, cap = StrokeCap.Round, join = StrokeJoin.Round))
+            drawPath(glyph.stroke, tint, style = strokeStyle)
             glyph.fill?.let { drawPath(it, tint) }
         }
     }

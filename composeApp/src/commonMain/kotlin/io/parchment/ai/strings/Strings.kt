@@ -17,6 +17,7 @@ internal object Strings {
     val addProviderProfile = "+ Add provider profile"
     val addSelect = "Add & select"
     val advanced = "⚙ Advanced"
+    val renameProvider = "Rename provider"
     val agentTools = "Agent tools"
     val allAssistants = "← All assistants"
     val allFamilies = "All families"

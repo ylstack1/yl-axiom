@@ -76,7 +76,7 @@ internal fun WorldBookAndCardsSubpage(
         modifier = Modifier
             .fillMaxSize()
             .verticalScroll(rememberScrollState())
-            .padding(if (win.isCompact) 12.dp else 20.dp),
+            .padding(if (win.isCompact) Space.s12 else Space.s16),
         verticalArrangement = Arrangement.spacedBy(Space.s16)
     ) {
         BasicText(text = Strings.worldBookCharacterCardsPng, style = p.uiHeaderStyle.copy(fontSize = 19.sp))

@@ -62,13 +62,13 @@ fun SepiaContextGaugeRing(
     val isUnlimited = contextLimitTokens <= 0
     val safeLimit = if (isUnlimited) 1_000_000 else contextLimitTokens
     val targetFraction = if (isUnlimited) 0.08f else (usedTokens.toFloat() / safeLimit.toFloat()).coerceIn(0f, 1f)
-    val animatedFraction by animateFloatAsState(
+    val animatedFractionState = animateFloatAsState(
         targetValue = targetFraction,
         animationSpec = motionSpring(Spring.StiffnessLow)
     )
     val percent = (targetFraction * 100f).toInt()
 
-    val ringColor by animateColorAsState(
+    val ringColorState = animateColorAsState(
         targetValue = when {
             !isUnlimited && targetFraction >= 0.85f -> p.danger
             !isUnlimited && targetFraction >= 0.60f -> p.accentSecondary
@@ -76,6 +76,8 @@ fun SepiaContextGaugeRing(
         },
         animationSpec = motionTween(Motion.SLOW)
     )
+    val density = androidx.compose.ui.platform.LocalDensity.current
+    val ringStroke = remember(density) { Stroke(width = with(density) { LineWidth.focus.toPx() }, cap = StrokeCap.Round) }
 
     val shape = RoundedCornerShape(Radius.r8)
     val gaugeInteraction = remember { MutableInteractionSource() }
@@ -89,15 +91,16 @@ fun SepiaContextGaugeRing(
     }
     Row(
         modifier = modifier
+            .heightIn(min = ControlHeight.compact)
             .then(
                 if (onClick != null) Modifier.kissClickable(interactionSource = gaugeInteraction, onClick = onClick)
                 else Modifier.hoverable(gaugeInteraction)
             )
             .semantics { stateDescription = gaugeStateSummary }
             .clip(shape)
-            .background(p.elevatedBg.copy(alpha = 0.6f))
-            .border(LineWidth.hairline, p.border.copy(alpha = 0.65f), shape)
-            .padding(horizontal = 7.dp, vertical = Space.s4),
+            .background(p.cardBg)
+            .border(LineWidth.hairline, p.border, shape)
+            .padding(horizontal = Space.s8, vertical = Space.s6),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(5.dp)
     ) {
@@ -105,21 +108,20 @@ fun SepiaContextGaugeRing(
             modifier = Modifier.size(16.dp),
             contentAlignment = Alignment.Center
         ) {
-            Canvas(modifier = Modifier.size(14.dp)) {
-                val strokeWidth = 2.0.dp.toPx()
+            Canvas(modifier = Modifier.size(IconSize.md)) {
                 drawArc(
                     color = p.border.copy(alpha = 0.6f),
                     startAngle = 0f,
                     sweepAngle = 360f,
                     useCenter = false,
-                    style = Stroke(width = strokeWidth, cap = StrokeCap.Round)
+                    style = ringStroke
                 )
                 drawArc(
-                    color = ringColor,
+                    color = ringColorState.value,
                     startAngle = -90f,
-                    sweepAngle = (animatedFraction * 360f).coerceAtLeast(6f),
+                    sweepAngle = (animatedFractionState.value * 360f).coerceAtLeast(6f),
                     useCenter = false,
-                    style = Stroke(width = strokeWidth, cap = StrokeCap.Round)
+                    style = ringStroke
                 )
             }
         }
@@ -437,7 +439,8 @@ fun SepiaSearchableModelPicker(
             ) {
                 items(
                     items = filteredOptions,
-                    key = { "${it.profileId}::${it.modelId}" }
+                    key = { "${it.profileId}::${it.modelId}" },
+                    contentType = { "model-option" }
                 ) { opt ->
                     ModelPickerOptionRow(
                         opt = opt,

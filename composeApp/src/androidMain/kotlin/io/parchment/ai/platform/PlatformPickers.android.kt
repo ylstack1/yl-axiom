@@ -56,6 +56,16 @@ actual object PlatformPickers {
         return act.requestImportFile(arrayOf("image/png", "application/json", "text/plain", "*/*"), maxPickedFileBytes(allowedExtensions))
     }
 
+    actual suspend fun pickFilesForImport(allowedExtensions: List<String>): List<PickedBinaryFile> {
+        val act = AndroidPlatformHost.mainActivityRef?.get() ?: return emptyList()
+        val maxBytes = maxPickedFileBytes(allowedExtensions)
+        val uris = act.requestImportDocumentUris(arrayOf("*/*"))
+        if (uris.isEmpty()) return emptyList()
+        return withContext(Dispatchers.IO) {
+            uris.mapNotNull { uri -> readUriAsPickedFile(uri, maxBytes = maxBytes) }
+        }
+    }
+
     actual suspend fun <T> pickAndImportChatFiles(decode: (chatJsons: List<String>) -> T): List<ChatImportOutcome<T>> {
         val act = AndroidPlatformHost.mainActivityRef?.get() ?: return emptyList()
         val ctx = AndroidPlatformHost.appContext ?: return emptyList()

@@ -373,7 +373,7 @@ internal fun ParchmentRightFilesSidebar(
             ) {
                 // 1. AI-Generated Files & Media
                 if (showAiSection) {
-                    item(key = "header-ai") {
+                    item(key = "header-ai", contentType = "section-header") {
                         Row(
                             verticalAlignment = Alignment.CenterVertically,
                             horizontalArrangement = Arrangement.spacedBy(5.dp)
@@ -391,7 +391,7 @@ internal fun ParchmentRightFilesSidebar(
                         }
                     }
 
-                    itemsIndexed(aiArtifacts, key = { idx, item -> "ai:${item.turnNumber}:$idx" }) { _, item ->
+                    itemsIndexed(aiArtifacts, key = { idx, item -> "ai:${item.turnNumber}:$idx" }, contentType = { _, item -> item::class.simpleName }) { _, item ->
                         when (item) {
                             is AiGeneratedChatArtifact.WorkspaceFileArtifact -> {
                                 val shortName = item.filePath.substringAfterLast('/').substringAfterLast('\\')
@@ -632,7 +632,7 @@ internal fun ParchmentRightFilesSidebar(
 
                 // 2. User-Uploaded Documents & Files
                 if (showUploadedSection) {
-                    item(key = "header-uploaded") {
+                    item(key = "header-uploaded", contentType = "section-header") {
                         Row(
                             verticalAlignment = Alignment.CenterVertically,
                             horizontalArrangement = Arrangement.spacedBy(5.dp)
@@ -650,7 +650,7 @@ internal fun ParchmentRightFilesSidebar(
                         }
                     }
 
-                    itemsIndexed(userUploads, key = { idx, entry -> "up:${entry.turnNumber}:$idx" }) { _, entry ->
+                    itemsIndexed(userUploads, key = { idx, entry -> "up:${entry.turnNumber}:$idx" }, contentType = { _, _ -> "upload" }) { _, entry ->
                         val att = entry.attachment
                         val mime = att.mimeType.lowercase()
                         val lowerName = att.fileName.lowercase()
@@ -750,7 +750,7 @@ internal fun ParchmentRightFilesSidebar(
 
                 // 3. Grounded Web Sources
                 if (showSourcesSection) {
-                    item(key = "header-sources") {
+                    item(key = "header-sources", contentType = "section-header") {
                         Row(
                             verticalAlignment = Alignment.CenterVertically,
                             horizontalArrangement = Arrangement.spacedBy(5.dp)
@@ -768,7 +768,7 @@ internal fun ParchmentRightFilesSidebar(
                         }
                     }
 
-                    itemsIndexed(webSources, key = { idx, item -> "web:${item.turnNumber}:$idx" }) { _, item ->
+                    itemsIndexed(webSources, key = { idx, item -> "web:${item.turnNumber}:$idx" }, contentType = { _, _ -> "web-source" }) { _, item ->
                         val src = item.source
                         val lineLabel = if (src.groundedLineNumbers.isNotEmpty()) {
                             Strings.line(src.groundedLineNumbers.joinToString(", "))

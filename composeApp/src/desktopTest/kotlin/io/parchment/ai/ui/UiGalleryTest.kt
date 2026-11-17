@@ -284,6 +284,8 @@ class UiGalleryTest {
                 for (page in listOf("Providers", "Assistant", "Workspace", "World Book & Cards", "Storage & Updates")) {
                     capture(desktop, ThemeConfig(), "page-${page.take(5).trim().lowercase()}", listOf("Settings", page))
                 }
+                capture(phone, ThemeConfig(), "page-provi", listOf("Settings", "Providers"))
+                capture(phone, ThemeConfig(), "page-provi-detail", listOf("Settings", "Providers", "Google Gemini"))
                 for (viewport in listOf(phone, desktop)) {
                     // On a phone, New chat already closes the sidebar.
                     capture(viewport, ThemeConfig(), "empty", listOf("New chat"))

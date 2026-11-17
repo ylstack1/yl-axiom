@@ -18,6 +18,7 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -111,18 +112,20 @@ fun ParchmentSettingsScreen(
         val isWide = maxWidth >= 720.dp
 
         if (isWide) {
-            Row(modifier = Modifier.fillMaxSize()) {
+            Column(modifier = Modifier.fillMaxSize()) {
+                SepiaDivider()
+                Row(modifier = Modifier.weight(1f).fillMaxWidth()) {
                 // Left Category Rail
                 Column(
                     modifier = Modifier
                         .textScaledWidth(225.dp)
                         .fillMaxHeight()
-                        .background(p.sheetBg.copy(alpha = 0.65f))
-                        .padding(14.dp),
+                        .background(p.sheetBg)
+                        .padding(Space.s16),
                     verticalArrangement = Arrangement.spacedBy(Space.s6)
                 ) {
                     Row(
-                        modifier = Modifier.fillMaxWidth(),
+                        modifier = Modifier.fillMaxWidth().heightIn(min = ControlHeight.compact),
                         horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
@@ -149,7 +152,7 @@ fun ParchmentSettingsScreen(
                             value = settingsSearchQuery,
                             onValueChange = { settingsSearchQuery = it },
                             placeholder = Strings.searchAllSettings,
-                            minHeight = 36.dp,
+                            minHeight = ControlHeight.compact,
                             modifier = Modifier.weight(1f)
                         )
                         if (settingsSearchQuery.isNotEmpty()) {
@@ -298,6 +301,7 @@ fun ParchmentSettingsScreen(
                         onNotify = onNotify
                     )
                 }
+                }
             }
         } else {
             // Compact / Portrait Mobile Layout:
@@ -365,7 +369,7 @@ fun ParchmentSettingsScreen(
                 Column(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .background(p.sheetBg.copy(alpha = 0.85f))
+                        .background(p.sheetBg)
                         .padding(horizontal = Space.s12, vertical = Space.s10),
                     verticalArrangement = Arrangement.spacedBy(Space.s8)
                 ) {

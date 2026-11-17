@@ -1247,8 +1247,10 @@ fun ParchmentApp(
                                         pendingAttachments = pendingAttachments,
                                         onAddAttachment = stableAction {
                                             uiScope.launch {
-                                                val picked = PlatformPickers.pickFileForImport(emptyList()) ?: return@launch
-                                                attachPickedFiles(listOf(picked))
+                                                val picked = PlatformPickers.pickFilesForImport(emptyList())
+                                                if (picked.isNotEmpty()) {
+                                                    attachPickedFiles(picked)
+                                                }
                                             }
                                         },
                                         onAttachWorkspaceFile = stableCallback { relPath ->
