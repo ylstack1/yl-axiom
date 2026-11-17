@@ -2,6 +2,13 @@
 
 What changed in each release, newest first. From 2.1.7 on, release-please writes these entries from commit messages that follow [Conventional Commits](https://www.conventionalcommits.org/) (`feat:` and `fix:` appear here and set the next version); edit wording in its release PR before merging it.
 
+## [2.4.1](https://github.com/baros4294/parchment/compare/v2.4.0...v2.4.1) (2026-11-17)
+
+
+### Faster and lighter
+
+* Leyden AOT cache, Shenandoah GC, native Win32 file pickers, UI consistency, and sharded CI ([402452b](https://github.com/baros4294/parchment/commit/402452b91645b7d6d3ca387791735e668b1f4360))
+
 ## [2.4.0](https://github.com/baros4294/parchment/compare/v2.3.0...v2.4.0) (2026-11-16)
 
 
