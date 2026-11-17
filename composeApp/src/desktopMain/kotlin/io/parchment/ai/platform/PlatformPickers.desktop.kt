@@ -30,6 +30,7 @@ private val RAW_IMAGE_MIMES = setOf("image/gif", "image/webp", "image/png", "ima
 
 actual object PlatformPickers {
     private val fontCache = ConcurrentHashMap<String, FontFamily>()
+    private val preloadedFontBytes = ConcurrentHashMap<String, ByteArray>()
 
     @Volatile
     var dragHoverCallback: ((Boolean) -> Unit)? = null
@@ -237,54 +238,109 @@ actual object PlatformPickers {
         true
     }.getOrDefault(false)
 
+    internal fun preloadStartupFonts() {
+        if (!preloadedFontBytes.containsKey("fonts/Inter-Regular.ttf")) {
+            readBundledResourceBytes("fonts/Inter-Regular.ttf")?.let { preloadedFontBytes.putIfAbsent("fonts/Inter-Regular.ttf", it) }
+        }
+        loadBundledFontFamily("Inter")
+    }
+
+    private fun bundledResourceExists(resPath: String): Boolean =
+        preloadedFontBytes.containsKey(resPath) ||
+            Thread.currentThread().contextClassLoader?.getResource(resPath) != null ||
+            PlatformPickers::class.java.classLoader?.getResource(resPath) != null
+
+    private fun readBundledResourceBytes(resPath: String): ByteArray? =
+        preloadedFontBytes.remove(resPath)
+            ?: Thread.currentThread().contextClassLoader?.getResourceAsStream(resPath)?.use { it.readBytes() }
+            ?: PlatformPickers::class.java.classLoader?.getResourceAsStream(resPath)?.use { it.readBytes() }
+
+    private fun requireBundledResourceBytes(primaryPath: String, fallbackPath: String = primaryPath): ByteArray =
+        readBundledResourceBytes(primaryPath)
+            ?: (if (fallbackPath != primaryPath) readBundledResourceBytes(fallbackPath) else null)
+            ?: error("Missing bundled font resource: $primaryPath")
+
     actual fun loadBundledFontFamily(bundleName: String): FontFamily? {
         val canonical = AppStorageInventory.canonicalBundledFontKey(bundleName)
         if (canonical.isEmpty()) return null
         val key = "bundled:$canonical"
         fontCache[key]?.let { return it }
 
-        fun readResBytes(resPath: String): ByteArray? =
-            Thread.currentThread().contextClassLoader?.getResourceAsStream(resPath)?.use { it.readBytes() }
-                ?: PlatformPickers::class.java.classLoader?.getResourceAsStream(resPath)?.use { it.readBytes() }
-
         return runCatching {
             val family = when (canonical) {
                 "inter" -> {
-                    val reg = readResBytes("fonts/Inter-Regular.ttf") ?: return null
-                    val ital = readResBytes("fonts/Inter-Italic.ttf") ?: reg
+                    if (!bundledResourceExists("fonts/Inter-Regular.ttf")) return null
                     FontFamily(
-                        Font(identity = "Inter-Regular", data = reg, weight = FontWeight.Normal, style = FontStyle.Normal),
-                        Font(identity = "Inter-Medium", data = reg, weight = FontWeight.Medium, style = FontStyle.Normal),
-                        Font(identity = "Inter-SemiBold", data = reg, weight = FontWeight.SemiBold, style = FontStyle.Normal),
-                        Font(identity = "Inter-Bold", data = reg, weight = FontWeight.Bold, style = FontStyle.Normal),
-                        Font(identity = "Inter-Italic", data = ital, weight = FontWeight.Normal, style = FontStyle.Italic),
-                        Font(identity = "Inter-BoldItalic", data = ital, weight = FontWeight.Bold, style = FontStyle.Italic)
+                        Font(
+                            identity = "Inter-Regular",
+                            getData = { requireBundledResourceBytes("fonts/Inter-Regular.ttf") },
+                            weight = FontWeight.Normal,
+                            style = FontStyle.Normal
+                        ),
+                        Font(
+                            identity = "Inter-Italic",
+                            getData = { requireBundledResourceBytes("fonts/Inter-Italic.ttf", "fonts/Inter-Regular.ttf") },
+                            weight = FontWeight.Normal,
+                            style = FontStyle.Italic
+                        )
                     )
                 }
                 "jetbrains_mono" -> {
-                    val reg = readResBytes("fonts/JetBrainsMono-Regular.ttf") ?: return null
-                    val semi = readResBytes("fonts/JetBrainsMono-SemiBold.ttf") ?: reg
-                    val bold = readResBytes("fonts/JetBrainsMono-Bold.ttf") ?: reg
-                    val ital = readResBytes("fonts/JetBrainsMono-Italic.ttf") ?: reg
+                    if (!bundledResourceExists("fonts/JetBrainsMono-Regular.ttf")) return null
                     FontFamily(
-                        Font(identity = "JBM-Regular", data = reg, weight = FontWeight.Normal, style = FontStyle.Normal),
-                        Font(identity = "JBM-Medium", data = reg, weight = FontWeight.Medium, style = FontStyle.Normal),
-                        Font(identity = "JBM-SemiBold", data = semi, weight = FontWeight.SemiBold, style = FontStyle.Normal),
-                        Font(identity = "JBM-Bold", data = bold, weight = FontWeight.Bold, style = FontStyle.Normal),
-                        Font(identity = "JBM-Italic", data = ital, weight = FontWeight.Normal, style = FontStyle.Italic)
+                        Font(
+                            identity = "JBM-Regular",
+                            getData = { requireBundledResourceBytes("fonts/JetBrainsMono-Regular.ttf") },
+                            weight = FontWeight.Normal,
+                            style = FontStyle.Normal
+                        ),
+                        Font(
+                            identity = "JBM-SemiBold",
+                            getData = { requireBundledResourceBytes("fonts/JetBrainsMono-SemiBold.ttf", "fonts/JetBrainsMono-Regular.ttf") },
+                            weight = FontWeight.SemiBold,
+                            style = FontStyle.Normal
+                        ),
+                        Font(
+                            identity = "JBM-Bold",
+                            getData = { requireBundledResourceBytes("fonts/JetBrainsMono-Bold.ttf", "fonts/JetBrainsMono-Regular.ttf") },
+                            weight = FontWeight.Bold,
+                            style = FontStyle.Normal
+                        ),
+                        Font(
+                            identity = "JBM-Italic",
+                            getData = { requireBundledResourceBytes("fonts/JetBrainsMono-Italic.ttf", "fonts/JetBrainsMono-Regular.ttf") },
+                            weight = FontWeight.Normal,
+                            style = FontStyle.Italic
+                        )
                     )
                 }
                 "latex" -> {
-                    val katexReg = readResBytes("fonts/KaTeX_Main-Regular.ttf") ?: return null
-                    val katexBold = readResBytes("fonts/KaTeX_Main-Bold.ttf") ?: katexReg
-                    val katexItal = readResBytes("fonts/KaTeX_Math-Italic.ttf") ?: katexReg
-                    val notoMath = readResBytes("fonts/NotoSansMath-Regular.ttf") ?: katexReg
+                    if (!bundledResourceExists("fonts/KaTeX_Main-Regular.ttf")) return null
                     FontFamily(
-                        Font(identity = "KaTeX-Regular", data = katexReg, weight = FontWeight.Normal, style = FontStyle.Normal),
-                        Font(identity = "KaTeX-Bold", data = katexBold, weight = FontWeight.Bold, style = FontStyle.Normal),
-                        Font(identity = "KaTeX-SemiBold", data = katexBold, weight = FontWeight.SemiBold, style = FontStyle.Normal),
-                        Font(identity = "KaTeX-MathItalic", data = katexItal, weight = FontWeight.Normal, style = FontStyle.Italic),
-                        Font(identity = "NotoSansMath-Regular", data = notoMath, weight = FontWeight.Medium, style = FontStyle.Normal)
+                        Font(
+                            identity = "KaTeX-Regular",
+                            getData = { requireBundledResourceBytes("fonts/KaTeX_Main-Regular.ttf") },
+                            weight = FontWeight.Normal,
+                            style = FontStyle.Normal
+                        ),
+                        Font(
+                            identity = "KaTeX-Bold",
+                            getData = { requireBundledResourceBytes("fonts/KaTeX_Main-Bold.ttf", "fonts/KaTeX_Main-Regular.ttf") },
+                            weight = FontWeight.Bold,
+                            style = FontStyle.Normal
+                        ),
+                        Font(
+                            identity = "KaTeX-MathItalic",
+                            getData = { requireBundledResourceBytes("fonts/KaTeX_Math-Italic.ttf", "fonts/KaTeX_Main-Regular.ttf") },
+                            weight = FontWeight.Normal,
+                            style = FontStyle.Italic
+                        ),
+                        Font(
+                            identity = "NotoSansMath-Regular",
+                            getData = { requireBundledResourceBytes("fonts/NotoSansMath-Regular.ttf", "fonts/KaTeX_Main-Regular.ttf") },
+                            weight = FontWeight.Medium,
+                            style = FontStyle.Normal
+                        )
                     )
                 }
                 else -> return null

@@ -3,16 +3,14 @@ package io.parchment.ai.harness
 import io.parchment.ai.model.AgentPermissionPolicy
 import io.parchment.ai.model.WorkspaceMode
 import kotlinx.serialization.json.JsonArray
-import kotlinx.serialization.json.JsonObjectBuilder
 import kotlinx.serialization.json.JsonPrimitive
-import kotlinx.serialization.json.buildJsonArray
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
 import kotlinx.serialization.json.putJsonArray
 import kotlinx.serialization.json.putJsonObject
 
 /**
- * Built-in workspace tool catalog, external MCP tool registration, and provider-specific schema adapters.
+ * Built-in workspace tool catalog, external MCP tool registration, and cached provider schema adapters.
  */
 internal object WorkspaceToolCatalog {
 
@@ -27,101 +25,85 @@ internal object WorkspaceToolCatalog {
         externalToolsProvider = provider
     }
 
+    private fun strProp(desc: String) = buildJsonObject {
+        put("type", "string")
+        put("description", desc)
+    }
+
+    private fun intProp(desc: String) = buildJsonObject {
+        put("type", "integer")
+        put("description", desc)
+    }
+
+    private fun boolProp(desc: String) = buildJsonObject {
+        put("type", "boolean")
+        put("description", desc)
+    }
+
     private val ALL_TOOLS: List<WorkspaceHarness.ToolDefinition> = listOf(
         WorkspaceHarness.ToolDefinition(
             name = "fs_list",
-            description = "List files and directories inside the mounted local workspace folder.",
+            description = "List directory entries in workspace.",
             requiresWritePermission = false,
             parametersSchema = buildJsonObject {
                 put("type", "object")
                 putJsonObject("properties") {
-                    putJsonObject("path") {
-                        put("type", "string")
-                        put("description", "Relative directory path inside workspace (empty string for root).")
-                    }
-                    putJsonObject("recursive") {
-                        put("type", "boolean")
-                        put("description", "Whether to list subdirectories recursively.")
-                    }
+                    put("path", strProp("Relative directory path ('' for root)."))
+                    put("recursive", boolProp("List subdirectories recursively."))
                 }
             }
         ),
         WorkspaceHarness.ToolDefinition(
             name = "fs_glob",
-            description = "Find files and directories matching a glob pattern (e.g. '*.kt', '**/*.md', 'src/**/Test*') inside the mounted workspace.",
+            description = "Find workspace paths matching a glob (e.g. '**/*.kt', 'docs/*').",
             requiresWritePermission = false,
             parametersSchema = buildJsonObject {
                 put("type", "object")
                 putJsonObject("properties") {
-                    putJsonObject("pattern") {
-                        put("type", "string")
-                        put("description", "Glob pattern to match (e.g. '*.kt', '**/*.md', 'docs/*').")
-                    }
-                    putJsonObject("max_results") {
-                        put("type", "integer")
-                        put("description", "Maximum number of matched paths to return (default 200).")
-                    }
+                    put("pattern", strProp("Glob pattern."))
+                    put("max_results", intProp("Max results (default 200)."))
                 }
                 putJsonArray("required") { add(JsonPrimitive("pattern")) }
             }
         ),
         WorkspaceHarness.ToolDefinition(
             name = "fs_read",
-            description = "Read the UTF-8 text contents of a file inside the mounted local workspace with line numbers.",
+            description = "Read UTF-8 file lines in workspace with line numbers.",
             requiresWritePermission = false,
             parametersSchema = buildJsonObject {
                 put("type", "object")
                 putJsonObject("properties") {
-                    putJsonObject("path") {
-                        put("type", "string")
-                        put("description", "Relative path to the file inside the workspace.")
-                    }
-                    putJsonObject("start_line") {
-                        put("type", "integer")
-                        put("description", "1-based starting line number (default 1).")
-                    }
-                    putJsonObject("max_lines") {
-                        put("type", "integer")
-                        put("description", "Maximum number of lines to read (default 250).")
-                    }
+                    put("path", strProp("Relative file path."))
+                    put("start_line", intProp("1-based start line (default 1)."))
+                    put("max_lines", intProp("Max lines to read (default 250)."))
                 }
                 putJsonArray("required") { add(JsonPrimitive("path")) }
             }
         ),
         WorkspaceHarness.ToolDefinition(
             name = "fs_search",
-            description = "Search for literal text or patterns across files in the mounted workspace (manuscript chapters, notes, or source code).",
+            description = "Search text or regex across workspace files (prioritizes code/prose over imports).",
             requiresWritePermission = false,
             parametersSchema = buildJsonObject {
                 put("type", "object")
                 putJsonObject("properties") {
-                    putJsonObject("query") {
-                        put("type", "string")
-                        put("description", "Text or regex pattern to search for.")
-                    }
-                    putJsonObject("file_glob") {
-                        put("type", "string")
-                        put("description", "Optional file extension or substring filter (e.g. '.md', '.kt').")
-                    }
+                    put("query", strProp("Literal text or regex pattern."))
+                    put("path", strProp("Optional relative directory or single file to scope search."))
+                    put("file_glob", strProp("Optional filename/extension filter (e.g. '.kt', 'Test.kt')."))
+                    put("max_results", intProp("Max matches to return (default 150)."))
                 }
                 putJsonArray("required") { add(JsonPrimitive("query")) }
             }
         ),
         WorkspaceHarness.ToolDefinition(
             name = "fs_write",
-            description = "Create a new file or overwrite an existing file inside the mounted workspace.",
+            description = "Create or overwrite a UTF-8 file in workspace.",
             requiresWritePermission = true,
             parametersSchema = buildJsonObject {
                 put("type", "object")
                 putJsonObject("properties") {
-                    putJsonObject("path") {
-                        put("type", "string")
-                        put("description", "Relative file path inside the workspace.")
-                    }
-                    putJsonObject("content") {
-                        put("type", "string")
-                        put("description", "Full text content to write to the file.")
-                    }
+                    put("path", strProp("Relative file path."))
+                    put("content", strProp("Full file text."))
                 }
                 putJsonArray("required") {
                     add(JsonPrimitive("path"))
@@ -131,27 +113,15 @@ internal object WorkspaceToolCatalog {
         ),
         WorkspaceHarness.ToolDefinition(
             name = "fs_edit",
-            description = "Perform a surgical search-and-replace edit on an existing file in the mounted workspace.",
+            description = "Surgical search-and-replace on an existing workspace file.",
             requiresWritePermission = true,
             parametersSchema = buildJsonObject {
                 put("type", "object")
                 putJsonObject("properties") {
-                    putJsonObject("path") {
-                        put("type", "string")
-                        put("description", "Relative file path inside the workspace.")
-                    }
-                    putJsonObject("old_text") {
-                        put("type", "string")
-                        put("description", "Exact existing text block to find.")
-                    }
-                    putJsonObject("new_text") {
-                        put("type", "string")
-                        put("description", "Replacement text block.")
-                    }
-                    putJsonObject("replace_all") {
-                        put("type", "boolean")
-                        put("description", "Replace every occurrence if true (default false).")
-                    }
+                    put("path", strProp("Relative file path."))
+                    put("old_text", strProp("Existing text block to match."))
+                    put("new_text", strProp("Replacement text block."))
+                    put("replace_all", boolProp("Replace all matches (default false)."))
                 }
                 putJsonArray("required") {
                     add(JsonPrimitive("path"))
@@ -162,33 +132,21 @@ internal object WorkspaceToolCatalog {
         ),
         WorkspaceHarness.ToolDefinition(
             name = "fs_multi_edit",
-            description = "Apply multiple search-and-replace edits to a single file atomically in one call. If any edit fails to match, all edits are rolled back.",
+            description = "Apply multiple search-and-replace hunks to one file atomically.",
             requiresWritePermission = true,
             parametersSchema = buildJsonObject {
                 put("type", "object")
                 putJsonObject("properties") {
-                    putJsonObject("path") {
-                        put("type", "string")
-                        put("description", "Relative file path inside the workspace.")
-                    }
+                    put("path", strProp("Relative file path."))
                     putJsonObject("edits") {
                         put("type", "array")
-                        put("description", "Ordered list of search-and-replace hunks to apply atomically.")
+                        put("description", "Ordered hunks.")
                         putJsonObject("items") {
                             put("type", "object")
                             putJsonObject("properties") {
-                                putJsonObject("old_text") {
-                                    put("type", "string")
-                                    put("description", "Exact existing text block to find.")
-                                }
-                                putJsonObject("new_text") {
-                                    put("type", "string")
-                                    put("description", "Replacement text block.")
-                                }
-                                putJsonObject("replace_all") {
-                                    put("type", "boolean")
-                                    put("description", "Replace every occurrence if true (default false).")
-                                }
+                                put("old_text", strProp("Existing text block."))
+                                put("new_text", strProp("Replacement text block."))
+                                put("replace_all", boolProp("Replace all matches (default false)."))
                             }
                             putJsonArray("required") {
                                 add(JsonPrimitive("old_text"))
@@ -205,19 +163,13 @@ internal object WorkspaceToolCatalog {
         ),
         WorkspaceHarness.ToolDefinition(
             name = "fs_move",
-            description = "Move or rename a file or directory inside the mounted workspace.",
+            description = "Move or rename a file or directory in workspace.",
             requiresWritePermission = true,
             parametersSchema = buildJsonObject {
                 put("type", "object")
                 putJsonObject("properties") {
-                    putJsonObject("source_path") {
-                        put("type", "string")
-                        put("description", "Existing relative path inside the workspace.")
-                    }
-                    putJsonObject("dest_path") {
-                        put("type", "string")
-                        put("description", "Destination relative path inside the workspace.")
-                    }
+                    put("source_path", strProp("Existing relative path."))
+                    put("dest_path", strProp("Destination relative path."))
                 }
                 putJsonArray("required") {
                     add(JsonPrimitive("source_path"))
@@ -227,135 +179,89 @@ internal object WorkspaceToolCatalog {
         ),
         WorkspaceHarness.ToolDefinition(
             name = "fs_delete",
-            description = "Delete a file or directory inside the mounted workspace.",
+            description = "Delete a file or directory in workspace.",
             requiresWritePermission = true,
             parametersSchema = buildJsonObject {
                 put("type", "object")
                 putJsonObject("properties") {
-                    putJsonObject("path") {
-                        put("type", "string")
-                        put("description", "Relative path to delete inside the workspace.")
-                    }
+                    put("path", strProp("Relative path to delete."))
                 }
-                putJsonArray("required") {
-                    add(JsonPrimitive("path"))
-                }
+                putJsonArray("required") { add(JsonPrimitive("path")) }
             }
         ),
         WorkspaceHarness.ToolDefinition(
             name = "web_search",
-            description = "Search the live internet for up-to-date information, documentation, news, and facts using a free multi-engine search cascade (DuckDuckGo, Wikipedia, HackerNews), returning titles, URLs, and snippets.",
+            description = "Search the web for current docs and facts.",
             requiresWritePermission = false,
             requiresWorkspaceFolder = false,
             parametersSchema = buildJsonObject {
                 put("type", "object")
                 putJsonObject("properties") {
-                    putJsonObject("query") {
-                        put("type", "string")
-                        put("description", "Search query keywords or question.")
-                    }
-                    putJsonObject("max_results") {
-                        put("type", "integer")
-                        put("description", "Maximum number of search results to return (default 6).")
-                    }
+                    put("query", strProp("Search query."))
+                    put("max_results", intProp("Max results (default 6)."))
                 }
-                putJsonArray("required") {
-                    add(JsonPrimitive("query"))
-                }
+                putJsonArray("required") { add(JsonPrimitive("query")) }
             }
         ),
         WorkspaceHarness.ToolDefinition(
             name = "web_fetch",
-            description = "Fetch the contents of any HTTP/HTTPS URL and extract clean readable Markdown/text or JSON.",
+            description = "Fetch an HTTP/HTTPS URL as clean Markdown/text or JSON.",
             requiresWritePermission = false,
             requiresWorkspaceFolder = false,
             parametersSchema = buildJsonObject {
                 put("type", "object")
                 putJsonObject("properties") {
-                    putJsonObject("url") {
-                        put("type", "string")
-                        put("description", "Full http:// or https:// URL to fetch.")
-                    }
-                    putJsonObject("max_chars") {
-                        put("type", "integer")
-                        put("description", "Maximum characters to return (default 24000).")
-                    }
+                    put("url", strProp("Full http(s) URL."))
+                    put("max_chars", intProp("Max chars (default 24000)."))
                 }
-                putJsonArray("required") {
-                    add(JsonPrimitive("url"))
-                }
+                putJsonArray("required") { add(JsonPrimitive("url")) }
             }
         ),
         WorkspaceHarness.ToolDefinition(
             name = "calc_eval",
-            description = "Deterministically evaluate a mathematical or scientific expression (supports +, -, *, /, %, ^, parentheses, sqrt, sin, cos, tan, ln, log, abs, round, pi, e).",
+            description = "Evaluate a math/scientific expression (+, -, *, /, %, ^, sqrt, trig, ln, log, pi, e).",
             requiresWritePermission = false,
             requiresWorkspaceFolder = false,
             parametersSchema = buildJsonObject {
                 put("type", "object")
                 putJsonObject("properties") {
-                    putJsonObject("expression") {
-                        put("type", "string")
-                        put("description", "Mathematical expression to evaluate, e.g. '(1450 * 1.08^5) / sqrt(16)'.")
-                    }
+                    put("expression", strProp("Math expression."))
                 }
-                putJsonArray("required") {
-                    add(JsonPrimitive("expression"))
-                }
+                putJsonArray("required") { add(JsonPrimitive("expression")) }
             }
         ),
         WorkspaceHarness.ToolDefinition(
             name = "dice_roll",
-            description = "Roll unbiased random dice using standard notation (e.g. '1d20', '2d6+3', '4d6', '1d100') for roleplay checks or story branching outcomes.",
+            description = "Roll unbiased dice (e.g. '1d20', '2d6+3', '1d100').",
             requiresWritePermission = false,
             requiresWorkspaceFolder = false,
             parametersSchema = buildJsonObject {
                 put("type", "object")
                 putJsonObject("properties") {
-                    putJsonObject("expression") {
-                        put("type", "string")
-                        put("description", "Dice notation such as '1d20', '2d6+3', or '1d100'.")
-                    }
-                    putJsonObject("reason") {
-                        put("type", "string")
-                        put("description", "Optional label or reason for the roll.")
-                    }
+                    put("expression", strProp("Dice notation."))
+                    put("reason", strProp("Optional roll label."))
                 }
-                putJsonArray("required") {
-                    add(JsonPrimitive("expression"))
-                }
+                putJsonArray("required") { add(JsonPrimitive("expression")) }
             }
         ),
         WorkspaceHarness.ToolDefinition(
             name = "todo_write",
-            description = "Create or update this chat session's structured task checklist for multi-step or long-horizon goals (stored in the open chat session, never in project files). Always keep one current step 'in_progress' and mark steps 'completed' as you verify them.",
+            description = "Update chat task checklist (never project files). Keep active step 'in_progress'; mark 'completed' once verified.",
             requiresWritePermission = false,
             requiresWorkspaceFolder = false,
             parametersSchema = buildJsonObject {
                 put("type", "object")
                 putJsonObject("properties") {
-                    putJsonObject("goal") {
-                        put("type", "string")
-                        put("description", "Overarching goal objective and definition of done.")
-                    }
+                    put("goal", strProp("Goal objective and definition of done."))
                     putJsonObject("todos") {
                         put("type", "array")
-                        put("description", "Ordered list of verifiable task steps.")
+                        put("description", "Ordered task steps.")
                         putJsonObject("items") {
                             put("type", "object")
                             putJsonObject("properties") {
-                                putJsonObject("id") {
-                                    put("type", "string")
-                                    put("description", "Step ID such as '1', '2', '3'.")
-                                }
-                                putJsonObject("content") {
-                                    put("type", "string")
-                                    put("description", "Specific actionable step and verification check.")
-                                }
-                                putJsonObject("status") {
-                                    put("type", "string")
-                                    put("description", "'pending', 'in_progress', 'completed', or 'cancelled'.")
-                                }
+                                put("id", strProp("Step ID (e.g. '1')."))
+                                put("content", strProp("Actionable step and check."))
+                                put("status", strProp("'pending', 'in_progress', 'completed', or 'cancelled'."))
                             }
                             putJsonArray("required") {
                                 add(JsonPrimitive("id"))
@@ -365,14 +271,12 @@ internal object WorkspaceToolCatalog {
                         }
                     }
                 }
-                putJsonArray("required") {
-                    add(JsonPrimitive("todos"))
-                }
+                putJsonArray("required") { add(JsonPrimitive("todos")) }
             }
         ),
         WorkspaceHarness.ToolDefinition(
             name = ComputerUse.TOOL_NAME,
-            description = "See and control this device. The user approves every action. Start with action 'screenshot'; each other action returns a new screenshot. Coordinates are pixels in the latest screenshot.",
+            description = "Control this device (each action requires approval). Start with 'screenshot'; coordinates match latest screenshot.",
             requiresWritePermission = false,
             requiresWorkspaceFolder = false,
             parametersSchema = buildJsonObject {
@@ -380,64 +284,58 @@ internal object WorkspaceToolCatalog {
                 putJsonObject("properties") {
                     putJsonObject("action") {
                         put("type", "string")
-                        putJsonArray("enum") { listOf("screenshot", "click", "double_click", "right_click", "move", "type", "key", "scroll").forEach { add(JsonPrimitive(it)) } }
+                        putJsonArray("enum") {
+                            listOf("screenshot", "click", "double_click", "right_click", "move", "type", "key", "scroll")
+                                .forEach { add(JsonPrimitive(it)) }
+                        }
                     }
                     putJsonObject("x") { put("type", "integer") }
                     putJsonObject("y") { put("type", "integer") }
-                    putJsonObject("text") { put("type", "string"); put("description", "Text to enter, for 'type'.") }
-                    putJsonObject("keys") { put("type", "string"); put("description", "For 'key', such as ctrl+c or enter. On Android: enter, back, home, recents or notifications.") }
-                    putJsonObject("amount") { put("type", "integer"); put("description", "For 'scroll': positive scrolls down, negative up.") }
+                    put("text", strProp("Text for 'type'."))
+                    put("keys", strProp("Key chord (e.g. ctrl+c, enter; Android: back, home, recents, notifications)."))
+                    put("amount", intProp("Scroll delta (+ down, - up)."))
                 }
                 putJsonArray("required") { add(JsonPrimitive("action")) }
             }
         ),
         WorkspaceHarness.ToolDefinition(
             name = "agent_delegate",
-            description = "Hand a self-contained task to a helper with its own separate context, such as searching a large codebase. It can read and search but cannot change anything, and it returns only its findings, which keeps this conversation short. Give it everything it needs in the task, because it cannot see this conversation.",
+            description = "Delegate a self-contained read/search task to an isolated helper that returns only findings.",
             requiresWritePermission = false,
             requiresWorkspaceFolder = false,
             parametersSchema = buildJsonObject {
                 put("type", "object")
                 putJsonObject("properties") {
-                    putJsonObject("task") {
-                        put("type", "string")
-                        put("description", "What the helper should find out, written so it makes sense on its own.")
-                    }
+                    put("task", strProp("Self-contained read/search task."))
                 }
                 putJsonArray("required") { add(JsonPrimitive("task")) }
             }
         ),
         WorkspaceHarness.ToolDefinition(
             name = "skill_load",
-            description = "Load the full instructions of a skill listed under Available skills. Use it when a skill's description fits the task.",
+            description = "Load full instructions of a skill listed under Available skills.",
             requiresWritePermission = false,
             parametersSchema = buildJsonObject {
                 put("type", "object")
                 putJsonObject("properties") {
-                    putJsonObject("name") {
-                        put("type", "string")
-                        put("description", "The skill's name, exactly as listed.")
-                    }
+                    put("name", strProp("Exact skill name."))
                 }
                 putJsonArray("required") { add(JsonPrimitive("name")) }
             }
         ),
         WorkspaceHarness.ToolDefinition(
             name = "ask_user",
-            description = "Pause and ask the user a question only they can answer, such as a decision between real options or missing information. Do not use it for confirmation of work you can check yourself.",
+            description = "Pause to ask the user a genuine decision or missing input (never for routine confirmation).",
             requiresWritePermission = false,
             requiresWorkspaceFolder = false,
             parametersSchema = buildJsonObject {
                 put("type", "object")
                 putJsonObject("properties") {
-                    putJsonObject("question") {
-                        put("type", "string")
-                        put("description", "The question, written so it makes sense on its own.")
-                    }
+                    put("question", strProp("Self-contained question."))
                     putJsonObject("options") {
                         put("type", "array")
                         putJsonObject("items") { put("type", "string") }
-                        put("description", "Optional short answers to offer. The user can always type their own.")
+                        put("description", "Optional short choices.")
                     }
                 }
                 putJsonArray("required") { add(JsonPrimitive("question")) }
@@ -445,68 +343,44 @@ internal object WorkspaceToolCatalog {
         ),
         WorkspaceHarness.ToolDefinition(
             name = "goal_complete",
-            description = "Signal that all steps and acceptance criteria of the active goal have been verified and completed.",
+            description = "Mark the active goal complete once all acceptance criteria are verified.",
             requiresWritePermission = false,
             requiresWorkspaceFolder = false,
             parametersSchema = buildJsonObject {
                 put("type", "object")
                 putJsonObject("properties") {
-                    putJsonObject("summary") {
-                        put("type", "string")
-                        put("description", "Concise summary of all completed work.")
-                    }
-                    putJsonObject("verification") {
-                        put("type", "string")
-                        put("description", "Verification checks performed to confirm the goal is 100% done.")
-                    }
+                    put("summary", strProp("Concise summary of completed work."))
+                    put("verification", strProp("Checks run to verify completion."))
                 }
-                putJsonArray("required") {
-                    add(JsonPrimitive("summary"))
-                }
+                putJsonArray("required") { add(JsonPrimitive("summary")) }
             }
         ),
         WorkspaceHarness.ToolDefinition(
             name = "agent_memory",
-            description = "Read or update Parchment's persistent global agent memory (memory/AGENT.md) across sessions when needed or requested by the user.",
+            description = "Read or update global memory/AGENT.md across sessions when needed or requested.",
             requiresWritePermission = false,
             requiresWorkspaceFolder = false,
             parametersSchema = buildJsonObject {
                 put("type", "object")
                 putJsonObject("properties") {
-                    putJsonObject("action") {
-                        put("type", "string")
-                        put("description", "'read', 'append', or 'overwrite'.")
-                    }
-                    putJsonObject("content") {
-                        put("type", "string")
-                        put("description", "Memory notes to append or overwrite when action is 'append' or 'overwrite'.")
-                    }
+                    put("action", strProp("'read', 'append', or 'overwrite'."))
+                    put("content", strProp("Notes for 'append' or 'overwrite'."))
                 }
-                putJsonArray("required") {
-                    add(JsonPrimitive("action"))
-                }
+                putJsonArray("required") { add(JsonPrimitive("action")) }
             }
         ),
         WorkspaceHarness.ToolDefinition(
             name = "shell_exec",
-            description = "Execute a shell command inside the mounted workspace directory and return stdout/stderr.",
+            description = "Run a shell command in workspace and return stdout/stderr.",
             requiresWritePermission = true,
             requiresShellPermission = true,
             parametersSchema = buildJsonObject {
                 put("type", "object")
                 putJsonObject("properties") {
-                    putJsonObject("command") {
-                        put("type", "string")
-                        put("description", "Shell command to run in the workspace directory.")
-                    }
-                    putJsonObject("timeout_seconds") {
-                        put("type", "integer")
-                        put("description", "Timeout in seconds (default 30).")
-                    }
+                    put("command", strProp("Shell command to run."))
+                    put("timeout_seconds", intProp("Timeout in seconds (default 30, max 1800)."))
                 }
-                putJsonArray("required") {
-                    add(JsonPrimitive("command"))
-                }
+                putJsonArray("required") { add(JsonPrimitive("command")) }
             }
         )
     )
@@ -514,7 +388,7 @@ internal object WorkspaceToolCatalog {
     fun allTools(): List<WorkspaceHarness.ToolDefinition> = ALL_TOOLS + externalToolsProvider()
 
     fun isParallelSafeReadOnlyTool(toolName: String): Boolean = when (toolName.lowercase()) {
-        "fs_read", "fs_list", "fs_glob", "fs_search",
+        "fs_read", "fs_list", "fs_glob", "fs_search", "skill_load",
         "web_search", "web_fetch", "calc_eval", "dice_roll" -> true
         else -> false
     }
@@ -554,21 +428,6 @@ internal object WorkspaceToolCatalog {
         }
     }
 
-    private inline fun mapActiveTools(
-        mode: WorkspaceMode,
-        workspacePath: String,
-        allowShell: Boolean,
-        goalModeActive: Boolean,
-        enableWebTools: Boolean,
-        includeLocalWebSearchTool: Boolean,
-        policy: AgentPermissionPolicy?,
-        crossinline encode: JsonObjectBuilder.(WorkspaceHarness.ToolDefinition) -> Unit
-    ): JsonArray = buildJsonArray {
-        for (tool in activeToolsForMode(mode, workspacePath, allowShell, goalModeActive, enableWebTools, includeLocalWebSearchTool, policy)) {
-            add(buildJsonObject { encode(tool) })
-        }
-    }
-
     fun buildFlatFunctionTools(
         mode: WorkspaceMode,
         workspacePath: String,
@@ -577,12 +436,10 @@ internal object WorkspaceToolCatalog {
         enableWebTools: Boolean = false,
         includeLocalWebSearchTool: Boolean = enableWebTools,
         policy: AgentPermissionPolicy? = null
-    ): JsonArray = mapActiveTools(mode, workspacePath, allowShell, goalModeActive, enableWebTools, includeLocalWebSearchTool, policy) { tool ->
-        put("type", "function")
-        put("name", tool.name)
-        put("description", tool.description)
-        put("parameters", tool.parametersSchema)
-    }
+    ): JsonArray = JsonArray(
+        activeToolsForMode(mode, workspacePath, allowShell, goalModeActive, enableWebTools, includeLocalWebSearchTool, policy)
+            .map { it.flatFunctionJson }
+    )
 
     fun buildOpenAiChatCompletionsTools(
         mode: WorkspaceMode,
@@ -592,14 +449,10 @@ internal object WorkspaceToolCatalog {
         enableWebTools: Boolean = false,
         includeLocalWebSearchTool: Boolean = enableWebTools,
         policy: AgentPermissionPolicy? = null
-    ): JsonArray = mapActiveTools(mode, workspacePath, allowShell, goalModeActive, enableWebTools, includeLocalWebSearchTool, policy) { tool ->
-        put("type", "function")
-        putJsonObject("function") {
-            put("name", tool.name)
-            put("description", tool.description)
-            put("parameters", tool.parametersSchema)
-        }
-    }
+    ): JsonArray = JsonArray(
+        activeToolsForMode(mode, workspacePath, allowShell, goalModeActive, enableWebTools, includeLocalWebSearchTool, policy)
+            .map { it.openAiChatJson }
+    )
 
     fun buildAnthropicTools(
         mode: WorkspaceMode,
@@ -609,9 +462,8 @@ internal object WorkspaceToolCatalog {
         enableWebTools: Boolean = false,
         includeLocalWebSearchTool: Boolean = enableWebTools,
         policy: AgentPermissionPolicy? = null
-    ): JsonArray = mapActiveTools(mode, workspacePath, allowShell, goalModeActive, enableWebTools, includeLocalWebSearchTool, policy) { tool ->
-        put("name", tool.name)
-        put("description", tool.description)
-        put("input_schema", tool.parametersSchema)
-    }
+    ): JsonArray = JsonArray(
+        activeToolsForMode(mode, workspacePath, allowShell, goalModeActive, enableWebTools, includeLocalWebSearchTool, policy)
+            .map { it.anthropicJson }
+    )
 }

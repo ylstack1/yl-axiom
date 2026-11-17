@@ -163,6 +163,44 @@ internal object WorkspaceFuzzyEditEngine {
             }
         }
 
-        error("old_text was not found in '$relativePath' (${fileLines.size} lines). Use fs_read to inspect the exact lines before editing.")
+        val hint = findClosestNearMissHint(fileLines, oldLines)
+        error("old_text was not found in '$relativePath' (${fileLines.size} lines).${if (hint.isNotEmpty()) "\n$hint" else " Use fs_read to inspect the exact lines before editing."}")
+    }
+
+    private fun findClosestNearMissHint(fileLines: List<String>, oldLines: List<String>): String {
+        if (fileLines.isEmpty() || oldLines.isEmpty()) return ""
+        val needles = oldLines.map { it.trim() }.filter { it.length >= 4 }.take(12)
+        if (needles.isEmpty()) return ""
+        val needleSet = needles.toSet()
+        val windowSize = oldLines.size.coerceIn(1, fileLines.size)
+        val firstAnchor = needles.first()
+        var bestStart = -1
+        var bestScore = 0
+        val fileTrimmed = fileLines.map { it.trim() }
+        val maxStart = (fileLines.size - windowSize).coerceAtLeast(0)
+        for (start in 0..maxStart) {
+            var score = 0
+            val endExclusive = (start + windowSize).coerceAtMost(fileTrimmed.size)
+            if (fileTrimmed[start] == firstAnchor) score += 3
+            else if (firstAnchor.length >= 8 && fileTrimmed[start].contains(firstAnchor, ignoreCase = true)) score += 2
+            for (idx in start until endExclusive) {
+                val line = fileTrimmed[idx]
+                if (line.length >= 4 && line in needleSet) score += 2
+            }
+            if (score > bestScore) {
+                bestScore = score
+                bestStart = start
+            }
+        }
+        val minRequiredScore = if (needles.size == 1) 2 else 3
+        if (bestStart < 0 || bestScore < minRequiredScore) return ""
+        val previewFrom = (bestStart - 1).coerceAtLeast(0)
+        val previewToExclusive = (bestStart + windowSize.coerceAtMost(8) + 1).coerceAtMost(fileLines.size)
+        return buildString {
+            appendLine("Closest match at lines ${previewFrom + 1}..$previewToExclusive:")
+            for (idx in previewFrom until previewToExclusive) {
+                appendLine("${idx + 1}: ${fileLines[idx].take(200)}")
+            }
+        }.trimEnd()
     }
 }

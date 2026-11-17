@@ -293,15 +293,12 @@ internal suspend fun AiProviderEngine.executeWorkspaceToolBatchWithLiveProgress(
     val onStepToolCall: suspend (ToolCallRecord) -> Unit = { rec ->
         onToolCall(if (rec.id == firstCallId) rec.copy(startsToolStep = true) else rec)
     }
-    val canRunBatchInParallel = calls.size > 1 && calls.all { (_, fnName, _) ->
-        WorkspaceHarness.isParallelSafeReadOnlyTool(fnName)
-    }
     // Helpers only read (subagentPolicy), so several asked for in one step can work side by side.
     val canRunHelpersInParallel = calls.size > 1 && calls.all { (_, fnName, _) -> fnName == "agent_delegate" }
     val activity = currentCoroutineContext()[RunActivityContext]?.activity
-    val batch = activity?.beginTools(if (canRunBatchInParallel || canRunHelpersInParallel) calls.size else 1)
-    try {
-        if (canRunHelpersInParallel) {
+    if (canRunHelpersInParallel) {
+        val batch = activity?.beginTools(calls.size)
+        try {
             onStatus(Strings.runningHelpersInParallel(calls.size))
             val rawCompleted = runConcurrentlyRelayingToFlow(calls.size) { idx ->
                 val (callId, fnName, argsJson) = calls[idx]
@@ -329,98 +326,125 @@ internal suspend fun AiProviderEngine.executeWorkspaceToolBatchWithLiveProgress(
                 onStepToolCall(rec)
                 rec
             }
+        } finally {
+            batch?.close()
         }
-        if (!canRunBatchInParallel) {
-            val results = mutableListOf<ToolCallRecord>()
-            for ((idx, triple) in calls.withIndex()) {
+    }
+
+    suspend fun runParallelReadSegment(segment: List<IndexedValue<Triple<String, String, String>>>): List<ToolCallRecord> {
+        val segBatch = activity?.beginTools(segment.size)
+        try {
+            val summaryNames = segment.map { it.value.second }.distinct().joinToString(", ")
+            onStatus(Strings.executingReadSearchToolsInParallel(segment.size, summaryNames))
+            for ((globalIdx, triple) in segment) {
                 val (callId, fnName, argsJson) = triple
-                val signedRec = executeWorkspaceToolWithLiveProgress(
-                    workspaceRoot = workspaceRoot,
-                    mode = mode,
-                    allowShell = allowShell,
-                    accessScope = accessScope,
-                    callId = callId,
-                    toolName = fnName,
-                    argumentsJson = argsJson,
-                    thoughtSignature = if (idx == 0) firstThoughtSignature else "",
-                    precedingThinking = if (idx == 0) firstPrecedingThinking else "",
-                    onStatus = onStatus,
-                    onToolCall = onStepToolCall,
-                    activityContext = activity?.let { RunActivityContext(it, requireNotNull(batch).branches.single()) }
+                onStepToolCall(
+                    ToolCallRecord(
+                        id = callId,
+                        name = fnName,
+                        argumentsJson = argsJson,
+                        resultText = "Running $fnName in parallel…",
+                        isRunning = true,
+                        thoughtSignature = if (globalIdx == 0) firstThoughtSignature else "",
+                        precedingThinking = if (globalIdx == 0) firstPrecedingThinking else ""
+                    )
                 )
-                val rec = circuitBreaker.onToolExecuted(signedRec)
+            }
+            val chatSessionId = currentCoroutineContext()[AgentToolRunContext]?.broker?.chatId.orEmpty()
+            val rawCompleted = kotlinx.coroutines.coroutineScope {
+                segment.mapIndexed { segIdx, (globalIdx, triple) ->
+                    val (callId, fnName, argsJson) = triple
+                    val work = activity?.let { RunActivityContext(it, requireNotNull(segBatch).branches[segIdx]) }
+                    async(Dispatchers.IO + (work ?: EmptyCoroutineContext)) {
+                        try {
+                            val authorization = authorizeWorkspaceTool(accessScope, callId, fnName, argsJson)
+                            currentCoroutineContext().ensureActive()
+                            val workerJob = currentCoroutineContext()[kotlinx.coroutines.Job]!!
+                            val startedAt = activity?.elapsedMs ?: 0L
+                            val raw = if (authorization is ToolAuthorization.Denied) ToolCallRecord(
+                                id = callId, name = fnName, argumentsJson = argsJson,
+                                resultText = "Error: ${authorization.reason}", isError = true
+                            ) else WorkspaceHarness.executeToolCall(
+                                workspaceRoot = workspaceRoot,
+                                mode = mode,
+                                allowShell = allowShell,
+                                callId = callId,
+                                toolName = fnName,
+                                argumentsJson = argsJson,
+                                accessScope = (authorization as ToolAuthorization.Allowed).permit.scope,
+                                permit = authorization.permit,
+                                sessionId = chatSessionId,
+                                isCancelled = { !workerJob.isActive || authorization.permit.isRevoked() }
+                            )
+                            raw.copy(
+                                isRunning = false,
+                                durationMs = if (authorization is ToolAuthorization.Allowed && activity != null)
+                                    (activity.elapsedMs - startedAt).coerceAtLeast(1L) else raw.durationMs,
+                                thoughtSignature = if (globalIdx == 0) firstThoughtSignature.ifBlank { raw.thoughtSignature } else raw.thoughtSignature,
+                                precedingThinking = if (globalIdx == 0) firstPrecedingThinking.ifBlank { raw.precedingThinking } else raw.precedingThinking
+                            )
+                        } finally { work?.let { it.activity.completeBranch(it.branch) } }
+                    }
+                }.map { it.await() }
+            }
+            val finalResults = ArrayList<ToolCallRecord>(rawCompleted.size)
+            for (rawRec in rawCompleted) {
+                val rec = circuitBreaker.onToolExecuted(rawRec)
                 circuitBreaker.goalState?.let { onGoalProgress(it) }
                 onStepToolCall(rec)
-                results.add(rec)
+                finalResults.add(rec)
             }
-            return results
+            return finalResults
+        } finally {
+            segBatch?.close()
         }
+    }
 
-        // Read-only tools run in parallel: show a running card for each at once, run them on Dispatchers.IO,
-        // and report the results in a fixed order.
-        val summaryNames = calls.map { it.second }.distinct().joinToString(", ")
-        onStatus(Strings.executingReadSearchToolsInParallel(calls.size, summaryNames))
-        for ((idx, triple) in calls.withIndex()) {
-            val (callId, fnName, argsJson) = triple
-            onStepToolCall(
-                ToolCallRecord(
-                    id = callId,
-                    name = fnName,
-                    argumentsJson = argsJson,
-                    resultText = "Running $fnName in parallel…",
-                    isRunning = true,
-                    thoughtSignature = if (idx == 0) firstThoughtSignature else "",
-                    precedingThinking = if (idx == 0) firstPrecedingThinking else ""
-                )
+    // Partition into contiguous parallel-safe read-only sub-runs vs sequential calls so e.g. [todo_write, fs_read x3]
+    // still executes the 3 reads concurrently while preserving exact causal order around writes and shell steps.
+    val results = ArrayList<ToolCallRecord>(calls.size)
+    var cursor = 0
+    while (cursor < calls.size) {
+        val (_, fnName, _) = calls[cursor]
+        if (WorkspaceHarness.isParallelSafeReadOnlyTool(fnName)) {
+            var end = cursor + 1
+            while (end < calls.size && WorkspaceHarness.isParallelSafeReadOnlyTool(calls[end].second)) {
+                end++
+            }
+            if (end - cursor >= 2) {
+                val segment = (cursor until end).map { idx -> IndexedValue(idx, calls[idx]) }
+                results.addAll(runParallelReadSegment(segment))
+                cursor = end
+                continue
+            }
+        }
+        val (callId, seqName, argsJson) = calls[cursor]
+        val seqBatch = activity?.beginTools(1)
+        try {
+            val signedRec = executeWorkspaceToolWithLiveProgress(
+                workspaceRoot = workspaceRoot,
+                mode = mode,
+                allowShell = allowShell,
+                accessScope = accessScope,
+                callId = callId,
+                toolName = seqName,
+                argumentsJson = argsJson,
+                thoughtSignature = if (cursor == 0) firstThoughtSignature else "",
+                precedingThinking = if (cursor == 0) firstPrecedingThinking else "",
+                onStatus = onStatus,
+                onToolCall = onStepToolCall,
+                activityContext = activity?.let { RunActivityContext(it, requireNotNull(seqBatch).branches.single()) }
             )
-        }
-
-        val chatSessionId = currentCoroutineContext()[AgentToolRunContext]?.broker?.chatId.orEmpty()
-        val rawCompleted = kotlinx.coroutines.coroutineScope {
-            calls.mapIndexed { idx, (callId, fnName, argsJson) ->
-                val work = activity?.let { RunActivityContext(it, requireNotNull(batch).branches[idx]) }
-                async(Dispatchers.IO + (work ?: EmptyCoroutineContext)) {
-                    try {
-                        val authorization = authorizeWorkspaceTool(accessScope, callId, fnName, argsJson)
-                        currentCoroutineContext().ensureActive()
-                        val workerJob = currentCoroutineContext()[kotlinx.coroutines.Job]!!
-                        val startedAt = activity?.elapsedMs ?: 0L
-                        val raw = if (authorization is ToolAuthorization.Denied) ToolCallRecord(
-                            id = callId, name = fnName, argumentsJson = argsJson,
-                            resultText = "Error: ${authorization.reason}", isError = true
-                        ) else WorkspaceHarness.executeToolCall(
-                            workspaceRoot = workspaceRoot,
-                            mode = mode,
-                            allowShell = allowShell,
-                            callId = callId,
-                            toolName = fnName,
-                            argumentsJson = argsJson,
-                            accessScope = (authorization as ToolAuthorization.Allowed).permit.scope,
-                            permit = authorization.permit,
-                            sessionId = chatSessionId,
-                            isCancelled = { !workerJob.isActive || authorization.permit.isRevoked() }
-                        )
-                        raw.copy(
-                            isRunning = false,
-                            durationMs = if (authorization is ToolAuthorization.Allowed && activity != null)
-                                (activity.elapsedMs - startedAt).coerceAtLeast(1L) else raw.durationMs,
-                            thoughtSignature = if (idx == 0) firstThoughtSignature.ifBlank { raw.thoughtSignature } else raw.thoughtSignature,
-                            precedingThinking = if (idx == 0) firstPrecedingThinking.ifBlank { raw.precedingThinking } else raw.precedingThinking
-                        )
-                    } finally { work?.let { it.activity.completeBranch(it.branch) } }
-                }
-            }.map { it.await() }
-        }
-
-        val finalResults = mutableListOf<ToolCallRecord>()
-        for (rawRec in rawCompleted) {
-            val rec = circuitBreaker.onToolExecuted(rawRec)
+            val rec = circuitBreaker.onToolExecuted(signedRec)
             circuitBreaker.goalState?.let { onGoalProgress(it) }
             onStepToolCall(rec)
-            finalResults.add(rec)
+            results.add(rec)
+        } finally {
+            seqBatch?.close()
         }
-        return finalResults
-    } finally { batch?.close() }
+        cursor++
+    }
+    return results
 }
 
 internal fun AiProviderEngine.groupToolCallsIntoStepBatches(

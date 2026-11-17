@@ -83,6 +83,16 @@ class ShardTestsTest(unittest.TestCase):
     def test_gradle_test_args_formats_flags(self):
         self.assertEqual(["--tests", "a.B", "--tests", "c.D"], gradle_test_args(["a.B", "c.D"]))
 
+    def test_heaviest_http_suites_spread_across_two_shards(self):
+        shards = assign_shards(discover_test_classes(REPO), 2)
+        first, second = set(shards[0]), set(shards[1])
+        self.assertNotEqual(
+            "io.parchment.ai.network.AgentPermissionHttpTest" in first,
+            "io.parchment.ai.network.StreamRecoveryHttpTest" in first,
+            "heaviest HTTP suites should land in opposite shards",
+        )
+        self.assertEqual(0, len(first & second))
+
 
 if __name__ == "__main__":
     unittest.main()

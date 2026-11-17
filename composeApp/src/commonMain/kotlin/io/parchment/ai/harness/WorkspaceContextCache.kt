@@ -61,6 +61,19 @@ internal object WorkspaceContextCache {
         return field("name") to field("description")
     }
 
+    /** Strips the `File: ... (Lines ...)` header and `N: ` line-number prefixes produced by `workspaceRead`. */
+    internal fun stripReadNumbering(numbered: String): String {
+        if (!numbered.startsWith("File: ")) return numbered
+        return numbered.lineSequence().drop(1).joinToString("\n") { line ->
+            val colonIdx = line.indexOf(": ")
+            if (colonIdx > 0 && line.substring(0, colonIdx).all { it.isDigit() }) {
+                line.substring(colonIdx + 2)
+            } else {
+                line
+            }
+        }
+    }
+
     private fun scanSkills(root: String): List<WorkspaceHarness.WorkspaceSkill> {
         val found = linkedMapOf<String, WorkspaceHarness.WorkspaceSkill>()
         for (folder in SKILL_FOLDERS) {
@@ -68,8 +81,7 @@ internal object WorkspaceContextCache {
             for (entry in entries.lines().map { it.trim() }.filter { it.endsWith("/") }.sorted()) {
                 val path = "${entry}SKILL.md"
                 val numbered = PlatformWorkspace.workspaceRead(root, path, startLine = 1, maxLines = 40).getOrNull() ?: continue
-                // The reader adds a header line and line numbers for the model.
-                val text = numbered.lines().drop(1).joinToString("\n") { it.substringAfter(": ", "") }
+                val text = stripReadNumbering(numbered)
                 val (declared, description) = parseSkillHeader(text) ?: continue
                 val name = declared.ifBlank { entry.trimEnd('/').substringAfterLast('/') }
                 if (description.isNotBlank() && SKILL_NAME.matches(name) && name !in found && found.size < SKILL_MAX_COUNT) {
@@ -99,7 +111,8 @@ internal object WorkspaceContextCache {
         val foundNames = mutableListOf<String>()
         val sb = StringBuilder()
         for (fileName in candidates) {
-            PlatformWorkspace.workspaceRead(cleanRoot, fileName, startLine = 1, maxLines = 10_000).onSuccess { content ->
+            PlatformWorkspace.workspaceRead(cleanRoot, fileName, startLine = 1, maxLines = 10_000).onSuccess { numbered ->
+                val content = stripReadNumbering(numbered).trim()
                 if (content.isNotBlank()) {
                     foundNames.add(fileName)
                     sb.appendLine("#### Auto-Loaded Workspace File: `$fileName`")

@@ -34,6 +34,12 @@ internal class BoundedImageCache(
         }
     }
 
+    fun clear() = synchronized(entries) {
+        entries.clear()
+        aliasToCanonical.clear()
+        totalBytes = 0L
+    }
+
     fun getOrLoad(
         filePath: String,
         resolveFile: (String) -> File?,

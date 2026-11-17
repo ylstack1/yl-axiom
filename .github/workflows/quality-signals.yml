@@ -1,7 +1,7 @@
 name: Quality signals
 
-# For pull requests: test coverage (Kover), the rendered UI gallery (uploaded so a reviewer can compare the
-# screens with the previous run's) and a check that the release SBOM lists the app's libraries.
+# For pull requests: test coverage (Kover), the rendered UI gallery (uploaded in parallel without Kover
+# instrumentation overhead) and a check that the release SBOM lists the app's libraries.
 # Runs on GitHub's machines; nothing here gates a release.
 on:
   pull_request:
@@ -30,6 +30,7 @@ jobs:
     timeout-minutes: 5
     outputs:
       coverage: ${{ steps.filter.outputs.coverage }}
+      gallery: ${{ steps.filter.outputs.gallery }}
       sbom: ${{ steps.filter.outputs.sbom }}
     steps:
       - name: Checkout Repository
@@ -46,12 +47,12 @@ jobs:
           BASE_SHA: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || '' }}
         run: python3 .github/scripts/ci_changes.py quality-signals
 
-  coverage-and-gallery:
-    name: Coverage and UI gallery
+  coverage:
+    name: Test coverage
     needs: changes
     if: needs.changes.outputs.coverage == 'true'
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    timeout-minutes: 20
     steps:
       - name: Checkout Repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -68,17 +69,15 @@ jobs:
 
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@8da46b539cd8fe6ab27ca75128919a18d757604c # v6.4.1
-        with:
-          cache-read-only: false
 
-      # Runs every desktop test once, instrumented, with the gallery rendering turned on.
+      # Runs desktop unit tests with Kover instrumentation while leaving PNG gallery rendering to the parallel job.
       - name: Tests with Coverage
         run: |
           chmod +x ./gradlew
           python3 .github/scripts/run_gradle.py -- --init-script .github/scripts/kover.init.gradle.kts \
             :composeApp:koverXmlReport :composeApp:koverHtmlReport :composeApp:koverLog \
-            -Dorg.gradle.jvmargs="-Xmx4g -XX:+UseParallelGC -XX:MaxMetaspaceSize=1g -Dfile.encoding=UTF-8" \
-            -Pparchment.gallery=true --no-daemon --no-configuration-cache --max-workers=4 \
+            -Dorg.gradle.jvmargs="-Xmx5g -XX:+UseParallelGC -XX:MaxMetaspaceSize=1g -Dfile.encoding=UTF-8" \
+            --no-daemon --no-configuration-cache --max-workers=4 \
             -Pkotlin.compiler.execution.strategy=in-process
 
       - name: Upload Coverage Report
@@ -90,20 +89,10 @@ jobs:
           retention-days: 14
           if-no-files-found: warn
 
-      - name: Upload UI Gallery
-        if: ${{ !cancelled() }}
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
-        with:
-          name: ui-gallery
-          path: .parchment-local/verification/gallery/*.png
-          compression-level: 0
-          retention-days: 14
-          if-no-files-found: warn
-
-  sbom:
-    name: SBOM Verification
+  ui-gallery:
+    name: UI gallery
     needs: changes
-    if: needs.changes.outputs.sbom == 'true'
+    if: needs.changes.outputs.gallery == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -120,32 +109,65 @@ jobs:
           distribution: "temurin"
           java-version: "25"
 
-      - name: Cache Android SDK Packages
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@8da46b539cd8fe6ab27ca75128919a18d757604c # v6.4.1
+
+      - name: Render UI Gallery
+        run: |
+          chmod +x ./gradlew
+          python3 .github/scripts/run_gradle.py -- :composeApp:desktopTest \
+            --tests io.parchment.ai.ui.UiGalleryTest \
+            -Pparchment.gallery=true \
+            -Dorg.gradle.jvmargs="-Xmx5g -XX:+UseParallelGC -XX:MaxMetaspaceSize=1g -Dfile.encoding=UTF-8" \
+            --no-daemon --no-configuration-cache --max-workers=4 \
+            -Pkotlin.compiler.execution.strategy=in-process
+
+      - name: Upload UI Gallery
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: ui-gallery
+          path: .parchment-local/verification/gallery/*.png
+          compression-level: 0
+          retention-days: 14
+          if-no-files-found: warn
+
+  sbom:
+    name: SBOM Verification
+    needs: changes
+    if: needs.changes.outputs.sbom == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 1
+          fetch-tags: false
+
+      - name: Set up JDK 25 (Temurin)
+        uses: actions/setup-java@77dd5b2ce225ea11469928ac317850245a74ae78 # v6.2.0
+        with:
+          distribution: "temurin"
+          java-version: "25"
+
+      - name: Restore Android SDK 37 Packages
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: |
-            /usr/local/lib/android/sdk/licenses
             /usr/local/lib/android/sdk/platforms/android-37*
-            /usr/local/lib/android/sdk/build-tools/35*
-            /usr/local/lib/android/sdk/build-tools/36*
             /usr/local/lib/android/sdk/build-tools/37*
-          key: android-sdk-${{ runner.os }}-${{ hashFiles('gradle/libs.versions.toml') }}
+          key: android-sdk-37-${{ runner.os }}-${{ hashFiles('gradle/libs.versions.toml') }}
 
-      - name: Accept Android SDK Licenses
+      - name: Write Android SDK License Hashes
         run: |
-          if [ ! -f "$ANDROID_HOME/licenses/.parchment-accepted" ]; then
-            SDKMGR=$(find "$ANDROID_HOME/cmdline-tools" -name sdkmanager | head -n 1)
-            if [ -n "$SDKMGR" ]; then
-              yes | "$SDKMGR" --licenses > /dev/null || true
-              mkdir -p "$ANDROID_HOME/licenses"
-              touch "$ANDROID_HOME/licenses/.parchment-accepted"
-            fi
-          fi
+          mkdir -p "$ANDROID_HOME/licenses"
+          printf "\n8933bad161af4178b1185d1a37fbf41ea5269c55\nd56f5187479451eabf01fb78af6dfcb131a6481e\n24333f8a63b6825ea9c5514f83c2829b004d1fee\n" > "$ANDROID_HOME/licenses/android-sdk-license"
+          printf "\n84831b9409646a918e30573bab4c9c91346d8abd\n504667f4c0de7af1a06de9f4b1727b84351f2910\n" > "$ANDROID_HOME/licenses/android-sdk-preview-license"
 
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@8da46b539cd8fe6ab27ca75128919a18d757604c # v6.4.1
-        with:
-          cache-read-only: false
 
       # The release attaches this SBOM; checking it here catches a scan that lists no libraries before a release does.
       - name: Generate and Validate SBOM

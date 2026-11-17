@@ -6,13 +6,27 @@ import java.util.concurrent.TimeUnit
 
 /** Desktop workspace shell command runner with streaming output capture and descendant cleanup. */
 internal object DesktopOwnedShell {
-    private const val MAX_TIMEOUT_SECONDS = 300
+    private const val MAX_TIMEOUT_SECONDS = 1800
     private const val POLL_INTERVAL_MS = 100L
     private const val DELTA_EMIT_INTERVAL_MS = 100L
     private const val READER_JOIN_TIMEOUT_MS = 1500L
     private const val READER_JOIN_DONE_MS = 2000L
-    private const val TIMEOUT_CAPTURE_CHARS = 4000
+    private const val TIMEOUT_CAPTURE_CHARS = 6000
     private const val EXIT_CAPTURE_CHARS = 8000
+
+    private val windowsShellExecutable: String by lazy {
+        val pathDirs = System.getenv("PATH")?.split(File.pathSeparatorChar).orEmpty()
+        val pwshOnPath = pathDirs.asSequence()
+            .filter { it.isNotBlank() }
+            .map { File(it.trim().trim('"'), "pwsh.exe") }
+            .firstOrNull { it.isFile && it.canExecute() }
+        val standardPwsh = File(System.getenv("ProgramFiles") ?: "C:\\Program Files", "PowerShell\\7\\pwsh.exe")
+        when {
+            pwshOnPath != null -> pwshOnPath.absolutePath
+            standardPwsh.isFile -> standardPwsh.absolutePath
+            else -> "powershell.exe"
+        }
+    }
 
     fun execute(
         workspaceRoot: String,
@@ -25,6 +39,7 @@ internal object DesktopOwnedShell {
         require(rootDir.exists() && rootDir.isDirectory) { "Workspace root does not exist: $workspaceRoot" }
         require(isCancelled?.invoke() != true) { "The owning run was cancelled before shell startup." }
 
+        val effectiveTimeoutSeconds = timeoutSeconds.coerceIn(1, MAX_TIMEOUT_SECONDS)
         val proc = buildProcess(rootDir, command).start()
         // Close stdin immediately so child CLI processes checking piped stdin never hang waiting for EOF.
         runCatching { proc.outputStream.close() }
@@ -33,14 +48,14 @@ internal object DesktopOwnedShell {
         val readerThread = startReaderThread(proc, capture, onOutputDelta)
 
         try {
-            val finished = awaitProcessExit(proc, timeoutSeconds, isCancelled)
+            val finished = awaitProcessExit(proc, effectiveTimeoutSeconds, isCancelled)
             if (!finished) {
                 terminateProcessTree(proc)
                 runCatching { proc.inputStream.close() }
                 runCatching { readerThread.join(READER_JOIN_TIMEOUT_MS) }
                 val partial = capture.snapshot(TIMEOUT_CAPTURE_CHARS).trim()
                 val partialSuffix = if (partial.isNotEmpty()) "\nPartial output before timeout:\n$partial" else ""
-                error("Command timed out after $timeoutSeconds seconds.$partialSuffix")
+                error("Command timed out after $effectiveTimeoutSeconds seconds.$partialSuffix")
             }
             runCatching { readerThread.join(READER_JOIN_DONE_MS) }
             val output = capture.snapshot().trim()
@@ -66,10 +81,20 @@ internal object DesktopOwnedShell {
                 "\$OutputEncoding = [System.Text.Encoding]::UTF8; " +
                 "\$ProgressPreference = 'SilentlyContinue'; $command"
             val encodedCommand = Base64.getEncoder().encodeToString(psCommandWithNoProgress.toByteArray(Charsets.UTF_16LE))
-            ProcessBuilder("powershell.exe", "-NoProfile", "-NonInteractive", "-EncodedCommand", encodedCommand)
+            ProcessBuilder(
+                windowsShellExecutable,
+                "-NoLogo",
+                "-NoProfile",
+                "-NonInteractive",
+                "-OutputFormat",
+                "Text",
+                "-EncodedCommand",
+                encodedCommand
+            )
         } else {
             ProcessBuilder("sh", "-c", command)
         }
+        builder.environment().putIfAbsent("PYTHONUNBUFFERED", "1")
         return builder.directory(rootDir).redirectErrorStream(true)
     }
 

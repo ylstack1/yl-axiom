@@ -70,6 +70,17 @@ WINDOWS_TEST_FILES = {
     "composeApp/src/desktopTest/kotlin/io/parchment/ai/CdsWarmupWatchdogTest.kt",
     "composeApp/src/desktopTest/kotlin/io/parchment/ai/WindowCaptionTest.kt",
 }
+GALLERY_UI_PREFIXES = (
+    "composeApp/src/commonMain/kotlin/io/parchment/ai/ui/",
+    "composeApp/src/commonMain/kotlin/io/parchment/ai/model/",
+    "composeApp/src/commonMain/resources/",
+    "composeApp/src/jvmShared/",
+    "composeApp/src/desktopMain/",
+)
+GALLERY_UI_FILES = {
+    "composeApp/src/desktopTest/kotlin/io/parchment/ai/ui/UiGalleryTest.kt",
+    ".github/workflows/quality-signals.yml",
+}
 SBOM_FILES = {
     "build.gradle.kts",
     "settings.gradle.kts",
@@ -227,7 +238,7 @@ def classify_installers(paths: set[str] | None, *, reuse_android_run: bool = Fal
 
 def classify_quality_signals(paths: set[str] | None) -> dict[str, str]:
     if paths is None:
-        return {"coverage": "true", "sbom": "true"}
+        return {"coverage": "true", "gallery": "true", "sbom": "true"}
     shared_gradle = any(
         _matches(
             p,
@@ -244,9 +255,11 @@ def classify_quality_signals(paths: set[str] | None) -> dict[str, str]:
         )
         for p in paths
     )
+    gallery = shared_gradle or any(_matches(p, GALLERY_UI_PREFIXES, GALLERY_UI_FILES) for p in paths)
     sbom = any(_matches(p, SHARED_BUILD_PREFIXES, SBOM_FILES) for p in paths)
     return {
         "coverage": "true" if coverage else "false",
+        "gallery": "true" if gallery else "false",
         "sbom": "true" if sbom else "false",
     }
 
@@ -255,11 +268,16 @@ def classify_codeql(paths: set[str] | None) -> dict[str, str]:
     if paths is None or ".github/workflows/codeql.yml" in paths:
         return {"has_targets": "true", "matrix": json.dumps(list(ALL_CODEQL_LANGUAGES), separators=(",", ":"))}
     selected: list[dict[str, str]] = []
+    # CodeQL compiles only production desktop and Android source sets (:composeApp:compileKotlinDesktop and
+    # :composeApp:compileAndroidMain), so pure unit-test edits under commonTest/desktopTest never enter the DB.
     has_jvm = any(
-        p.endswith((".kt", ".java", ".kts"))
-        or p.startswith("gradle/")
-        or p in {"gradle.properties", "gradlew", "gradlew.bat"}
-        or p.endswith("AndroidManifest.xml")
+        not p.startswith(DESKTOP_TEST_PREFIXES)
+        and (
+            p.endswith((".kt", ".java", ".kts"))
+            or p.startswith("gradle/")
+            or p in {"gradle.properties", "gradlew", "gradlew.bat"}
+            or p.endswith("AndroidManifest.xml")
+        )
         for p in paths
     )
     has_python = any(p.endswith(".py") for p in paths)

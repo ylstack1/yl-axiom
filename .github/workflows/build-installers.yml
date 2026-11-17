@@ -72,20 +72,27 @@ jobs:
           BASE_SHA: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event.before }}
           REUSE_ANDROID_RUN: ${{ inputs.reuse_android_run }}
         run: |
-          python3 scripts/quality.py
-          git -c core.safecrlf=false diff --check
-          python3 -I -X utf8 scripts/test_workflow_tools.py
+          set -euo pipefail
+          python3 scripts/quality.py &
+          PID_Q=$!
+          git -c core.safecrlf=false diff --check &
+          PID_D=$!
+          python3 -I -X utf8 scripts/test_workflow_tools.py &
+          PID_W=$!
           PYTHONPATH=.github/scripts python3 -m unittest \
             test_run_gradle \
             test_check_sbom \
             test_shard_tests \
-            test_ci_changes
+            test_ci_changes &
+          PID_U=$!
           python3 .github/scripts/ci_changes.py installers
           if grep -q '^signing_scripts=true$' "$GITHUB_OUTPUT"; then
-            PYTHONPATH=.github/scripts python3 .github/scripts/test_stage_android_signing.py
+            PYTHONPATH=.github/scripts python3 .github/scripts/test_stage_android_signing.py &
           else
-            PYTHONPATH=.github/scripts python3 -m unittest test_stage_android_signing -k PrivateSignerTest
+            PYTHONPATH=.github/scripts python3 -m unittest test_stage_android_signing -k PrivateSignerTest &
           fi
+          PID_S=$!
+          wait "$PID_Q" "$PID_D" "$PID_W" "$PID_U" "$PID_S"
 
   test-desktop:
     name: Desktop Tests (Shard ${{ matrix.label }})
@@ -123,8 +130,8 @@ jobs:
           chmod +x ./gradlew
           read -r -a SHARD_ARGS <<< "$(python3 .github/scripts/shard_tests.py --index "${{ matrix.shard }}" --total 2)"
           python3 .github/scripts/run_gradle.py -- :composeApp:desktopTest "${SHARD_ARGS[@]}" \
-            -Dorg.gradle.jvmargs="-Xmx4g -XX:+UseParallelGC -XX:MaxMetaspaceSize=1g -Dfile.encoding=UTF-8" \
-            --no-daemon --configuration-cache --max-workers=4 \
+            -Dorg.gradle.jvmargs="-Xmx5g -XX:+UseParallelGC -XX:MaxMetaspaceSize=1g -Dfile.encoding=UTF-8" \
+            --no-daemon --no-configuration-cache --max-workers=4 \
             -Pkotlin.compiler.execution.strategy=in-process
 
   build-android-apk:
@@ -147,27 +154,19 @@ jobs:
           distribution: "temurin"
           java-version: "25"
 
-      - name: Cache Android SDK Packages
+      - name: Cache Android SDK 37 Packages
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: |
-            /usr/local/lib/android/sdk/licenses
             /usr/local/lib/android/sdk/platforms/android-37*
-            /usr/local/lib/android/sdk/build-tools/35*
-            /usr/local/lib/android/sdk/build-tools/36*
             /usr/local/lib/android/sdk/build-tools/37*
-          key: android-sdk-${{ runner.os }}-${{ hashFiles('gradle/libs.versions.toml') }}
+          key: android-sdk-37-${{ runner.os }}-${{ hashFiles('gradle/libs.versions.toml') }}
 
-      - name: Accept Android SDK Licenses
+      - name: Write Android SDK License Hashes
         run: |
-          if [ ! -f "$ANDROID_HOME/licenses/.parchment-accepted" ]; then
-            SDKMGR=$(find "$ANDROID_HOME/cmdline-tools" -name sdkmanager | head -n 1)
-            if [ -n "$SDKMGR" ]; then
-              yes | "$SDKMGR" --licenses > /dev/null || true
-              mkdir -p "$ANDROID_HOME/licenses"
-              touch "$ANDROID_HOME/licenses/.parchment-accepted"
-            fi
-          fi
+          mkdir -p "$ANDROID_HOME/licenses"
+          printf "\n8933bad161af4178b1185d1a37fbf41ea5269c55\nd56f5187479451eabf01fb78af6dfcb131a6481e\n24333f8a63b6825ea9c5514f83c2829b004d1fee\n" > "$ANDROID_HOME/licenses/android-sdk-license"
+          printf "\n84831b9409646a918e30573bab4c9c91346d8abd\n504667f4c0de7af1a06de9f4b1727b84351f2910\n" > "$ANDROID_HOME/licenses/android-sdk-preview-license"
 
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@8da46b539cd8fe6ab27ca75128919a18d757604c # v6.4.1
@@ -192,7 +191,7 @@ jobs:
           if [[ "$GITHUB_EVENT_NAME" == pull_request ]]; then
             BUILD_VARIANT=debug
             BUILD_TASK=:androidApp:assembleDebug
-            EXTRA_FLAGS=(--configuration-cache -PofficialRelease=false)
+            EXTRA_FLAGS=(-PofficialRelease=false)
           else
             BUILD_VARIANT=release
             BUILD_TASK=:androidApp:assembleRelease
@@ -201,12 +200,12 @@ jobs:
           echo "ANDROID_BUILD_VARIANT=$BUILD_VARIANT" >> "$GITHUB_ENV"
           chmod +x ./gradlew
           python3 .github/scripts/run_gradle.py -- "$BUILD_TASK" \
-            -Dorg.gradle.jvmargs="-Xmx4g -XX:+UseParallelGC -XX:MaxMetaspaceSize=1g -Dfile.encoding=UTF-8" \
+            -Dorg.gradle.jvmargs="-Xmx5g -XX:+UseParallelGC -XX:MaxMetaspaceSize=1g -Dfile.encoding=UTF-8" \
             -PappVersion="$APP_VER" \
             -PappVersionCode="$APP_CODE" \
             -PgithubRepo="$GITHUB_REPOSITORY" \
             "${EXTRA_FLAGS[@]}" \
-            --no-daemon --max-workers=4 -Pkotlin.compiler.execution.strategy=in-process
+            --no-daemon --no-configuration-cache --max-workers=4 -Pkotlin.compiler.execution.strategy=in-process
 
       - name: Rename APK for Clean Download
         run: |
@@ -217,10 +216,10 @@ jobs:
             cp androidApp/build/outputs/mapping/release/mapping.txt dist/Parchment-Android-R8-mapping.txt
           fi
 
-      # The SBOM lists every library in the app (CycloneDX). It never blocks a release: if the plugin can't run,
-      # the release ships without it and this step shows the error.
+      # The SBOM lists every library in the app (CycloneDX). Dependency PRs already verify SBOM in quality-signals.yml,
+      # so build-installers generates it only on tag/manual release runs where publish-github-release attaches it.
       - name: Generate SBOM
-        if: ${{ github.event_name != 'pull_request' }}
+        if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'
         continue-on-error: true
         run: |
           # No build cache: a cached SBOM outlives the dependency changes it should show.
@@ -229,14 +228,14 @@ jobs:
           python3 .github/scripts/check_sbom.py build/reports/cyclonedx/bom.json
           cp build/reports/cyclonedx/bom.json dist/Parchment-SBOM.cdx.json
 
+      - name: Verify Staged APK Exists
+        run: test -s dist/Parchment-Android-Universal.apk
+
       - name: Upload Android APK Artifact
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: Parchment-Android-APK
-          path: |
-            dist/Parchment-Android-Universal.apk
-            dist/Parchment-Android-R8-mapping.txt
-            dist/Parchment-SBOM.cdx.json
+          path: dist/Parchment-*
           compression-level: 1
           retention-days: ${{ github.event_name == 'pull_request' && 7 || 30 }}
           if-no-files-found: error
@@ -286,14 +285,18 @@ jobs:
           APP_VER: ${{ needs.preflight.outputs.app_version }}
           APP_CODE: ${{ needs.preflight.outputs.app_version_code }}
           OFFICIAL_RELEASE: ${{ github.event_name != 'pull_request' && 'true' || 'false' }}
+          GRADLE_OPTS: "-Xmx5g -XX:+UseParallelGC -XX:MaxMetaspaceSize=1g -Dfile.encoding=UTF-8"
         run: |
+          $gradleHome = if ($env:GRADLE_USER_HOME) { $env:GRADLE_USER_HOME } else { "$HOME\.gradle" }
+          New-Item -ItemType Directory -Force -Path $gradleHome | Out-Null
+          Add-Content -Path "$gradleHome\gradle.properties" -Value "`norg.gradle.jvmargs=-Xmx5g -XX:+UseParallelGC -XX:MaxMetaspaceSize=1g -Dfile.encoding=UTF-8"
           $winTests = (python .github/scripts/shard_tests.py --windows-native) -split ' '
           python .github/scripts/run_gradle.py -- :composeApp:desktopTest @winTests :composeApp:createReleaseDistributable `
             "-PappVersion=$env:APP_VER" `
             "-PappVersionCode=$env:APP_CODE" `
             "-PgithubRepo=$env:GITHUB_REPOSITORY" `
             "-PofficialRelease=$env:OFFICIAL_RELEASE" `
-            --no-daemon --configuration-cache --max-workers=4 '-Pkotlin.compiler.execution.strategy=in-process'
+            --no-daemon --no-configuration-cache --max-workers=4 '-Pkotlin.compiler.execution.strategy=in-process'
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           python -c "import sys; sys.path.insert(0, 'scripts'); import verify; m = verify.missing_service_classes(); sys.exit('\n'.join(m) if m else 0)"
           exit $LASTEXITCODE
@@ -302,7 +305,8 @@ jobs:
         shell: pwsh
         env:
           APP_VER: ${{ needs.preflight.outputs.app_version }}
-        run: iscc.exe "/DMyAppVersion=$env:APP_VER" installer\windows-installer.iss
+          INNO_COMPRESSION: ${{ github.event_name == 'pull_request' && 'lzma2/fast' || 'lzma2/max' }}
+        run: iscc.exe "/DMyAppVersion=$env:APP_VER" "/DMyCompression=$env:INNO_COMPRESSION" installer\windows-installer.iss
 
       - name: Upload Windows EXE Installer Artifact
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2

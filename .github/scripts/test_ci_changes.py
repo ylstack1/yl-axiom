@@ -66,7 +66,7 @@ class PathFilteringTest(unittest.TestCase):
             {"desktop_tests": "false", "android": "false", "windows": "false", "signing_scripts": "false"},
             classify_installers(paths),
         )
-        self.assertEqual({"coverage": "false", "sbom": "false"}, classify_quality_signals(paths))
+        self.assertEqual({"coverage": "false", "gallery": "false", "sbom": "false"}, classify_quality_signals(paths))
         codeql = classify_codeql(paths)
         self.assertEqual("false", codeql["has_targets"])
         self.assertTrue(json.loads(codeql["matrix"]), "placeholder matrix must stay non-empty JSON")
@@ -77,7 +77,7 @@ class PathFilteringTest(unittest.TestCase):
             {"desktop_tests": "false", "android": "true", "windows": "false", "signing_scripts": "false"},
             classify_installers(paths),
         )
-        self.assertEqual({"coverage": "false", "sbom": "false"}, classify_quality_signals(paths))
+        self.assertEqual({"coverage": "false", "gallery": "false", "sbom": "false"}, classify_quality_signals(paths))
         codeql = classify_codeql(paths)
         self.assertEqual("true", codeql["has_targets"])
         self.assertEqual([{"language": "java-kotlin", "build-mode": "manual"}], json.loads(codeql["matrix"]))
@@ -88,7 +88,7 @@ class PathFilteringTest(unittest.TestCase):
             {"desktop_tests": "true", "android": "false", "windows": "true", "signing_scripts": "false"},
             classify_installers(paths),
         )
-        self.assertEqual({"coverage": "true", "sbom": "false"}, classify_quality_signals(paths))
+        self.assertEqual({"coverage": "true", "gallery": "true", "sbom": "false"}, classify_quality_signals(paths))
 
     def test_pure_non_windows_unit_test_runs_linux_shards_only(self):
         paths = {"composeApp/src/desktopTest/kotlin/io/parchment/ai/network/StreamRecoveryHttpTest.kt"}
@@ -96,6 +96,8 @@ class PathFilteringTest(unittest.TestCase):
             {"desktop_tests": "true", "android": "false", "windows": "false", "signing_scripts": "false"},
             classify_installers(paths),
         )
+        self.assertEqual({"coverage": "true", "gallery": "false", "sbom": "false"}, classify_quality_signals(paths))
+        self.assertEqual("false", classify_codeql(paths)["has_targets"])
 
     def test_windows_platform_test_runs_windows_job_too(self):
         paths = {"composeApp/src/desktopTest/kotlin/io/parchment/ai/platform/WindowsChromeTest.kt"}
@@ -122,7 +124,10 @@ class PathFilteringTest(unittest.TestCase):
         )
 
     def test_dependency_changes_enable_sbom(self):
-        self.assertEqual({"coverage": "true", "sbom": "true"}, classify_quality_signals({"gradle/libs.versions.toml"}))
+        self.assertEqual(
+            {"coverage": "true", "gallery": "true", "sbom": "true"},
+            classify_quality_signals({"gradle/libs.versions.toml"}),
+        )
 
     def test_codeql_selects_only_affected_languages(self):
         py_only = classify_codeql({"scripts/verify.py"})
@@ -157,6 +162,33 @@ class WorkflowSecurityAndOptimizationInvariantsTest(unittest.TestCase):
             r"-m\s+unittest\s+\.github/",
             f"{name} must not pass dot-prefixed .github/ file paths to python -m unittest",
         )
+        self.assertNotRegex(
+            text,
+            r"/android/sdk/build-tools/3[56]",
+            f"{name} must not cache preinstalled 1.2 GB Android build-tools 35/36 directories",
+        )
+        self.assertNotIn(
+            "sdkmanager --licenses",
+            text,
+            f"{name} must write static Android SDK license hashes instead of booting sdkmanager JVM",
+        )
+        self.assertNotIn(
+            "cache-read-only: false",
+            text,
+            f"{name} must not force cache-read-only: false on pull_request workflows",
+        )
+        if "cache-encryption-key:" not in text:
+            self.assertNotRegex(
+                text,
+                r"(?<!no-)--configuration-cache\b",
+                f"{name} must not serialize --configuration-cache on one-shot --no-daemon CI runs without cache-encryption-key",
+            )
+        if "shell: pwsh" in text:
+            self.assertNotRegex(
+                text,
+                r"""['"]-Dorg\.gradle\.jvmargs=[^'"]+\s+[^'"]+['"]""",
+                f"{name} must not pass space-containing -Dorg.gradle.jvmargs CLI arg through gradlew.bat",
+            )
         for expr_match in re.finditer(r"\$\{\{(.*?)\}\}", text, re.S):
             expr = expr_match.group(1)
             self.assertNotRegex(

@@ -15,16 +15,39 @@ import kotlinx.serialization.json.jsonPrimitive
 internal object ToolOutputAndGoalSupport {
 
     private val ANSI_ESCAPE_REGEX = Regex("""\u001B\[[0-?]*[ -/]*[@-~]""")
-    private val PS_CLIXML_BLOCK_REGEX = Regex("""(?s)#< CLIXML\s*<Objs\b.*?</Objs>""")
+    private val PS_CLIXML_HEADER_REGEX = Regex("""(?m)^#<\s*CLIXML\s*$""")
+    private val PS_CLIXML_ERROR_LINE_REGEX = Regex("""<S S="Error">(.*?)</S>""")
+    private val PS_CLIXML_BLOCK_REGEX = Regex("""(?s)\s*<Objs\b.*?</Objs>""")
     private val EXCESS_BLANK_LINES_REGEX = Regex("""\n{4,}""")
-    private const val COMPACTION_BATCH = 16
+    private val CODE_SYMBOL_REGEX = Regex(
+        """^\s*(?:\d+:\s*)?(?:(?:internal|public|private|protected|override|suspend|inline|actual|expect|data|sealed|abstract|open)\s+)*(?:fun|class|interface|object|def)\s+([A-Za-z_]\w*)"""
+    )
+    internal const val COMPACTION_BATCH = 16
+
+    private fun extractCliXmlErrors(block: String): String {
+        val parts = PS_CLIXML_ERROR_LINE_REGEX.findAll(block)
+            .map { match ->
+                match.groupValues[1]
+                    .replace("_x000D__x000A_", "\n")
+                    .replace("_x000A_", "\n")
+                    .replace("_x0009_", "\t")
+                    .replace("&lt;", "<")
+                    .replace("&gt;", ">")
+                    .replace("&amp;", "&")
+                    .replace("&quot;", "\"")
+                    .replace("&apos;", "'")
+            }
+            .joinToString("")
+            .trim()
+        return if (parts.isEmpty()) "" else "\n$parts"
+    }
 
     fun compressWithSizeValve(toolName: String, rawOutput: String): String {
         if (rawOutput.isEmpty()) return rawOutput
         val cleaned = rawOutput
             .replace(ANSI_ESCAPE_REGEX, "")
-            .replace(PS_CLIXML_BLOCK_REGEX, "")
-            .replace("#< CLIXML", "")
+            .replace(PS_CLIXML_HEADER_REGEX, "")
+            .replace(PS_CLIXML_BLOCK_REGEX) { match -> extractCliXmlErrors(match.value) }
             .replace("\r\n", "\n")
             .replace(EXCESS_BLANK_LINES_REGEX, "\n\n\n")
             .trimEnd()
@@ -53,16 +76,33 @@ internal object ToolOutputAndGoalSupport {
         totalSteps: Int,
         toolName: String,
         rawOutput: String,
-        keepRecentCount: Int = 8
+        keepRecentCount: Int = 8,
+        minCharsToCompact: Int = 1_100
     ): String {
         // A boundary sliding every step would rewrite earlier text and miss the provider's cache each time.
         val boundary = if (keepRecentCount > 0) ((totalSteps - keepRecentCount) / COMPACTION_BATCH) * COMPACTION_BATCH else totalSteps
-        if (stepIndex >= boundary || rawOutput.length <= 850) {
+        if (stepIndex >= boundary || rawOutput.length <= minCharsToCompact) {
             return rawOutput
         }
-        val firstLine = rawOutput.lineSequence().firstOrNull()?.take(140).orEmpty()
-        val lineCount = rawOutput.count { it == '\n' } + 1
-        return "[Compacted step #$stepIndex ($toolName): ${rawOutput.length} chars ($lineCount lines) — \"$firstLine…\". Re-run tool if exact lines are needed.]"
+        val lines = rawOutput.lines()
+        val firstLine = lines.firstOrNull()?.take(140).orEmpty()
+        val lineCount = lines.size
+        val extraHint = when (toolName.lowercase()) {
+            "fs_read" -> {
+                val symbols = lines.asSequence()
+                    .mapNotNull { CODE_SYMBOL_REGEX.find(it)?.groupValues?.getOrNull(1) }
+                    .distinct()
+                    .take(5)
+                    .toList()
+                if (symbols.isNotEmpty()) " symbols=${symbols.joinToString(",")};" else ""
+            }
+            "shell_exec" -> {
+                val tailLine = lines.asReversed().firstOrNull { it.isNotBlank() && it != firstLine }?.trim()?.take(100)
+                if (!tailLine.isNullOrEmpty()) " tail=\"$tailLine\";" else ""
+            }
+            else -> ""
+        }
+        return "[Compacted step #$stepIndex ($toolName): ${rawOutput.length} chars ($lineCount lines) — \"$firstLine…\";$extraHint Re-run tool if exact lines are needed.]"
     }
 
     fun parseTodoItems(args: JsonObject): List<TodoItem> {

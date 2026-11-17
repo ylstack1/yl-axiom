@@ -105,19 +105,57 @@ internal class WorkspaceTreeScanner(
         if (matches.isEmpty()) "No files matched glob '$pattern'." else matches.joinToString("\n")
     }
 
-    fun search(workspaceRoot: String, query: String, fileGlob: String): Result<String> = runCatching {
+    private data class SearchHit(
+        val formatted: String,
+        val isImportLine: Boolean
+    )
+
+    fun search(
+        workspaceRoot: String,
+        query: String,
+        fileGlob: String,
+        relativePath: String = "",
+        maxResults: Int = 0
+    ): Result<String> = runCatching {
         val rootFile = WorkspacePathGuard.root(workspaceRoot).toFile()
         val rootPath = rootFile.toPath().normalize()
         require(rootFile.exists() && rootFile.isDirectory) { "Workspace root does not exist: $workspaceRoot" }
         require(query.isNotBlank()) { "Search query must not be blank." }
 
+        val effectiveMaxHits = if (maxResults > 0) {
+            maxResults.coerceIn(1, MAX_SEARCH_RESULTS_CAP)
+        } else {
+            config.maxSearchHits
+        }
         val regex = runCatching { Regex(query, RegexOption.IGNORE_CASE) }.getOrNull()
         val cleanFilter = fileGlob.trim().trimStart('*', '/')
-        val sourceEntries = if (config.useTreeCache) {
-            getOrBuildRootTree(rootFile)
+        val cleanScope = relativePath.trim().replace('\\', '/').trim('/')
+
+        val sourceEntries: List<CachedEntry> = if (cleanScope.isEmpty()) {
+            if (config.useTreeCache) {
+                getOrBuildRootTree(rootFile)
+            } else {
+                walkEntries(rootFile, rootPath).take(config.maxTreeEntries.coerceAtLeast(1)).toList()
+            }
         } else {
-            walkEntries(rootFile, rootPath).take(config.maxTreeEntries.coerceAtLeast(1)).toList()
+            val scopedFile = WorkspacePathGuard.resolve(workspaceRoot, cleanScope).toFile()
+            require(scopedFile.exists()) { "Path not found: $relativePath" }
+            require(WorkspacePathGuard.canTraverse(rootPath, scopedFile.toPath())) {
+                "Access denied: Linked workspace targets cannot be searched."
+            }
+            if (scopedFile.isFile) {
+                listOf(toEntry(rootPath, scopedFile))
+            } else {
+                val hasIgnoredSeg = cleanScope.split('/').any { WorkspacePathGuard.isIgnoredDirectory(it) }
+                if (config.useTreeCache && !hasIgnoredSeg) {
+                    val normPrefix = "$cleanScope/"
+                    getOrBuildRootTree(rootFile).filter { it.relPath == cleanScope || it.relPath.startsWith(normPrefix) }
+                } else {
+                    walkEntries(scopedFile, rootPath).take(config.maxTreeEntries.coerceAtLeast(1)).toList()
+                }
+            }
         }
+
         val candidates = sourceEntries.filter { entry ->
             !entry.isDirectory &&
                 entry.length <= config.maxSearchFileBytes &&
@@ -125,12 +163,13 @@ internal class WorkspaceTreeScanner(
                 (cleanFilter.isEmpty() ||
                     entry.name.contains(cleanFilter, ignoreCase = true) ||
                     (config.filterSearchByRelPath && entry.relPath.contains(cleanFilter, ignoreCase = true)))
-        }
+        }.sortedBy { it.relPath }
 
-        val hitCount = AtomicInteger(0)
-        val matches = if (config.parallelSearch) {
+        val nonImportHits = AtomicInteger(0)
+        val importHits = AtomicInteger(0)
+        val allHits: List<SearchHit> = if (config.parallelSearch && candidates.size > 1) {
             val perFileHits = candidates.parallelStream()
-                .map { entry -> searchSingleFile(entry, rootPath, query, regex, hitCount) }
+                .map { entry -> searchSingleFile(entry, rootPath, query, regex, nonImportHits, importHits, effectiveMaxHits) }
                 .collect(Collectors.toList())
             buildList {
                 for (hits in perFileHits) {
@@ -140,12 +179,24 @@ internal class WorkspaceTreeScanner(
         } else {
             buildList {
                 for (entry in candidates) {
-                    if (hitCount.get() >= config.maxSearchHits) break
-                    searchSingleFile(entry, rootPath, query, regex, hitCount)?.let(::addAll)
+                    if (nonImportHits.get() >= effectiveMaxHits) break
+                    searchSingleFile(entry, rootPath, query, regex, nonImportHits, importHits, effectiveMaxHits)?.let(::addAll)
                 }
             }
         }
-        if (matches.isEmpty()) "No matches found for '$query'." else matches.joinToString("\n")
+
+        val selected = if (allHits.size <= effectiveMaxHits) {
+            allHits.map { it.formatted }
+        } else {
+            val primary = allHits.asSequence().filter { !it.isImportLine }.map { it.formatted }.take(effectiveMaxHits).toList()
+            if (primary.size >= effectiveMaxHits) {
+                primary
+            } else {
+                val needed = effectiveMaxHits - primary.size
+                primary + allHits.asSequence().filter { it.isImportLine }.map { it.formatted }.take(needed).toList()
+            }
+        }
+        if (selected.isEmpty()) "No matches found for '$query'." else selected.joinToString("\n")
     }
 
     private fun searchSingleFile(
@@ -153,24 +204,33 @@ internal class WorkspaceTreeScanner(
         rootPath: Path,
         query: String,
         regex: Regex?,
-        hitCount: AtomicInteger
-    ): List<String>? {
-        if (hitCount.get() >= config.maxSearchHits) return null
-        val fileHits = mutableListOf<String>()
+        nonImportHits: AtomicInteger,
+        importHits: AtomicInteger,
+        maxCap: Int
+    ): List<SearchHit>? {
+        if (nonImportHits.get() >= maxCap) return null
+        val fileHits = mutableListOf<SearchHit>()
         runCatching {
-            require(WorkspacePathGuard.canTraverse(rootPath, entry.file.toPath())) {
+            require(WorkspacePathGuard.canTraverseVerifiedChild(rootPath, entry.file.toPath())) {
                 "Workspace path changed during search."
             }
             entry.file.bufferedReader(Charsets.UTF_8).use { reader ->
                 var idx = 0
-                while (hitCount.get() < config.maxSearchHits) {
+                while (nonImportHits.get() < maxCap) {
                     val line = reader.readLine() ?: break
                     val hit = regex?.containsMatchIn(line) ?: line.contains(query, ignoreCase = true)
                     if (hit) {
-                        val claimed = hitCount.incrementAndGet()
-                        if (claimed <= config.maxSearchHits) {
-                            fileHits.add("${entry.relPath}:${idx + 1}: ${line.trim().take(config.maxSearchLineChars)}")
-                        } else {
+                        val trimmed = line.trim()
+                        val isImport = trimmed.startsWith("import ")
+                        val claimed = if (isImport) importHits.incrementAndGet() else nonImportHits.incrementAndGet()
+                        if (claimed <= maxCap) {
+                            fileHits.add(
+                                SearchHit(
+                                    formatted = "${entry.relPath}:${idx + 1}: ${trimmed.take(config.maxSearchLineChars)}",
+                                    isImportLine = isImport
+                                )
+                            )
+                        } else if (!isImport) {
                             break
                         }
                     }
@@ -219,7 +279,7 @@ internal class WorkspaceTreeScanner(
             .filter { file ->
                 file != startDir &&
                     !WorkspacePathGuard.isIgnoredDirectory(file.name) &&
-                    WorkspacePathGuard.canTraverse(rootPath, file.toPath())
+                    (file.isDirectory || WorkspacePathGuard.canTraverseVerifiedChild(rootPath, file.toPath()))
             }
             .map { file -> toEntry(rootPath, file) }
 
@@ -274,5 +334,6 @@ internal class WorkspaceTreeScanner(
         const val MAX_FLAT_LIST_ENTRIES = 300
         const val MAX_RECURSIVE_LIST_ENTRIES = 400
         const val MAX_GLOB_RESULTS = 500
+        const val MAX_SEARCH_RESULTS_CAP = 300
     }
 }

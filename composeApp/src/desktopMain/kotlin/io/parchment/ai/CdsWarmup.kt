@@ -9,6 +9,7 @@ import io.parchment.ai.model.MessageVariant
 import io.parchment.ai.model.ToolCallRecord
 import io.parchment.ai.platform.AtomicFileStorage
 import io.parchment.ai.platform.DesktopPlatformHost
+import io.parchment.ai.platform.PlatformPickers
 import io.parchment.ai.platform.PlatformRuntime
 import io.parchment.ai.platform.PlatformStorage
 import io.parchment.ai.platform.WindowsNative
@@ -21,6 +22,8 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.swing.Swing
 import kotlinx.serialization.encodeToString
+import org.jetbrains.skia.FontMgr
+import org.jetbrains.skia.impl.Library as SkiaLibrary
 import java.io.File
 import java.nio.file.Files
 import kotlin.system.exitProcess
@@ -60,6 +63,24 @@ internal fun runCdsWarmup(): Nothing {
     val dataDir = Files.createTempDirectory("parchment-cds-warmup-").toFile()
     try {
         DesktopPlatformHost.useStorageDirectory(dataDir)
+        runCatching { SkiaLibrary.staticLoad() }
+        runCatching { FontMgr.default }
+        runCatching { PlatformPickers.preloadStartupFonts() }
+        runCatching { predecodedAppIconPainter }
+        runCatching { loadSavedWindowGeometry() }
+        runCatching { windowCaption("Parchment", "Warm-up") }
+        val loader = DesktopPlatformHost::class.java.classLoader
+        listOf(
+            "androidx.compose.ui.window.Application_desktopKt",
+            "androidx.compose.ui.window.Window_desktopKt",
+            "androidx.compose.ui.awt.ComposeWindow",
+            "androidx.compose.ui.scene.WindowComposeSceneLayer",
+            "org.jetbrains.skiko.SkiaLayer",
+            "org.jetbrains.skiko.redrawer.Direct3DRedrawer",
+            "org.jetbrains.skiko.context.Direct3DContextHandler",
+            "io.parchment.ai.platform.WindowsChrome",
+            "io.parchment.ai.platform.WindowsNative"
+        ).forEach { name -> runCatching { Class.forName(name, false, loader) } }
         runCatching { seedWarmupData() }
         runCatching { O200kTokenizer.warmUp() }
         runCatching { renderAppHeadless() }

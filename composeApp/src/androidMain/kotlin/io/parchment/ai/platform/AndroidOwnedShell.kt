@@ -92,11 +92,12 @@ internal object AndroidOwnedShell {
         }.apply { name = "parchment-shell-control"; isDaemon = true; start() }
 
         try {
-            val deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(timeoutSeconds.coerceIn(1, 120).toLong())
+            val effectiveTimeoutSeconds = timeoutSeconds.coerceIn(1, 300)
+            val deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(effectiveTimeoutSeconds.toLong())
             while (exitCode.get() < 0) {
                 check(cancelled?.invoke() != true) { "Shell command stopped or its permission was revoked." }
                 failure.get()?.let { throw it }
-                check(System.nanoTime() < deadline) { "Command timed out after $timeoutSeconds seconds." }
+                check(System.nanoTime() < deadline) { "Command timed out after $effectiveTimeoutSeconds seconds." }
                 if (process.waitFor(100, TimeUnit.MILLISECONDS)) {
                     controlReader.join(1_000L)
                     failure.get()?.let { throw it }

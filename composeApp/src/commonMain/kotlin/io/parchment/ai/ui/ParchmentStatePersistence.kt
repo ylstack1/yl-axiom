@@ -882,6 +882,29 @@ internal fun loadFastInitialAppState(): Pair<AppStateSnapshot, Boolean> {
                 return sanitized to true
             }
         }
+    } else {
+        val stamps = runCatching { PlatformStorage.chatFileStamps() }.getOrDefault(emptyMap())
+        if (stamps.isNotEmpty()) {
+            val newestFolder = stamps.entries.maxWithOrNull(
+                compareBy<Map.Entry<String, io.parchment.ai.platform.ChatFileStamp>> { it.value.lastModifiedMs }.thenBy { it.key }
+            )?.key
+            val newestRaw = newestFolder?.let { PlatformStorage.loadChatSessionJsonById(it) }
+            val newestSession = newestRaw?.let {
+                runCatching { compactStateJson.decodeFromString<ChatSession>(it) }.getOrNull()
+            }?.takeIf { it.id.isNotBlank() }?.let { stripRedundantAttachmentBase64(it) }
+            if (newestSession != null) {
+                val fallback = createDefaultAppState()
+                val sanitized = sanitizeLoadedSnapshot(
+                    fallback.copy(
+                        sessions = listOf(newestSession),
+                        activeSessionId = newestSession.id,
+                        openTabSessionIds = listOf(newestSession.id)
+                    )
+                )
+                appDiskWriter.enqueue(settings = sanitized, sessions = emptyList(), urgent = true)
+                return sanitized to true
+            }
+        }
     }
     return ensureActiveSessionHydratedAndDehydrateOthers(loadOrCreateDefaultAppState()) to false
 }

@@ -5,6 +5,9 @@
 #ifndef MyAppVersion
   #define MyAppVersion "2.0.0"
 #endif
+#ifndef MyCompression
+  #define MyCompression "lzma2/max"
+#endif
 #define MyAppPublisher "Parchment"
 #define MyAppExeName "Parchment.exe"
 
@@ -19,8 +22,10 @@ DisableProgramGroupPage=yes
 PrivilegesRequired=lowest
 OutputDir=..\build\installer
 OutputBaseFilename=Parchment-Windows-x64-Setup
-Compression=lzma2/ultra64
+Compression={#MyCompression}
 SolidCompression=yes
+LZMAUseSeparateProcess=yes
+LZMANumBlockThreads=4
 WizardStyle=modern
 SetupIconFile=parchment-icon.ico
 UninstallDisplayIcon={app}\{#MyAppExeName}

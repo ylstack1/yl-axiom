@@ -3,7 +3,15 @@ package io.parchment.ai.platform
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.text.font.FontFamily
 import io.parchment.ai.harness.WorkspaceContextCache
+import io.parchment.ai.model.ChatSession
+import io.parchment.ai.model.MessageNode
+import io.parchment.ai.model.MessageRole
+import io.parchment.ai.model.MessageVariant
 import io.parchment.ai.model.StorageFileCategory
+import io.parchment.ai.ui.compactStateJson
+import io.parchment.ai.ui.loadFastInitialAppState
+import io.parchment.ai.ui.loadRemainingHistoricalSessionsDehydrated
+import kotlinx.serialization.encodeToString
 import java.io.File
 import java.nio.file.Files
 import java.util.concurrent.ConcurrentHashMap
@@ -491,6 +499,72 @@ class PlatformSharedHelpersTest {
             assertEquals(4, searched.size, "Expected uncached search to obey maxTreeEntries=4: $searched")
         } finally {
             root.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun boundedImageCacheClearAndBundledLazyFontsLoadCleanly() {
+        val tempRoot = Files.createTempDirectory("parchment-cache-trim-").toFile()
+        try {
+            val file = File(tempRoot, "sample.png").apply { writeText("img") }
+            val cache = BoundedImageCache { 4 to (4L * 1024L * 1024L) }
+            val loaded = cache.getOrLoad("sample.png", { file }, { ImageBitmap(32, 32) })
+            assertNotNull(loaded)
+            assertSame(loaded, cache.get("sample.png"))
+            cache.clear()
+            assertNull(cache.get("sample.png"))
+
+            PlatformPickers.preloadStartupFonts()
+            assertNotNull(PlatformPickers.loadBundledFontFamily("Inter"))
+            assertNotNull(PlatformPickers.loadBundledFontFamily("JetBrains Mono"))
+            assertNotNull(PlatformPickers.loadBundledFontFamily("LaTeX"))
+            PlatformStorage.trimMemoryCaches()
+            assertTrue(io.parchment.ai.ParchmentBuildConfig.APP_VERSION.isNotBlank())
+            assertTrue(io.parchment.ai.ParchmentBuildConfig.DEFAULT_GITHUB_REPO.contains("/"))
+        } finally {
+            tempRoot.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun unindexedFreshStartupHydratesNewestChatFirstAndDefersRemainingStubs() {
+        val previousDir = DesktopPlatformHost.resolveStorageDir()
+        val freshDir = Files.createTempDirectory("parchment-fresh-startup-").toFile()
+        try {
+            DesktopPlatformHost.useStorageDirectory(freshDir)
+            val ids = listOf("fresh-0", "fresh-1", "fresh-2")
+            ids.forEachIndexed { idx, id ->
+                val session = ChatSession(
+                    id = id,
+                    title = "Fresh $idx",
+                    createdAt = 1_700_000_000_000L + idx,
+                    updatedAt = 1_700_000_000_000L + idx,
+                    profileId = "prof-gemini-interactions",
+                    messages = listOf(
+                        MessageNode("m-$id", MessageRole.ASSISTANT, listOf(MessageVariant("v-$id", "Reply $idx")))
+                    )
+                )
+                PlatformStorage.saveChatSessionJson(id, compactStateJson.encodeToString(session))
+                val file = File(freshDir, "chats/$id/chat.json")
+                check(file.setLastModified(1_700_000_000_000L + idx * 2_000L))
+            }
+
+            val (initial, needsHydration) = loadFastInitialAppState()
+            PlatformRuntime.flushPendingStateNow()
+            assertTrue(needsHydration, "fresh unindexed chats should defer historical stub hydration past Frame 1")
+            assertEquals(1, initial.sessions.size)
+            assertEquals("fresh-2", initial.activeSessionId)
+            assertFalse(initial.sessions.single().isCompactStub)
+
+            val merged = loadRemainingHistoricalSessionsDehydrated(initial)
+            assertEquals(3, merged.sessions.size)
+            assertFalse(merged.sessions.first { it.id == "fresh-2" }.isCompactStub)
+            assertTrue(merged.sessions.first { it.id == "fresh-0" }.isCompactStub)
+            assertTrue(merged.sessions.first { it.id == "fresh-1" }.isCompactStub)
+        } finally {
+            PlatformRuntime.flushPendingStateNow()
+            DesktopPlatformHost.useStorageDirectory(previousDir)
+            freshDir.deleteRecursively()
         }
     }
 }

@@ -1,5 +1,9 @@
 package io.parchment.ai.platform
 
+import io.parchment.ai.harness.WorkspaceHarness
+import io.parchment.ai.model.AgentPermissionPolicy
+import io.parchment.ai.model.ToolApprovalMode
+import io.parchment.ai.model.WorkspaceMode
 import java.io.File
 import java.nio.file.Files
 import kotlin.test.*
@@ -138,5 +142,106 @@ class WorkspaceAndMediaBehaviorTest {
         assertTrue(PlatformStorage.isReadableLocalFile("D:/other/device/chats/behavior-readable/media/check-readable.png"))
         assertFalse(PlatformStorage.isReadableLocalFile("chats/behavior-readable/media/missing.png"))
         assertFalse(PlatformStorage.isReadableLocalFile("   "))
+    }
+
+    @Test fun harnessSearchScopingImportPriorityNearMissAndTokenEfficiency() {
+        // 1. Scoped fs_search + non-import priority when hitting max_results
+        for (idx in 0 until 6) {
+            PlatformWorkspace.workspaceWrite(workspace, "src/User$idx.kt", "package a\nimport x.TargetWidget\nval v$idx = $idx\n").getOrThrow()
+        }
+        PlatformWorkspace.workspaceWrite(workspace, "src/z_Def.kt", "package x\nclass TargetWidget {\n    fun run() = 1\n}\n").getOrThrow()
+        PlatformWorkspace.workspaceWrite(workspace, "sub/only.kt", "val scopedNeedle = \"TargetWidget in sub\"\n").getOrThrow()
+
+        val prioritized = WorkspaceHarness.executeToolCall(
+            workspaceRoot = workspace,
+            mode = WorkspaceMode.READ_ONLY,
+            callId = "s1",
+            toolName = "fs_search",
+            argumentsJson = """{"query":"TargetWidget","file_glob":".kt","max_results":2}"""
+        )
+        assertFalse(prioritized.isError, prioritized.resultText)
+        assertTrue("class TargetWidget" in prioritized.resultText, prioritized.resultText)
+
+        val scopedFile = WorkspaceHarness.executeToolCall(
+            workspaceRoot = workspace,
+            mode = WorkspaceMode.READ_ONLY,
+            callId = "s2",
+            toolName = "fs_search",
+            argumentsJson = """{"query":"TargetWidget","path":"sub/only.kt"}"""
+        )
+        assertFalse(scopedFile.isError, scopedFile.resultText)
+        assertEquals(1, scopedFile.resultText.lines().size)
+        assertTrue(scopedFile.resultText.startsWith("sub/only.kt:1:"), scopedFile.resultText)
+
+        // 2. Near-miss line hint on fs_edit mismatch
+        val multiLine = (1..30).joinToString("\n") { "val item$it = ${it * 10}" }
+        PlatformWorkspace.workspaceWrite(workspace, "src/NearMiss.kt", multiLine).getOrThrow()
+        val miss = WorkspaceHarness.executeToolCall(
+            workspaceRoot = workspace,
+            mode = WorkspaceMode.READ_WRITE,
+            callId = "e1",
+            toolName = "fs_edit",
+            argumentsJson = """{"path":"src/NearMiss.kt","old_text":"val item14 = 140\nval item15 = 999\nval item16 = 160","new_text":"val item15 = 150"}"""
+        )
+        assertTrue(miss.isError)
+        assertTrue("Closest match at lines" in miss.resultText && "14: val item14 = 140" in miss.resultText, miss.resultText)
+
+        // 3. Auto-loaded AGENTS.md and skill_load strip reader line numbers
+        PlatformWorkspace.workspaceWrite(workspace, "AGENTS.md", "# Rules\nKeep edits surgical.").getOrThrow()
+        PlatformWorkspace.workspaceWrite(workspace, ".parchment/skills/craft/SKILL.md", "---\nname: craft\ndescription: Rigor skill\n---\n# Craft\nVerify first.").getOrThrow()
+        WorkspaceHarness.invalidateWorkspaceCache(workspace)
+        val ctx = WorkspaceHarness.discoverWorkspaceContextFiles(workspace)
+        assertTrue("# Rules\nKeep edits surgical." in ctx && "1: # Rules" !in ctx && "File: AGENTS.md" !in ctx, ctx)
+        val skillLoaded = WorkspaceHarness.executeToolCall(
+            workspaceRoot = workspace,
+            mode = WorkspaceMode.READ_ONLY,
+            callId = "sk1",
+            toolName = "skill_load",
+            argumentsJson = """{"name":"craft"}"""
+        )
+        assertFalse(skillLoaded.isError, skillLoaded.resultText)
+        assertTrue("1: ---" !in skillLoaded.resultText && "# Craft\nVerify first." in skillLoaded.resultText, skillLoaded.resultText)
+
+        // 4. PowerShell CLIXML error text preserved instead of wiped
+        val cliXml = "#< CLIXML\r\n<Objs Version=\"1.1.0.1\" xmlns=\"http://schemas.microsoft.com/powershell/2004/04\"><S S=\"Error\">ParserError: Unexpected token '&amp;&amp;'_x000D__x000A_</S></Objs>"
+        val cleaned = WorkspaceHarness.compressToolOutputWithSizeValve("shell_exec", cliXml)
+        assertTrue("ParserError: Unexpected token '&&'" in cleaned, cleaned)
+
+        // 5. Compacted fs_read receipt preserves symbol summary
+        val bigKotlin = "File: Engine.kt (Lines 1..80 of 80)\n1: package demo\n2: class AlphaEngine {\n3:     suspend fun runFast() {}\n" +
+            (4..80).joinToString("\n") { "$it:     val pad$it = \"padding_content_line_$it\"" }
+        val receipt = WorkspaceHarness.compactStaleToolOutputText(3, 30, "fs_read", bigKotlin)
+        assertTrue(receipt.startsWith("[Compacted step #3 (fs_read):") && "symbols=AlphaEngine,runFast;" in receipt, receipt)
+
+        // 6. Cached wire tool schemas & token budget (< 8,200 chars for full 21-tool flat schema)
+        val policy = AgentPermissionPolicy(
+            workspacePath = workspace,
+            workspaceMode = WorkspaceMode.READ_WRITE,
+            webAccess = true,
+            computerAccess = true,
+            approvalMode = ToolApprovalMode.NEVER
+        )
+        val firstTools = WorkspaceHarness.buildFlatFunctionTools(
+            mode = WorkspaceMode.READ_WRITE,
+            workspacePath = workspace,
+            allowShell = true,
+            goalModeActive = true,
+            enableWebTools = true,
+            includeLocalWebSearchTool = true,
+            policy = policy
+        )
+        val secondTools = WorkspaceHarness.buildFlatFunctionTools(
+            mode = WorkspaceMode.READ_WRITE,
+            workspacePath = workspace,
+            allowShell = true,
+            goalModeActive = true,
+            enableWebTools = true,
+            includeLocalWebSearchTool = true,
+            policy = policy
+        )
+        assertEquals(21, firstTools.size)
+        assertSame(firstTools[0], secondTools[0], "ToolDefinition wire JsonObject should be cached across requests")
+        val serializedChars = firstTools.toString().length
+        assertTrue(serializedChars < 8_200, "21-tool schema exceeded token budget ($serializedChars chars >= 8200)")
     }
 }

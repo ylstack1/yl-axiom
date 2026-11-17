@@ -111,6 +111,11 @@ actual object PlatformStorage {
 
     actual fun cachedImageBitmap(filePath: String): ImageBitmap? = imageCache.get(filePath)
 
+    actual fun trimMemoryCaches() {
+        imageCache.clear()
+        io.parchment.ai.protocol.O200kTokenizer.clearCaches()
+    }
+
     actual fun loadImageBitmapFromFile(filePath: String): ImageBitmap? =
         imageCache.getOrLoad(filePath, ::resolveLocalMediaFile, DesktopImageDecoder::decode)
 

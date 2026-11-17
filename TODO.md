@@ -4,11 +4,20 @@ Updated 2026-11-17. AGENTS.md owns workflow; MEMORY holds contracts. Task IDs st
 
 ## Current status
 
-- **Source:** 2026-11-17 performance, native picker, UI consistency & CI batch: JDK 25 Generational Shenandoah + Compact Headers + build-time Leyden `parchment.aot`, `KissMotionNode` (`Modifier.Node`, 0 hover/press recompositions), `stability_config.conf` + `kotlinx-collections-immutable` 0.5.2, R8 Full Mode + `profileinstaller` 1.4.1, native Win32 COM `IFileOpenDialog`/`IFileSaveDialog` multi-file/save pickers, `ControlHeight` UI alignment across Settings/Providers/chat, and CI caching/sharding across all 8 workflows.
-- **Last verified:** 2026-11-17, `verify.py final` (558 tests + 37 UI gallery captures, signed APK, release package & service-loader checks), `verify.py perf` (`desktop_title_ms=1929`, first launch `1916`, `desktop_idle_private_mb=240.1`, `apk_mb=4.4`, `desktop_cds_archives_ok=True`), `verify.py affected` (CI shard expression fix).
-- **Next action:** User checks 17.1 on the phone after the release.
+- **Source:** 2026-11-17 Batch 1 (`0.90 s` cold start, `197.5 MB` idle RAM), Batch 1.1 (CI workflow baseline & cache/SDK/Inno optimizations), & Batch 1.2 harness optimization: `pwsh` + `-OutputFormat Text` + `PYTHONUNBUFFERED=1` + `1800 s` `shell_exec` with CLIXML error extraction, quantized prompt-cache-safe tool compaction with symbol/tail receipts, unnumbered `AGENTS.md`/`SKILL.md` prompt loading, ~30%-leaner cached 21-tool schemas (`< 8.2 KB`), scoped/prioritized `fs_search` with fast NTFS child checks, `fs_edit` near-miss line hints, and parallel read sub-batches.
+- **Last verified:** 2026-11-17, `verify.py affected` (quality gates, desktop/common harness & prompt-cache tests, Android compile) + `verify.py final` & `perf` (`desktop_title_ms=903`, `desktop_idle_private_mb=197.5`, `apk_mb=4.4`).
+- **Next action:** Execute Batch 2 (`18.2`: `< 8 ms` streaming p95 incremental tail-block markdown layout & MRU hydrated tab/search UX).
 
 ## Open tasks
+
+### Planned batches
+
+- [ ] **18.2 Streaming `< 8 ms` p95 & instant tab/search UX:** memoize sealed prefix blocks in `ProseRenderer.kt` during live streaming, retain a bounded MRU cache of hydrated `ChatSession` tabs (`3` normal / `1` low-memory), and precompute lowercase sidebar search keys.
+- [ ] **18.3 Comfortable `TopEditorialBar`, wide Split Diff & clean copy/export:** tighten `TopEditorialBar` desktop vertical rhythm (`84.dp -> ~61.dp`, `24.dp` inline sparkle icon & pointer model capsule, `Space.s2` gap, `Space.s6` padding), add wide-desktop Unified/Split toggle in `ParchmentDiffViewer.kt`, and skip empty/aborted assistant stubs on Markdown copy/export.
+- [ ] **18.4 Settings keyboard shortcuts subpage:** add `SettingsCategory.SHORTCUTS` (`SettingsShortcutsPage.kt`), keycap overview, click-to-record rebinding (`PreferencesConfig.customShortcuts`) with conflict check & Reset, send-key toggle, Settings search indexing, and live `handleAppShortcut`/`CommandPalette` reflection.
+- [ ] **18.5 Offline local import for Skills & MCP:** add local folder, `SKILL.md`, and `.zip` skill import (`MAX_SKILL_FILES = 64`, `1 MB`/file, `8 MB` total, traversal guard) plus `mcp.json`/`.mcp.json` and desktop command-picker MCP import (`enabled = false` default).
+- [ ] **18.6 `/plan` & `/build` modes, stale-read guard, missing-folder recovery & deferred MCP schemas:** add `/plan` (`READ_ONLY`) and `/build` (`READ_WRITE`) switches with `ToolApprovalBroker.invalidate()`, run-scoped `fs_read` revision guard before `fs_edit`/`fs_write`, active-chat missing `workspacePath` recovery prompt, and on-demand MCP schema expansion when `> 6` tools are enabled.
+- [ ] **18.7 Privacy retention badges, zero-dep `.docx` extraction & workspace `/` commands:** surface local-only server-storage/training-tier badges from catalog metadata, extract `.docx` `word/document.xml` via `ZipInputStream` (`0 KB` deps), and discover `.parchment/commands/*.md` + explicit Save-as-Skill.
 
 ### For the user
 
@@ -21,7 +30,7 @@ Updated 2026-11-17. AGENTS.md owns workflow; MEMORY holds contracts. Task IDs st
 
 ## Known gaps
 
-Not planned; open a task first. No JDK AOT cache (16.6, dropped 2026-11): AppCDS already meets the start budget, and a cache built in CI may not match installed paths. No Android startup profile without a device-generated one (single DEX; PERFORMANCE.md). No `:core:*` module split: `model` is a clean leaf but 2.4% of the code and `protocol` depends on `harness` (2026-11-16). No Android long-press menus: a long press belongs to text selection. `final` runs without the configuration cache (signer validation is not cache-compatible). No CHARX archives; cards over 512 KB of data lose their original copy. No persona profiles. No full-duplex voice. Android MCP is HTTP-only. Shell is not sandboxed.
+Not planned; open a task first. No `:core:*` module split: `model` is a clean leaf but 2.4% of the code and `protocol` depends on `harness` (2026-11-16). No Android long-press menus: a long press belongs to text selection. `final` runs without the configuration cache (signer validation is not cache-compatible). No CHARX archives; cards over 512 KB of data lose their original copy. No persona profiles. No full-duplex voice. Android MCP is HTTP-only. Shell is not sandboxed.
 
 ## Sources
 

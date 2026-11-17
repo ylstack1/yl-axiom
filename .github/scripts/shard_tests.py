@@ -29,6 +29,32 @@ _TOP_LEVEL_CLASS = re.compile(
     r"^(?:@[A-Za-z_][\w.]*(?:\([^)\n]*\))?\s+)*(?:internal\s+|public\s+|final\s+)*class\s+([A-Za-z_]\w*)\b",
     re.M,
 )
+_HTTP_FIXTURE = re.compile(r"\b(?:HttpServer\.create|ServerSocket|EmbeddedServer|SunHttpServer)\b")
+_COMPOSE_SCENE = re.compile(r"\bImageComposeScene\b")
+_SLEEP_OR_DELAY = re.compile(r"\b(?:delay|Thread\.sleep)\s*\(")
+_DISK_CHURN = re.compile(r"\b(?:createTempDirectory|AtomicFileStorage|SnapshotFileStorage)\b")
+_TEST_ANNOT = re.compile(r"@Test\b")
+
+
+def _estimate_runtime_weight(raw_len: int, code: str, cls_name: str) -> int:
+    # UiGalleryTest skips rendering in regular desktopTest shards unless -Pparchment.gallery=true is passed.
+    if cls_name == "UiGalleryTest":
+        return max(1, raw_len // 4)
+    http_bonus = 60_000 if cls_name.endswith(("HttpTest", "EndToEndTest")) else 0
+    http_hits = len(_HTTP_FIXTURE.findall(code))
+    scene_hits = len(_COMPOSE_SCENE.findall(code))
+    delay_hits = len(_SLEEP_OR_DELAY.findall(code))
+    disk_hits = len(_DISK_CHURN.findall(code))
+    test_count = len(_TEST_ANNOT.findall(code))
+    return (
+        raw_len
+        + http_bonus
+        + http_hits * 22_000
+        + scene_hits * 8_000
+        + delay_hits * 3_500
+        + disk_hits * 4_000
+        + test_count * 1_200
+    )
 
 
 def _strip_comments(text: str) -> str:
@@ -77,10 +103,10 @@ def discover_test_classes(repo: Path = REPO) -> list[tuple[int, str]]:
             classes = [m.group(1) for m in _TOP_LEVEL_CLASS.finditer(code)]
             if not classes:
                 continue
-            share = max(1, len(raw) // len(classes))
             for cls in classes:
                 fqcn = f"{package}.{cls}" if package else cls
-                by_name[fqcn] = by_name.get(fqcn, 0) + share
+                weight = max(1, _estimate_runtime_weight(len(raw), code, cls) // len(classes))
+                by_name[fqcn] = by_name.get(fqcn, 0) + weight
     if not by_name:
         raise ValueError(f"No desktop test classes discovered under {repo}")
     return sorted(((weight, fqcn) for fqcn, weight in by_name.items()), key=lambda item: (-item[0], item[1]))

@@ -76,8 +76,13 @@ actual object PlatformWorkspace {
         return AndroidOwnedShell.execute(root, command, timeoutSeconds, onOutputDelta, isCancelled)
     }
 
-    actual fun workspaceSearch(workspaceRoot: String, query: String, fileGlob: String): Result<String> =
-        workspaceScanner.search(workspaceRoot, query, fileGlob)
+    actual fun workspaceSearch(
+        workspaceRoot: String,
+        query: String,
+        fileGlob: String,
+        relativePath: String,
+        maxResults: Int
+    ): Result<String> = workspaceScanner.search(workspaceRoot, query, fileGlob, relativePath, maxResults)
 
     actual fun fetchUrlText(url: String, maxChars: Int, isCancelled: (() -> Boolean)?): Result<String> =
         PublicWebTransport.fetch(url, maxChars, isCancelled)

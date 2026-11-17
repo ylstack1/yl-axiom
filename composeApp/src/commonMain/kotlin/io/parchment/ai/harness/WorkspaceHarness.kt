@@ -35,6 +35,34 @@ object WorkspaceHarness {
         val requiresWorkspaceFolder: Boolean = true
     ) {
         val parametersSchemaString: String by lazy { parametersSchema.toString() }
+        internal val flatFunctionJson: JsonObject by lazy {
+            kotlinx.serialization.json.buildJsonObject {
+                put("type", kotlinx.serialization.json.JsonPrimitive("function"))
+                put("name", kotlinx.serialization.json.JsonPrimitive(name))
+                put("description", kotlinx.serialization.json.JsonPrimitive(description))
+                put("parameters", parametersSchema)
+            }
+        }
+        internal val openAiChatJson: JsonObject by lazy {
+            kotlinx.serialization.json.buildJsonObject {
+                put("type", kotlinx.serialization.json.JsonPrimitive("function"))
+                put(
+                    "function",
+                    kotlinx.serialization.json.buildJsonObject {
+                        put("name", kotlinx.serialization.json.JsonPrimitive(name))
+                        put("description", kotlinx.serialization.json.JsonPrimitive(description))
+                        put("parameters", parametersSchema)
+                    }
+                )
+            }
+        }
+        internal val anthropicJson: JsonObject by lazy {
+            kotlinx.serialization.json.buildJsonObject {
+                put("name", kotlinx.serialization.json.JsonPrimitive(name))
+                put("description", kotlinx.serialization.json.JsonPrimitive(description))
+                put("input_schema", parametersSchema)
+            }
+        }
     }
 
     data class WorkspaceSkill(val name: String, val description: String, val path: String)
@@ -197,7 +225,11 @@ object WorkspaceHarness {
             "fs_delete" -> "Deleting ${strArg("path")}"
             "fs_list" -> "Listing workspace ${strArg("path").ifBlank { "root" }}"
             "fs_glob" -> "Matching files with glob '${strArg("pattern")}'"
-            "fs_search" -> "Searching workspace for '${strArg("query")}'"
+            "fs_search" -> {
+                val scope = strArg("path")
+                if (scope.isNotEmpty()) "Searching $scope for '${strArg("query")}'"
+                else "Searching workspace for '${strArg("query")}'"
+            }
             "web_search" -> "Searching the web for '${strArg("query")}'"
             "web_fetch" -> "Fetching URL ${strArg("url")}"
             "calc_eval" -> "Calculating ${strArg("expression")}"
@@ -296,7 +328,10 @@ object WorkspaceHarness {
                 "Updated Chat Todo Checklist ($done/${parsed.size} completed, $active in_progress, $pending pending).\n$mdSummary"
             }
             "skill_load" -> discoverSkills(workspaceRoot).find { it.name == strArg("name") }
-                ?.let { PlatformWorkspace.workspaceRead(workspaceRoot, it.path, startLine = 1, maxLines = WorkspaceContextCache.SKILL_MAX_LINES) }
+                ?.let { skill ->
+                    PlatformWorkspace.workspaceRead(workspaceRoot, skill.path, startLine = 1, maxLines = WorkspaceContextCache.SKILL_MAX_LINES)
+                        .map { numbered -> WorkspaceContextCache.stripReadNumbering(numbered).trim() }
+                }
                 ?: Result.failure(IllegalArgumentException("No skill named '${strArg("name")}' is available in this workspace."))
             ComputerUse.TOOL_NAME -> Result.failure(IllegalStateException("Computer control is not available in this run."))
             "agent_delegate" -> Result.failure(IllegalStateException("Helpers are not available in this run."))
@@ -325,7 +360,9 @@ object WorkspaceHarness {
             "fs_search" -> PlatformWorkspace.workspaceSearch(
                 workspaceRoot,
                 strArg("query"),
-                strArg("file_glob", "")
+                strArg("file_glob", ""),
+                strArg("path", ""),
+                args["max_results"]?.jsonPrimitive?.intOrNull ?: 0
             )
             "fs_write" -> requireWriteMode(mode, "to allow writing files") {
                 PlatformWorkspace.workspaceWrite(workspaceRoot, strArg("path"), strArg("content"))
@@ -483,8 +520,16 @@ object WorkspaceHarness {
         totalSteps: Int,
         toolName: String,
         rawOutput: String,
-        keepRecentCount: Int = 8
-    ): String = ToolOutputAndGoalSupport.compactStaleOutput(stepIndex, totalSteps, toolName, rawOutput, keepRecentCount)
+        keepRecentCount: Int = 8,
+        minCharsToCompact: Int = 1_100
+    ): String = ToolOutputAndGoalSupport.compactStaleOutput(
+        stepIndex,
+        totalSteps,
+        toolName,
+        rawOutput,
+        keepRecentCount,
+        minCharsToCompact
+    )
 
     /**
      * Repeated-Failure Circuit Breaker & Stop-Hook Work-Check Gate.

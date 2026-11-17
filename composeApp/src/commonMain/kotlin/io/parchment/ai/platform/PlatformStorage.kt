@@ -49,5 +49,7 @@ expect object PlatformStorage {
     fun loadImageBitmapFromFile(filePath: String): ImageBitmap?
     /** An already decoded image, without touching the disk. */
     fun cachedImageBitmap(filePath: String): ImageBitmap?
+    /** Drops decoded image bitmaps and transient token caches under memory pressure or backgrounding. */
+    fun trimMemoryCaches()
     fun openOrPlayMedia(localFilePathOrUrl: String)
 }

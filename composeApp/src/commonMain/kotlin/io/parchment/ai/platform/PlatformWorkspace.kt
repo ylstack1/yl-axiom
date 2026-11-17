@@ -29,7 +29,13 @@ expect object PlatformWorkspace {
     fun workspaceMultiEdit(workspaceRoot: String, relativePath: String, edits: List<Triple<String, String, Boolean>>): Result<String>
     fun workspaceMove(workspaceRoot: String, sourceRelativePath: String, destRelativePath: String): Result<String>
     fun workspaceDelete(workspaceRoot: String, relativePath: String): Result<String>
-    fun workspaceSearch(workspaceRoot: String, query: String, fileGlob: String = ""): Result<String>
+    fun workspaceSearch(
+        workspaceRoot: String,
+        query: String,
+        fileGlob: String = "",
+        relativePath: String = "",
+        maxResults: Int = 0
+    ): Result<String>
     fun workspaceShellExec(
         workspaceRoot: String,
         command: String,

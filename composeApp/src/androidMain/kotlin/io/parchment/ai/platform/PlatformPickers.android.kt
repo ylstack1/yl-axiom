@@ -225,17 +225,12 @@ actual object PlatformPickers {
                 "inter" -> {
                     FontFamily(
                         Font(assetManager = assets, path = "fonts/Inter-Regular.ttf", weight = FontWeight.Normal, style = FontStyle.Normal),
-                        Font(assetManager = assets, path = "fonts/Inter-Regular.ttf", weight = FontWeight.Medium, style = FontStyle.Normal),
-                        Font(assetManager = assets, path = "fonts/Inter-Regular.ttf", weight = FontWeight.SemiBold, style = FontStyle.Normal),
-                        Font(assetManager = assets, path = "fonts/Inter-Regular.ttf", weight = FontWeight.Bold, style = FontStyle.Normal),
-                        Font(assetManager = assets, path = "fonts/Inter-Italic.ttf", weight = FontWeight.Normal, style = FontStyle.Italic),
-                        Font(assetManager = assets, path = "fonts/Inter-Italic.ttf", weight = FontWeight.Bold, style = FontStyle.Italic)
+                        Font(assetManager = assets, path = "fonts/Inter-Italic.ttf", weight = FontWeight.Normal, style = FontStyle.Italic)
                     )
                 }
                 "jetbrains_mono" -> {
                     FontFamily(
                         Font(assetManager = assets, path = "fonts/JetBrainsMono-Regular.ttf", weight = FontWeight.Normal, style = FontStyle.Normal),
-                        Font(assetManager = assets, path = "fonts/JetBrainsMono-Regular.ttf", weight = FontWeight.Medium, style = FontStyle.Normal),
                         Font(assetManager = assets, path = "fonts/JetBrainsMono-SemiBold.ttf", weight = FontWeight.SemiBold, style = FontStyle.Normal),
                         Font(assetManager = assets, path = "fonts/JetBrainsMono-Bold.ttf", weight = FontWeight.Bold, style = FontStyle.Normal),
                         Font(assetManager = assets, path = "fonts/JetBrainsMono-Italic.ttf", weight = FontWeight.Normal, style = FontStyle.Italic)
@@ -245,7 +240,6 @@ actual object PlatformPickers {
                     FontFamily(
                         Font(assetManager = assets, path = "fonts/KaTeX_Main-Regular.ttf", weight = FontWeight.Normal, style = FontStyle.Normal),
                         Font(assetManager = assets, path = "fonts/KaTeX_Main-Bold.ttf", weight = FontWeight.Bold, style = FontStyle.Normal),
-                        Font(assetManager = assets, path = "fonts/KaTeX_Main-Bold.ttf", weight = FontWeight.SemiBold, style = FontStyle.Normal),
                         Font(assetManager = assets, path = "fonts/KaTeX_Math-Italic.ttf", weight = FontWeight.Normal, style = FontStyle.Italic),
                         Font(assetManager = assets, path = "fonts/NotoSansMath-Regular.ttf", weight = FontWeight.Medium, style = FontStyle.Normal)
                     )

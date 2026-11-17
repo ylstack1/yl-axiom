@@ -3,6 +3,7 @@ package io.parchment.ai
 import io.parchment.ai.runtime.AppForeground
 import android.Manifest
 import android.app.Activity
+import android.content.ComponentCallbacks2
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.net.Uri
@@ -35,6 +36,7 @@ import io.parchment.ai.platform.CrashRecorder
 import io.parchment.ai.platform.PickedBinaryFile
 import io.parchment.ai.platform.PlatformPickers
 import io.parchment.ai.platform.PlatformRuntime
+import io.parchment.ai.platform.PlatformStorage
 import io.parchment.ai.ui.ParchmentApp
 import io.parchment.ai.ui.preloadProcessStateInBackground
 import java.io.OutputStream
@@ -257,6 +259,13 @@ class MainActivity : ComponentActivity() {
         AppForeground.markLeft()
         PlatformRuntime.flushPendingStateNow()
         super.onStop()
+    }
+
+    override fun onTrimMemory(level: Int) {
+        super.onTrimMemory(level)
+        if (level >= ComponentCallbacks2.TRIM_MEMORY_UI_HIDDEN || level >= ComponentCallbacks2.TRIM_MEMORY_RUNNING_LOW) {
+            PlatformStorage.trimMemoryCaches()
+        }
     }
 
     /** Reads off the main thread, so a large selection cannot freeze the interface. */

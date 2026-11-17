@@ -151,6 +151,12 @@ object O200kTokenizer {
         countTokens("Warm up o200k_base regex and BPE subword counter.")
     }
 
+    fun clearCaches() {
+        synchronized(tokenCache) { tokenCache.clear() }
+        synchronized(toolCallTokenCache) { toolCallTokenCache.clear() }
+        synchronized(variantTokenCache) { variantTokenCache.clear() }
+    }
+
     /**
      * Constant-time token estimate for partial streaming buffers, so frames
      * never run regexes on transient substrings or evict completed turns from `tokenCache`.

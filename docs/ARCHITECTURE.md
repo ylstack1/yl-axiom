@@ -10,10 +10,10 @@ Gradle defines two modules sharing one version catalog (`gradle/libs.versions.to
 
 | Module | Role | JVM / SDK target | Packaging |
 |---|---|---|---|
-| `composeApp` | Multiplatform shared code, UI, desktop `main()` and desktop/common tests | Desktop JVM 21 bytecode on the bundled JDK 25 runtime (FFM, compact object headers), Android JVM 17 | Desktop distributable via JLink + AppCDS (`classes_coh.jsa` + `parchment.jsa`) + ProGuard, consumed as KMP library by `androidApp` |
+| `composeApp` | Multiplatform shared code, UI, desktop `main()` and desktop/common tests | Desktop JVM 21 bytecode on the bundled JDK 25 runtime (FFM, compact object headers), Android JVM 17 | Desktop distributable via JLink + Project Leyden AOT (`parchment.aot`) + ProGuard, consumed as KMP library by `androidApp` |
 | `androidApp` | Android application shell (`AndroidManifest.xml`, launcher resources, `proguard-rules.pro`) | `minSdk 26`, `compileSdk 37`, `targetSdk 37` | Release APK via R8 full shrinking and resource shrinking |
 
-`composeApp/build.gradle.kts` generates `io.parchment.ai.ParchmentBuildConfig` (build version and platform flags) and wires pinned dependencies from `gradle/libs.versions.toml` (Kotlin `2.4.21`, AGP `9.3.3`, Compose Multiplatform `1.12.2`, Ktor `3.6.1`, Coroutines `1.11.0`, Serialization `1.12.0`). Windows native calls use the JDK's FFM API (`WindowsNative`), not JNA.
+`composeApp/build.gradle.kts` generates `/parchment-build.properties` read by `io.parchment.ai.ParchmentBuildConfig` (so version bumps do not invalidate Kotlin compilation caches) and wires pinned dependencies from `gradle/libs.versions.toml` (Kotlin `2.4.21`, AGP `9.3.3`, Compose Multiplatform `1.12.2`, Ktor `3.6.1`, Coroutines `1.11.0`, Serialization `1.13.0`). Windows native calls use the JDK's FFM API (`WindowsNative`), not JNA.
 
 | Source set | Path | Compiles for | Role |
 |---|---|---|---|

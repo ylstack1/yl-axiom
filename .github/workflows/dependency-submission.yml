@@ -43,30 +43,22 @@ jobs:
           distribution: "temurin"
           java-version: "25"
 
-      - name: Cache Android SDK Packages
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      - name: Restore Android SDK 37 Packages
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: |
-            /usr/local/lib/android/sdk/licenses
             /usr/local/lib/android/sdk/platforms/android-37*
-            /usr/local/lib/android/sdk/build-tools/35*
-            /usr/local/lib/android/sdk/build-tools/36*
             /usr/local/lib/android/sdk/build-tools/37*
-          key: android-sdk-${{ runner.os }}-${{ hashFiles('gradle/libs.versions.toml') }}
+          key: android-sdk-37-${{ runner.os }}-${{ hashFiles('gradle/libs.versions.toml') }}
 
-      - name: Accept Android SDK Licenses
+      - name: Write Android SDK License Hashes
         run: |
-          if [ ! -f "$ANDROID_HOME/licenses/.parchment-accepted" ]; then
-            SDKMGR=$(find "$ANDROID_HOME/cmdline-tools" -name sdkmanager | head -n 1)
-            if [ -n "$SDKMGR" ]; then
-              yes | "$SDKMGR" --licenses > /dev/null || true
-              mkdir -p "$ANDROID_HOME/licenses"
-              touch "$ANDROID_HOME/licenses/.parchment-accepted"
-            fi
-          fi
+          mkdir -p "$ANDROID_HOME/licenses"
+          printf "\n8933bad161af4178b1185d1a37fbf41ea5269c55\nd56f5187479451eabf01fb78af6dfcb131a6481e\n24333f8a63b6825ea9c5514f83c2829b004d1fee\n" > "$ANDROID_HOME/licenses/android-sdk-license"
+          printf "\n84831b9409646a918e30573bab4c9c91346d8abd\n504667f4c0de7af1a06de9f4b1727b84351f2910\n" > "$ANDROID_HOME/licenses/android-sdk-preview-license"
 
       - name: Submit shipped dependencies
         uses: gradle/actions/dependency-submission@8da46b539cd8fe6ab27ca75128919a18d757604c # v6.4.1
         with:
           dependency-graph-include-configurations: "^(desktopRuntimeClasspath|releaseRuntimeClasspath)$"
-          additional-arguments: "--no-daemon --max-workers=4"
+          additional-arguments: "--no-daemon --no-configuration-cache --max-workers=4"

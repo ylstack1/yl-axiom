@@ -30,12 +30,15 @@ import io.parchment.ai.runtime.AppForeground
 import io.parchment.ai.ui.AppShortcutDispatcher
 import io.parchment.ai.ui.LocalParchmentPalette
 import io.parchment.ai.ui.ParchmentApp
+import io.parchment.ai.ui.initialAppStateLoad
 import io.parchment.ai.ui.preloadProcessStateInBackground
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.debounce
 import kotlinx.coroutines.withContext
+import org.jetbrains.skia.FontMgr
 import org.jetbrains.skia.Image
+import org.jetbrains.skia.impl.Library as SkiaLibrary
 import java.awt.Component
 import java.awt.Dimension
 import java.awt.GraphicsEnvironment
@@ -56,7 +59,7 @@ import java.awt.event.WindowEvent
 import java.io.File
 import java.util.Properties
 import kotlin.system.exitProcess
-private data class SavedWindowGeometry(
+internal data class SavedWindowGeometry(
     val isMaximized: Boolean,
     val widthDp: Int,
     val heightDp: Int,
@@ -67,7 +70,7 @@ private data class SavedWindowGeometry(
 private fun windowBoundsFile(): File =
     File(PlatformStorage.getAppStorageDirectoryPath(), "window-bounds.properties")
 
-private fun loadSavedWindowGeometry(): SavedWindowGeometry {
+internal fun loadSavedWindowGeometry(): SavedWindowGeometry {
     return runCatching {
         val f = windowBoundsFile()
         if (!f.exists() || !f.isFile) {
@@ -144,6 +147,29 @@ internal fun windowCaption(runStatus: String, captionTitle: String): String {
     }
 }
 
+internal val predecodedAppIconPainter: BitmapPainter? by lazy {
+    runCatching {
+        val stream = Thread.currentThread().contextClassLoader?.getResourceAsStream("icon/parchment-icon.png")
+            ?: DesktopPlatformHost::class.java.classLoader?.getResourceAsStream("icon/parchment-icon.png")
+        val bytes = stream?.use { it.readBytes() }
+        if (bytes != null && bytes.isNotEmpty()) {
+            BitmapPainter(Image.makeFromEncoded(bytes).use { it.toComposeImageBitmap() })
+        } else null
+    }.getOrNull()
+}
+
+private fun preloadDesktopGraphicsInBackground() {
+    Thread({
+        runCatching { SkiaLibrary.staticLoad() }
+        runCatching { FontMgr.default }
+        runCatching { PlatformPickers.preloadStartupFonts() }
+        runCatching { predecodedAppIconPainter }
+    }, "parchment-gfx-preload").apply {
+        isDaemon = true
+        start()
+    }
+}
+
 @OptIn(kotlinx.coroutines.FlowPreview::class)
 fun main(args: Array<String>) {
     if ("--aot-verify" in args) exitProcess(0)
@@ -153,13 +179,22 @@ fun main(args: Array<String>) {
     // Enable hardware VSync and Swing frame pacing so Skia renders smoothly at 60Hz / 120Hz / 144Hz / 240Hz.
     System.setProperty("skiko.vsync.enabled", "true")
     System.setProperty("skiko.swing.frame.pacing", "true")
+    if (System.getProperty("skiko.gpu.resourceCacheLimit") == null) {
+        System.setProperty("skiko.gpu.resourceCacheLimit", if (PlatformRuntime.isLowMemoryDevice) "6291456" else "8388608")
+    }
     preloadProcessStateInBackground()
+    preloadDesktopGraphicsInBackground()
     val startupGeometry = loadSavedWindowGeometry()
 
     application {
-        // Idle, the caption names the open chat; during a run it shows the run's progress instead.
+        // Pre-seed the chat title from initialAppStateLoad so Frame 1 opens directly with "Chat — Parchment".
+        val initialCaption = remember {
+            val snap = initialAppStateLoad.value.first
+            (snap.sessions.find { it.id == snap.activeSessionId } ?: snap.sessions.firstOrNull())
+                ?.title?.trim().orEmpty()
+        }
         var runStatus by remember { mutableStateOf("Parchment") }
-        var captionTitle by remember { mutableStateOf("") }
+        var captionTitle by remember { mutableStateOf(initialCaption) }
         PlatformRuntime.windowStatusCallback = { newTitle -> runStatus = newTitle }
         val windowTitle = windowCaption(runStatus, captionTitle)
 
@@ -221,15 +256,7 @@ fun main(args: Array<String>) {
 
     val shortcuts = remember { AppShortcutDispatcher() }
 
-    val appIconPainter = remember {
-        runCatching {
-            val stream = Thread.currentThread().contextClassLoader?.getResourceAsStream("icon/parchment-icon.png")
-            val bytes = stream?.use { it.readBytes() }
-            if (bytes != null && bytes.isNotEmpty()) {
-                BitmapPainter(Image.makeFromEncoded(bytes).use { it.toComposeImageBitmap() })
-            } else null
-        }.getOrNull()
-    }
+    val appIconPainter = remember { predecodedAppIconPainter }
 
         val closeAndSave: () -> Unit = {
             val isMax = windowState.placement == WindowPlacement.Maximized || windowState.placement == WindowPlacement.Fullscreen
@@ -322,6 +349,7 @@ fun main(args: Array<String>) {
                 val listener = object : WindowAdapter() {
                     override fun windowIconified(e: WindowEvent?) {
                         AppForeground.markLeft()
+                        PlatformStorage.trimMemoryCaches()
                         Thread({ System.gc() }, "parchment-concurrent-uncommit").apply { isDaemon = true; start() }
                     }
                     override fun windowDeiconified(e: WindowEvent?) = AppForeground.markResumed()
@@ -331,8 +359,10 @@ fun main(args: Array<String>) {
             }
             // Concurrent post-hydration sweep so Generational Shenandoah uncommits startup allocation churn within ~2 s.
             LaunchedEffect(Unit) {
-                kotlinx.coroutines.delay(2_200L)
-                withContext(Dispatchers.IO) { System.gc() }
+                kotlinx.coroutines.delay(1_800L)
+                Thread({ System.gc() }, "parchment-idle-sweep-1").apply { isDaemon = true; start() }
+                kotlinx.coroutines.delay(1_600L)
+                Thread({ System.gc() }, "parchment-idle-sweep-2").apply { isDaemon = true; start() }
             }
             ParchmentApp(
                 shortcutDispatcher = shortcuts,

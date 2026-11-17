@@ -1,3 +1,4 @@
+import java.util.concurrent.TimeUnit
 import org.jetbrains.compose.desktop.application.dsl.TargetFormat
 import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 
@@ -13,40 +14,35 @@ plugins {
     alias(libs.plugins.composeHotReload)
 }
 
-val appVersionProp = (project.findProperty("appVersion") as? String)?.removePrefix("v")?.trim()
-    ?.takeIf { it.isNotEmpty() } ?: "2.1.0"
-val appVersionCodeProp = (project.findProperty("appVersionCode") as? String)?.toIntOrNull() ?: 200
-val githubRepoProp = (project.findProperty("githubRepo") as? String)?.trim()
-    ?.takeIf { it.isNotEmpty() } ?: "baros4294/parchment"
+val appVersionProp = providers.gradleProperty("appVersion")
+    .map { it.removePrefix("v").trim().ifEmpty { "2.1.0" } }
+    .orElse("2.1.0")
+val githubRepoProp = providers.gradleProperty("githubRepo")
+    .map { it.trim().ifEmpty { "baros4294/parchment" } }
+    .orElse("baros4294/parchment")
 // Set only by .github/workflows/build-installers.yml. Dev runs and local packages must never install an update over the real app.
-val officialReleaseProp = (project.findProperty("officialRelease") as? String)?.trim().toBoolean()
+val officialReleaseProp = providers.gradleProperty("officialRelease")
+    .map { it.trim().toBoolean() }
+    .orElse(false)
 
+// Emit a tiny Java resource instead of a generated .kt source file so changing -PappVersion/-PofficialRelease
+// never invalidates compileKotlinDesktop, compileDesktopTestKotlinDesktop, or compileAndroidMain in the Gradle build cache.
 val generateBuildConfig = tasks.register("generateBuildConfig") {
-    val outputDir = layout.buildDirectory.dir("generated/parchmentConfig")
+    val outputDir = layout.buildDirectory.dir("generated/parchmentResources")
     inputs.property("appVersion", appVersionProp)
-    inputs.property("appVersionCode", appVersionCodeProp)
     inputs.property("githubRepo", githubRepoProp)
     inputs.property("officialRelease", officialReleaseProp)
     outputs.dir(outputDir)
     val ver = appVersionProp
-    val code = appVersionCodeProp
     val repo = githubRepoProp
     val official = officialReleaseProp
     doLast {
-        val file = outputDir.get().file("io/parchment/ai/ParchmentBuildConfig.kt").asFile
+        val file = outputDir.get().file("parchment-build.properties").asFile
         file.parentFile.mkdirs()
         file.writeText(
-            """
-            package io.parchment.ai
-
-            object ParchmentBuildConfig {
-                const val APP_VERSION = "$ver"
-                const val APP_VERSION_CODE = $code
-                const val DEFAULT_GITHUB_REPO = "$repo"
-                /** True only for builds made by the release workflow; other builds never install updates. */
-                const val OFFICIAL_RELEASE = $official
-            }
-            """.trimIndent()
+            "appVersion=${ver.get()}\n" +
+                "githubRepo=${repo.get()}\n" +
+                "officialRelease=${official.get()}\n"
         )
     }
 }
@@ -79,7 +75,7 @@ kotlin {
         desktopMain.kotlin.srcDir("src/jvmShared/kotlin")
 
         commonMain {
-            kotlin.srcDir(generateBuildConfig.map { it.outputs.files.singleFile })
+            resources.srcDir(generateBuildConfig.map { it.outputs.files.singleFile })
             dependencies {
             // Compose Foundation and UI only: no Material.
             implementation(libs.compose.runtime)
@@ -155,31 +151,40 @@ val jdkLibraryClasses = tasks.register<Exec>("extractJdkLibraryClasses") {
     }
 }
 
+val desktopJvmArgs = listOf(
+    "-Xms8m",
+    "-Xmx224m",
+    "-Xss512k",
+    "-XX:TieredStopAtLevel=1",
+    "-XX:CICompilerCount=1",
+    "-XX:InitialCodeCacheSize=4m",
+    "-XX:ReservedCodeCacheSize=24m",
+    "-XX:+UseShenandoahGC",
+    "-XX:ShenandoahGCMode=generational",
+    "-XX:ParallelGCThreads=2",
+    "-XX:ConcGCThreads=1",
+    "-XX:SoftMaxHeapSize=16m",
+    "-XX:+ExplicitGCInvokesConcurrent",
+    "-XX:+UnlockExperimentalVMOptions",
+    "-XX:ShenandoahUncommitDelay=300",
+    "-XX:+UseCompactObjectHeaders",
+    "-Dsun.java2d.d3d=false",
+    "-Dskiko.rendering.laf.global=false",
+    "-Dskiko.vsync.enabled=true",
+    "-Dskiko.swing.frame.pacing=true",
+    "-Dskiko.gpu.resourceCacheLimit=8388608",
+    "-Dkotlinx.coroutines.io.parallelism=16",
+    // FFM downcalls (title bar, file/folder COM dialogs, memory check, keep-awake: WindowsNative) and Skia call
+    // native code; JDK 25 warns without this and later JDKs will block it.
+    "--enable-native-access=ALL-UNNAMED"
+)
+
 compose.desktop {
     application {
         mainClass = "io.parchment.ai.MainKt"
 
-        // Lean, pause-free JDK 25 runtime:
-        // - Generational Shenandoah (JEP 521, -XX:+UseShenandoahGC -XX:ShenandoahGCMode=generational) keeps GC pauses
-        //   sub-1ms for 120Hz/240Hz frame pacing while keeping CompressedOops enabled so Project Leyden's AOTCache
-        //   archives heap objects, the full module graph, and AOT-linked classes (`Using AOT-linked classes: true`).
-        // - Compact object headers (JEP 519, -XX:+UseCompactObjectHeaders) shrink every object header from 12 to 8 bytes.
-        // - Skiko VSync + Swing frame pacing keep DirectX presentation locked to the display refresh cadence.
-        jvmArgs(
-            "-Xms32m",
-            "-Xmx512m",
-            "-XX:+UseShenandoahGC",
-            "-XX:ShenandoahGCMode=generational",
-            "-XX:SoftMaxHeapSize=48m",
-            "-XX:+UnlockExperimentalVMOptions",
-            "-XX:ShenandoahUncommitDelay=1000",
-            "-XX:+UseCompactObjectHeaders",
-            "-Dskiko.vsync.enabled=true",
-            "-Dskiko.swing.frame.pacing=true",
-            // FFM downcalls (title bar, file/folder COM dialogs, memory check, keep-awake: WindowsNative) and Skia call
-            // native code; JDK 25 warns without this and later JDKs will block it.
-            "--enable-native-access=ALL-UNNAMED"
-        )
+        // Lean, pause-free JDK 25 runtime shared identically with Project Leyden AOT training below.
+        jvmArgs(*desktopJvmArgs.toTypedArray())
 
         // Releases (createReleaseDistributable) drop unused code from the jars. Shrinking only: no renaming or
         // optimization passes, which are where ProGuard tends to break Kotlin.
@@ -194,7 +199,7 @@ compose.desktop {
         nativeDistributions {
             targetFormats(TargetFormat.Exe, TargetFormat.Msi)
             packageName = "Parchment"
-            packageVersion = appVersionProp
+            packageVersion = appVersionProp.get()
             description = "Parchment — Minimal Bleeding-Edge Literary & Agent AI Frontend"
             vendor = "Parchment"
 
@@ -229,6 +234,7 @@ tasks.withType<org.jetbrains.compose.desktop.application.tasks.AbstractJLinkTask
 tasks.withType<org.jetbrains.compose.desktop.application.tasks.AbstractJPackageTask>().configureEach {
     freeArgs.addAll("--java-options", "-XX:AOTCache=\$APPDIR/parchment.aot")
     val destDir = destinationDir
+    val aotJvmArgs = ArrayList(desktopJvmArgs)
     doLast {
         val appRoot = destDir.get().asFile.resolve("Parchment")
         val launcherExe = appRoot.resolve("Parchment.exe")
@@ -248,36 +254,42 @@ tasks.withType<org.jetbrains.compose.desktop.application.tasks.AbstractJPackageT
                 ?: throw GradleException("jlink image has no java launcher to build parchment.aot.")
             val aotFile = appDir.resolve("parchment.aot")
             aotFile.delete()
+            val trainLogFile = File.createTempFile("parchment-aot-train-", ".log")
             val train = ProcessBuilder(
-                javaExe.absolutePath,
-                "-Xms32m",
-                "-Xmx512m",
-                "-XX:+UseShenandoahGC",
-                "-XX:ShenandoahGCMode=generational",
-                "-XX:SoftMaxHeapSize=48m",
-                "-XX:+UnlockExperimentalVMOptions",
-                "-XX:ShenandoahUncommitDelay=1000",
-                "-XX:+UseCompactObjectHeaders",
-                "-Dskiko.vsync.enabled=true",
-                "-Dskiko.swing.frame.pacing=true",
-                "--enable-native-access=ALL-UNNAMED",
-                "-XX:AOTCacheOutput=${aotFile.absolutePath}",
-                "-cp",
-                orderedCp,
-                "io.parchment.ai.MainKt",
-                "--cds-warmup"
-            ).redirectErrorStream(true).start()
-            val trainLog = train.inputStream.bufferedReader().readText()
-            if (train.waitFor() != 0 || !aotFile.isFile) {
+                listOf(
+                    javaExe.absolutePath,
+                    "-Dskiko.library.path=${appDir.absolutePath}",
+                    "-Djava.library.path=${appDir.absolutePath}"
+                ) +
+                    aotJvmArgs +
+                    listOf(
+                        "-XX:AOTCacheOutput=${aotFile.absolutePath}",
+                        "-cp",
+                        orderedCp,
+                        "io.parchment.ai.MainKt",
+                        "--cds-warmup"
+                    )
+            ).redirectErrorStream(true).redirectOutput(trainLogFile).start()
+            val trainDone = train.waitFor(90, TimeUnit.SECONDS)
+            if (!trainDone) train.destroyForcibly()
+            val trainLog = runCatching { trainLogFile.readText() }.getOrDefault("")
+            trainLogFile.delete()
+            if (!trainDone || train.exitValue() != 0 || !aotFile.isFile) {
                 throw GradleException("Building parchment.aot failed:\n" + trainLog.takeLast(3000))
             }
             runtimeBin.listFiles { file -> file.extension.equals("exe", ignoreCase = true) }?.forEach { it.delete() }
             runtimeBin.resolve("server").listFiles { file -> file.extension.equals("jsa", ignoreCase = true) }?.forEach { it.delete() }
-            val verifyPb = ProcessBuilder(launcherExe.absolutePath, "--aot-verify").redirectErrorStream(true)
+            val verifyLogFile = File.createTempFile("parchment-aot-verify-", ".log")
+            val verifyPb = ProcessBuilder(launcherExe.absolutePath, "--aot-verify")
+                .redirectErrorStream(true)
+                .redirectOutput(verifyLogFile)
             verifyPb.environment()["JAVA_TOOL_OPTIONS"] = "-Xlog:aot"
             val verifyProc = verifyPb.start()
-            val verifyLog = verifyProc.inputStream.bufferedReader().readText()
-            if (verifyProc.waitFor() != 0 || "Opened AOT cache" !in verifyLog) {
+            val verifyDone = verifyProc.waitFor(30, TimeUnit.SECONDS)
+            if (!verifyDone) verifyProc.destroyForcibly()
+            val verifyLog = runCatching { verifyLogFile.readText() }.getOrDefault("")
+            verifyLogFile.delete()
+            if (!verifyDone || verifyProc.exitValue() != 0 || "Opened AOT cache" !in verifyLog) {
                 throw GradleException("Parchment.exe failed to map parchment.aot:\n" + verifyLog.takeLast(2000))
             }
         }

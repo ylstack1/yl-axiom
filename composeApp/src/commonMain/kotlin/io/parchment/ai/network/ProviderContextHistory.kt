@@ -253,15 +253,25 @@ internal fun AiProviderEngine.compactHistoricalToolResultForWire(
     callIndexInTurn: Int,
     totalCallsInTurn: Int
 ): String {
-    val shouldCompact = (isOlderAssistantTurn && rawResult.length > 900) ||
-        (totalCallsInTurn > 10 && callIndexInTurn < totalCallsInTurn - 6 && rawResult.length > 900)
-    if (!shouldCompact) return rawResult
+    if (isOlderAssistantTurn) {
+        if (rawResult.length <= 2_000) return rawResult
+        return WorkspaceHarness.compactStaleToolOutputText(
+            stepIndex = callIndexInTurn,
+            totalSteps = totalCallsInTurn.coerceAtLeast(callIndexInTurn + 1),
+            toolName = toolName,
+            rawOutput = rawResult,
+            keepRecentCount = 0,
+            minCharsToCompact = 2_000
+        )
+    }
+    // Quantize intra-turn compaction via compactStaleToolOutputText (COMPACTION_BATCH = 16) so prompt-cache prefixes never slide step-by-step.
     return WorkspaceHarness.compactStaleToolOutputText(
-        stepIndex = 0,
-        totalSteps = 100,
+        stepIndex = callIndexInTurn,
+        totalSteps = totalCallsInTurn,
         toolName = toolName,
         rawOutput = rawResult,
-        keepRecentCount = 0
+        keepRecentCount = 8,
+        minCharsToCompact = 2_400
     )
 }
 
