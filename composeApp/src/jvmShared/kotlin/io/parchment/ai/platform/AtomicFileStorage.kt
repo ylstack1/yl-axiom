@@ -12,6 +12,7 @@ import java.nio.file.StandardCopyOption
 import java.nio.file.FileVisitResult
 import java.nio.file.SimpleFileVisitor
 import java.nio.file.attribute.BasicFileAttributes
+import java.util.concurrent.locks.LockSupport
 
 /**
  * Stages and flushes complete content beside its target before an atomic rename.
@@ -100,8 +101,13 @@ internal object AtomicFileStorage {
                 return
             } catch (error: AccessDeniedException) {
                 if (attempt == MAX_REPLACE_ATTEMPTS - 1) throw error
-                // Windows readers/indexers can briefly hold handles without delete sharing.
-                Thread.sleep(minOf(8L shl attempt, 256L))
+                // Sub-millisecond parks on early attempts avoid phase-locking with Windows' 15.6 ms Thread.sleep tick
+                // when concurrent readers briefly open/close the target; later attempts back off for AV indexers.
+                if (attempt < 6) {
+                    LockSupport.parkNanos(250_000L * (attempt + 1))
+                } else {
+                    Thread.sleep(minOf(7L * (attempt - 4), 251L))
+                }
             }
         }
     }

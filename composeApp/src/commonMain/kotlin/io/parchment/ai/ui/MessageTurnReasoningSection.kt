@@ -115,7 +115,11 @@ internal fun MessageTurnReasoningDrawer(
                     }
                     if (preferences.showToolCards && activeVar.toolCalls.isNotEmpty()) {
                         activeVar.toolCalls.forEach { tc ->
-                            ToolExecutionCard(tc, showToolResultSummary = preferences.showToolResultSummary)
+                            ToolExecutionCard(
+                                tc = tc,
+                                showToolResultSummary = preferences.showToolResultSummary,
+                                wrapCodeBlocks = preferences.wrapCodeBlocks
+                            )
                         }
                     }
                 }
@@ -342,7 +346,11 @@ private fun InterleavedReasoningTimeline(
             }
             if (preferences.showToolCards) {
                 if (run.first == run.last) {
-                    ToolExecutionCard(first, showToolResultSummary = preferences.showToolResultSummary)
+                    ToolExecutionCard(
+                        tc = first,
+                        showToolResultSummary = preferences.showToolResultSummary,
+                        wrapCodeBlocks = preferences.wrapCodeBlocks
+                    )
                 } else {
                     QuietToolGroup(
                         tools = visibleTools.subList(run.first, run.last + 1),
@@ -506,7 +514,8 @@ private fun ReasoningThoughtStepBlock(
 @Composable
 private fun ToolExecutionCard(
     tc: ToolCallRecord,
-    showToolResultSummary: Boolean
+    showToolResultSummary: Boolean,
+    wrapCodeBlocks: Boolean = false
 ) {
     val p = LocalParchmentPalette.current
     val lowerTool = tc.name.lowercase()
@@ -543,7 +552,8 @@ private fun ToolExecutionCard(
             oldText = oldTxt,
             newText = newTxt,
             resultSummary = tc.resultText,
-            isError = tc.isError
+            isError = tc.isError,
+            wrapCodeBlocks = wrapCodeBlocks
         )
         return
     }

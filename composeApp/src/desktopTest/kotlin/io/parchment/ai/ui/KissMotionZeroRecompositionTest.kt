@@ -16,7 +16,6 @@ import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.swing.Swing
 import kotlin.test.Test
 import kotlin.test.assertEquals
-import kotlin.test.assertFalse
 
 class KissMotionZeroRecompositionTest {
     @OptIn(ExperimentalComposeUiApi::class)
@@ -66,7 +65,7 @@ class KissMotionZeroRecompositionTest {
 
     @OptIn(ExperimentalComposeUiApi::class)
     @Test
-    fun streamingPulseDotAvoidsContinuousFrameClockInvalidationsAndCallerRecomposition() = runBlocking(Dispatchers.Swing) {
+    fun streamingPulseDotAnimatesInDrawLayerWithoutCallerRecomposition() = runBlocking(Dispatchers.Swing) {
         var compositions = 0
         val scene = ImageComposeScene(width = 120, height = 120, density = Density(1f), coroutineContext = Dispatchers.Swing)
         try {
@@ -74,15 +73,11 @@ class KissMotionZeroRecompositionTest {
                 SideEffect { compositions++ }
                 KissStreamingPulseDot()
             }
-            Snapshot.sendApplyNotifications()
-            scene.render(0L).close()
-            Snapshot.sendApplyNotifications()
-            scene.render(16_000_000L).close()
-            assertEquals(1, compositions)
-            assertFalse(
-                scene.hasInvalidations(),
-                "KissStreamingPulseDot must not register a 120-240Hz InfiniteTransition frame-clock awaiter while idle-waiting"
-            )
+            for (f in 0 until 20) {
+                Snapshot.sendApplyNotifications()
+                scene.render(f * 16_000_000L).close()
+            }
+            assertEquals(1, compositions, "Smooth VSync pulse dot must animate purely in graphicsLayer without caller recomposition")
         } finally {
             scene.close()
         }

@@ -28,6 +28,7 @@ import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -494,7 +495,7 @@ private fun ProseBlockItem(
                         var isCollapsed by remember(index, autoCollapseCodeBlocks) {
                             mutableStateOf(autoCollapseCodeBlocks)
                         }
-                        var isWrapped by remember(index, wrapCodeBlocks) {
+                        var isWrapped by rememberSaveable(index, wrapCodeBlocks) {
                             mutableStateOf(wrapCodeBlocks)
                         }
                         val scanState = remember(index) { CodeFenceScanState() }.update(block.code)
@@ -553,7 +554,7 @@ private fun ProseBlockItem(
                                             }
                                         )
                                     }
-                                    if (!isDiffLang && !(isSvgArtifact && showSvgPreview)) {
+                                    if (!(isSvgArtifact && showSvgPreview)) {
                                         SepiaButton(
                                             text = "↩",
                                             compact = true,
@@ -607,35 +608,43 @@ private fun ProseBlockItem(
                                     if (isSvgArtifact && showSvgPreview) {
                                         InlineSvgArtifactPreview(rawSvg = block.code)
                                     } else if (isDiffLang) {
-                                        SepiaRawDiffLinesView(
-                                            rawDiffText = block.code,
-                                            modifier = Modifier.padding(vertical = Space.s4)
-                                        )
+                                        key(isWrapped) {
+                                            SepiaRawDiffLinesView(
+                                                rawDiffText = block.code,
+                                                wrapLines = isWrapped,
+                                                modifier = Modifier.padding(vertical = Space.s4)
+                                            )
+                                        }
                                     } else {
                                         val codeChunks = remember(block.code) { splitCodeFenceChunks(block.code) }
                                         val scrollState = rememberScrollState()
-                                        Box(
-                                            modifier = Modifier
-                                                .fillMaxWidth()
-                                                .then(if (isWrapped) Modifier else Modifier.horizontalScroll(scrollState))
-                                                .padding(11.dp)
-                                        ) {
-                                            if (codeChunks.size == 1) {
-                                                BasicText(
-                                                    text = codeChunks[0],
-                                                    style = p.monoStyle,
-                                                    softWrap = isWrapped
-                                                )
-                                            } else {
-                                                // Chunk long code blocks into ~40-line paragraphs so settled prefixes skip Skia relayout while streaming.
-                                                Column {
-                                                    codeChunks.forEachIndexed { chunkIdx, chunk ->
-                                                        key(chunkIdx) {
-                                                            BasicText(
-                                                                text = chunk,
-                                                                style = p.monoStyle,
-                                                                softWrap = isWrapped
-                                                            )
+                                        key(isWrapped) {
+                                            Box(
+                                                modifier = Modifier
+                                                    .fillMaxWidth()
+                                                    .then(if (isWrapped) Modifier else Modifier.horizontalScroll(scrollState))
+                                                    .padding(11.dp)
+                                            ) {
+                                                val lineModifier = if (isWrapped) Modifier.fillMaxWidth() else Modifier
+                                                if (codeChunks.size == 1) {
+                                                    BasicText(
+                                                        text = codeChunks[0],
+                                                        style = p.monoStyle,
+                                                        softWrap = isWrapped,
+                                                        modifier = lineModifier
+                                                    )
+                                                } else {
+                                                    // Chunk long code blocks into ~40-line paragraphs so settled prefixes skip Skia relayout while streaming.
+                                                    Column(modifier = lineModifier) {
+                                                        codeChunks.forEachIndexed { chunkIdx, chunk ->
+                                                            key(chunkIdx) {
+                                                                BasicText(
+                                                                    text = chunk,
+                                                                    style = p.monoStyle,
+                                                                    softWrap = isWrapped,
+                                                                    modifier = lineModifier
+                                                                )
+                                                            }
                                                         }
                                                     }
                                                 }

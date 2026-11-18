@@ -884,6 +884,7 @@ internal fun ImageViewerFallbackState(isLoading: Boolean, sourceLabel: String) {
 @Composable
 internal fun ParchmentAttachmentViewerModal(
     item: ActiveMediaViewerItem,
+    wrapCodeBlocks: Boolean = false,
     onNotify: (String) -> Unit,
     onClose: () -> Unit
 ) {
@@ -1127,6 +1128,7 @@ internal fun ParchmentAttachmentViewerModal(
                 var showRenderedPreview by remember(item, isSvgContent, isMarkdownContent) {
                     mutableStateOf(isSvgContent || isMarkdownContent)
                 }
+                var isWrapped by remember(item, wrapCodeBlocks) { mutableStateOf(wrapCodeBlocks) }
 
                 val viewerShape = RoundedCornerShape(Radius.r12)
                 Column(
@@ -1179,6 +1181,15 @@ internal fun ParchmentAttachmentViewerModal(
                                     compact = true,
                                     style = if (showRenderedPreview) SepiaButtonStyle.SECONDARY else SepiaButtonStyle.OUTLINE,
                                     onClick = { showRenderedPreview = !showRenderedPreview }
+                                )
+                            }
+                            if (!(isSvgContent && showRenderedPreview)) {
+                                SepiaButton(
+                                    text = "↩",
+                                    contentDescription = if (isWrapped) Strings.unwrapCode else Strings.wrapCode,
+                                    compact = true,
+                                    style = if (isWrapped) SepiaButtonStyle.SECONDARY else SepiaButtonStyle.OUTLINE,
+                                    onClick = { isWrapped = !isWrapped }
                                 )
                             }
                             SepiaButton(
@@ -1244,14 +1255,23 @@ internal fun ParchmentAttachmentViewerModal(
                                 LiteraryProseRenderer(
                                     text = item.textContent,
                                     enableMarkdown = true,
-                                    enableMath = true
+                                    enableMath = true,
+                                    wrapCodeBlocks = isWrapped
                                 )
                             }
                             else -> {
-                                BasicText(
-                                    text = item.textContent.ifEmpty { Strings.emptyFile },
-                                    style = p.monoStyle.copy(fontSize = 13.sp, lineHeight = 18.sp)
-                                )
+                                Box(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .then(if (isWrapped) Modifier else Modifier.horizontalScroll(rememberScrollState()))
+                                ) {
+                                    BasicText(
+                                        text = item.textContent.ifEmpty { Strings.emptyFile },
+                                        style = p.monoStyle.copy(fontSize = 13.sp, lineHeight = 18.sp),
+                                        softWrap = isWrapped,
+                                        modifier = if (isWrapped) Modifier.fillMaxWidth() else Modifier
+                                    )
+                                }
                             }
                         }
                     }

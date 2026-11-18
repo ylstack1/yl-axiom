@@ -7,7 +7,6 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
@@ -17,12 +16,16 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicText
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -203,6 +206,7 @@ internal fun buildSplitDiffRows(diffLines: List<DiffLine>): List<SplitDiffRow> {
 @Composable
 internal fun SepiaSplitDiffLinesList(
     diffLines: List<DiffLine>,
+    wrapLines: Boolean = false,
     modifier: Modifier = Modifier
 ) {
     val p = LocalParchmentPalette.current
@@ -220,9 +224,9 @@ internal fun SepiaSplitDiffLinesList(
                 )
             } else {
                 Row(modifier = Modifier.fillMaxWidth()) {
-                    SplitDiffCell(line = row.left, modifier = Modifier.weight(1f))
+                    SplitDiffCell(line = row.left, wrapLines = wrapLines, modifier = Modifier.weight(1f))
                     Box(Modifier.width(LineWidth.hairline).height(20.dp).background(p.border.copy(alpha = 0.6f)))
-                    SplitDiffCell(line = row.right, modifier = Modifier.weight(1f))
+                    SplitDiffCell(line = row.right, wrapLines = wrapLines, modifier = Modifier.weight(1f))
                 }
             }
         }
@@ -232,6 +236,7 @@ internal fun SepiaSplitDiffLinesList(
 @Composable
 private fun SplitDiffCell(
     line: DiffLine?,
+    wrapLines: Boolean = false,
     modifier: Modifier = Modifier
 ) {
     val p = LocalParchmentPalette.current
@@ -249,13 +254,14 @@ private fun SplitDiffCell(
     Box(
         modifier = modifier
             .background(tone?.copy(alpha = 0.14f) ?: Color.Transparent)
-            .horizontalScroll(rememberScrollState())
+            .then(if (wrapLines) Modifier else Modifier.horizontalScroll(rememberScrollState()))
             .padding(horizontal = Space.s8, vertical = 1.dp)
     ) {
         BasicText(
             text = if (line != null) "$prefix${line.text}" else "",
             style = p.monoStyle.copy(color = tone ?: p.narrationInk, fontSize = 12.sp),
-            softWrap = false
+            softWrap = wrapLines,
+            modifier = if (wrapLines) Modifier.fillMaxWidth() else Modifier
         )
     }
 }
@@ -263,6 +269,7 @@ private fun SplitDiffCell(
 @Composable
 fun SepiaDiffLinesList(
     diffLines: List<DiffLine>,
+    wrapLines: Boolean = false,
     modifier: Modifier = Modifier
 ) {
     val p = LocalParchmentPalette.current
@@ -272,14 +279,14 @@ fun SepiaDiffLinesList(
     Column(
         modifier = modifier
             .fillMaxWidth()
-            .horizontalScroll(rememberScrollState())
+            .then(if (wrapLines) Modifier else Modifier.horizontalScroll(rememberScrollState()))
             .padding(vertical = Space.s4),
         verticalArrangement = Arrangement.spacedBy(1.dp)
     ) {
         diffLines.forEach { line ->
             when (line.kind) {
-                DiffLineKind.REMOVED -> DiffSignedLineRow(prefix = "-", text = line.text, lineColor = removedColor)
-                DiffLineKind.ADDED -> DiffSignedLineRow(prefix = "+", text = line.text, lineColor = addedColor)
+                DiffLineKind.REMOVED -> DiffSignedLineRow(prefix = "-", text = line.text, lineColor = removedColor, wrapLines = wrapLines)
+                DiffLineKind.ADDED -> DiffSignedLineRow(prefix = "+", text = line.text, lineColor = addedColor, wrapLines = wrapLines)
                 DiffLineKind.COLLAPSED -> {
                     BasicText(
                         text = line.text,
@@ -295,7 +302,9 @@ fun SepiaDiffLinesList(
                     BasicText(
                         text = "  ${line.text}",
                         style = p.monoStyle.copy(color = p.narrationInk, fontSize = 12.sp),
-                        modifier = Modifier.padding(horizontal = Space.s10, vertical = 1.dp)
+                        softWrap = wrapLines,
+                        modifier = (if (wrapLines) Modifier.fillMaxWidth() else Modifier)
+                            .padding(horizontal = Space.s10, vertical = 1.dp)
                     )
                 }
             }
@@ -307,26 +316,25 @@ fun SepiaDiffLinesList(
 private fun DiffSignedLineRow(
     prefix: String,
     text: String,
-    lineColor: Color
+    lineColor: Color,
+    wrapLines: Boolean = false
 ) {
     val p = LocalParchmentPalette.current
     Row(
         modifier = Modifier
             .fillMaxWidth()
             .background(lineColor.copy(alpha = 0.14f))
-            .padding(end = Space.s10),
+            .drawBehind {
+                drawRect(color = lineColor, size = Size(Space.s4.toPx(), size.height))
+            }
+            .padding(start = 11.dp, end = Space.s10, top = 1.dp, bottom = 1.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
-        Box(
-            modifier = Modifier
-                .width(Space.s4)
-                .height(20.dp)
-                .background(lineColor)
-        )
-        Spacer(Modifier.width(7.dp))
         BasicText(
             text = "$prefix $text",
-            style = p.monoStyle.copy(color = lineColor, fontSize = 12.sp)
+            style = p.monoStyle.copy(color = lineColor, fontSize = 12.sp),
+            softWrap = wrapLines,
+            modifier = if (wrapLines) Modifier.fillMaxWidth() else Modifier
         )
     }
 }
@@ -334,6 +342,7 @@ private fun DiffSignedLineRow(
 @Composable
 fun SepiaRawDiffLinesView(
     rawDiffText: String,
+    wrapLines: Boolean = false,
     modifier: Modifier = Modifier
 ) {
     val parsed = remember(rawDiffText) {
@@ -350,7 +359,7 @@ fun SepiaRawDiffLinesView(
             }
         }
     }
-    SepiaDiffLinesList(diffLines = parsed, modifier = modifier)
+    SepiaDiffLinesList(diffLines = parsed, wrapLines = wrapLines, modifier = modifier)
 }
 
 @Composable
@@ -361,6 +370,7 @@ fun SepiaFileDiffCard(
     newText: String,
     resultSummary: String = "",
     isError: Boolean = false,
+    wrapCodeBlocks: Boolean = false,
     modifier: Modifier = Modifier
 ) {
     val p = LocalParchmentPalette.current
@@ -370,6 +380,7 @@ fun SepiaFileDiffCard(
     val removedCount = remember(diffLines) { diffLines.count { it.kind == DiffLineKind.REMOVED } }
     var showDiffBody by remember { mutableStateOf(true) }
     var splitDiffMode by remember { mutableStateOf(false) }
+    var isWrapped by rememberSaveable(filePath, wrapCodeBlocks) { mutableStateOf(wrapCodeBlocks) }
     val addedGreen = p.success
     val shape = RoundedCornerShape(Radius.r8)
 
@@ -464,6 +475,13 @@ fun SepiaFileDiffCard(
                     }
                 }
                 if (diffLines.isNotEmpty()) {
+                    SepiaButton(
+                        text = "↩",
+                        contentDescription = if (isWrapped) Strings.unwrapCode else Strings.wrapCode,
+                        compact = true,
+                        style = if (isWrapped) SepiaButtonStyle.SECONDARY else SepiaButtonStyle.GHOST,
+                        onClick = { isWrapped = !isWrapped }
+                    )
                     if (!win.isCompact) {
                         SepiaButton(
                             text = "◫",
@@ -493,10 +511,12 @@ fun SepiaFileDiffCard(
             )
         } else if (showDiffBody && diffLines.isNotEmpty()) {
             SepiaDivider()
-            if (splitDiffMode && !win.isCompact) {
-                SepiaSplitDiffLinesList(diffLines = diffLines)
-            } else {
-                SepiaDiffLinesList(diffLines = diffLines)
+            key(isWrapped, splitDiffMode) {
+                if (splitDiffMode && !win.isCompact) {
+                    SepiaSplitDiffLinesList(diffLines = diffLines, wrapLines = isWrapped)
+                } else {
+                    SepiaDiffLinesList(diffLines = diffLines, wrapLines = isWrapped)
+                }
             }
         } else if (resultSummary.isNotBlank()) {
             SepiaDivider()

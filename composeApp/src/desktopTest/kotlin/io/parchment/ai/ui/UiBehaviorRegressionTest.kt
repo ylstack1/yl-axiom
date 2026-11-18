@@ -1405,34 +1405,51 @@ class UiBehaviorRegressionTest {
             assertTrue(settingsBtn.boundsInRoot.bottom <= 68f, "TopEditorialBar should be comfortably compact (<=68dp), got bottom=${settingsBtn.boundsInRoot.bottom}")
         }
 
-        // 2. Code block wrap toggle & global wrapCodeBlocks + Split Diff toggle
-        val longCode = "```kotlin\nval veryLongLine = \"" + "word ".repeat(60) + "\"\n```"
+        // 2. Code block & diff wrap toggle + global wrapCodeBlocks + Split Diff toggle (asserting real pixel layout wrapping)
+        val longCode = "```kotlin\nval CODE_MARKER = \"" + "word ".repeat(60) + "\"\n```\n\n```diff\n+val DIFF_MARKER = \"" + "delta ".repeat(60) + "\"\n```"
         var globalWrap by mutableStateOf(false)
         withUiScene(
             width = 860,
-            height = 640,
+            height = 1200,
             content = {
                 Column {
                     LiteraryProseRenderer(text = longCode, wrapCodeBlocks = globalWrap)
                     SepiaFileDiffCard(
                         filePath = "src/App.kt",
                         actionLabel = "Edit",
-                        oldText = "val a = 1\nval b = 2",
-                        newText = "val a = 1\nval b = 3"
+                        oldText = "val a = 1",
+                        newText = "val CARD_MARKER = \"" + "patch ".repeat(60) + "\"",
+                        wrapCodeBlocks = globalWrap
                     )
                 }
             }
         ) { scene ->
-            val wrapBtnUnwrapped = nodes(scene).first { description(it) == Strings.wrapCode }
-            val splitBtn = nodes(scene).first { description(it) == Strings.splitDiffView }
-            click(wrapBtnUnwrapped)
-            click(splitBtn)
+            fun flattenUnmerged(n: SemanticsNode): List<SemanticsNode> = listOf(n) + n.children.flatMap(::flattenUnmerged)
+            fun nodeWith(marker: String): SemanticsNode =
+                scene.semanticsOwners.flatMap { flattenUnmerged(it.unmergedRootSemanticsNode) }.first { text(it).contains(marker) }
+
+            val codeBefore = nodeWith("CODE_MARKER")
+            val diffBefore = nodeWith("DIFF_MARKER")
+            val cardBefore = nodeWith("CARD_MARKER")
+            assertTrue(codeBefore.size.width > 860, "Unwrapped code fence should exceed viewport width, got ${codeBefore.size}")
+            assertTrue(diffBefore.size.width > 860, "Unwrapped diff fence should exceed viewport width, got ${diffBefore.size}")
+            assertTrue(cardBefore.size.width > 860, "Unwrapped SepiaFileDiffCard line should exceed viewport width, got ${cardBefore.size}")
+
+            val wrapBtns = nodes(scene).filter { description(it) == Strings.wrapCode }
+            assertEquals(3, wrapBtns.size, "Expected wrap buttons on standard fence, diff fence, and SepiaFileDiffCard")
+            click(wrapBtns[0])
             settle(scene, 32_000_000L)
-            assertNotNull(nodes(scene).firstOrNull { description(it) == Strings.unwrapCode })
-            assertNotNull(nodes(scene).firstOrNull { description(it) == Strings.unifiedDiffView })
+            val codeAfterClick = nodeWith("CODE_MARKER")
+            assertTrue(codeAfterClick.size.width <= 860 && codeAfterClick.size.height > codeBefore.size.height, "Per-block wrap click must wrap code layout, got ${codeAfterClick.size}")
+
+            val splitBtn = nodes(scene).first { description(it) == Strings.splitDiffView }
+            click(splitBtn)
             globalWrap = true
-            settle(scene, 48_000_000L)
-            assertNotNull(nodes(scene).firstOrNull { description(it) == Strings.unwrapCode })
+            settle(scene, 64_000_000L)
+            val diffAfterPref = nodeWith("DIFF_MARKER")
+            val cardAfterPref = nodeWith("CARD_MARKER")
+            assertTrue(diffAfterPref.size.width <= 860 && diffAfterPref.size.height > diffBefore.size.height, "Global wrapCodeBlocks must wrap ```diff fence, got ${diffAfterPref.size}")
+            assertTrue(cardAfterPref.size.width <= 430 && cardAfterPref.size.height > cardBefore.size.height, "Global wrapCodeBlocks must wrap Split Diff SepiaFileDiffCard, got ${cardAfterPref.size}")
         }
 
         // 3. Provider model list vertically centers model ID beside trailing action buttons

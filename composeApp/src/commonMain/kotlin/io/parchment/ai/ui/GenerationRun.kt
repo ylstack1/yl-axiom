@@ -319,24 +319,26 @@ internal fun GenerationHost.beginGeneration(
             fun computeLetterStep(diff: Int, dtMs: Long, carry: Float, done: Boolean): Pair<Int, Float> {
                 if (diff <= 0) return 0 to 0f
                 if (processState.frameClock.value == null) return diff to 0f
-                val dtSec = (dtMs.coerceIn(8L, 64L)) / 1000f
+                val dtSec = (dtMs.coerceIn(2L, 32L)) / 1000f
+                // Base letter-by-letter speed (~92 chars/sec -> ~0.76 chars per 120Hz frame, ~1.4 chars per 60Hz frame)
+                // plus a gentle elastic catch-up only when buffer backlog grows beyond 28 chars
                 val backlog = (diff - 28).coerceAtLeast(0)
                 val catchUpPerSec = if (done) {
-                    maxOf(260f, diff * 12f)
+                    maxOf(220f, diff * 10f)
                 } else {
-                    backlog * 4.8f
+                    backlog * 4.2f
                 }
-                val exactChars = carry + (108f + catchUpPerSec) * dtSec
+                val exactChars = carry + (92f + catchUpPerSec) * dtSec
                 val rawStep = exactChars.toInt()
                 return if (rawStep <= 0) {
                     0 to exactChars
                 } else {
                     val maxPerFrame = when {
-                        done -> maxOf(8, diff / 3)
-                        diff <= 28 -> 4
-                        diff <= 96 -> 8
-                        diff <= 220 -> 14
-                        else -> maxOf(18, diff / 10)
+                        done -> maxOf(4, diff / 4)
+                        diff <= 28 -> 1
+                        diff <= 72 -> 2
+                        diff <= 160 -> 4
+                        else -> maxOf(6, diff / 14)
                     }
                     val clamped = rawStep.coerceAtMost(maxPerFrame).coerceAtMost(diff)
                     clamped to (exactChars - clamped).coerceIn(0f, 0.99f)
@@ -355,10 +357,10 @@ internal fun GenerationHost.beginGeneration(
             var cachedThinkWords = 0
             var lastThinkWordScanIdx = 0
             var lastThinkCharWasSpace = true
+            var lastPublishedThinkWholeSec = -1L
 
-            // Coalesce active text reveal updates to ~33 fps (30 ms; ~22 fps on low-memory devices) instead of waking
-            // Compose layout + Skia Direct3D Present() 120–240 times per second for single characters.
-            val minRevealStepMs = if (PlatformRuntime.isLowMemoryDevice) 45L else 30L
+            // True VSync frame-locked streaming (low-memory devices publish every other frame, ~30 fps).
+            val framesPerPublish = if (PlatformRuntime.isLowMemoryDevice) 2 else 1
             while (!networkDone || displayedContentLen < networkContentTarget.length || displayedThinkingLen < networkThinkingTarget.length) {
                 val caughtUp = displayedContentLen >= networkContentTarget.length &&
                     displayedThinkingLen >= networkThinkingTarget.length &&
@@ -367,35 +369,29 @@ internal fun GenerationHost.beginGeneration(
                     displayedThinkingLen == cachedVisibleThinkLen
                 val dtMs = if (caughtUp && !networkDone) {
                     // Nothing left to reveal (model thinking or tool running): sleep until new SSE bytes arrive,
-                    // waking at most once per second for the whole-second stopwatch instead of 10–120 times per second.
-                    withTimeoutOrNull(1_000L) { pacerWake.receive() }
+                    // polling every 250 ms so whole-second stopwatch boundaries (1s, 2s, ..., 30s) tick steadily.
+                    withTimeoutOrNull(250L) { pacerWake.receive() }
                     lastFrameNanos = 0L
-                    30L
+                    8L
                 } else {
-                    val frameNanos = processState.nextFrameNanos()
+                    var frameNanos = processState.nextFrameNanos()
+                    for (skipped in 1 until framesPerPublish) {
+                        if (frameNanos == null) break
+                        frameNanos = processState.nextFrameNanos() ?: frameNanos
+                    }
                     if (frameNanos != null) {
-                        val elapsedMs = if (lastFrameNanos > 0L) (frameNanos - lastFrameNanos) / 1_000_000L else minRevealStepMs
-                        val waitMoreMs = minRevealStepMs - elapsedMs
-                        if (waitMoreMs > 2L && !networkDone) {
-                            delay(waitMoreMs)
-                            val afterWait = processState.nextFrameNanos() ?: (frameNanos + waitMoreMs * 1_000_000L)
-                            val delta = ((afterWait - lastFrameNanos) / 1_000_000L).coerceIn(12L, 64L)
-                            lastFrameNanos = afterWait
-                            delta
-                        } else {
-                            val delta = elapsedMs.coerceIn(8L, 64L)
-                            lastFrameNanos = frameNanos
-                            delta
-                        }
+                        val delta = if (lastFrameNanos > 0L) ((frameNanos - lastFrameNanos) / 1_000_000L).coerceIn(2L, 32L) else 8L
+                        lastFrameNanos = frameNanos
+                        delta
                     } else {
-                        delay(if (processState.frameClock.value == null && !networkDone) 100L else minRevealStepMs)
+                        delay(if (processState.frameClock.value == null && !networkDone) 100L else 8L)
                         lastFrameNanos = 0L
-                        minRevealStepMs
+                        8L
                     }
                 }
                 var changed = false
                 val now = activity.elapsedMs
-                if (now - lastStopwatchTickMs >= 1_000L) {
+                if (now - lastStopwatchTickMs >= 250L) {
                     lastStopwatchTickMs = now
                     if (firstLiveTokenMs >= 0L) {
                         val netGenerationMs = ((now - turnRequestStartMs) - activity.toolMs).coerceAtLeast(500L)
@@ -408,22 +404,27 @@ internal fun GenerationHost.beginGeneration(
                         }
                     }
                     if (activeThinkingPhaseStartMs >= 0L) {
-                        thinkingDurationMs = (accumulatedThinkingMs + (now - activeThinkingPhaseStartMs)).coerceAtLeast(100L)
+                        thinkingDurationMs = (accumulatedThinkingMs + (now - activeThinkingPhaseStartMs)).coerceAtLeast(0L)
+                        val wholeSec = thinkingDurationMs / 1000L
+                        val curThinkTargetLen = networkThinkingTarget.length
+                        if (curThinkTargetLen < lastThinkWordScanIdx) {
+                            cachedThinkWords = 0
+                            lastThinkWordScanIdx = 0
+                            lastThinkCharWasSpace = true
+                        }
+                        while (lastThinkWordScanIdx < curThinkTargetLen) {
+                            val c = networkThinkingTarget[lastThinkWordScanIdx]
+                            val isSp = c == ' ' || c == '\n' || c == '\r' || c == '\t'
+                            if (!isSp && lastThinkCharWasSpace) cachedThinkWords++
+                            lastThinkCharWasSpace = isSp
+                            lastThinkWordScanIdx++
+                        }
+                        if (wholeSec != lastPublishedThinkWholeSec) {
+                            lastPublishedThinkWholeSec = wholeSec
+                            changed = true
+                        }
                         val hasRunningToolNow = accumulatedTools.any { it.isRunning }
                         if (!hasRunningToolNow) {
-                            val curThinkTargetLen = networkThinkingTarget.length
-                            if (curThinkTargetLen < lastThinkWordScanIdx) {
-                                cachedThinkWords = 0
-                                lastThinkWordScanIdx = 0
-                                lastThinkCharWasSpace = true
-                            }
-                            while (lastThinkWordScanIdx < curThinkTargetLen) {
-                                val c = networkThinkingTarget[lastThinkWordScanIdx]
-                                val isSp = c == ' ' || c == '\n' || c == '\r' || c == '\t'
-                                if (!isSp && lastThinkCharWasSpace) cachedThinkWords++
-                                lastThinkCharWasSpace = isSp
-                                lastThinkWordScanIdx++
-                            }
                             val thinkWords = cachedThinkWords
                             val toolSuffix = if (accumulatedTools.isNotEmpty()) " • ${accumulatedTools.size} tools" else ""
                             val nextStatus = Strings.thinkingWords(modelName, thinkWords, toolSuffix, formatDurationFromMs(thinkingDurationMs))

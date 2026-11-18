@@ -2,7 +2,6 @@ import java.util.concurrent.TimeUnit
 import java.util.jar.JarEntry
 import java.util.jar.JarFile
 import java.util.jar.JarOutputStream
-import java.util.zip.CRC32
 import org.jetbrains.compose.desktop.application.dsl.TargetFormat
 import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 
@@ -159,12 +158,10 @@ val desktopJvmArgs = listOf(
     "-Xms8m",
     "-Xmx224m",
     "-Xss512k",
-    "-XX:CICompilerCount=2",
-    "-XX:Tier4InvocationThreshold=40000",
-    "-XX:Tier4MinInvocationThreshold=20000",
-    "-XX:Tier4CompileThreshold=50000",
-    "-XX:InitialCodeCacheSize=6m",
-    "-XX:ReservedCodeCacheSize=32m",
+    "-XX:TieredStopAtLevel=1",
+    "-XX:CICompilerCount=1",
+    "-XX:InitialCodeCacheSize=4m",
+    "-XX:ReservedCodeCacheSize=24m",
     "-XX:+UseShenandoahGC",
     "-XX:ShenandoahGCMode=generational",
     "-XX:ParallelGCThreads=2",
@@ -259,17 +256,13 @@ tasks.withType<org.jetbrains.compose.desktop.application.tasks.AbstractJPackageT
             val normalizedEpochMs = 1_700_000_000_000L
             val uberJar = appDir.resolve("parchment-all.jar")
             if (jarFiles.size > 1 || (jarFiles.size == 1 && jarFiles.single() != uberJar)) {
-                // Repack all ~80 application & dependency jars into a single uncompressed (STORED) parchment-all.jar so
-                // cold Explorer launches open 1 contiguous file through NTFS/Defender instead of 80 separate ZIP tables.
+                // Repack all ~80 application & dependency jars into a single DEFLATED parchment-all.jar (~22 MB) so cold
+                // Explorer launches open 1 file through NTFS/Defender instead of 80 without inflating mapped working-set RAM.
                 val seenEntries = HashSet<String>(8192)
                 val mergedServices = LinkedHashMap<String, LinkedHashSet<String>>()
-                fun writeStoredEntry(jos: JarOutputStream, name: String, bytes: ByteArray) {
-                    val crc = CRC32().apply { update(bytes) }.value
+                fun writeDeflatedEntry(jos: JarOutputStream, name: String, bytes: ByteArray) {
                     val entry = JarEntry(name).apply {
-                        method = JarEntry.STORED
-                        size = bytes.size.toLong()
-                        compressedSize = bytes.size.toLong()
-                        this.crc = crc
+                        method = JarEntry.DEFLATED
                         time = normalizedEpochMs
                     }
                     jos.putNextEntry(entry)
@@ -278,7 +271,7 @@ tasks.withType<org.jetbrains.compose.desktop.application.tasks.AbstractJPackageT
                 }
                 uberJar.outputStream().buffered(262_144).use { bos ->
                     JarOutputStream(bos).use { jos ->
-                        writeStoredEntry(jos, "META-INF/MANIFEST.MF", "Manifest-Version: 1.0\r\n\r\n".toByteArray(Charsets.UTF_8))
+                        writeDeflatedEntry(jos, "META-INF/MANIFEST.MF", "Manifest-Version: 1.0\r\n\r\n".toByteArray(Charsets.UTF_8))
                         seenEntries.add("META-INF/MANIFEST.MF")
                         for (jf in jarFiles) {
                             JarFile(jf).use { jar ->
@@ -310,7 +303,7 @@ tasks.withType<org.jetbrains.compose.desktop.application.tasks.AbstractJPackageT
                                     }
                                     if (seenEntries.add(name)) {
                                         val bytes = jar.getInputStream(e).use { it.readBytes() }
-                                        writeStoredEntry(jos, name, bytes)
+                                        writeDeflatedEntry(jos, name, bytes)
                                     }
                                 }
                             }
@@ -318,7 +311,7 @@ tasks.withType<org.jetbrains.compose.desktop.application.tasks.AbstractJPackageT
                         for ((svcName, impls) in mergedServices) {
                             if (impls.isNotEmpty() && seenEntries.add(svcName)) {
                                 val content = (impls.joinToString("\n") + "\n").toByteArray(Charsets.UTF_8)
-                                writeStoredEntry(jos, svcName, content)
+                                writeDeflatedEntry(jos, svcName, content)
                             }
                         }
                     }

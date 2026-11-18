@@ -227,15 +227,13 @@ internal fun migrateLegacyProviderJson(raw: String): String {
 }
 
 internal fun formatDurationFromMs(ms: Long): String {
-    val totalTenths = (ms.coerceAtLeast(0L) + 50L) / 100L
-    val totalSeconds = totalTenths / 10L
-    val dec = totalTenths % 10L
+    val totalSeconds = ms.coerceAtLeast(0L) / 1000L
     return when {
-        totalSeconds < 60L -> "${totalSeconds}.${dec}s"
+        totalSeconds < 60L -> "${totalSeconds}s"
         totalSeconds < 3600L -> {
             val mins = totalSeconds / 60L
             val secs = totalSeconds % 60L
-            "${mins}m${secs}.${dec}s"
+            "${mins}m${secs}s"
         }
         totalSeconds < 86_400L -> {
             val hrs = totalSeconds / 3600L
