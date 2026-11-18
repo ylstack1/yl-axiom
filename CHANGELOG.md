@@ -2,6 +2,13 @@
 
 What changed in each release, newest first. From 2.1.7 on, release-please writes these entries from commit messages that follow [Conventional Commits](https://www.conventionalcommits.org/) (`feat:` and `fix:` appear here and set the next version); edit wording in its release PR before merging it.
 
+## [2.5.0](https://github.com/baros4294/parchment/compare/v2.4.4...v2.5.0) (2026-11-18)
+
+
+### New
+
+* fix GPU atlas glitch, inline retry UI, code auto-wrap, and top-bar polish ([f1e00c4](https://github.com/baros4294/parchment/commit/f1e00c47006f497f646a9d57e22bfb98b2dc7825))
+
 ## [2.4.4](https://github.com/baros4294/parchment/compare/v2.4.3...v2.4.4) (2026-11-18)
 
 
