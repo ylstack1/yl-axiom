@@ -189,6 +189,12 @@ class WorkflowSecurityAndOptimizationInvariantsTest(unittest.TestCase):
                 r"""['"]-Dorg\.gradle\.jvmargs=[^'"]+\s+[^'"]+['"]""",
                 f"{name} must not pass space-containing -Dorg.gradle.jvmargs CLI arg through gradlew.bat",
             )
+        if name == "build-installers.yml":
+            self.assertIn(
+                "Using AOT-linked classes: true",
+                text,
+                "build-installers.yml must verify installed Parchment.exe maps AOT-linked classes across timezones",
+            )
         for expr_match in re.finditer(r"\$\{\{(.*?)\}\}", text, re.S):
             expr = expr_match.group(1)
             self.assertNotRegex(

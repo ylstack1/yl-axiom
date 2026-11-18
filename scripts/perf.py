@@ -139,8 +139,9 @@ def warm_up(exe: Path, work: Path) -> tuple[int, bool]:
     started = time.perf_counter()
     run = subprocess.run([str(exe), "--aot-verify"], cwd=work, timeout=30, check=False,
                          capture_output=True, text=True, encoding="utf-8", errors="replace",
-                         env=dict(os.environ, JAVA_TOOL_OPTIONS="-Xlog:aot"))
-    mapped = "Opened AOT cache" in (run.stdout + run.stderr)
+                         env=dict(os.environ, JAVA_TOOL_OPTIONS="-Xlog:aot*=info"))
+    out = run.stdout + run.stderr
+    mapped = "Using AOT-linked classes: true" in out and "Unable to map shared spaces" not in out
     return round((time.perf_counter() - started) * 1000), run.returncode == 0 and archive.is_file() and mapped
 
 

@@ -4,8 +4,8 @@ Updated 2026-11-17. AGENTS.md owns workflow; MEMORY holds contracts. Task IDs st
 
 ## Current status
 
-- **Source:** 2026-11-17 Batch 1 (`0.90 s` cold start, `197.5 MB` idle RAM), Batch 1.1 (CI workflow baseline & cache/SDK/Inno optimizations), & Batch 1.2 harness optimization: `pwsh` + `-OutputFormat Text` + `PYTHONUNBUFFERED=1` + `1800 s` `shell_exec` with CLIXML error extraction, quantized prompt-cache-safe tool compaction with symbol/tail receipts, unnumbered `AGENTS.md`/`SKILL.md` prompt loading, ~30%-leaner cached 21-tool schemas (`< 8.2 KB`), scoped/prioritized `fs_search` with fast NTFS child checks, `fs_edit` near-miss line hints, and parallel read sub-batches.
-- **Last verified:** 2026-11-17, `verify.py affected` (quality gates, desktop/common harness & prompt-cache tests, Android compile) + `verify.py final` & `perf` (`desktop_title_ms=903`, `desktop_idle_private_mb=197.5`, `apk_mb=4.4`).
+- **Source:** 2026-11-18 installed-app Leyden AOT timestamp fix: pin packaged `appRoot` file timestamps to even-second zero-ns UTC before `-XX:AOTCacheOutput` + `TimeStampsInUTC=yes` so Inno Setup preserves exact NTFS FILETIMEs (`Using AOT-linked classes: true` verified in `build.gradle.kts`, `perf.py`, and CI non-UTC silent-install gate), building on Batch 1 (`0.90 s` start, `197.5 MB` RAM), Batch 1.1 CI overhaul, and Batch 1.2 harness overhaul.
+- **Last verified:** 2026-11-18, `verify.py final` + `verify.py perf` + `.github/scripts` unit suites (`Using AOT-linked classes: true` after zero-ns Inno simulation).
 - **Next action:** Execute Batch 2 (`18.2`: `< 8 ms` streaming p95 incremental tail-block markdown layout & MRU hydrated tab/search UX).
 
 ## Open tasks

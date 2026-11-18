@@ -20,7 +20,7 @@ Under 4 GB of RAM, or with Android's low-RAM flag, the app runs in low-memory mo
 | Android idle PSS | < 100 MB | not measured | needs a phone |
 | Frame time while streaming, p95 | 8 ms desktop (120Hz), 16 ms low-end Android (60Hz) | not measured | 5.4 ms for the prose renderer alone (p50 3.1, CPU drawing, `FrameTimeProbeTest`); 8.4 ms in the full app with a 200-message chat (`LiveTurnStreamingTest`); 0 hover/press recompositions (`KissMotionZeroRecompositionTest`) |
 
-"Now" is the 2026-11-17 ProGuard-shrunk release measurement on an i5-1135G7 with 7.7 GB. Packaging generates `$APPDIR/parchment.aot` at build time (`-XX:AOTCacheOutput` with `-Dskiko.library.path=$APPDIR`), so updates and fresh installs start immediately with AOT-linked Compose, Skia, and app classes plus the full module graph without running a post-install warmup on the user's machine. Budgets were lowered on 2026-11-17 with the user's agreement to target near-instant startup, memory residency, and 120Hz/60Hz streaming. Only change a budget with the user's agreement, and record why.
+"Now" is the 2026-11-17 ProGuard-shrunk release measurement on an i5-1135G7 with 7.7 GB. Packaging normalizes all packaged file timestamps to an even-second zero-nanosecond UTC epoch before generating `$APPDIR/parchment.aot` (`-XX:AOTCacheOutput` with `-Dskiko.library.path=$APPDIR` and Inno Setup `TimeStampsInUTC=yes`), so installed `.EXE` releases map AOT-linked Compose, Skia, and app classes across every timezone without post-install warmup. Budgets were lowered on 2026-11-17 with the user's agreement to target near-instant startup, memory residency, and 120Hz/60Hz streaming. Only change a budget with the user's agreement, and record why.
 
 ### Measured decisions (2026-11-17)
 

@@ -42,7 +42,7 @@ Updated 2026-11-17. Stable contracts only; AGENTS.md owns workflow.
 ## Runs and timing
 
 - Process state keeps chats, jobs, queues and approvals across UI recreation. New runs await draining workers and refresh saved history.
-- A streaming reply's text lives in LiveTurns (per variant) between 3.5 s checkpoints; readers of a streaming chat outside the reply use withLiveTurns (completeSessionForAction, export, pause flush). A run's RetryControl shows its retry waits; Retry now ends them.
+- Streaming text lives in LiveTurns (per variant) between 3.5 s checkpoints; external readers use withLiveTurns (completeSessionForAction, export, pause flush). RetryControl shows retry waits; Retry now ends them.
 - RunActivity/RunLeaseRegistry track time and owners: acquire before replacing/queueing, close owned lease only, skip approval waits, subtract tool unions once; Android foreground service heartbeats every 15 s.
 - Durations use Android uptime/desktop nanoTime, skipping unseen gaps over 5 s. Windows keep-awake: one thread holds SetThreadExecutionState while owners > 0; failures retry after 5 s.
 - Device: OnePlus PLZ110 (Android 17) can cut the network ~2 s after leaving the screen; the stall watch retries on return.
@@ -66,9 +66,9 @@ Updated 2026-11-17. Stable contracts only; AGENTS.md owns workflow.
 
 ## Imports, exports and updates
 
-- Imports are untrusted: withImportedPermissions reduces media references to `chats/<id>/media/<name>` or `media/<name>`, drops network font paths, keeps this device's OTA repository.
-- ChatArchiveExtractor is atomic (validate, stage, decode, commit new files); importChatFile detects truncation; chat JSON max 256 MiB in memory.
-- ChatArchiveWriter streams one chat at a time; desktop replaces only after a complete write, Android removes a partial document.
+- Imports are untrusted: withImportedPermissions restricts media refs to `chats/<id>/media/<name>` or `media/<name>`, drops network font paths, keeps local OTA repo.
+- ChatArchiveExtractor is atomic (validate, stage, decode, commit); importChatFile detects truncation; chat JSON max 256 MiB in RAM.
+- ChatArchiveWriter streams one chat at a time; desktop replaces after complete write, Android deletes partial output.
 - Model/import links open only via openWebLink (http/https); openOrPlayMedia refuses executables.
 - OTA verifies size + SHA-256 (Windows GitHub digest; Android APK sig) via OtaStagedFile; blocks install while runs are active or queued.
 - Limits: attachments 50 MiB, inline text 8 MiB, card/settings 256 MiB, desktop images 100 MP/128 MiB (downscaled past 2560 px). Shell output keeps head+tail. workspaceRead caps 4k chars/line, 10k lines, 250k chars: never rewrite from it.
@@ -77,10 +77,11 @@ Updated 2026-11-17. Stable contracts only; AGENTS.md owns workflow.
 
 - designDefaultsApplied applies DESIGN.md display defaults once (built-in high reasoning moves to none).
 - Foundation primitives and KissVectorIcon/ModelLabSvgIcon; no raw OS emoji. 14sp prose/code baseline; vertical choices and wrapped rows, no horizontal option scrollbars.
-- Shared controls expose one labelled target with state and 48dp minimum. Field labels merge into input semantics (contentDescription would replace reader values).
-- Palette keeps muted, danger and success ink at 4.5:1 on all surfaces; filled controls use onFillInk.
-- Tabs: MRU cap 12, keep the active tab and settings. Notices wrap, dismiss by a 48dp control and keep their timeout.
+- Shared controls expose one labelled 48dp+ target with state. Field labels merge into input semantics (contentDescription would clobber reader values).
+- Palette keeps muted, danger and success ink >= 4.5:1 on all surfaces; filled controls use onFillInk.
+- Tabs: MRU cap 12, keep active tab and settings. Notices wrap, dismiss via 48dp control and keep timeout.
 - Streamed Markdown: a cached split needs text after it, or an open fence breaks. Model text renderers keep depth and size bounds; past one they show plain text.
 - Raw wire previews stay within 4096 chars; streaming renders the last 12 interleaved steps. Hydrate active and running chats, dehydrate the rest.
 - App root never reads draft text; the stream pacer sleeps when caught up.
+- `parchment.aot`: pin packaged file mtimes to even-second zero-ns UTC before `-XX:AOTCacheOutput` so Inno Setup (`TimeStampsInUTC=yes`) preserves exact FILETIMEs.
 - Optimize only with measurements or equivalence checks.

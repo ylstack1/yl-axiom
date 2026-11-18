@@ -308,6 +308,29 @@ jobs:
           INNO_COMPRESSION: ${{ github.event_name == 'pull_request' && 'lzma2/fast' || 'lzma2/max' }}
         run: iscc.exe "/DMyAppVersion=$env:APP_VER" "/DMyCompression=$env:INNO_COMPRESSION" installer\windows-installer.iss
 
+      - name: Verify Installed .EXE Maps Leyden AOT Cache Across Timezones
+        shell: pwsh
+        run: |
+          $origTz = (Get-TimeZone).Id
+          $testDir = Join-Path ([System.IO.Path]::GetTempPath()) "parchment-inno-aot-check"
+          Remove-Item -Recurse -Force $testDir -ErrorAction SilentlyContinue
+          try {
+            tzutil /s "SE Asia Standard Time"
+            $proc = Start-Process -FilePath "build\installer\Parchment-Windows-x64-Setup.exe" `
+              -ArgumentList "/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART", "/DIR=$testDir" `
+              -Wait -PassThru
+            if ($proc.ExitCode -ne 0) { throw "Silent installer exited with $($proc.ExitCode)" }
+            $env:JAVA_TOOL_OPTIONS = "-Xlog:aot*=info"
+            $out = & "$testDir\Parchment.exe" --aot-verify 2>&1 | Out-String
+            Remove-Item Env:JAVA_TOOL_OPTIONS -ErrorAction SilentlyContinue
+            if ($LASTEXITCODE -ne 0 -or $out -notmatch "Using AOT-linked classes: true" -or $out -match "Unable to map shared spaces") {
+              throw "Installed Parchment.exe rejected parchment.aot:`n$out"
+            }
+          } finally {
+            tzutil /s $origTz
+            Remove-Item -Recurse -Force $testDir -ErrorAction SilentlyContinue
+          }
+
       - name: Upload Windows EXE Installer Artifact
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:

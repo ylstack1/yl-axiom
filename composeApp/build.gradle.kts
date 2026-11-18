@@ -254,6 +254,15 @@ tasks.withType<org.jetbrains.compose.desktop.application.tasks.AbstractJPackageT
                 ?: throw GradleException("jlink image has no java launcher to build parchment.aot.")
             val aotFile = appDir.resolve("parchment.aot")
             aotFile.delete()
+            // Inno Setup strips sub-second NTFS FILETIME ticks, while HotSpot's Windows AOT path-table validation checks
+            // exact timestamps (`timestamp has changed` -> unmaps parchment.aot). Pin packaged files to an even-second
+            // zero-nanosecond UTC epoch BEFORE building parchment.aot so installed files match bit-for-bit everywhere.
+            val normalizedEpochMs = 1_700_000_000_000L
+            appRoot.walkTopDown().filter { it.isFile }.forEach { file ->
+                if (!file.setLastModified(normalizedEpochMs)) {
+                    throw GradleException("Failed to normalize timestamp on ${file.absolutePath}")
+                }
+            }
             val trainLogFile = File.createTempFile("parchment-aot-train-", ".log")
             val train = ProcessBuilder(
                 listOf(
@@ -279,18 +288,24 @@ tasks.withType<org.jetbrains.compose.desktop.application.tasks.AbstractJPackageT
             }
             runtimeBin.listFiles { file -> file.extension.equals("exe", ignoreCase = true) }?.forEach { it.delete() }
             runtimeBin.resolve("server").listFiles { file -> file.extension.equals("jsa", ignoreCase = true) }?.forEach { it.delete() }
+            aotFile.setLastModified(normalizedEpochMs)
             val verifyLogFile = File.createTempFile("parchment-aot-verify-", ".log")
             val verifyPb = ProcessBuilder(launcherExe.absolutePath, "--aot-verify")
                 .redirectErrorStream(true)
                 .redirectOutput(verifyLogFile)
-            verifyPb.environment()["JAVA_TOOL_OPTIONS"] = "-Xlog:aot"
+            verifyPb.environment()["JAVA_TOOL_OPTIONS"] = "-Xlog:aot*=info"
             val verifyProc = verifyPb.start()
             val verifyDone = verifyProc.waitFor(30, TimeUnit.SECONDS)
             if (!verifyDone) verifyProc.destroyForcibly()
             val verifyLog = runCatching { verifyLogFile.readText() }.getOrDefault("")
             verifyLogFile.delete()
-            if (!verifyDone || verifyProc.exitValue() != 0 || "Opened AOT cache" !in verifyLog) {
-                throw GradleException("Parchment.exe failed to map parchment.aot:\n" + verifyLog.takeLast(2000))
+            if (
+                !verifyDone ||
+                verifyProc.exitValue() != 0 ||
+                "Using AOT-linked classes: true" !in verifyLog ||
+                "Unable to map shared spaces" in verifyLog
+            ) {
+                throw GradleException("Parchment.exe failed to map AOT-linked parchment.aot:\n" + verifyLog.takeLast(2500))
             }
         }
     }

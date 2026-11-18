@@ -26,6 +26,7 @@ Compression={#MyCompression}
 SolidCompression=yes
 LZMAUseSeparateProcess=yes
 LZMANumBlockThreads=4
+TimeStampsInUTC=yes
 WizardStyle=modern
 SetupIconFile=parchment-icon.ico
 UninstallDisplayIcon={app}\{#MyAppExeName}
