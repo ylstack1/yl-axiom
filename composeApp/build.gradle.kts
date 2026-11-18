@@ -1,4 +1,8 @@
 import java.util.concurrent.TimeUnit
+import java.util.jar.JarEntry
+import java.util.jar.JarFile
+import java.util.jar.JarOutputStream
+import java.util.zip.CRC32
 import org.jetbrains.compose.desktop.application.dsl.TargetFormat
 import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 
@@ -155,10 +159,12 @@ val desktopJvmArgs = listOf(
     "-Xms8m",
     "-Xmx224m",
     "-Xss512k",
-    "-XX:TieredStopAtLevel=1",
-    "-XX:CICompilerCount=1",
-    "-XX:InitialCodeCacheSize=4m",
-    "-XX:ReservedCodeCacheSize=24m",
+    "-XX:CICompilerCount=2",
+    "-XX:Tier4InvocationThreshold=40000",
+    "-XX:Tier4MinInvocationThreshold=20000",
+    "-XX:Tier4CompileThreshold=50000",
+    "-XX:InitialCodeCacheSize=6m",
+    "-XX:ReservedCodeCacheSize=32m",
     "-XX:+UseShenandoahGC",
     "-XX:ShenandoahGCMode=generational",
     "-XX:ParallelGCThreads=2",
@@ -239,15 +245,109 @@ tasks.withType<org.jetbrains.compose.desktop.application.tasks.AbstractJPackageT
         val launcherExe = appRoot.resolve("Parchment.exe")
         if (launcherExe.isFile) {
             val appDir = appRoot.resolve("app")
-            val cfgLines = appDir.resolve("Parchment.cfg").readLines()
+            val cfgFile = appDir.resolve("Parchment.cfg")
+            val cfgLines = cfgFile.readLines()
             val mainJar = cfgLines.firstOrNull { it.startsWith("app.mainjar=") }?.substringAfter("app.mainjar=")?.trim().orEmpty()
             val extraJars = cfgLines.filter { it.startsWith("app.classpath=") }.map { it.substringAfter("app.classpath=").trim() }
-            val orderedCp = (listOf(mainJar) + extraJars)
+            val jarFiles = (listOf(mainJar) + extraJars)
                 .filter { it.isNotEmpty() }
-                .joinToString(File.pathSeparator) { entry ->
+                .map { entry ->
                     val rel = entry.replace("\$APPDIR\\", "").replace("\$APPDIR/", "")
-                    appDir.resolve(rel).absolutePath
+                    appDir.resolve(rel)
                 }
+                .filter { it.isFile }
+            val normalizedEpochMs = 1_700_000_000_000L
+            val uberJar = appDir.resolve("parchment-all.jar")
+            if (jarFiles.size > 1 || (jarFiles.size == 1 && jarFiles.single() != uberJar)) {
+                // Repack all ~80 application & dependency jars into a single uncompressed (STORED) parchment-all.jar so
+                // cold Explorer launches open 1 contiguous file through NTFS/Defender instead of 80 separate ZIP tables.
+                val seenEntries = HashSet<String>(8192)
+                val mergedServices = LinkedHashMap<String, LinkedHashSet<String>>()
+                fun writeStoredEntry(jos: JarOutputStream, name: String, bytes: ByteArray) {
+                    val crc = CRC32().apply { update(bytes) }.value
+                    val entry = JarEntry(name).apply {
+                        method = JarEntry.STORED
+                        size = bytes.size.toLong()
+                        compressedSize = bytes.size.toLong()
+                        this.crc = crc
+                        time = normalizedEpochMs
+                    }
+                    jos.putNextEntry(entry)
+                    jos.write(bytes)
+                    jos.closeEntry()
+                }
+                uberJar.outputStream().buffered(262_144).use { bos ->
+                    JarOutputStream(bos).use { jos ->
+                        writeStoredEntry(jos, "META-INF/MANIFEST.MF", "Manifest-Version: 1.0\r\n\r\n".toByteArray(Charsets.UTF_8))
+                        seenEntries.add("META-INF/MANIFEST.MF")
+                        for (jf in jarFiles) {
+                            JarFile(jf).use { jar ->
+                                val entries = jar.entries()
+                                while (entries.hasMoreElements()) {
+                                    val e = entries.nextElement()
+                                    if (e.isDirectory) continue
+                                    val name = e.name.trimStart('/')
+                                    if (name.isEmpty() || name == "module-info.class" || name.endsWith("/module-info.class")) continue
+                                    if (name.startsWith("META-INF/")) {
+                                        val upper = name.uppercase()
+                                        if (upper == "META-INF/MANIFEST.MF" ||
+                                            upper.endsWith(".SF") ||
+                                            upper.endsWith(".DSA") ||
+                                            upper.endsWith(".RSA") ||
+                                            upper.substringAfter("META-INF/").startsWith("SIG-")
+                                        ) {
+                                            continue
+                                        }
+                                        if (name.startsWith("META-INF/services/") && name.length > "META-INF/services/".length) {
+                                            val lines = jar.getInputStream(e).bufferedReader(Charsets.UTF_8).use { it.readLines() }
+                                            val bucket = mergedServices.getOrPut(name) { LinkedHashSet() }
+                                            for (line in lines) {
+                                                val trimmed = line.trim()
+                                                if (trimmed.isNotEmpty() && !trimmed.startsWith("#")) bucket.add(trimmed)
+                                            }
+                                            continue
+                                        }
+                                    }
+                                    if (seenEntries.add(name)) {
+                                        val bytes = jar.getInputStream(e).use { it.readBytes() }
+                                        writeStoredEntry(jos, name, bytes)
+                                    }
+                                }
+                            }
+                        }
+                        for ((svcName, impls) in mergedServices) {
+                            if (impls.isNotEmpty() && seenEntries.add(svcName)) {
+                                val content = (impls.joinToString("\n") + "\n").toByteArray(Charsets.UTF_8)
+                                writeStoredEntry(jos, svcName, content)
+                            }
+                        }
+                    }
+                }
+                val sep = if (cfgLines.any { it.contains("\$APPDIR\\") }) "\\" else "/"
+                val rewrittenCfg = buildList {
+                    var insertedCp = false
+                    for (line in cfgLines) {
+                        if (line.startsWith("app.mainjar=") || line.startsWith("app.classpath=")) {
+                            if (!insertedCp) {
+                                add("app.classpath=\$APPDIR${sep}parchment-all.jar")
+                                insertedCp = true
+                            }
+                        } else {
+                            add(line)
+                            if (line.trim() == "[Application]" && !insertedCp) {
+                                add("app.classpath=\$APPDIR${sep}parchment-all.jar")
+                                insertedCp = true
+                            }
+                        }
+                    }
+                }
+                cfgFile.writeText(rewrittenCfg.joinToString("\n") + "\n")
+                for (jf in jarFiles) {
+                    if (jf != uberJar) jf.delete()
+                }
+            }
+            val orderedCp = uberJar.takeIf { it.isFile }?.absolutePath
+                ?: jarFiles.joinToString(File.pathSeparator) { it.absolutePath }
             val runtimeBin = appRoot.resolve("runtime/bin")
             val javaExe = listOf("java.exe", "java").map { runtimeBin.resolve(it) }.firstOrNull { it.isFile }
                 ?: throw GradleException("jlink image has no java launcher to build parchment.aot.")
@@ -256,7 +356,6 @@ tasks.withType<org.jetbrains.compose.desktop.application.tasks.AbstractJPackageT
             // Inno Setup strips sub-second NTFS FILETIME ticks, while HotSpot's Windows AOT path-table validation checks
             // exact timestamps (`timestamp has changed` -> unmaps parchment.aot). Pin packaged files to an even-second
             // zero-nanosecond UTC epoch BEFORE building parchment.aot so installed files match bit-for-bit everywhere.
-            val normalizedEpochMs = 1_700_000_000_000L
             appRoot.walkTopDown().filter { it.isFile }.forEach { file ->
                 if (!file.setLastModified(normalizedEpochMs)) {
                     throw GradleException("Failed to normalize timestamp on ${file.absolutePath}")

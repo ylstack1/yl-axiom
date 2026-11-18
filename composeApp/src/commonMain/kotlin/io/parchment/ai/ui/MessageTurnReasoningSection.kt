@@ -155,19 +155,20 @@ private fun ReasoningDrawerHeader(
     FlowRow(
         modifier = Modifier.fillMaxWidth(),
         horizontalArrangement = Arrangement.SpaceBetween,
-        verticalArrangement = Arrangement.spacedBy(Space.s6)
+        verticalArrangement = Arrangement.spacedBy(Space.s6),
+        itemVerticalAlignment = Alignment.CenterVertically
     ) {
         Row(
             horizontalArrangement = Arrangement.spacedBy(Space.s6),
             verticalAlignment = Alignment.CenterVertically,
-            modifier = Modifier.weight(1f, fill = false).padding(top = Space.s2, end = Space.s6)
+            modifier = Modifier.weight(1f, fill = false).padding(end = Space.s6)
         ) {
             if (isActivelyThinkingThisNode) {
                 KissStreamingPulseDot(color = p.accent)
             } else {
                 KissVectorIcon(icon = KissIcon.BRAIN, tint = p.accent, size = IconSize.md)
             }
-            val wordCount = countWordsFast(activeVar.thinkingSummary)
+            val wordCount = remember(activeVar.thinkingSummary) { countWordsFast(activeVar.thinkingSummary) }
             val toolCount = activeVar.toolCalls.size
             val headerSummary = buildString {
                 if (isLivePeekOnly) {

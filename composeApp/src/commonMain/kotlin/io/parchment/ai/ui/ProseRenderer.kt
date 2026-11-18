@@ -22,6 +22,7 @@ import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.Immutable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
@@ -37,6 +38,7 @@ import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.LinkAnnotation
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.TextLinkStyles
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
@@ -46,14 +48,15 @@ import androidx.compose.ui.unit.sp
 import io.parchment.ai.platform.PlatformPickers
 import kotlinx.coroutines.launch
 
+@Immutable
 internal sealed class ProseBlock {
-    data class Heading(val level: Int, val text: String) : ProseBlock()
-    data class SceneBreak(val raw: String) : ProseBlock()
-    data class BlockQuote(val text: String) : ProseBlock()
-    data class CodeFence(val language: String, val code: String) : ProseBlock()
-    data class MathBlock(val rawLatex: String) : ProseBlock()
-    data class TableBlock(val headers: List<String>, val rows: List<List<String>>) : ProseBlock()
-    data class Paragraph(val text: String) : ProseBlock()
+    @Immutable data class Heading(val level: Int, val text: String) : ProseBlock()
+    @Immutable data class SceneBreak(val raw: String) : ProseBlock()
+    @Immutable data class BlockQuote(val text: String) : ProseBlock()
+    @Immutable data class CodeFence(val language: String, val code: String) : ProseBlock()
+    @Immutable data class MathBlock(val rawLatex: String) : ProseBlock()
+    @Immutable data class TableBlock(val headers: List<String>, val rows: List<List<String>>) : ProseBlock()
+    @Immutable data class Paragraph(val text: String) : ProseBlock()
 }
 
 /**
@@ -304,9 +307,6 @@ fun LiteraryProseRenderer(
     highlightedLineSubstring: String = ""
 ) {
     val p = LocalParchmentPalette.current
-    val scope = rememberCoroutineScope()
-    @Suppress("DEPRECATION")
-    val clipboard = LocalClipboardManager.current
     val baseTextStyle = if (compactReasoningMode) {
         p.uiBodyStyle.copy(
             fontFamily = p.proseFontFamily,
@@ -334,9 +334,52 @@ fun LiteraryProseRenderer(
 
     SelectionContainer {
         Column(modifier = modifier.fillMaxWidth()) {
-            blocks.forEachIndexed { index, block ->
+            val lastIdx = blocks.lastIndex
+            for (index in 0..lastIdx) {
+                val block = blocks[index]
+                val nextIsListItem = index < lastIdx &&
+                    block is ProseBlock.Paragraph &&
+                    blocks[index + 1].let { it is ProseBlock.Paragraph && isListItemParagraph(it.text) }
                 key(index) {
-                when (block) {
+                    ProseBlockItem(
+                        index = index,
+                        block = block,
+                        isLastBlock = index == lastIdx,
+                        nextIsListItem = nextIsListItem,
+                        baseTextStyle = baseTextStyle,
+                        compactReasoningMode = compactReasoningMode,
+                        enableMath = enableMath,
+                        enableInlineDollarMath = enableInlineDollarMath,
+                        autoCollapseCodeBlocks = autoCollapseCodeBlocks,
+                        wrapCodeBlocks = wrapCodeBlocks,
+                        highlightedLineSubstring = highlightedLineSubstring
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun ProseBlockItem(
+    index: Int,
+    block: ProseBlock,
+    isLastBlock: Boolean,
+    nextIsListItem: Boolean,
+    baseTextStyle: TextStyle,
+    compactReasoningMode: Boolean,
+    enableMath: Boolean,
+    enableInlineDollarMath: Boolean,
+    autoCollapseCodeBlocks: Boolean,
+    wrapCodeBlocks: Boolean,
+    highlightedLineSubstring: String
+) {
+    val p = LocalParchmentPalette.current
+    val scope = rememberCoroutineScope()
+    @Suppress("DEPRECATION")
+    val clipboard = LocalClipboardManager.current
+    Column(modifier = Modifier.fillMaxWidth()) {
+        when (block) {
                     is ProseBlock.SceneBreak -> {
                         Row(
                             modifier = Modifier
@@ -478,7 +521,8 @@ fun LiteraryProseRenderer(
                                     .background(p.sheetBg.copy(alpha = 0.85f))
                                     .padding(horizontal = Space.s10, vertical = Space.s4),
                                 horizontalArrangement = Arrangement.SpaceBetween,
-                                verticalArrangement = Arrangement.spacedBy(Space.s4)
+                                verticalArrangement = Arrangement.spacedBy(Space.s4),
+                                itemVerticalAlignment = Alignment.CenterVertically
                             ) {
                                 Row(
                                     verticalAlignment = Alignment.CenterVertically,
@@ -771,19 +815,14 @@ fun LiteraryProseRenderer(
                     }
                 }
 
-                if (index < blocks.lastIndex) {
-                    val nextBlock = blocks[index + 1]
-                    val bothAreListItems = block is ProseBlock.Paragraph && nextBlock is ProseBlock.Paragraph &&
-                        isListItemParagraph(block.text) && isListItemParagraph(nextBlock.text)
-                    val gap = when {
-                        bothAreListItems -> if (compactReasoningMode) 7.dp else 9.dp
-                        compactReasoningMode -> 10.dp
-                        else -> p.paragraphSpacing.coerceAtLeast(16.dp)
-                    }
-                    Spacer(Modifier.height(gap))
-                }
-                }
+        if (!isLastBlock) {
+            val bothAreListItems = block is ProseBlock.Paragraph && isListItemParagraph(block.text) && nextIsListItem
+            val gap = when {
+                bothAreListItems -> if (compactReasoningMode) 7.dp else 9.dp
+                compactReasoningMode -> 10.dp
+                else -> p.paragraphSpacing.coerceAtLeast(16.dp)
             }
+            Spacer(Modifier.height(gap))
         }
     }
 }

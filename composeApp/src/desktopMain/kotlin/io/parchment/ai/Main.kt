@@ -39,6 +39,7 @@ import kotlinx.coroutines.withContext
 import org.jetbrains.skia.FontMgr
 import org.jetbrains.skia.Image
 import org.jetbrains.skia.impl.Library as SkiaLibrary
+import java.awt.Color as AwtColor
 import java.awt.Component
 import java.awt.Dimension
 import java.awt.GraphicsEnvironment
@@ -370,6 +371,9 @@ fun main(args: Array<String>) {
                     SideEffect { if (captionTitle != title) captionTitle = title }
                     val p = LocalParchmentPalette.current
                     LaunchedEffect(window, p.canvasBg, p.primaryInk, p.border) {
+                        val awtCanvas = AwtColor(p.canvasBg.toArgb(), false)
+                        window.background = awtCanvas
+                        window.contentPane?.background = awtCanvas
                         WindowsChrome.applyCaption(
                             window.windowHandle, p.canvasBg.toArgb(), p.primaryInk.toArgb(), p.border.toArgb(), p.canvasBg.luminance() < 0.5f
                         )

@@ -32,7 +32,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
-import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicText
@@ -177,7 +177,13 @@ internal fun ManuscriptViewport(
     val assistantPrefillInput = readAssistantPrefillInput()
     val p = LocalParchmentPalette.current
     val scope = rememberCoroutineScope()
-    val listState = rememberLazyListState()
+    val listState = remember(activeSession.id) {
+        val startAtBottom = preferences.autoScrollToBottomOnOpen && activeSession.messages.isNotEmpty() && jumpToNodeId.isBlank()
+        LazyListState(
+            firstVisibleItemIndex = if (startAtBottom) activeSession.messages.size else 0,
+            firstVisibleItemScrollOffset = if (startAtBottom) 100_000 else 0
+        )
+    }
     val reduceMotion = LocalReduceMotion.current
     var showMinimapTreeModal by remember { mutableStateOf(false) }
     var showContextBreakdownPopover by remember { mutableStateOf(false) }
@@ -345,7 +351,7 @@ internal fun ManuscriptViewport(
             !isListDragged &&
             !isPointerInteracting &&
             !userDisengagedAutoFollow &&
-            (listState.canScrollForward || lastMsgContentLen % 24 == 0)
+            listState.canScrollForward
         ) {
             lastAutoFollowMs[0] = PlatformRuntime.currentTimeMillis()
             jumpToBottomEdge()

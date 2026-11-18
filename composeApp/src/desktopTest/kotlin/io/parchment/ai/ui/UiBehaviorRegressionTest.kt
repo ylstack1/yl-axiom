@@ -1434,5 +1434,48 @@ class UiBehaviorRegressionTest {
             settle(scene, 48_000_000L)
             assertNotNull(nodes(scene).firstOrNull { description(it) == Strings.unwrapCode })
         }
+
+        // 3. Provider model list vertically centers model ID beside trailing action buttons
+        val modelProfile = ProviderProfile(
+            id = "p-align",
+            name = "Gemini",
+            protocol = ProviderProtocol.GEMINI_INTERACTIONS,
+            defaultModel = "gemini-4-carbon",
+            savedModels = listOf("gemini-4-hydrogen", "gemini-4-carbon")
+        )
+        val alignState = AppStateSnapshot(
+            profiles = listOf(modelProfile),
+            activeProfileId = modelProfile.id,
+            sessions = listOf(session.copy(profileId = modelProfile.id)),
+            activeSessionId = session.id
+        )
+        withUiScene(
+            width = 1100,
+            height = 1400,
+            content = {
+                ProvidersSubpage(
+                    appState = alignState,
+                    activeProfile = modelProfile,
+                    activeSession = alignState.sessions.single(),
+                    onSelectProfile = {},
+                    onUpdateProfile = {},
+                    onUpdateProfileById = { _, _ -> },
+                    onAddProfile = {},
+                    onDeleteProfile = {},
+                    onUpdateSession = {},
+                    onNotify = {}
+                )
+            }
+        ) { scene ->
+            fun flattenUnmerged(n: SemanticsNode): List<SemanticsNode> = listOf(n) + n.children.flatMap(::flattenUnmerged)
+            val unmerged = scene.semanticsOwners.flatMap { flattenUnmerged(it.unmergedRootSemanticsNode) }
+            val carbonText = unmerged.first { text(it) == "gemini-4-carbon" }
+            val rowGear = nodes(scene)
+                .filter { description(it) == Strings.modelSettings }
+                .minByOrNull { kotlin.math.abs(it.boundsInRoot.center.y - carbonText.boundsInRoot.center.y) }
+            assertNotNull(rowGear)
+            val dy = kotlin.math.abs(carbonText.boundsInRoot.center.y - rowGear.boundsInRoot.center.y)
+            assertTrue(dy <= 2.5f, "Model text center.y (${carbonText.boundsInRoot.center.y}) must align with row controls (${rowGear.boundsInRoot.center.y}), dy=$dy")
+        }
     }
 }

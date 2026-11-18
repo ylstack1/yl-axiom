@@ -249,8 +249,23 @@ internal fun ParchmentSidebar(
             }
             val historySearch = rememberHistorySearch(storedChatIds, searchQuery)
             val sessionListSignature = remember(appState.sessions) {
-                appState.sessions.joinToString("|") { s ->
-                    "${s.id}:${s.assistantId}:${s.title}:${s.isPinned}:${s.displayMessageCount}:${s.updatedAt}:${s.isCompactStub}"
+                var h = 1125899906842597L
+                for (s in appState.sessions) {
+                    h = 31L * h + s.id.hashCode()
+                    h = 31L * h + s.assistantId.hashCode()
+                    h = 31L * h + s.title.hashCode()
+                    h = 31L * h + (if (s.isPinned) 1 else 0)
+                    h = 31L * h + s.displayMessageCount
+                    h = 31L * h + (s.updatedAt xor (s.updatedAt ushr 32))
+                    h = 31L * h + (if (s.isCompactStub) 1 else 0)
+                }
+                h xor (appState.sessions.size.toLong() shl 32)
+            }
+            val lowerTitleIndex = remember(sessionListSignature) {
+                HashMap<String, String>(appState.sessions.size * 2).apply {
+                    for (s in appState.sessions) {
+                        put(s.id, s.title.lowercase())
+                    }
                 }
             }
             val assistantIdsSignature = remember(appState.assistants) {
@@ -268,9 +283,10 @@ internal fun ParchmentSidebar(
             }
             val assistantTopics = remember(topicsStructuralKey) {
                 val q = searchQuery.trim()
+                val qLower = q.lowercase()
                 val forAsst = appState.sessions.filter { it.assistantId == activeAssistant.id || appState.assistants.none { a -> a.id == it.assistantId } }
                 val searched = if (q.isEmpty()) forAsst else forAsst.filter { s ->
-                    s.title.contains(q, ignoreCase = true) || chatMessagesContain(s, q) || s.id in historySearch.matchingIds
+                    (lowerTitleIndex[s.id]?.contains(qLower) == true) || chatMessagesContain(s, q) || s.id in historySearch.matchingIds
                 }
                 searched.sortedWith(compareByDescending<ChatSession> { it.isPinned }.thenByDescending { it.updatedAt })
             }

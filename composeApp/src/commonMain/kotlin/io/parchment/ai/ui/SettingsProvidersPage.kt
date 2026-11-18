@@ -997,10 +997,14 @@ internal fun ProvidersSubpage(
                                     .then(if (isSelectedModel) Modifier.rubricMark(p.accent, verticalInset = Space.s6) else Modifier)
                                     .padding(horizontal = Space.s12, vertical = Space.s8),
                                 horizontalArrangement = Arrangement.SpaceBetween,
-                                verticalArrangement = Arrangement.spacedBy(Space.s6)
+                                verticalArrangement = Arrangement.spacedBy(Space.s6),
+                                itemVerticalAlignment = Alignment.CenterVertically
                             ) {
                                 Row(
-                                    modifier = Modifier.weight(1f, fill = false).padding(end = Space.s8),
+                                    modifier = Modifier
+                                        .weight(1f, fill = false)
+                                        .heightIn(min = ControlHeight.compact)
+                                        .padding(end = Space.s8),
                                     horizontalArrangement = Arrangement.spacedBy(Space.s8),
                                     verticalAlignment = Alignment.CenterVertically
                                 ) {
@@ -1108,12 +1112,13 @@ internal fun ProviderProtocolSubpage(
         FlowRow(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.SpaceBetween,
-            verticalArrangement = Arrangement.spacedBy(Space.s8)
+            verticalArrangement = Arrangement.spacedBy(Space.s8),
+            itemVerticalAlignment = Alignment.CenterVertically
         ) {
             BasicText(
                 text = Strings.advancedSettingsFor(profile.name),
                 style = p.uiHeaderStyle,
-                modifier = Modifier.padding(top = Space.s4, end = Space.s8)
+                modifier = Modifier.padding(end = Space.s8)
             )
             SepiaButton(text = Strings.backToProvider, compact = true, style = SepiaButtonStyle.PRIMARY, onClick = onBack)
         }

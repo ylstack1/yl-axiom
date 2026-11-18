@@ -2,14 +2,8 @@ package io.parchment.ai.ui
 
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.animateContentSize
-import androidx.compose.animation.core.FastOutSlowInEasing
-import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.Spring
-import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.animateFloatAsState
-import androidx.compose.animation.core.infiniteRepeatable
-import androidx.compose.animation.core.rememberInfiniteTransition
-import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.interaction.MutableInteractionSource
@@ -41,6 +35,7 @@ import androidx.compose.foundation.text.BasicText
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.MutableState
 import androidx.compose.runtime.getValue
@@ -89,6 +84,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import kotlinx.coroutines.launch
 
 /** A wrapping choice with one radio target and room for enlarged text. */
 @Composable
@@ -734,8 +730,42 @@ fun SepiaToggleRow(
     }
 }
 
+private object StreamingPulseClock {
+    private val lock = Any()
+    private var observers = 0
+    private var tickerJob: kotlinx.coroutines.Job? = null
+    val dimPhase = mutableStateOf(false)
+
+    fun retain() {
+        synchronized(lock) {
+            observers++
+            if (tickerJob == null) {
+                tickerJob = appProcessScope.launch {
+                    while (true) {
+                        kotlinx.coroutines.delay(Motion.LOOP.toLong())
+                        dimPhase.value = !dimPhase.value
+                    }
+                }
+            }
+        }
+    }
+
+    fun release() {
+        synchronized(lock) {
+            observers = (observers - 1).coerceAtLeast(0)
+            if (observers == 0) {
+                tickerJob?.cancel()
+                tickerJob = null
+                dimPhase.value = false
+            }
+        }
+    }
+}
+
 /**
- * Breathing pulse dot for active streaming & long-horizon deep thinking.
+ * Low-power breathing pulse dot for active streaming & long-horizon deep thinking.
+ * Shares a single 650 ms stepped heartbeat across all mounted dots instead of running a 120–240Hz
+ * InfiniteTransition per dot (eliminating continuous GPU swapchain flips during 0 Mbps thinking/tool waits).
  */
 @Composable
 fun KissStreamingPulseDot(
@@ -743,24 +773,22 @@ fun KissStreamingPulseDot(
     modifier: Modifier = Modifier
 ) {
     val dot = modifier.size(8.dp)
-    // With Reduce motion the dot holds still, and no frame-by-frame animation runs at all.
     if (LocalReduceMotion.current) {
         Box(dot.clip(CircleShape).background(color))
         return
     }
-    val transition = rememberInfiniteTransition()
-    val pulse = infiniteRepeatable<Float>(
-        animation = tween(durationMillis = Motion.LOOP, easing = FastOutSlowInEasing),
-        repeatMode = RepeatMode.Reverse
-    )
-    val pulseAlpha by transition.animateFloat(initialValue = 0.35f, targetValue = 1.0f, animationSpec = pulse)
-    val pulseScale by transition.animateFloat(initialValue = 0.85f, targetValue = 1.15f, animationSpec = pulse)
+    DisposableEffect(Unit) {
+        StreamingPulseClock.retain()
+        onDispose { StreamingPulseClock.release() }
+    }
     Box(
         modifier = dot
             .graphicsLayer {
-                scaleX = pulseScale
-                scaleY = pulseScale
-                alpha = pulseAlpha
+                val dim = StreamingPulseClock.dimPhase.value
+                val scale = if (dim) 0.88f else 1.12f
+                scaleX = scale
+                scaleY = scale
+                alpha = if (dim) 0.42f else 1.0f
             }
             .clip(CircleShape)
             .background(color)

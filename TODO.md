@@ -1,18 +1,17 @@
 # Parchment TODO
 
-Updated 2026-11-17. AGENTS.md owns workflow; MEMORY holds contracts. Task IDs stay stable. Finished tasks are removed: CHANGELOG.md and the git history keep what was done.
+Updated 2026-11-18. AGENTS.md owns workflow; MEMORY holds contracts. Task IDs stay stable. Finished tasks are removed: CHANGELOG.md and the git history keep what was done.
 
 ## Current status
 
-- **Source:** 2026-11-18 Batch 2A UI & GPU hotfix: removed 8 MiB `skiko.gpu.resourceCacheLimit` Direct3D 12 atlas starvation (fixing tiled glyph/pill corruption), moved `Retry now` inline to the right side of the status header bar, added global + per-fence `wrapCodeBlocks` (`PreferencesConfig` + `ProseRenderer` `"↩"` vector toggle), tightened `TopEditorialBar` desktop vertical rhythm (`84.dp -> ~60.dp`), added wide-desktop Split Diff toggle (`ParchmentDiffViewer.kt`), and skipped empty assistant stubs on Markdown export.
-- **Last verified:** 2026-11-18, `verify.py final` (563 tests + 37 UI gallery captures, signed R8 APK, ProGuard/Leyden AOT package) + `verify.py perf` (`desktop_title_ms=979`, `desktop_idle_private_mb=200.0`, `apk_mb=4.4`, `desktop_cds_archives_ok=True`).
-- **Next action:** Execute Batch 2B (`18.2`: `< 8 ms` streaming p95 incremental tail-block markdown layout & MRU hydrated tab/search UX).
+- **Source:** 2026-11-18 Batch 2B SSE power/CPU overhaul, sub-0.9s single-JAR cold start & Provider row alignment: centered `SettingsProvidersPage` model rows (`FlowRow` `itemVerticalAlignment = Alignment.CenterVertically`), replaced 120–240Hz `KissStreamingPulseDot` `InfiniteTransition` loops with one shared `Motion.LOOP` heartbeat, coalesced `GenerationRun` reveal/thinking copies & `1 Hz` stopwatch updates, made `@Immutable` `ProseBlockItem` skippable (`8.0 ms` full-app streaming p95), repacked 80 packaged JARs into 1 `STORED` `parchment-all.jar` with high-threshold C2 JIT (`Tier4CompileThreshold=50000`), anchored `ManuscriptViewport` `LazyListState` at bottom on open, deferred `McpServerConnections` past Frame 2, and added a 3-tab MRU hydrated cache + precomputed sidebar search keys.
+- **Last verified:** 2026-11-18, `verify.py final` (564 tests + 37 UI gallery captures, signed R8 APK, single-JAR ProGuard/Leyden AOT package) + `verify.py perf` (`desktop_title_ms=868`, `desktop_first_launch_title_ms=927`, `desktop_idle_private_mb=198.7`, `apk_mb=4.4`, `live_turn_ab new_p95_ms=8.0`, `desktop_cds_archives_ok=True`).
+- **Next action:** Execute Batch 3 (`18.4`: Settings keyboard shortcuts subpage, click-to-record rebinding & `CommandPalette` reflection).
 
 ## Open tasks
 
 ### Planned batches
 
-- [ ] **18.2 Streaming `< 8 ms` p95 & instant tab/search UX:** memoize sealed prefix blocks in `ProseRenderer.kt` during live streaming, retain a bounded MRU cache of hydrated `ChatSession` tabs (`3` normal / `1` low-memory), and precompute lowercase sidebar search keys.
 - [ ] **18.4 Settings keyboard shortcuts subpage:** add `SettingsCategory.SHORTCUTS` (`SettingsShortcutsPage.kt`), keycap overview, click-to-record rebinding (`PreferencesConfig.customShortcuts`) with conflict check & Reset, send-key toggle, Settings search indexing, and live `handleAppShortcut`/`CommandPalette` reflection.
 - [ ] **18.5 Offline local import for Skills & MCP:** add local folder, `SKILL.md`, and `.zip` skill import (`MAX_SKILL_FILES = 64`, `1 MB`/file, `8 MB` total, traversal guard) plus `mcp.json`/`.mcp.json` and desktop command-picker MCP import (`enabled = false` default).
 - [ ] **18.6 `/plan` & `/build` modes, stale-read guard, missing-folder recovery & deferred MCP schemas:** add `/plan` (`READ_ONLY`) and `/build` (`READ_WRITE`) switches with `ToolApprovalBroker.invalidate()`, run-scoped `fs_read` revision guard before `fs_edit`/`fs_write`, active-chat missing `workspacePath` recovery prompt, and on-demand MCP schema expansion when `> 6` tools are enabled.

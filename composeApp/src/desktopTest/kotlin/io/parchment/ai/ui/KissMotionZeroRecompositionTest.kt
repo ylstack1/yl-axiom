@@ -16,6 +16,7 @@ import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.swing.Swing
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 
 class KissMotionZeroRecompositionTest {
     @OptIn(ExperimentalComposeUiApi::class)
@@ -58,6 +59,30 @@ class KissMotionZeroRecompositionTest {
 
             assertEquals(1, clicks, "Expected click callback to fire once")
             assertEquals(1, compositions, "Hover and press spring animations must not recompose caller scope")
+        } finally {
+            scene.close()
+        }
+    }
+
+    @OptIn(ExperimentalComposeUiApi::class)
+    @Test
+    fun streamingPulseDotAvoidsContinuousFrameClockInvalidationsAndCallerRecomposition() = runBlocking(Dispatchers.Swing) {
+        var compositions = 0
+        val scene = ImageComposeScene(width = 120, height = 120, density = Density(1f), coroutineContext = Dispatchers.Swing)
+        try {
+            scene.setContent {
+                SideEffect { compositions++ }
+                KissStreamingPulseDot()
+            }
+            Snapshot.sendApplyNotifications()
+            scene.render(0L).close()
+            Snapshot.sendApplyNotifications()
+            scene.render(16_000_000L).close()
+            assertEquals(1, compositions)
+            assertFalse(
+                scene.hasInvalidations(),
+                "KissStreamingPulseDot must not register a 120-240Hz InfiniteTransition frame-clock awaiter while idle-waiting"
+            )
         } finally {
             scene.close()
         }

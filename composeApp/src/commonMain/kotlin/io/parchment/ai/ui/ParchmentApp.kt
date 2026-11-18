@@ -130,17 +130,29 @@ fun ParchmentApp(
                 ?: AssistantAgent(id = "asst-default", name = "Default Assistant", iconEmoji = "💬", systemPrompt = "")
         }
 
-        McpServerConnections(appState.preferences.mcpServers)
+        var startupSettled by remember { mutableStateOf(false) }
+        if (startupSettled) {
+            McpServerConnections(appState.preferences.mcpServers)
+        }
+        // Keep a bounded MRU set of recently visited open tabs hydrated in memory (3 normal, 1 low-memory) for 0ms tab switches.
+        val mruHydratedCap = if (PlatformRuntime.isLowMemoryDevice) 1 else 3
+        var recentHydratedTabs by remember { mutableStateOf(listOf(activeSession.id)) }
+        if (recentHydratedTabs.firstOrNull() != activeSession.id) {
+            recentHydratedTabs = (listOf(activeSession.id) + recentHydratedTabs.filter { it != activeSession.id && it in appState.openTabSessionIds })
+                .take(mruHydratedCap)
+        }
+
         // Background startup hydration: let the first two frames paint, warm O200kTokenizer in parallel, and hydrate inactive stubs.
         LaunchedEffect(Unit) {
             withFrameNanos { }
             withFrameNanos { }
+            startupSettled = true
             launch(Dispatchers.Default) {
                 O200kTokenizer.warmUp()
             }
             if (needsBackgroundChatHydration) {
                 val beforeLoad = appState
-                val keepHydrated = activeStreamsBySession.keys
+                val keepHydrated = activeStreamsBySession.keys + recentHydratedTabs
                 val hydrated = withContext(Dispatchers.Default) {
                     loadRemainingHistoricalSessionsDehydrated(beforeLoad, keepHydrated)
                 }
@@ -152,12 +164,12 @@ fun ParchmentApp(
             }
         }
 
-        // Load the chat being switched to in full and shrink inactive ones back to stubs, to keep memory low.
+        // Load the chat being switched to in full and shrink non-MRU inactive ones back to stubs, to keep memory low.
         LaunchedEffect(appState.activeSessionId, tabRebalanceTick) {
             val current = appState
             val target = current.sessions.find { it.id == current.activeSessionId }
             val hadStubTarget = target?.isCompactStub == true
-            val keepHydrated = activeStreamsBySession.keys
+            val keepHydrated = activeStreamsBySession.keys + recentHydratedTabs
             val rebalanced = withContext(Dispatchers.Default) {
                 ensureActiveSessionHydratedAndDehydrateOthers(current, keepHydrated)
             }
