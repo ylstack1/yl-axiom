@@ -646,6 +646,7 @@ private fun MessageTurnProseOrEditor(
                 enableMath = preferences.mathFormulaRendering,
                 enableInlineDollarMath = preferences.inlineDollarMathRendering,
                 autoCollapseCodeBlocks = preferences.autoCollapseCodeBlocks,
+                wrapCodeBlocks = preferences.wrapCodeBlocks,
                 highlightedLineSubstring = highlightedSourceLineText
             )
             if (isLongCollapsible) {

@@ -4,16 +4,15 @@ Updated 2026-11-17. AGENTS.md owns workflow; MEMORY holds contracts. Task IDs st
 
 ## Current status
 
-- **Source:** 2026-11-18 installed-app Leyden AOT timestamp fix: pin packaged `appRoot` file timestamps to even-second zero-ns UTC before `-XX:AOTCacheOutput` + `TimeStampsInUTC=yes` so Inno Setup preserves exact NTFS FILETIMEs (`Using AOT-linked classes: true` verified in `build.gradle.kts`, `perf.py`, and CI non-UTC silent-install gate), building on Batch 1 (`0.90 s` start, `197.5 MB` RAM), Batch 1.1 CI overhaul, and Batch 1.2 harness overhaul.
-- **Last verified:** 2026-11-18, `verify.py final` + `verify.py perf` + `.github/scripts` unit suites (`Using AOT-linked classes: true` after zero-ns Inno simulation).
-- **Next action:** Execute Batch 2 (`18.2`: `< 8 ms` streaming p95 incremental tail-block markdown layout & MRU hydrated tab/search UX).
+- **Source:** 2026-11-18 Batch 2A UI & GPU hotfix: removed 8 MiB `skiko.gpu.resourceCacheLimit` Direct3D 12 atlas starvation (fixing tiled glyph/pill corruption), moved `Retry now` inline to the right side of the status header bar, added global + per-fence `wrapCodeBlocks` (`PreferencesConfig` + `ProseRenderer` `"↩"` vector toggle), tightened `TopEditorialBar` desktop vertical rhythm (`84.dp -> ~60.dp`), added wide-desktop Split Diff toggle (`ParchmentDiffViewer.kt`), and skipped empty assistant stubs on Markdown export.
+- **Last verified:** 2026-11-18, `verify.py final` (563 tests + 37 UI gallery captures, signed R8 APK, ProGuard/Leyden AOT package) + `verify.py perf` (`desktop_title_ms=979`, `desktop_idle_private_mb=200.0`, `apk_mb=4.4`, `desktop_cds_archives_ok=True`).
+- **Next action:** Execute Batch 2B (`18.2`: `< 8 ms` streaming p95 incremental tail-block markdown layout & MRU hydrated tab/search UX).
 
 ## Open tasks
 
 ### Planned batches
 
 - [ ] **18.2 Streaming `< 8 ms` p95 & instant tab/search UX:** memoize sealed prefix blocks in `ProseRenderer.kt` during live streaming, retain a bounded MRU cache of hydrated `ChatSession` tabs (`3` normal / `1` low-memory), and precompute lowercase sidebar search keys.
-- [ ] **18.3 Comfortable `TopEditorialBar`, wide Split Diff & clean copy/export:** tighten `TopEditorialBar` desktop vertical rhythm (`84.dp -> ~61.dp`, `24.dp` inline sparkle icon & pointer model capsule, `Space.s2` gap, `Space.s6` padding), add wide-desktop Unified/Split toggle in `ParchmentDiffViewer.kt`, and skip empty/aborted assistant stubs on Markdown copy/export.
 - [ ] **18.4 Settings keyboard shortcuts subpage:** add `SettingsCategory.SHORTCUTS` (`SettingsShortcutsPage.kt`), keycap overview, click-to-record rebinding (`PreferencesConfig.customShortcuts`) with conflict check & Reset, send-key toggle, Settings search indexing, and live `handleAppShortcut`/`CommandPalette` reflection.
 - [ ] **18.5 Offline local import for Skills & MCP:** add local folder, `SKILL.md`, and `.zip` skill import (`MAX_SKILL_FILES = 64`, `1 MB`/file, `8 MB` total, traversal guard) plus `mcp.json`/`.mcp.json` and desktop command-picker MCP import (`enabled = false` default).
 - [ ] **18.6 `/plan` & `/build` modes, stale-read guard, missing-folder recovery & deferred MCP schemas:** add `/plan` (`READ_ONLY`) and `/build` (`READ_WRITE`) switches with `ToolApprovalBroker.invalidate()`, run-scoped `fs_read` revision guard before `fs_edit`/`fs_write`, active-chat missing `workspacePath` recovery prompt, and on-demand MCP schema expansion when `> 6` tools are enabled.

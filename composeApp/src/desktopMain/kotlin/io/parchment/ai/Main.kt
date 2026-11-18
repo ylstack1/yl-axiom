@@ -179,8 +179,8 @@ fun main(args: Array<String>) {
     // Enable hardware VSync and Swing frame pacing so Skia renders smoothly at 60Hz / 120Hz / 144Hz / 240Hz.
     System.setProperty("skiko.vsync.enabled", "true")
     System.setProperty("skiko.swing.frame.pacing", "true")
-    if (System.getProperty("skiko.gpu.resourceCacheLimit") == null) {
-        System.setProperty("skiko.gpu.resourceCacheLimit", if (PlatformRuntime.isLowMemoryDevice) "6291456" else "8388608")
+    if (PlatformRuntime.isLowMemoryDevice && System.getProperty("skiko.gpu.resourceCacheLimit") == null) {
+        System.setProperty("skiko.gpu.resourceCacheLimit", "50331648")
     }
     preloadProcessStateInBackground()
     preloadDesktopGraphicsInBackground()

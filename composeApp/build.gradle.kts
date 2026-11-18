@@ -172,7 +172,6 @@ val desktopJvmArgs = listOf(
     "-Dskiko.rendering.laf.global=false",
     "-Dskiko.vsync.enabled=true",
     "-Dskiko.swing.frame.pacing=true",
-    "-Dskiko.gpu.resourceCacheLimit=8388608",
     "-Dkotlinx.coroutines.io.parallelism=16",
     // FFM downcalls (title bar, file/folder COM dialogs, memory check, keep-awake: WindowsNative) and Skia call
     // native code; JDK 25 warns without this and later JDKs will block it.

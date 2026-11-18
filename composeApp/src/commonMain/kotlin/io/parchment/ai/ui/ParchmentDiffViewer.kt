@@ -168,6 +168,98 @@ private fun collapseUnchangedContextRuns(rawDiff: List<DiffLine>): List<DiffLine
     return compacted
 }
 
+internal data class SplitDiffRow(
+    val left: DiffLine?,
+    val right: DiffLine?
+)
+
+internal fun buildSplitDiffRows(diffLines: List<DiffLine>): List<SplitDiffRow> {
+    val rows = ArrayList<SplitDiffRow>(diffLines.size)
+    var idx = 0
+    while (idx < diffLines.size) {
+        when (diffLines[idx].kind) {
+            DiffLineKind.CONTEXT, DiffLineKind.COLLAPSED -> {
+                rows.add(SplitDiffRow(diffLines[idx], diffLines[idx]))
+                idx++
+            }
+            DiffLineKind.REMOVED, DiffLineKind.ADDED -> {
+                val removed = ArrayList<DiffLine>()
+                val added = ArrayList<DiffLine>()
+                while (idx < diffLines.size && (diffLines[idx].kind == DiffLineKind.REMOVED || diffLines[idx].kind == DiffLineKind.ADDED)) {
+                    if (diffLines[idx].kind == DiffLineKind.REMOVED) removed.add(diffLines[idx])
+                    else added.add(diffLines[idx])
+                    idx++
+                }
+                val pairs = maxOf(removed.size, added.size)
+                for (pIdx in 0 until pairs) {
+                    rows.add(SplitDiffRow(removed.getOrNull(pIdx), added.getOrNull(pIdx)))
+                }
+            }
+        }
+    }
+    return rows
+}
+
+@Composable
+internal fun SepiaSplitDiffLinesList(
+    diffLines: List<DiffLine>,
+    modifier: Modifier = Modifier
+) {
+    val p = LocalParchmentPalette.current
+    val rows = remember(diffLines) { buildSplitDiffRows(diffLines) }
+    Column(
+        modifier = modifier.fillMaxWidth().padding(vertical = Space.s4),
+        verticalArrangement = Arrangement.spacedBy(1.dp)
+    ) {
+        rows.forEach { row ->
+            if (row.left?.kind == DiffLineKind.COLLAPSED) {
+                BasicText(
+                    text = row.left.text,
+                    style = p.uiLabelStyle.copy(color = p.mutedInk, fontFamily = p.codeFontFamily, fontSize = 11.sp),
+                    modifier = Modifier.padding(horizontal = Space.s12, vertical = Space.s2)
+                )
+            } else {
+                Row(modifier = Modifier.fillMaxWidth()) {
+                    SplitDiffCell(line = row.left, modifier = Modifier.weight(1f))
+                    Box(Modifier.width(LineWidth.hairline).height(20.dp).background(p.border.copy(alpha = 0.6f)))
+                    SplitDiffCell(line = row.right, modifier = Modifier.weight(1f))
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun SplitDiffCell(
+    line: DiffLine?,
+    modifier: Modifier = Modifier
+) {
+    val p = LocalParchmentPalette.current
+    val tone = when (line?.kind) {
+        DiffLineKind.REMOVED -> p.danger
+        DiffLineKind.ADDED -> p.success
+        else -> null
+    }
+    val prefix = when (line?.kind) {
+        DiffLineKind.REMOVED -> "- "
+        DiffLineKind.ADDED -> "+ "
+        DiffLineKind.CONTEXT -> "  "
+        else -> ""
+    }
+    Box(
+        modifier = modifier
+            .background(tone?.copy(alpha = 0.14f) ?: Color.Transparent)
+            .horizontalScroll(rememberScrollState())
+            .padding(horizontal = Space.s8, vertical = 1.dp)
+    ) {
+        BasicText(
+            text = if (line != null) "$prefix${line.text}" else "",
+            style = p.monoStyle.copy(color = tone ?: p.narrationInk, fontSize = 12.sp),
+            softWrap = false
+        )
+    }
+}
+
 @Composable
 fun SepiaDiffLinesList(
     diffLines: List<DiffLine>,
@@ -272,10 +364,12 @@ fun SepiaFileDiffCard(
     modifier: Modifier = Modifier
 ) {
     val p = LocalParchmentPalette.current
+    val win = LocalParchmentWindowSize.current
     val diffLines = remember(oldText, newText) { computeUnifiedLineDiff(oldText, newText) }
     val addedCount = remember(diffLines) { diffLines.count { it.kind == DiffLineKind.ADDED } }
     val removedCount = remember(diffLines) { diffLines.count { it.kind == DiffLineKind.REMOVED } }
     var showDiffBody by remember { mutableStateOf(true) }
+    var splitDiffMode by remember { mutableStateOf(false) }
     val addedGreen = p.success
     val shape = RoundedCornerShape(Radius.r8)
 
@@ -370,6 +464,15 @@ fun SepiaFileDiffCard(
                     }
                 }
                 if (diffLines.isNotEmpty()) {
+                    if (!win.isCompact) {
+                        SepiaButton(
+                            text = "◫",
+                            contentDescription = if (splitDiffMode) Strings.unifiedDiffView else Strings.splitDiffView,
+                            compact = true,
+                            style = if (splitDiffMode) SepiaButtonStyle.SECONDARY else SepiaButtonStyle.GHOST,
+                            onClick = { splitDiffMode = !splitDiffMode }
+                        )
+                    }
                     SepiaButton(
                         text = if (showDiffBody) "▴" else "▾",
                         contentDescription = if (showDiffBody) Strings.hideChanges else Strings.showChanges,
@@ -390,7 +493,11 @@ fun SepiaFileDiffCard(
             )
         } else if (showDiffBody && diffLines.isNotEmpty()) {
             SepiaDivider()
-            SepiaDiffLinesList(diffLines = diffLines)
+            if (splitDiffMode && !win.isCompact) {
+                SepiaSplitDiffLinesList(diffLines = diffLines)
+            } else {
+                SepiaDiffLinesList(diffLines = diffLines)
+            }
         } else if (resultSummary.isNotBlank()) {
             SepiaDivider()
             BasicText(

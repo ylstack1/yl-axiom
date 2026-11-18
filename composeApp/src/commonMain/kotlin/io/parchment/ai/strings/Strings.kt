@@ -1005,5 +1005,10 @@ internal object Strings {
     fun deleteAllChatsForAssistant(chatsPlural: String, assistantName: String): String =
         "Delete all $chatsPlural for '$assistantName'? The assistant and its system prompt stay. You can undo this for a few seconds afterwards."
     val copyCode = "Copy code"
+    val wrapCodeBlocks = "Wrap long lines in code blocks"
+    val wrapCode = "Wrap code lines"
+    val unwrapCode = "Unwrap code lines"
+    val splitDiffView = "Side-by-side diff"
+    val unifiedDiffView = "Unified diff"
     fun tokensUsedInConversation(used: String, limit: String): String = "$used of $limit tokens used"
 }

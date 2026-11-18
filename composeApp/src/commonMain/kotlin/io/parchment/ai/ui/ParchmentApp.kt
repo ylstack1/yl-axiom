@@ -1319,55 +1319,7 @@ fun ParchmentApp(
                                         },
                                         onExportChatMarkdown = stableAction {
                                             uiScope.launch {
-                                                val md = buildString {
-                                                    appendLine("# ${activeSession.title}")
-                                                    appendLine()
-                                                    for (n in activeSession.messages) {
-                                                        val v = n.activeVariant
-                                                        val roleHeader = if (n.role == MessageRole.ASSISTANT) {
-                                                            activeSession.activeCard?.name?.ifBlank { v.modelUsed.ifBlank { activeAssistant.name } } ?: activeAssistant.name
-                                                        } else {
-                                                            activeSession.userName.ifBlank { Strings.user }
-                                                        }
-                                                        val muteTag = if (!n.includedInContext) Strings.muted else ""
-                                                        appendLine("### $roleHeader$muteTag")
-                                                        if (v.thinkingSummary.isNotBlank()) {
-                                                            appendLine("<details><summary>Reasoning</summary>")
-                                                            appendLine()
-                                                            appendLine(v.thinkingSummary)
-                                                            appendLine("</details>")
-                                                            appendLine()
-                                                        }
-                                                        if (v.toolCalls.isNotEmpty()) {
-                                                            appendLine("<details><summary>Tools Executed (${v.toolCalls.size})</summary>")
-                                                            appendLine()
-                                                            for (tc in v.toolCalls) {
-                                                                appendLine("- **`${tc.name}`**: `${tc.argumentsJson}`")
-                                                                if (tc.resultText.isNotBlank()) {
-                                                                    appendLine("  ```")
-                                                                    appendLine("  ${tc.resultText.take(1200)}")
-                                                                    appendLine("  ```")
-                                                                }
-                                                            }
-                                                            appendLine("</details>")
-                                                            appendLine()
-                                                        }
-                                                        if (v.content.isNotBlank()) {
-                                                            appendLine(v.content)
-                                                            appendLine()
-                                                        }
-                                                        if (v.attachments.isNotEmpty()) {
-                                                            appendLine(Strings.attachments(v.attachments.joinToString { it.fileName }))
-                                                            appendLine()
-                                                        }
-                                                        if (v.mediaItems.isNotEmpty()) {
-                                                            appendLine(Strings.generatedMedia(v.mediaItems.joinToString { it.localFilePath.ifBlank { it.remoteUrl } }))
-                                                            appendLine()
-                                                        }
-                                                        appendLine("---")
-                                                        appendLine()
-                                                    }
-                                                }
+                                                val md = formatSessionMarkdownExport(activeSession, activeAssistant)
                                                 val safeTitle = activeSession.title.replace(Regex("[^a-zA-Z0-9-_]"), "_").ifBlank { "chat" }
                                                 val saved = PlatformPickers.saveFileForExport("$safeTitle.md", md.encodeToByteArray())
                                                 if (saved != null) bannerNotification = Strings.exportedMarkdownTo(saved)
@@ -1905,3 +1857,63 @@ internal class DeletedChats(
 
 private const val NOTICE_MS = 5_000L
 private const val UNDO_NOTICE_MS = 8_000L
+
+internal fun formatSessionMarkdownExport(session: ChatSession, activeAssistant: AssistantAgent): String = buildString {
+    appendLine("# ${session.title}")
+    appendLine()
+    for (n in session.messages) {
+        val v = n.activeVariant
+        if (
+            n.role == MessageRole.ASSISTANT &&
+            v.content.isBlank() &&
+            v.thinkingSummary.isBlank() &&
+            v.toolCalls.isEmpty() &&
+            v.attachments.isEmpty() &&
+            v.mediaItems.isEmpty()
+        ) {
+            continue
+        }
+        val roleHeader = if (n.role == MessageRole.ASSISTANT) {
+            session.activeCard?.name?.ifBlank { v.modelUsed.ifBlank { activeAssistant.name } } ?: activeAssistant.name
+        } else {
+            session.userName.ifBlank { Strings.user }
+        }
+        val muteTag = if (!n.includedInContext) Strings.muted else ""
+        appendLine("### $roleHeader$muteTag")
+        if (v.thinkingSummary.isNotBlank()) {
+            appendLine("<details><summary>Reasoning</summary>")
+            appendLine()
+            appendLine(v.thinkingSummary)
+            appendLine("</details>")
+            appendLine()
+        }
+        if (v.toolCalls.isNotEmpty()) {
+            appendLine("<details><summary>Tools Executed (${v.toolCalls.size})</summary>")
+            appendLine()
+            for (tc in v.toolCalls) {
+                appendLine("- **`${tc.name}`**: `${tc.argumentsJson}`")
+                if (tc.resultText.isNotBlank()) {
+                    appendLine("  ```")
+                    appendLine("  ${tc.resultText.take(1200)}")
+                    appendLine("  ```")
+                }
+            }
+            appendLine("</details>")
+            appendLine()
+        }
+        if (v.content.isNotBlank()) {
+            appendLine(v.content)
+            appendLine()
+        }
+        if (v.attachments.isNotEmpty()) {
+            appendLine(Strings.attachments(v.attachments.joinToString { it.fileName }))
+            appendLine()
+        }
+        if (v.mediaItems.isNotEmpty()) {
+            appendLine(Strings.generatedMedia(v.mediaItems.joinToString { it.localFilePath.ifBlank { it.remoteUrl } }))
+            appendLine()
+        }
+        appendLine("---")
+        appendLine()
+    }
+}

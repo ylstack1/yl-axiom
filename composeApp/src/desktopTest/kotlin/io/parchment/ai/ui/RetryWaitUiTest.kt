@@ -94,6 +94,7 @@ class RetryWaitUiTest {
             settle()
             val button = assertNotNull(retryNow(scene), "Retry now must show while the run waits")
             assertTrue(button.size.height >= 48, "Retry now must be a full touch target: ${button.size}")
+            assertTrue(button.boundsInRoot.left > 450f, "Retry now must sit inline on the trailing right side of the status bar: ${button.boundsInRoot}")
             button.config[SemanticsActions.OnClick].action?.invoke()
             assertEquals(1, pressed)
             retryWait = null

@@ -109,7 +109,8 @@ internal fun MessageTurnReasoningDrawer(
                             enableMarkdown = preferences.renderReasoningWithMarkdown,
                             enableMath = preferences.mathFormulaRendering,
                             enableInlineDollarMath = preferences.inlineDollarMathRendering,
-                            autoCollapseCodeBlocks = preferences.autoCollapseCodeBlocks
+                            autoCollapseCodeBlocks = preferences.autoCollapseCodeBlocks,
+                            wrapCodeBlocks = preferences.wrapCodeBlocks
                         )
                     }
                     if (preferences.showToolCards && activeVar.toolCalls.isNotEmpty()) {
@@ -334,7 +335,8 @@ private fun InterleavedReasoningTimeline(
                     enableMarkdown = enableMd,
                     enableMath = preferences.mathFormulaRendering,
                     enableInlineDollarMath = preferences.inlineDollarMathRendering,
-                    autoCollapseCodeBlocks = preferences.autoCollapseCodeBlocks
+                    autoCollapseCodeBlocks = preferences.autoCollapseCodeBlocks,
+                    wrapCodeBlocks = preferences.wrapCodeBlocks
                 )
             }
             if (preferences.showToolCards) {
@@ -494,7 +496,8 @@ private fun ReasoningThoughtStepBlock(
             enableMarkdown = preferences.renderReasoningWithMarkdown,
             enableMath = preferences.mathFormulaRendering,
             enableInlineDollarMath = preferences.inlineDollarMathRendering,
-            autoCollapseCodeBlocks = preferences.autoCollapseCodeBlocks
+            autoCollapseCodeBlocks = preferences.autoCollapseCodeBlocks,
+            wrapCodeBlocks = preferences.wrapCodeBlocks
         )
     }
 }

@@ -124,6 +124,8 @@ private fun outline(icon: KissIcon): String = when (icon) {
     KissIcon.DICE -> box(3.5, 3.5, 17.0, 17.0)
     KissIcon.CALCULATOR -> box(5.0, 2.5, 14.0, 19.0) + "M8.500 6.500h7"
     KissIcon.CORNER_DOWN_RIGHT -> "M5 4v7a3 3 0 0 0 3 3h11M15 10l4 4-4 4"
+    KissIcon.WRAP_TEXT -> "M4 6h16M4 12h13a3 3 0 1 1 0 6h-5M14 15l-3 3 3 3M4 18h4"
+    KissIcon.SPLIT_COLUMNS -> box(3.5, 4.5, 17.0, 15.0, 2.0) + "M12 4.500v15"
     KissIcon.STOP, KissIcon.MORE_HORIZONTAL, KissIcon.CIRCLE_DOT -> ""
 }
 

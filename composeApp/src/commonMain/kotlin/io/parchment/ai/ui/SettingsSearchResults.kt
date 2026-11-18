@@ -225,6 +225,7 @@ internal fun GlobalSettingsSearchResultsSubpage(
     val hitAssistantMd = hit("Render assistant messages with Markdown", "Rendering settings", "formatting", "prose", "assistant")
     val hitDialogueInk = hit("Highlight spoken dialogue & narration ink", "Rendering settings", "quotes", "italics", "roleplay")
     val hitAutoCollapseCode = hit("Auto-collapse Code Blocks", "Rendering settings", "fenced code")
+    val hitWrapCodeBlocks = hit("Wrap long lines in code blocks", "Rendering settings", "fenced code", "word wrap", "horizontal scroll", "code")
     val hitCollapseLong = hit("Collapse Long Messages", "Rendering settings", "truncate", "expand", "read more")
 
     val hitAutoTopics = hit("Auto switch to Topics", "Behavior & startup", "sidebar", "chats tab", "assistant")
@@ -252,7 +253,7 @@ internal fun GlobalSettingsSearchResultsSubpage(
         hitUserActions, hitModelIcon, hitModelName, hitModelTimestamp, hitProviderAfterModel, hitTokenStats,
         hitTokensEntireTurn, hitThinkingCards, hitToolCards, hitReasoningButton,
         hitInlineDollar, hitMathFormula, hitUserMd, hitReasoningMd, hitAssistantMd, hitDialogueInk,
-        hitAutoCollapseCode, hitCollapseLong,
+        hitAutoCollapseCode, hitWrapCodeBlocks, hitCollapseLong,
         hitAutoTopics, hitAutoCollapseThink, hitToolSummary, hitDeleteBelowRegen, hitDeletePrevRegen,
         hitConfirmRegen, hitConfirmDelete, hitKeepForkVersions, hitChatListDates, hitNewChatSwitchAsst,
         hitNewChatDeleteTopic, hitNewChatLaunch, hitAutoScrollOnOpen, hitAutoFollowBottom, hitAutoCompactLimit, hitNavMinimap, hitSendShortcut, hitPasteLongFile
@@ -586,6 +587,13 @@ internal fun GlobalSettingsSearchResultsSubpage(
                             title = Strings.autoCollapseCodeBlocks,
                             checked = prefs.autoCollapseCodeBlocks,
                             onCheckedChange = { onUpdatePreferences(prefs.copy(autoCollapseCodeBlocks = it)) }
+                        )
+                    }
+                    if (hitWrapCodeBlocks) {
+                        SepiaToggleRow(
+                            title = Strings.wrapCodeBlocks,
+                            checked = prefs.wrapCodeBlocks,
+                            onCheckedChange = { onUpdatePreferences(prefs.copy(wrapCodeBlocks = it)) }
                         )
                     }
                     if (hitCollapseLong) {

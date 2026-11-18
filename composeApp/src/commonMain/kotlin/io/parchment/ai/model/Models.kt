@@ -543,6 +543,7 @@ data class PreferencesConfig(
     val renderReasoningWithMarkdown: Boolean = true,
     val renderAssistantMessagesWithMarkdown: Boolean = true,
     val autoCollapseCodeBlocks: Boolean = false,
+    val wrapCodeBlocks: Boolean = false,
     // Behavior & startup
     val autoSwitchToTopics: Boolean = true,
     val autoCollapseThinking: Boolean = true,

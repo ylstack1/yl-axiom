@@ -1339,4 +1339,100 @@ class UiBehaviorRegressionTest {
             }
         }
     }
+
+    @Test
+    fun topBarComfortCodeBlockWrapSplitDiffAndCleanMarkdownExport() {
+        // 1. TopEditorialBar desktop height stays comfortable (~54..66dp instead of bloated 84dp)
+        val prof = ProviderProfile(id = "p1", name = "Gemini", protocol = ProviderProtocol.GEMINI_INTERACTIONS, defaultModel = "gemini-4-carbon")
+        val asst = AssistantAgent(id = "a1", name = "Writer")
+        val session = ChatSession(
+            id = "s1",
+            title = "Current PERFORMANCE.md Stats and Measurements",
+            createdAt = 1L,
+            updatedAt = 1L,
+            profileId = prof.id,
+            assistantId = asst.id,
+            messages = listOf(
+                MessageNode("u1", MessageRole.USER, listOf(MessageVariant("uv1", "Hello"))),
+                MessageNode("a-empty", MessageRole.ASSISTANT, listOf(MessageVariant("av-empty", ""))),
+                MessageNode("a-real", MessageRole.ASSISTANT, listOf(MessageVariant("av-real", "Done.")))
+            )
+        )
+        val exported = formatSessionMarkdownExport(session, asst)
+        assertTrue("### User" in exported && "Done." in exported, exported)
+        assertEquals(1, Regex("""^### Writer""", RegexOption.MULTILINE).findAll(exported).count(), "Empty assistant stub must be skipped on export:\n$exported")
+
+        withUiScene(
+            width = 1100,
+            height = 720,
+            content = {
+                val snap = AppStateSnapshot(
+                    profiles = listOf(prof),
+                    activeProfileId = prof.id,
+                    assistants = listOf(asst),
+                    activeAssistantId = asst.id,
+                    sessions = listOf(session),
+                    activeSessionId = session.id
+                )
+                Column {
+                    TopEditorialBar(
+                        appState = snap,
+                        activeSession = session,
+                        activeAssistant = asst,
+                        activeProfile = prof,
+                        isCompactScreen = false,
+                        showSidebar = false,
+                        showSessionInspector = false,
+                        showQuickModelPopover = false,
+                        openTabCount = 1,
+                        backgroundStreamingCount = 0,
+                        onOpenMobileTabSwitcher = {},
+                        onNewChatTab = {},
+                        onToggleSidebar = {},
+                        onToggleSessionInspector = {},
+                        onToggleQuickModelPopover = {},
+                        onDismissQuickModelPopover = {},
+                        onSelectModelQuick = { _, _ -> },
+                        onRenameTopicInline = {},
+                        onRegenerateTitleAi = {},
+                        onOpenSettings = {}
+                    )
+                    SepiaDivider()
+                }
+            }
+        ) { scene ->
+            val settingsBtn = nodes(scene).first { description(it) == Strings.settings }
+            assertTrue(settingsBtn.boundsInRoot.bottom <= 68f, "TopEditorialBar should be comfortably compact (<=68dp), got bottom=${settingsBtn.boundsInRoot.bottom}")
+        }
+
+        // 2. Code block wrap toggle & global wrapCodeBlocks + Split Diff toggle
+        val longCode = "```kotlin\nval veryLongLine = \"" + "word ".repeat(60) + "\"\n```"
+        var globalWrap by mutableStateOf(false)
+        withUiScene(
+            width = 860,
+            height = 640,
+            content = {
+                Column {
+                    LiteraryProseRenderer(text = longCode, wrapCodeBlocks = globalWrap)
+                    SepiaFileDiffCard(
+                        filePath = "src/App.kt",
+                        actionLabel = "Edit",
+                        oldText = "val a = 1\nval b = 2",
+                        newText = "val a = 1\nval b = 3"
+                    )
+                }
+            }
+        ) { scene ->
+            val wrapBtnUnwrapped = nodes(scene).first { description(it) == Strings.wrapCode }
+            val splitBtn = nodes(scene).first { description(it) == Strings.splitDiffView }
+            click(wrapBtnUnwrapped)
+            click(splitBtn)
+            settle(scene, 32_000_000L)
+            assertNotNull(nodes(scene).firstOrNull { description(it) == Strings.unwrapCode })
+            assertNotNull(nodes(scene).firstOrNull { description(it) == Strings.unifiedDiffView })
+            globalWrap = true
+            settle(scene, 48_000_000L)
+            assertNotNull(nodes(scene).firstOrNull { description(it) == Strings.unwrapCode })
+        }
+    }
 }

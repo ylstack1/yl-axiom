@@ -416,7 +416,7 @@ internal fun PreferencesSubpage(
         }
 
         // 3. Rendering Settings (Matching Screenshot 6)
-        if (matchesSearch("rendering", "markdown", "math", "latex", "reasoning", "thinking", "code blocks", "dialogue")) {
+        if (matchesSearch("rendering", "markdown", "math", "latex", "reasoning", "thinking", "code blocks", "wrap", "dialogue")) {
             SepiaSectionCard(title = Strings.renderingSettings) {
                 Column(verticalArrangement = Arrangement.spacedBy(Space.s4)) {
                     SepiaToggleRow(
@@ -453,6 +453,11 @@ internal fun PreferencesSubpage(
                         title = Strings.autoCollapseCodeBlocks,
                         checked = prefs.autoCollapseCodeBlocks,
                         onCheckedChange = { onUpdatePreferences(prefs.copy(autoCollapseCodeBlocks = it)) }
+                    )
+                    SepiaToggleRow(
+                        title = Strings.wrapCodeBlocks,
+                        checked = prefs.wrapCodeBlocks,
+                        onCheckedChange = { onUpdatePreferences(prefs.copy(wrapCodeBlocks = it)) }
                     )
                     SepiaToggleRow(
                         title = Strings.collapseLongMessages1800,

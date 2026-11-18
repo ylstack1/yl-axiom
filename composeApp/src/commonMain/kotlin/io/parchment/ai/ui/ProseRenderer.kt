@@ -300,6 +300,7 @@ fun LiteraryProseRenderer(
     enableMath: Boolean = true,
     enableInlineDollarMath: Boolean = true,
     autoCollapseCodeBlocks: Boolean = false,
+    wrapCodeBlocks: Boolean = false,
     highlightedLineSubstring: String = ""
 ) {
     val p = LocalParchmentPalette.current
@@ -450,9 +451,14 @@ fun LiteraryProseRenderer(
                         var isCollapsed by remember(index, autoCollapseCodeBlocks) {
                             mutableStateOf(autoCollapseCodeBlocks)
                         }
+                        var isWrapped by remember(index, wrapCodeBlocks) {
+                            mutableStateOf(wrapCodeBlocks)
+                        }
                         val scanState = remember(index) { CodeFenceScanState() }.update(block.code)
                         val isSvgArtifact = block.language.equals("svg", ignoreCase = true) ||
                             (scanState.hasSvgOpen && scanState.hasSvgClose)
+                        val isDiffLang = block.language.equals("diff", ignoreCase = true) ||
+                            block.language.equals("patch", ignoreCase = true)
                         var showSvgPreview by remember(index, isSvgArtifact) { mutableStateOf(isSvgArtifact) }
                         var copiedCode by remember(index) { mutableStateOf(false) }
                         var savedCode by remember(index) { mutableStateOf(false) }
@@ -503,6 +509,15 @@ fun LiteraryProseRenderer(
                                             }
                                         )
                                     }
+                                    if (!isDiffLang && !(isSvgArtifact && showSvgPreview)) {
+                                        SepiaButton(
+                                            text = "↩",
+                                            compact = true,
+                                            style = if (isWrapped) SepiaButtonStyle.SECONDARY else SepiaButtonStyle.GHOST,
+                                            contentDescription = if (isWrapped) Strings.unwrapCode else Strings.wrapCode,
+                                            onClick = { isWrapped = !isWrapped }
+                                        )
+                                    }
                                     SepiaButton(
                                         text = if (isCollapsed) "▸" else "▾",
                                         compact = true,
@@ -545,8 +560,6 @@ fun LiteraryProseRenderer(
                             ) {
                                 Column {
                                     SepiaDivider()
-                                    val isDiffLang = block.language.equals("diff", ignoreCase = true) ||
-                                        block.language.equals("patch", ignoreCase = true)
                                     if (isSvgArtifact && showSvgPreview) {
                                         InlineSvgArtifactPreview(rawSvg = block.code)
                                     } else if (isDiffLang) {
@@ -556,16 +569,18 @@ fun LiteraryProseRenderer(
                                         )
                                     } else {
                                         val codeChunks = remember(block.code) { splitCodeFenceChunks(block.code) }
+                                        val scrollState = rememberScrollState()
                                         Box(
                                             modifier = Modifier
                                                 .fillMaxWidth()
-                                                .horizontalScroll(rememberScrollState())
+                                                .then(if (isWrapped) Modifier else Modifier.horizontalScroll(scrollState))
                                                 .padding(11.dp)
                                         ) {
                                             if (codeChunks.size == 1) {
                                                 BasicText(
                                                     text = codeChunks[0],
-                                                    style = p.monoStyle
+                                                    style = p.monoStyle,
+                                                    softWrap = isWrapped
                                                 )
                                             } else {
                                                 // Chunk long code blocks into ~40-line paragraphs so settled prefixes skip Skia relayout while streaming.
@@ -574,7 +589,8 @@ fun LiteraryProseRenderer(
                                                         key(chunkIdx) {
                                                             BasicText(
                                                                 text = chunk,
-                                                                style = p.monoStyle
+                                                                style = p.monoStyle,
+                                                                softWrap = isWrapped
                                                             )
                                                         }
                                                     }

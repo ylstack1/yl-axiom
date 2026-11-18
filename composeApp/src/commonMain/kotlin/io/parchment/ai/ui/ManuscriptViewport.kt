@@ -1242,7 +1242,7 @@ internal fun ManuscriptViewport(
                             verticalAlignment = Alignment.CenterVertically
                         ) {
                             Row(
-                                modifier = Modifier.weight(1f),
+                                modifier = Modifier.weight(1f).padding(end = Space.s8),
                                 horizontalArrangement = Arrangement.spacedBy(Space.s8),
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
@@ -1258,12 +1258,28 @@ internal fun ManuscriptViewport(
                                     )
                                 )
                             }
-                            if (statusDetail.isNotEmpty() || statusHeadline.length > 72) {
-                                KissVectorIcon(
-                                    icon = if (statusExpanded) KissIcon.CHEVRON_UP else KissIcon.CHEVRON_DOWN,
-                                    tint = p.mutedInk,
-                                    size = IconSize.sm
-                                )
+                            Row(
+                                horizontalArrangement = Arrangement.spacedBy(Space.s8),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                // Keep Retry now inline on the trailing side of the status bar instead of hanging beneath on the left.
+                                if (retryWait != null) {
+                                    SepiaButton(
+                                        text = "↻ ${Strings.retryNow}",
+                                        onClick = onRetryNow,
+                                        compact = true,
+                                        style = SepiaButtonStyle.OUTLINE,
+                                        hint = Strings.retryNowHint,
+                                        modifier = Modifier.heightIn(min = Space.s48)
+                                    )
+                                }
+                                if (statusDetail.isNotEmpty() || statusHeadline.length > 72) {
+                                    KissVectorIcon(
+                                        icon = if (statusExpanded) KissIcon.CHEVRON_UP else KissIcon.CHEVRON_DOWN,
+                                        tint = p.mutedInk,
+                                        size = IconSize.sm
+                                    )
+                                }
                             }
                         }
                         if (statusDetail.isNotEmpty()) {
@@ -1277,17 +1293,6 @@ internal fun ManuscriptViewport(
                                     lineHeight = 16.sp
                                 ),
                                 modifier = Modifier.padding(start = Space.s16)
-                            )
-                        }
-                        // While the run waits to try again, the wait can be skipped (Stop stays in the composer).
-                        if (retryWait != null) {
-                            SepiaButton(
-                                text = Strings.retryNow,
-                                onClick = onRetryNow,
-                                compact = true,
-                                style = SepiaButtonStyle.OUTLINE,
-                                hint = Strings.retryNowHint,
-                                modifier = Modifier.padding(start = Space.s16).heightIn(min = Space.s48)
                             )
                         }
                     }

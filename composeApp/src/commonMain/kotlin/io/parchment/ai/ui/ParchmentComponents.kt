@@ -483,6 +483,7 @@ fun SepiaButton(
     style: SepiaButtonStyle = SepiaButtonStyle.OUTLINE,
     enabled: Boolean = true,
     compact: Boolean = false,
+    inlineCompact: Boolean = false,
     wrapText: Boolean = false,
     contentDescription: String? = null,
     hint: String? = contentDescription,
@@ -548,15 +549,20 @@ fun SepiaButton(
 
     val win = LocalParchmentWindowSize.current
     val parsed = remember(text) { parseKissLabelIcons(text) }
-    val minHeight = if (compact) ControlHeight.compact else ControlHeight.regular
+    val minHeight = when {
+        inlineCompact -> Space.s24
+        compact -> ControlHeight.compact
+        else -> ControlHeight.regular
+    }
     val hPad = when {
+        inlineCompact -> Space.s6
         compact && win.isCompact -> Space.s8
         compact -> Space.s10
         win.isCompact -> Space.s12
         else -> 14.dp
     }
     val fontSize = when {
-        compact -> 12.sp
+        inlineCompact || compact -> 12.sp
         else -> 13.sp
     }
 
@@ -579,7 +585,11 @@ fun SepiaButton(
             )
             .padding(
                 horizontal = hPad,
-                vertical = if (compact) Space.s6 else Space.s8
+                vertical = when {
+                    inlineCompact -> Space.s2
+                    compact -> Space.s6
+                    else -> Space.s8
+                }
             ),
         contentAlignment = Alignment.Center
     ) {

@@ -548,7 +548,7 @@ internal fun TopEditorialBar(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(Space.s4),
                 modifier = Modifier
-                    .heightIn(min = ControlHeight.compact)
+                    .heightIn(min = if (stackCompactActions) ControlHeight.compact else 22.dp)
                     .kissClickable(hoverScale = 1.01f) { onToggleQuickModelPopover() }
                     .accessibilityLabel(if (showQuickModelPopover) Strings.closeModelPicker else Strings.chooseAModel)
             ) {
@@ -734,7 +734,7 @@ internal fun TopEditorialBar(
         modifier = Modifier
             .fillMaxWidth()
             .background(p.canvasBg)
-            .padding(horizontal = Space.s12, vertical = Space.s8),
+            .padding(horizontal = Space.s12, vertical = Space.s6),
         verticalArrangement = Arrangement.spacedBy(Space.s6)
     ) {
         Row(
@@ -764,7 +764,10 @@ internal fun TopEditorialBar(
                     )
                 }
 
-                Column(modifier = Modifier.weight(1f)) {
+                Column(
+                    modifier = Modifier.weight(1f),
+                    verticalArrangement = Arrangement.spacedBy(Space.s2)
+                ) {
                     if (isEditingTitle) {
                         Row(
                             horizontalArrangement = Arrangement.spacedBy(Space.s6),
@@ -820,6 +823,7 @@ internal fun TopEditorialBar(
                                     contentDescription = Strings.regenerateTitle,
                                     hint = Strings.writeANewTitleFrom,
                                     compact = true,
+                                    inlineCompact = true,
                                     style = SepiaButtonStyle.GHOST,
                                     onClick = onRegenerateTitleAi
                                 )

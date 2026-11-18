@@ -116,7 +116,9 @@ enum class KissIcon {
     FLAME,
     DICE,
     CALCULATOR,
-    CORNER_DOWN_RIGHT
+    CORNER_DOWN_RIGHT,
+    WRAP_TEXT,
+    SPLIT_COLUMNS
 }
 
 fun resolveToolKissIcon(toolName: String): KissIcon = when (toolName.lowercase()) {
@@ -318,6 +320,8 @@ fun parseKissLabelIcons(raw: String): ParsedLabelWithIcons {
         "→" -> KissIcon.ARROW_RIGHT
         "↗" -> KissIcon.EXTERNAL_LINK
         "↳" -> KissIcon.CORNER_DOWN_RIGHT
+        "↩" -> KissIcon.WRAP_TEXT
+        "◫" -> KissIcon.SPLIT_COLUMNS
         "@" -> KissIcon.AT_SIGN
         "💬" -> KissIcon.MESSAGE_CIRCLE
         "🧪" -> KissIcon.FLASK
