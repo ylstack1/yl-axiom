@@ -2,6 +2,13 @@
 
 What changed in each release, newest first. From 2.1.7 on, release-please writes these entries from commit messages that follow [Conventional Commits](https://www.conventionalcommits.org/) (`feat:` and `fix:` appear here and set the next version); edit wording in its release PR before merging it.
 
+## [2.4.4](https://github.com/baros4294/parchment/compare/v2.4.3...v2.4.4) (2026-11-18)
+
+
+### Fixes
+
+* preserve Leyden AOT cache mapping in installed Windows builds ([d03b04f](https://github.com/baros4294/parchment/commit/d03b04fffd5c6b02d010a79d967c359be7d414b3))
+
 ## [2.4.3](https://github.com/baros4294/parchment/compare/v2.4.2...v2.4.3) (2026-11-17)
 
 
