@@ -2,6 +2,17 @@
 
 What changed in each release, newest first. From 2.1.7 on, release-please writes these entries from commit messages that follow [Conventional Commits](https://www.conventionalcommits.org/) (`feat:` and `fix:` appear here and set the next version); edit wording in its release PR before merging it.
 
+## [3.0.0](https://github.com/baros4294/parchment/compare/v2.6.0...v3.0.0) (2026-11-19)
+
+
+### ⚠ BREAKING CHANGES
+
+* Windows desktop now ships as a standalone native Rust + GPUI executable and automatically migrates v2 JSON chats into SQLite WAL + FTS5 on first launch.
+
+### New
+
+* Parchment v3 native Rust core, Windows GPUI desktop, and Android JNI ([a12791d](https://github.com/baros4294/parchment/commit/a12791d0d3f2353b982cb9ddeb7e17bcd21fb4fe))
+
 ## [2.6.0](https://github.com/baros4294/parchment/compare/v2.5.2...v2.6.0) (2026-11-19)
 
 
