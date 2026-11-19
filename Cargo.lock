@@ -4424,7 +4424,7 @@ version = "3.0.0"
 dependencies = [
  "anyhow",
  "async-trait",
- "base64 0.22.1",
+ "base64 0.23.1",
  "gpui-component",
  "gpui-pre",
  "gpui-pre-platform",
@@ -4441,7 +4441,7 @@ name = "parchment-harness"
 version = "3.0.0"
 dependencies = [
  "async-trait",
- "base64 0.22.1",
+ "base64 0.23.1",
  "futures-util",
  "globset",
  "grep-regex",
@@ -4478,7 +4478,7 @@ dependencies = [
 name = "parchment-protocol"
 version = "3.0.0"
 dependencies = [
- "base64 0.22.1",
+ "base64 0.23.1",
  "bytes",
  "futures-util",
  "parchment-model",

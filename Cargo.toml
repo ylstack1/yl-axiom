@@ -20,7 +20,7 @@ repository = "https://github.com/baros4294/parchment"
 [workspace.dependencies]
 anyhow = "1"
 async-trait = "0.1"
-base64 = "0.22"
+base64 = "0.23"
 bytes = "1"
 futures-util = "0.3"
 globset = "0.4"
