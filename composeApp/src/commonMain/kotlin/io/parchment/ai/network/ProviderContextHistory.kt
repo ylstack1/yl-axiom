@@ -362,11 +362,19 @@ internal fun AiProviderEngine.buildCompiledSystemPrompt(
     if (workspacePolicy.hasWorkspace && workspacePolicy.allowsTool("fs_read")) {
         sb.appendLine("### Local Workspace Agent Harness")
         sb.appendLine("Use only the tools advertised for the mounted directory (`${workspacePolicy.workspacePath}`). Inspect files before editing, keep edits surgical, and keep the project tree clean: `todo_write` updates this chat session's TODO checklist (never project files), and `agent_memory` reads or updates Parchment's global `memory/AGENT.md` when needed or requested by the user. Verify before `goal_complete`. An approval does not expand permissions; denied tools remain disabled.")
+        if (workspacePolicy.workspaceMode == io.parchment.ai.model.WorkspaceMode.READ_ONLY) {
+            sb.appendLine("Workspace is currently in Read-Only (/plan) mode: inspect files and propose a clear plan without modifying workspace files.")
+        }
         val discoveredContext = WorkspaceHarness.discoverWorkspaceContextFiles(workspacePolicy.workspacePath)
         if (discoveredContext.isNotBlank()) {
             sb.appendLine()
             sb.appendLine(discoveredContext)
         }
+    }
+    val deferredMcpCatalog = WorkspaceHarness.deferredMcpToolsCatalogPrompt(workspacePolicy)
+    if (deferredMcpCatalog.isNotBlank()) {
+        sb.appendLine()
+        sb.appendLine(deferredMcpCatalog)
     }
     if (anyAgentToolsActive && workspacePolicy.allowsTool("agent_memory")) {
         val globalMemory = WorkspaceHarness.discoverGlobalAgentMemory(appStorageRoot)

@@ -209,6 +209,7 @@ internal suspend fun AiProviderEngine.executeOpenAiResponsesLoop(
                             if (size != "auto") put("size", size)
                         })
                     }
+                    val expandedMcpTools = currentExpandedMcpTools()
                     val wsTools = WorkspaceHarness.buildOpenAiResponsesTools(
                         session.workspaceMode,
                         session.workspacePath,
@@ -216,7 +217,8 @@ internal suspend fun AiProviderEngine.executeOpenAiResponsesLoop(
                         goalModeActive = circuitBreaker.goalState != null,
                         enableWebTools = profile.enableWebSearch || profile.enableUrlContext,
                         includeLocalWebSearchTool = profile.enableWebSearch && omitOpenAiNativeWebSearchOnRetry,
-                        policy = AgentPermissionResolver.resolve(session, profile = profile)
+                        policy = AgentPermissionResolver.resolve(session, profile = profile),
+                        expandedMcpTools = expandedMcpTools
                     )
                     wsTools.forEach { add(it) }
                 }
@@ -689,7 +691,8 @@ internal suspend fun AiProviderEngine.executeOpenAiResponsesLoop(
             accessScope = ToolAccessScope(
                 AgentPermissionResolver.resolve(session, profile = profile),
                 goalModeActive = circuitBreaker.goalState != null,
-                includeLocalWebSearchTool = profile.enableWebSearch && omitOpenAiNativeWebSearchOnRetry
+                includeLocalWebSearchTool = profile.enableWebSearch && omitOpenAiNativeWebSearchOnRetry,
+                expandedMcpTools = currentExpandedMcpTools()
             ),
             calls = turnToolCalls.map { (callId, fnPair) -> Triple(callId, fnPair.first, fnPair.second) },
             firstThoughtSignature = roundEncryptedReasoning,

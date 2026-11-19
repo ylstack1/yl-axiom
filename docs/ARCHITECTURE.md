@@ -2,7 +2,7 @@
 
 Parchment is a Kotlin Multiplatform application built with Compose Multiplatform (Foundation only, no Material). It targets Windows desktop and Android from shared protocol, agent-harness, storage and UI code.
 
-New contributors and AI harnesses should start with [AGENTS.md](../AGENTS.md) for working rules, [CONTRIBUTING.md](../CONTRIBUTING.md) for local setup and verification commands, and [MEMORY.md](../MEMORY.md) for stable system contracts.
+New contributors and AI harnesses should start with [AGENTS.md](../AGENTS.md) for working rules, engineering standards, and stable system contracts, and [CONTRIBUTING.md](../CONTRIBUTING.md) for local setup and verification commands.
 
 ## Modules and source sets
 
@@ -32,7 +32,7 @@ Top-level files and tooling outside `composeApp/src`:
 - **Verification & automation scripts:** `scripts/verify.py` (ledger-backed test/gate runner), `scripts/quality.py` (encoding, dead-code, banned-pattern, link and doc-budget checks), `scripts/quality-baseline.json`, `scripts/perf.py` (300-chat startup/frame benchmark), `scripts/test_workflow_tools.py` (Python script tests), `scripts/create-private-signer.ps1`, `scripts/load-private-signer.ps1`.
 - **Installers & assets:** `installer/windows-installer.iss`, `installer/parchment-icon.ico`, `installer/release-badge.svg`, `composeApp/src/commonMain/resources/icon/parchment-icon.png`.
 - **CI & releases:** `.github/workflows/` (`build-installers.yml`, `release-please.yml`, `quality-signals.yml`, `codeql.yml`, `scorecard.yml`, `dependency-submission.yml`, `dependabot-automerge.yml`, `stale.yml`), `.github/scripts/` (`ci_changes.py`, `shard_tests.py`, `run_gradle.py`, `stage_android_signing.py`, `check_sbom.py`, `kover.init.gradle.kts`, `sbom.init.gradle.kts`), `release-please-config.json`, `.release-please-manifest.json`.
-- **Docs:** `README.md`, `AGENTS.md` (with harness shims `CLAUDE.md`, `GEMINI.md`, `.github/copilot-instructions.md`), `CONTRIBUTING.md`, `MEMORY.md`, `TODO.md`, `docs/DESIGN.md`, `docs/PERFORMANCE.md`, `docs/RELEASE_SIGNING.md`.
+- **Docs:** `README.md`, `AGENTS.md` (consolidated rules, engineering rigor and stable contracts, with harness shims `CLAUDE.md`, `GEMINI.md`, `.github/copilot-instructions.md`), `CONTRIBUTING.md`, `TODO.md`, `docs/DESIGN.md`, `docs/PERFORMANCE.md`, `docs/RELEASE_SIGNING.md`.
 
 ## Common package and file map
 
@@ -54,20 +54,20 @@ All Kotlin files below sit under `composeApp/src/commonMain/kotlin/io/parchment/
 - **Shared provider support:** `ProviderContextHistory.kt` (history/branch/lorebook assembly), `ProviderReasoning.kt`, `ProviderToolExecution.kt` (tool loop, parallel execution, approvals), `ToolScreenshots.kt`, `ProviderCitations.kt`, `ProviderMediaGeneration.kt`, `ProviderModelDiscovery.kt`, `ModelsDevClient.kt` (single-flight background model catalog & pricing sync), `ProviderTransportSupport.kt`, `ProviderErrorPolicy.kt` (typed HTTP failures, server retry hints, backoff, and which failures a person must fix), `ProviderUsage.kt`, `UsageCharges.kt`.
 - **Extensions & updates:** `McpClient.kt`, `McpRegistry.kt`, `ExtensionSources.kt` (skills & extension discovery), `Subagents.kt` (`agent_delegate` orchestration), `OtaUpdateEngine.kt` (GitHub Release update checks and download staging).
 
-### `ui` package (50 files)
+### `ui` package (51 files)
 
 - **Shell, state & runs:** `ParchmentApp.kt`, `ParchmentAppController.kt`, `AgentRunCoordinator.kt`, `ChatRunHosts.kt`, `GenerationRun.kt`, `StorySummaryRun.kt`, `AppShortcuts.kt`, `CommandPalette.kt`.
 - **Persistence, usage & search:** `ParchmentStatePersistence.kt`, `ParchmentDiskWriter.kt`, `SessionSpend.kt`, `UtilityUsage.kt`, `PinnedReplies.kt`, `ChatHistorySearch.kt`.
 - **Navigation, modals & sidebars:** `ParchmentModalsAndNavigation.kt`, `ParchmentSidebar.kt`, `ChatFilesSidebar.kt`, `AppDialogs.kt`, `FloatingNotification.kt`.
 - **Chat viewport, turns & renderers:** `ManuscriptViewport.kt`, `EmptyChatAndNotes.kt`, `MessageTurnItem.kt`, `MessageTurnReasoningSection.kt`, `MessageTurnMediaAndDrawers.kt`, `MessageTurnFooter.kt`, `ComposerControls.kt`, `ProseRenderer.kt`, `LatexMathRenderer.kt`, `SvgSceneRenderer.kt`, `ParchmentDiffViewer.kt`, `FileImages.kt`.
-- **Settings, pickers & permissions:** `ParchmentSettingsPages.kt`, `SettingsProvidersPage.kt`, `SettingsAssistantsPage.kt`, `SettingsDefaultModelPage.kt`, `SettingsWorkspacePage.kt`, `SettingsWorldBookPage.kt`, `SettingsPreferencesPage.kt`, `SettingsBackupPage.kt`, `SettingsSearchResults.kt`, `McpSettings.kt`, `AgentPermissionEditor.kt`, `ParchmentModelPickerAndStats.kt`, `ParchmentProfileSettings.kt`.
+- **Settings, pickers & permissions:** `ParchmentSettingsPages.kt`, `SettingsProvidersPage.kt`, `SettingsAssistantsPage.kt`, `SettingsDefaultModelPage.kt`, `SettingsWorkspacePage.kt`, `SettingsWorldBookPage.kt`, `SettingsPreferencesPage.kt`, `SettingsShortcutsPage.kt`, `SettingsBackupPage.kt`, `SettingsSearchResults.kt`, `McpSettings.kt`, `AgentPermissionEditor.kt`, `ParchmentModelPickerAndStats.kt`, `ParchmentProfileSettings.kt`.
 - **Design system & icons:** `DesignTokens.kt`, `ParchmentTheme.kt`, `ParchmentComponents.kt`, `ParchmentFormComponents.kt`, `ParchmentIcons.kt`, `KissIconGlyphs.kt`.
 
 ## Platform implementations
 
 | Source set | Files & responsibilities |
 |---|---|
-| `jvmShared/platform` | `AppAgentStorage.kt`, `AppStorageInventory.kt`, `AtomicFileStorage.kt`, `BoundedImageCache.kt`, `BoundedTextCapture.kt`, `ChatArchiveExtractor.kt`, `ChatArchiveWriter.kt`, `CrashRecorder.kt` (uncaught errors: flush, then a redacted `crash/last-crash.txt`), `LocalMediaStore.kt`, `OtaStagedFile.kt`, `PublicWebTransport.kt` (DNS/private-IP SSRF guard), `SnapshotFileStorage.kt`, `StreamingJsonDecoder.kt`, `WorkspaceFileEditor.kt`, `WorkspacePathGuard.kt`, `WorkspaceTextReader.kt`, `WorkspaceTreeScanner.kt`; `jvmShared/network/ProviderHttpEngine.kt` (OkHttp for both targets) and `jvmShared/ui/ProcessStatePreload.kt` (settings and open chat read while the window is built). |
+| `jvmShared/platform` | `AppAgentStorage.kt`, `AppStorageInventory.kt`, `AtomicFileStorage.kt`, `BoundedImageCache.kt`, `BoundedTextCapture.kt`, `ChatArchiveExtractor.kt`, `ChatArchiveWriter.kt`, `CrashRecorder.kt` (uncaught errors: flush, then a redacted `crash/last-crash.txt`), `DocxTextExtractor.kt` (zero-dep `.docx` `word/document.xml` extractor via `ZipInputStream`), `LocalMediaStore.kt`, `LocalSkillSourceReader.kt` (bounded local folder/zip skill import with traversal & zip-bomb guards), `OtaStagedFile.kt`, `PublicWebTransport.kt` (DNS/private-IP SSRF guard), `SnapshotFileStorage.kt`, `StreamingJsonDecoder.kt`, `WorkspaceFileEditor.kt`, `WorkspacePathGuard.kt`, `WorkspaceTextReader.kt`, `WorkspaceTreeScanner.kt`; `jvmShared/network/ProviderHttpEngine.kt` (OkHttp for both targets) and `jvmShared/ui/ProcessStatePreload.kt` (settings and open chat read while the window is built). |
 | `desktopMain` | `Main.kt` (window startup, single-instance lock, Windows framing), `CdsWarmup.kt` (installer `--cds-warmup`), `WindowKeys.kt`, and `platform/`: `DesktopComputerControl.kt`, `DesktopImageDecoder.kt`, `DesktopMcpProcess.kt`, `DesktopOwnedShell.kt`, `DesktopPlatformHost.kt`, `PlatformPickers.desktop.kt`, `PlatformRuntime.desktop.kt`, `PlatformStorage.desktop.kt`, `PlatformVoice.desktop.kt`, `PlatformWorkspace.desktop.kt`, `WindowsChrome.kt`, `WindowsFolderDialog.kt` (IFileOpenDialog via FFM COM), `WindowsMemory.kt`, `WindowsNative.kt` (FFM downcalls), `WindowsPowerLease.kt`; `ui/PlatformContextMenu.desktop.kt` (right-click menus). |
 | `androidMain` | `MainActivity.kt`, `LongDecodeForegroundService.kt`, `ParchmentAccessibilityService.kt`, `OtaInstallReceiver.kt`, `ParchmentFileProvider.kt`, and `platform/`: `AndroidComputerControl.kt`, `AndroidOwnedShell.kt`, `AndroidPlatformHost.kt`, `PlatformPickers.android.kt`, `PlatformRuntime.android.kt`, `PlatformStorage.android.kt`, `PlatformVoice.android.kt`, `PlatformWorkspace.android.kt`. |
 
@@ -113,7 +113,7 @@ Conventions enforced by tests and quality gates:
 - **Search portably:** use `git grep -n` (Windows environments may not have `rg` installed).
 - **UI tests:** use Compose Skiko `ImageComposeScene` on the AWT EDT (`runBlocking(Dispatchers.Swing)` with `Dispatchers.Swing` / `Dispatchers.Swing.immediate` so tests serialize with Compose Desktop's internal `SwingDispatcher`), calling `Snapshot.sendApplyNotifications()` after mutating state before rendering. See `desktopTest/kotlin/io/parchment/ai/ui/` (`AgentPermissionUiTest.kt`, `TurnUsageUiTest.kt`, `UiBehaviorRegressionTest.kt`, `KeyboardShortcutTest.kt`, `SharedActionSemanticsUiTest.kt`, `UiGalleryTest.kt`, `PerformanceBaselineTest.kt`).
 - **Network tests:** use local HTTP/SSE fixtures (`desktopTest/network/`, including `StreamRecoveryHttpTest.kt`, `McpEndToEndTest.kt`, `ModelRegistrySyncTest.kt`), never live endpoints.
-- **Static checks (`scripts/quality.py`):** enforces LF line endings (except `.bat`/`.iss`), UTF-8 without BOM, ASCII `.ps1` scripts, no unused imports or dead code outside `scripts/quality-baseline.json`, 3000-line limit per main Kotlin file, banned APIs (`androidx.compose.material`, `GlobalScope`, `println(`, `FIXME`, `TODO(`, `.clickable(enabled = false)`), valid relative Markdown links and `#heading` anchors, no tracked secrets, and strict doc byte budgets (`AGENTS.md`, `MEMORY.md`, `TODO.md`).
+- **Static checks (`scripts/quality.py`):** enforces LF line endings (except `.bat`/`.iss`), UTF-8 without BOM, ASCII `.ps1` scripts, no unused imports or dead code outside `scripts/quality-baseline.json`, 3000-line limit per main Kotlin file, banned APIs (`androidx.compose.material`, `GlobalScope`, `println(`, `FIXME`, `TODO(`, `.clickable(enabled = false)`), valid relative Markdown links and `#heading` anchors, no tracked secrets, and strict doc character budgets (`AGENTS.md`, `TODO.md` at 20,000 chars each).
 
 ## Where to change what
 
@@ -127,7 +127,7 @@ Conventions enforced by tests and quality gates:
 | Change agent run lifecycle or background tabs | `ui/ParchmentAppController.kt`, `ui/ChatRunHosts.kt`, `ui/GenerationRun.kt`, `ui/AgentRunCoordinator.kt` |
 | Add or modify a provider protocol or stream parser | `network/AiProviderEngine.kt` + matching `*Protocol.kt` (`OpenAi*`, `Anthropic*`, `Gemini*`), `ProviderContextHistory.kt`, `ProviderUsage.kt` |
 | Add or modify a built-in agent tool | `harness/WorkspaceToolCatalog.kt`, `harness/WorkspaceHarness.kt`, `network/ProviderToolExecution.kt`, `harness/AgentPermissionGate.kt` |
-| Change workspace security, SSRF or atomic file I/O | `jvmShared/platform/` (`WorkspacePathGuard.kt`, `PublicWebTransport.kt`, `AtomicFileStorage.kt`, `SnapshotFileStorage.kt`) + [MEMORY.md](../MEMORY.md) |
+| Change workspace security, SSRF or atomic file I/O | `jvmShared/platform/` (`WorkspacePathGuard.kt`, `PublicWebTransport.kt`, `AtomicFileStorage.kt`, `SnapshotFileStorage.kt`) + [AGENTS.md](../AGENTS.md#stable-contracts) |
 | Change chat persistence, imports or `.parchment` archives | `ui/ParchmentStatePersistence.kt`, `ui/ParchmentDiskWriter.kt`, `protocol/CardAndPromptCodec.kt`, `jvmShared/platform/ChatArchive*.kt` |
 | Change Windows desktop chrome, power/memory or owned shell | `desktopMain/WindowKeys.kt`, `desktopMain/Main.kt`, `desktopMain/platform/{WindowsChrome,WindowsMemory,WindowsPowerLease,DesktopOwnedShell,DesktopPlatformHost}.kt` |
 | Change Android activity, foreground runs, OTA receiver or computer use | `androidMain/{MainActivity,LongDecodeForegroundService,ParchmentAccessibilityService,OtaInstallReceiver,ParchmentFileProvider}.kt`, `androidMain/platform/*` |

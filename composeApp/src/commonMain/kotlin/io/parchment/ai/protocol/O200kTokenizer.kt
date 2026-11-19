@@ -468,11 +468,13 @@ object O200kTokenizer {
             allowShell = toolPolicy.allowShell,
             goalModeActive = goalModeActive,
             enableWebTools = toolPolicy.webAccess,
-            policy = toolPolicy
+            policy = toolPolicy,
+            expandedMcpTools = emptySet()
         )
+        val deferredMcpCatalogTokens = countTokens(WorkspaceHarness.deferredMcpToolsCatalogPrompt(toolPolicy))
         val toolSchemaTokens = activeTools.sumOf { t ->
             countTokens(t.name) + countTokens(t.description) + countTokens(t.parametersSchemaString) + 8
-        }
+        } + deferredMcpCatalogTokens
         val wsContextTokens = if (toolPolicy.hasWorkspace && toolPolicy.allowsTool("fs_read")) {
             countTokens(WorkspaceHarness.discoverWorkspaceContextFiles(wsPath)) + 95
         } else 0

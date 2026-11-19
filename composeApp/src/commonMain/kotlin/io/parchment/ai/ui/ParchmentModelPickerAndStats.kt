@@ -26,6 +26,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicText
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.Immutable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -42,7 +43,10 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import io.parchment.ai.model.ModelPricingSpec
 import io.parchment.ai.model.ProviderProfile
+import io.parchment.ai.model.ProviderProtocol
+import io.parchment.ai.model.keepsProviderState
 import io.parchment.ai.strings.Strings
 
 /**
@@ -170,11 +174,11 @@ fun countWordsFast(text: CharSequence): Int {
     return count
 }
 
-/** Each new frame of a long reply copies all its text, so very long replies refresh a little less often. */
+/** Each new frame of a long reply copies its text; keep VSync-locked up to 32 KB and >=60Hz up to 128 KB. */
 internal fun visibleTextCopyIntervalMs(length: Int): Long = when {
     length < 32_000 -> 0L
-    length < 128_000 -> 48L
-    else -> 96L
+    length < 128_000 -> 16L
+    else -> 32L
 }
 
 /** Counts like [countWordsFast] but scans only what was appended since the last call. */
@@ -231,12 +235,123 @@ fun formatUsdCost(costUsd: Double): String {
     return "$$whole.$frac"
 }
 
+enum class PrivacyBadgeTone {
+    POSITIVE,
+    NEUTRAL,
+    CAUTION
+}
+
+@Immutable
+data class ModelPrivacyBadge(
+    val label: String,
+    val detail: String,
+    val tone: PrivacyBadgeTone
+)
+
+private fun isLocalEndpointUrl(baseUrl: String): Boolean {
+    val trimmed = baseUrl.trim().lowercase()
+    if (trimmed.isEmpty()) return false
+    val hostPort = trimmed.substringAfter("://", trimmed).substringBefore('/').substringBefore('?')
+    val host = if (hostPort.startsWith("[")) {
+        hostPort.substringAfter('[').substringBefore(']')
+    } else {
+        hostPort.substringBefore(':')
+    }
+    if (host == "localhost" || host == "::1" || host == "0.0.0.0" || host.endsWith(".local")) return true
+    if (host.startsWith("127.") || host.startsWith("10.") || host.startsWith("192.168.")) return true
+    if (host.startsWith("172.")) {
+        val second = host.removePrefix("172.").substringBefore('.').toIntOrNull()
+        if (second != null && second in 16..31) return true
+    }
+    return false
+}
+
+/**
+ * Derives truthful, local-only privacy & retention badges from endpoint locality, provider storage flags,
+ * and catalog pricing metadata (zero extra network requests, zero hardcoded model IDs).
+ */
+internal fun resolveModelPrivacyBadges(
+    profile: ProviderProfile,
+    modelId: String = profile.defaultModel,
+    spec: ModelPricingSpec? = profile.customModelSpecs[modelId]
+): List<ModelPrivacyBadge> = buildList {
+    val isLocal = isLocalEndpointUrl(profile.baseUrl)
+    if (isLocal) {
+        add(ModelPrivacyBadge(Strings.privacyBadgeLocal, Strings.privacyBadgeLocalDetail, PrivacyBadgeTone.POSITIVE))
+        return@buildList
+    }
+    val supportsStorageToggle = profile.protocol == ProviderProtocol.GEMINI_INTERACTIONS ||
+        profile.protocol == ProviderProtocol.OPENAI_RESPONSES ||
+        profile.keepsProviderState
+    if (supportsStorageToggle) {
+        if (profile.keepsProviderState) {
+            add(ModelPrivacyBadge(Strings.privacyBadgeStored, Strings.privacyBadgeStoredDetail, PrivacyBadgeTone.CAUTION))
+        } else {
+            add(ModelPrivacyBadge(Strings.privacyBadgeNoStore, Strings.privacyBadgeNoStoreDetail, PrivacyBadgeTone.POSITIVE))
+        }
+    }
+    val kp = spec?.knownPricing
+    val isKnownFree = modelId.trim().endsWith(":free", ignoreCase = true) ||
+        (kp != null && kp.inputPerM == 0.0 && kp.outputPerM == 0.0)
+    val isKnownPaid = !isKnownFree && spec != null && (
+        (kp?.inputPerM ?: spec.inputPricePerM) > 0.0 ||
+            (kp?.outputPerM ?: spec.outputPricePerM) > 0.0
+        )
+    when {
+        isKnownFree -> add(ModelPrivacyBadge(Strings.privacyBadgeFreeTier, Strings.privacyBadgeFreeTierDetail, PrivacyBadgeTone.CAUTION))
+        isKnownPaid -> add(ModelPrivacyBadge(Strings.privacyBadgePaidApi, Strings.privacyBadgePaidApiDetail, PrivacyBadgeTone.NEUTRAL))
+    }
+}
+
+internal fun primaryModelPrivacyBadge(
+    profile: ProviderProfile,
+    modelId: String,
+    spec: ModelPricingSpec? = profile.customModelSpecs[modelId]
+): ModelPrivacyBadge? {
+    val badges = resolveModelPrivacyBadges(profile, modelId, spec)
+    return badges.firstOrNull { it.tone == PrivacyBadgeTone.CAUTION }
+        ?: badges.firstOrNull { it.tone == PrivacyBadgeTone.POSITIVE }
+        ?: badges.firstOrNull()
+}
+
+@Composable
+internal fun ModelPrivacyBadgeChip(
+    badge: ModelPrivacyBadge,
+    modifier: Modifier = Modifier
+) {
+    val p = LocalParchmentPalette.current
+    val toneColor = when (badge.tone) {
+        PrivacyBadgeTone.POSITIVE -> p.success
+        PrivacyBadgeTone.CAUTION -> p.danger
+        PrivacyBadgeTone.NEUTRAL -> p.mutedInk
+    }
+    val shape = RoundedCornerShape(Radius.r6)
+    Box(
+        modifier = modifier
+            .clip(shape)
+            .background(toneColor.copy(alpha = if (badge.tone == PrivacyBadgeTone.NEUTRAL) 0.10f else 0.13f))
+            .border(LineWidth.hairline, toneColor.copy(alpha = 0.45f), shape)
+            .padding(horizontal = Space.s6, vertical = Space.s2)
+    ) {
+        BasicText(
+            text = badge.label,
+            maxLines = 1,
+            style = p.uiLabelStyle.copy(
+                fontSize = 10.5.sp,
+                fontWeight = FontWeight.Medium,
+                color = toneColor
+            )
+        )
+    }
+}
+
 data class SearchableModelOption(
     val profileId: String,
     val profileName: String,
     val modelId: String,
     val vendorGroup: String,
-    val contextWindowTokens: Int
+    val contextWindowTokens: Int,
+    val privacyBadge: ModelPrivacyBadge? = null
 )
 
 /**
@@ -268,13 +383,15 @@ fun SepiaSearchableModelPicker(
             else emptyList()
             models.map { m ->
                 val vendor = if (m.contains('/')) m.substringBefore('/').trim() else ""
-                val ctx = prof.customModelSpecs[m]?.contextWindowTokens ?: prof.contextWindowTokens
+                val spec = prof.customModelSpecs[m]
+                val ctx = spec?.contextWindowTokens ?: prof.contextWindowTokens
                 SearchableModelOption(
                     profileId = prof.id,
                     profileName = prof.name,
                     modelId = m,
                     vendorGroup = vendor,
-                    contextWindowTokens = ctx
+                    contextWindowTokens = ctx,
+                    privacyBadge = primaryModelPrivacyBadge(prof, m, spec)
                 )
             }
         }
@@ -301,7 +418,8 @@ fun SepiaSearchableModelPicker(
             val searchOk = tokens.isEmpty() || tokens.all { tok ->
                 opt.modelId.lowercase().contains(tok) ||
                     opt.profileName.lowercase().contains(tok) ||
-                    opt.vendorGroup.lowercase().contains(tok)
+                    opt.vendorGroup.lowercase().contains(tok) ||
+                    (opt.privacyBadge?.label?.lowercase()?.contains(tok) == true)
             }
             provOk && vendOk && searchOk
         }
@@ -541,6 +659,9 @@ private fun ModelPickerOptionRow(
                         style = p.uiLabelStyle.copy(fontSize = 11.sp, color = p.narrationInk)
                     )
                 }
+            }
+            if (opt.privacyBadge != null) {
+                ModelPrivacyBadgeChip(badge = opt.privacyBadge)
             }
             Box(
                 modifier = Modifier

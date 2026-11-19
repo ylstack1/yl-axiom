@@ -37,6 +37,7 @@ import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 
 /** One thing the command palette can do. [shortcut] is shown beside it, for example "Ctrl+N". */
 internal data class PaletteCommand(val label: String, val shortcut: String = "", val run: () -> Unit)
@@ -197,7 +198,22 @@ internal fun CommandPalette(
                         overflow = TextOverflow.Ellipsis,
                         modifier = Modifier.weight(1f)
                     )
-                    if (command.shortcut.isNotEmpty()) BasicText(command.shortcut, style = p.uiLabelStyle)
+                    if (command.shortcut.isNotEmpty()) {
+                        val badgeShape = RoundedCornerShape(Radius.r6)
+                        Box(
+                            modifier = Modifier
+                                .clip(badgeShape)
+                                .background(p.sheetBg)
+                                .border(LineWidth.hairline, p.border, badgeShape)
+                                .padding(horizontal = Space.s8, vertical = 2.dp),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            BasicText(
+                                text = command.shortcut,
+                                style = p.monoStyle.copy(fontSize = 11.sp, lineHeight = 16.sp, color = p.mutedInk)
+                            )
+                        }
+                    }
                 }
             }
         }

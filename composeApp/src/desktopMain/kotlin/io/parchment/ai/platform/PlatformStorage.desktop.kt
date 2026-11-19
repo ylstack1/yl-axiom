@@ -114,6 +114,7 @@ actual object PlatformStorage {
     actual fun trimMemoryCaches() {
         imageCache.clear()
         io.parchment.ai.protocol.O200kTokenizer.clearCaches()
+        io.parchment.ai.network.ModelsDevClient.trimMemoryCache()
     }
 
     actual fun loadImageBitmapFromFile(filePath: String): ImageBitmap? =

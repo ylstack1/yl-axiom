@@ -1030,7 +1030,13 @@ internal fun ProvidersSubpage(
                                     horizontalArrangement = Arrangement.spacedBy(Space.s6),
                                     verticalAlignment = Alignment.CenterVertically
                                 ) {
-                                    // Capability & Context Window Badges
+                                    // Local-only Privacy/Retention Badge & Context Window Badge
+                                    val privacyBadge = remember(activeProfile.baseUrl, activeProfile.protocol, activeProfile.keepsProviderState, modelId, customSpec) {
+                                        primaryModelPrivacyBadge(activeProfile, modelId, customSpec)
+                                    }
+                                    if (privacyBadge != null) {
+                                        ModelPrivacyBadgeChip(badge = privacyBadge)
+                                    }
                                     Box(
                                         modifier = Modifier
                                             .clip(RoundedCornerShape(Radius.r6))
@@ -1180,6 +1186,25 @@ internal fun ProviderProtocolSubpage(
                     onCheckedChange = { af -> onUpdateProfile { it.copy(autoFetchModels = af) } }
                 )
                 if (profile.protocol == ProviderProtocol.GEMINI_INTERACTIONS || profile.protocol == ProviderProtocol.OPENAI_RESPONSES) {
+                    val storageBadges = remember(profile.baseUrl, profile.protocol, profile.keepsProviderState, profile.defaultModel, profile.customModelSpecs) {
+                        resolveModelPrivacyBadges(profile, profile.defaultModel, profile.customModelSpecs[profile.defaultModel])
+                    }
+                    if (storageBadges.isNotEmpty()) {
+                        @OptIn(ExperimentalLayoutApi::class)
+                        FlowRow(
+                            horizontalArrangement = Arrangement.spacedBy(Space.s6),
+                            verticalArrangement = Arrangement.spacedBy(Space.s4),
+                            itemVerticalAlignment = Alignment.CenterVertically
+                        ) {
+                            storageBadges.forEach { badge ->
+                                ModelPrivacyBadgeChip(badge = badge)
+                            }
+                            BasicText(
+                                text = storageBadges.first().detail,
+                                style = p.uiLabelStyle
+                            )
+                        }
+                    }
                     SepiaToggleRow(
                         title = PROVIDER_STORAGE_TITLE,
                         subtitle = PROVIDER_STORAGE_SUBTITLE,

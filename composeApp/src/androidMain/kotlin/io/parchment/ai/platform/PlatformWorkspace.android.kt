@@ -64,6 +64,13 @@ actual object PlatformWorkspace {
         WorkspaceFileEditor.delete(workspaceRoot, relativePath)
     }
 
+    actual fun workspaceFileStamp(workspaceRoot: String, relativePath: String): Result<String?> = runCatching {
+        WorkspaceFileEditor.fileStamp(workspaceRoot, relativePath)
+    }
+
+    actual fun workspaceDirectoryExists(path: String): Boolean =
+        WorkspaceFileEditor.directoryExists(path)
+
     actual fun workspaceShellExec(
         workspaceRoot: String,
         command: String,
@@ -89,6 +96,15 @@ actual object PlatformWorkspace {
 
     actual fun fetchPublicBytes(url: String, maxBytes: Int, isCancelled: (() -> Boolean)?): Result<ByteArray> =
         PublicWebTransport.fetchBytes(url, maxBytes, isCancelled)
+
+    actual fun readLocalSkillFolder(folderPath: String): Result<LocalSkillBundle> =
+        LocalSkillSourceReader.readFolder(folderPath)
+
+    actual fun readLocalSkillZip(fileName: String, zipBytes: ByteArray): Result<LocalSkillBundle> =
+        LocalSkillSourceReader.readZip(fileName, zipBytes)
+
+    actual fun extractDocxText(bytes: ByteArray): Result<String> =
+        DocxTextExtractor.extractText(bytes)
 
     actual val computerControl: ComputerControl get() = AndroidComputerControl
     actual val supportsLocalMcpServers: Boolean = false

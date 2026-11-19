@@ -146,7 +146,7 @@ internal fun WorkspaceSubpage(
             }
         }
 
-        McpServersCard(appState.preferences, onUpdatePreferences)
+        McpServersCard(appState.preferences, onUpdatePreferences, onNotify)
         SkillInstallCard(effectiveWsPath, effectiveWsMode == io.parchment.ai.model.WorkspaceMode.READ_WRITE, onNotify)
 
         SepiaSectionCard(title = Strings.agentTools) {

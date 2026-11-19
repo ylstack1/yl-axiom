@@ -11,7 +11,8 @@ import kotlinx.serialization.json.contentOrNull
 data class ToolAccessScope(
     val policy: AgentPermissionPolicy,
     val goalModeActive: Boolean = false,
-    val includeLocalWebSearchTool: Boolean = policy.webAccess
+    val includeLocalWebSearchTool: Boolean = policy.webAccess,
+    val expandedMcpTools: Set<String>? = null
 )
 
 data class ToolEffect(val requiresApproval: Boolean, val changesFiles: Boolean)
@@ -22,8 +23,11 @@ object AgentPermissionGate {
 
     fun denial(scope: ToolAccessScope, name: String, argumentsJson: String): String? {
         val policy = scope.policy
-        val definition = WorkspaceHarness.allTools().find { it.name == name }
-            ?: return "Unknown workspace tool '$name'."
+        val definition = if (name == WorkspaceHarness.MCP_SCHEMA_TOOL_NAME) {
+            WorkspaceToolCatalog.MCP_SCHEMA_TOOL
+        } else {
+            WorkspaceHarness.allTools().find { it.name == name }
+        } ?: return "Unknown workspace tool '$name'."
         if (!policy.allowsTool(name)) return "Tool '$name' is disabled by the current policy."
         if (definition.requiresWorkspaceFolder && !policy.hasWorkspace) return "Workspace harness is disabled or no workspace directory is mounted."
         if (definition.requiresShellPermission && !policy.allowShell) return "Shell execution is disabled. Enable full process access explicitly before running commands."
@@ -37,10 +41,20 @@ object AgentPermissionGate {
         }
         if (name in setOf("web_search", "web_fetch") && !policy.webAccess) return "Web access is disabled by the current policy."
         if (name == ComputerUse.TOOL_NAME && !policy.computerAccess) return "Computer control is turned off for this chat."
+        if (name == WorkspaceHarness.MCP_SCHEMA_TOOL_NAME) {
+            return if (WorkspaceToolCatalog.shouldDeferMcpSchemas(policy)) null
+            else "Tool '$name' is not available in this run."
+        }
         if (WorkspaceHarness.activeToolsForMode(
                 policy.workspaceMode, policy.workspacePath, policy.allowShell,
-                scope.goalModeActive, policy.webAccess, scope.includeLocalWebSearchTool, policy
-            ).none { it.name == name }) return "Tool '$name' is not available in this run."
+                scope.goalModeActive, policy.webAccess, scope.includeLocalWebSearchTool, policy,
+                expandedMcpTools = scope.expandedMcpTools
+            ).none { it.name == name }) {
+            if (WorkspaceHarness.isMcpToolName(name) && scope.expandedMcpTools != null && WorkspaceToolCatalog.shouldDeferMcpSchemas(policy)) {
+                return "MCP tool '$name' schema is deferred. Call ${WorkspaceHarness.MCP_SCHEMA_TOOL_NAME}(names=[\"$name\"]) first to inspect its parameters and enable it."
+            }
+            return "Tool '$name' is not available in this run."
+        }
         return null
     }
 

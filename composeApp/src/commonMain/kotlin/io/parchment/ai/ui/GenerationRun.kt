@@ -347,7 +347,8 @@ internal fun GenerationHost.beginGeneration(
 
             var cachedVisibleCont = networkContentTarget.substring(0, displayedContentLen.coerceAtMost(networkContentTarget.length))
             var cachedVisibleContLen = displayedContentLen
-            var lastOverlayCopyMs = 0L
+            var lastContentCopyMs = 0L
+            var lastThinkingCopyMs = 0L
             var cachedVisibleThink = networkThinkingTarget.substring(0, displayedThinkingLen.coerceAtMost(networkThinkingTarget.length))
             var cachedVisibleThinkLen = displayedThinkingLen
             var cachedVisibleStepThink = ""
@@ -484,23 +485,32 @@ internal fun GenerationHost.beginGeneration(
                 val effStepLen = if (accumulatedTools.isEmpty()) 0 else displayedStepThinkingLen.coerceAtMost(currentStepThinkingTarget.length)
                 val contentBehind = displayedContentLen != cachedVisibleContLen
                 val thinkingBehind = displayedThinkingLen != cachedVisibleThinkLen || effStepLen != cachedVisibleStepThinkLen
-                val longestActiveLen = maxOf(displayedContentLen, displayedThinkingLen, effStepLen)
-                val holdLongText = !networkDone && (contentBehind || thinkingBehind) &&
-                    now - lastOverlayCopyMs < visibleTextCopyIntervalMs(longestActiveLen)
-                if ((changed || contentBehind || thinkingBehind) && !holdLongText) {
-                    if (contentBehind) {
+                // Keep visible prose reveals on hardware VSync independent of accumulated thinking length:
+                // long agent thinking traces (>32 KB) must never throttle content streaming down to 20-30 fps.
+                val holdContent = !networkDone && contentBehind &&
+                    now - lastContentCopyMs < visibleTextCopyIntervalMs(displayedContentLen)
+                val holdThinking = !networkDone && thinkingBehind &&
+                    now - lastThinkingCopyMs < visibleTextCopyIntervalMs(maxOf(displayedThinkingLen, effStepLen))
+                val shouldCopyContent = contentBehind && !holdContent
+                val shouldCopyThinking = thinkingBehind && !holdThinking
+                val shouldPublish = shouldCopyContent || shouldCopyThinking || (changed && !holdContent && !holdThinking)
+                if (shouldPublish) {
+                    if (shouldCopyContent) {
                         cachedVisibleCont = networkContentTarget.substring(0, displayedContentLen.coerceAtMost(networkContentTarget.length))
                         cachedVisibleContLen = displayedContentLen
+                        lastContentCopyMs = now
                     }
-                    if (displayedThinkingLen != cachedVisibleThinkLen) {
-                        cachedVisibleThink = networkThinkingTarget.substring(0, displayedThinkingLen.coerceAtMost(networkThinkingTarget.length))
-                        cachedVisibleThinkLen = displayedThinkingLen
+                    if (shouldCopyThinking) {
+                        if (displayedThinkingLen != cachedVisibleThinkLen) {
+                            cachedVisibleThink = networkThinkingTarget.substring(0, displayedThinkingLen.coerceAtMost(networkThinkingTarget.length))
+                            cachedVisibleThinkLen = displayedThinkingLen
+                        }
+                        if (effStepLen != cachedVisibleStepThinkLen) {
+                            cachedVisibleStepThink = if (effStepLen == 0) "" else currentStepThinkingTarget.substring(0, effStepLen)
+                            cachedVisibleStepThinkLen = effStepLen
+                        }
+                        lastThinkingCopyMs = now
                     }
-                    if (effStepLen != cachedVisibleStepThinkLen) {
-                        cachedVisibleStepThink = if (effStepLen == 0) "" else currentStepThinkingTarget.substring(0, effStepLen)
-                        cachedVisibleStepThinkLen = effStepLen
-                    }
-                    lastOverlayCopyMs = now
                     if (signatureSb.length != cachedSigLen) {
                         cachedSig = signatureSb.toString()
                         cachedSigLen = signatureSb.length

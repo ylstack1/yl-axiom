@@ -98,6 +98,7 @@ internal suspend fun AiProviderEngine.executeGeminiGenerateContentLoop(
     var loopStep = 0
     while (loopStep < MAX_SAFETY_HORIZON_STEPS) {
         loopStep++
+        val expandedMcpTools = currentExpandedMcpTools()
         val activeWorkspaceTools = WorkspaceHarness.activeToolsForMode(
             session.workspaceMode,
             session.workspacePath,
@@ -105,7 +106,8 @@ internal suspend fun AiProviderEngine.executeGeminiGenerateContentLoop(
             goalModeActive = circuitBreaker.goalState != null,
             enableWebTools = (profile.enableWebSearch && disableMixedToolsOnRetry) || profile.enableUrlContext,
             includeLocalWebSearchTool = profile.enableWebSearch && disableMixedToolsOnRetry,
-            policy = AgentPermissionResolver.resolve(session, profile = profile)
+            policy = AgentPermissionResolver.resolve(session, profile = profile),
+            expandedMcpTools = expandedMcpTools
         )
         var roundModelParts = mutableListOf<JsonObject>()
         val roundToolCalls = mutableListOf<Triple<String, String, String>>() // (callId, name, argsJson)
@@ -528,7 +530,8 @@ internal suspend fun AiProviderEngine.executeGeminiGenerateContentLoop(
             accessScope = ToolAccessScope(
                 AgentPermissionResolver.resolve(session, profile = profile),
                 goalModeActive = circuitBreaker.goalState != null,
-                includeLocalWebSearchTool = profile.enableWebSearch && disableMixedToolsOnRetry
+                includeLocalWebSearchTool = profile.enableWebSearch && disableMixedToolsOnRetry,
+                expandedMcpTools = currentExpandedMcpTools()
             ),
             calls = roundToolCalls,
             firstThoughtSignature = cleanRoundSig,

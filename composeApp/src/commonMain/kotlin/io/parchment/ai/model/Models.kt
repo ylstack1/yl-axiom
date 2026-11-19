@@ -564,6 +564,7 @@ data class PreferencesConfig(
     val sidebarOpen: Boolean = true,
     val messageNavButtons: MessageNavVisibility = MessageNavVisibility.WHILE_SCROLLING,
     val sendShortcut: SendShortcutMode = SendShortcutMode.ENTER,
+    val customShortcuts: Map<String, String> = emptyMap(),
     val pasteLongTextAsFile: Boolean = false,
     val pasteConversionThresholdChars: Int = 5000,
     val autoScrollToBottomOnOpen: Boolean = true,

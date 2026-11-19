@@ -1,7 +1,11 @@
+import java.net.URI
+import java.nio.file.FileSystems
+import java.nio.file.Files
 import java.util.concurrent.TimeUnit
 import java.util.jar.JarEntry
 import java.util.jar.JarFile
 import java.util.jar.JarOutputStream
+import java.util.zip.CRC32
 import org.jetbrains.compose.desktop.application.dsl.TargetFormat
 import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 
@@ -127,30 +131,66 @@ composeCompiler {
 }
 
 // The UI gallery renders every screen to PNG; verify.py passes -Pparchment.gallery=true only when it is wanted.
+// Parallel test forks stay 1 locally (low-RAM safe) and scale on multi-core CI runners via -Pparchment.testForks=N;
+// DesktopPlatformHost gives every Gradle worker JVM its own isolated temp data directory.
 val renderGallery = providers.gradleProperty("parchment.gallery").orElse("false")
+val testParallelForks = providers.gradleProperty("parchment.testForks")
+    .map { (it.trim().toIntOrNull() ?: 1).coerceIn(1, 4) }
+    .orElse(1)
 tasks.withType<Test>().configureEach {
     systemProperty("parchment.gallery", renderGallery.get())
+    maxParallelForks = testParallelForks.get()
 }
 
 // JDK 25 builds ship without jmods (JEP 493), which is where Compose points ProGuard for the JDK's own classes.
-// Extract the java.* modules from the runtime image once instead and hand them to ProGuard as library classes.
-val jdkLibraryClasses = tasks.register<Exec>("extractJdkLibraryClasses") {
+// Stream the java.* modules from jrt:/ directly into one STORED jdk-library.jar (avoiding 16,000+ loose .class files
+// on Windows NTFS/Defender) and hand that single jar to ProGuard as -libraryjars.
+val jdkLibraryClasses = tasks.register("extractJdkLibraryClasses") {
     val jdk = File(System.getProperty("java.home"))
     val outDir = layout.buildDirectory.dir("jdk-library-classes")
-    val classesDir = outDir.map { it.dir("classes").asFile }
+    val jarFile = outDir.map { it.file("jdk-library.jar").asFile }
     val proFile = outDir.map { it.file("jdk-library.pro").asFile }
     inputs.file(jdk.resolve("lib/modules"))
-    outputs.dir(classesDir)
+    outputs.file(jarFile)
     outputs.file(proFile)
-    executable = jdk.resolve("bin/jimage" + if (System.getProperty("os.name").startsWith("Windows")) ".exe" else "").path
-    argumentProviders.add(CommandLineArgumentProvider {
-        listOf("extract", "--dir", classesDir.get().path,
-            "--include", "regex:/(java\\.[a-z.]+|jdk\\.unsupported|jdk\\.crypto\\.ec)/.*\\.class", jdk.resolve("lib/modules").path)
-    })
-    doFirst { classesDir.get().deleteRecursively() }
     doLast {
-        val modules = classesDir.get().listFiles()!!.filter { it.isDirectory }.sortedBy { it.name }
-        proFile.get().writeText(modules.joinToString("\n") { "-libraryjars '${it.path.replace('\\', '/')}'(!module-info.class)" } + "\n")
+        val outJar = jarFile.get()
+        outJar.parentFile.mkdirs()
+        val moduleFilter = Regex("^(java\\.[a-z.]+|jdk\\.unsupported|jdk\\.crypto\\.ec)$")
+        val jrtRoot = FileSystems.getFileSystem(URI.create("jrt:/")).getPath("/modules")
+        val seen = HashSet<String>(24_000)
+        val crc = CRC32()
+        outJar.outputStream().buffered(262_144).use { bos ->
+            JarOutputStream(bos).use { jos ->
+                Files.list(jrtRoot).use { modStream ->
+                    modStream
+                        .filter { moduleFilter.matches(it.fileName.toString()) }
+                        .sorted(Comparator.comparing { it.fileName.toString() })
+                        .forEach { modDir ->
+                            Files.walk(modDir).use { walk ->
+                                walk.filter { Files.isRegularFile(it) }.forEach { clsPath ->
+                                    val rel = modDir.relativize(clsPath).toString().replace('\\', '/')
+                                    if (!rel.endsWith(".class") || rel == "module-info.class" || !seen.add(rel)) return@forEach
+                                    val bytes = Files.readAllBytes(clsPath)
+                                    crc.reset()
+                                    crc.update(bytes)
+                                    val entry = JarEntry(rel).apply {
+                                        method = JarEntry.STORED
+                                        size = bytes.size.toLong()
+                                        compressedSize = bytes.size.toLong()
+                                        this.crc = crc.value
+                                        time = 1_700_000_000_000L
+                                    }
+                                    jos.putNextEntry(entry)
+                                    jos.write(bytes)
+                                    jos.closeEntry()
+                                }
+                            }
+                        }
+                }
+            }
+        }
+        proFile.get().writeText("-libraryjars '${outJar.absolutePath.replace('\\', '/')}'\n")
     }
 }
 
@@ -166,10 +206,12 @@ val desktopJvmArgs = listOf(
     "-XX:ShenandoahGCMode=generational",
     "-XX:ParallelGCThreads=2",
     "-XX:ConcGCThreads=1",
-    "-XX:SoftMaxHeapSize=16m",
     "-XX:+ExplicitGCInvokesConcurrent",
     "-XX:+UnlockExperimentalVMOptions",
-    "-XX:ShenandoahUncommitDelay=300",
+    "-XX:ShenandoahUncommitDelay=5000",
+    "-XX:ShenandoahControlIntervalMin=50",
+    "-XX:ShenandoahControlIntervalMax=900",
+    "-XX:ShenandoahGuaranteedGCInterval=0",
     "-XX:+UseCompactObjectHeaders",
     "-Dsun.java2d.d3d=false",
     "-Dskiko.rendering.laf.global=false",
@@ -233,7 +275,16 @@ tasks.withType<org.jetbrains.compose.desktop.application.tasks.AbstractJLinkTask
     @Suppress("UNCHECKED_CAST")
     (javaClass.getMethod("getStripNativeCommands\$compose").invoke(this) as Property<Boolean>).set(false)
 }
+val prepareEmptyWixDir = tasks.register("prepareEmptyWixDir") {
+    val dir = layout.buildDirectory.dir("empty-wix")
+    outputs.dir(dir)
+    doLast { dir.get().asFile.mkdirs() }
+}
 tasks.withType<org.jetbrains.compose.desktop.application.tasks.AbstractJPackageTask>().configureEach {
+    // createReleaseDistributable builds a jpackage app-image (Inno Setup packages the .exe), so WiX is never invoked.
+    // Satisfy Compose Desktop's @InputDirectory check cleanly while downloadWix=false skips :downloadWix/:unzipWix.
+    dependsOn(prepareEmptyWixDir)
+    wixToolsetDir.convention(layout.buildDirectory.dir("empty-wix"))
     freeArgs.addAll("--java-options", "-XX:AOTCache=\$APPDIR/parchment.aot")
     val destDir = destinationDir
     val aotJvmArgs = ArrayList(desktopJvmArgs)

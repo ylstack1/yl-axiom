@@ -97,6 +97,7 @@ internal fun MessageTurnItem(
     onRegenerate: () -> Unit,
     onTranslate: () -> Unit = {},
     onContinue: () -> Unit,
+    onSaveAsSkill: (() -> Unit)? = null,
     onInspectAttachment: (PromptAttachment) -> Unit = {},
     onInspectGeneratedImage: (GeneratedMediaItem) -> Unit = {}
 ) {
@@ -334,6 +335,7 @@ internal fun MessageTurnItem(
                 onRegenerate = onRegenerate,
                 onTranslate = onTranslate,
                 onContinue = onContinue,
+                onSaveAsSkill = onSaveAsSkill,
                 onToggleRawWireDrawer = { showRawWireDrawer = !showRawWireDrawer }
             )
 

@@ -206,6 +206,7 @@ def classify_installers(paths: set[str] | None, *, reuse_android_run: bool = Fal
     if paths is None:
         return {
             "desktop_tests": "true",
+            "windows_tests": "true",
             "android": "false" if reuse_android_run else "true",
             "windows": "true",
             "signing_scripts": "false" if reuse_android_run else "true",
@@ -216,20 +217,30 @@ def classify_installers(paths: set[str] | None, *, reuse_android_run: bool = Fal
         and not p.startswith("installer/")
         for p in paths
     )
+    windows_tests = shared or any(
+        _matches(
+            p,
+            DESKTOP_ONLY_PREFIXES + WINDOWS_TEST_PREFIXES,
+            WINDOWS_TEST_FILES | {".github/scripts/shard_tests.py"},
+        )
+        and not p.startswith("installer/")
+        for p in paths
+    )
     android = (not reuse_android_run) and (
         shared or any(_matches(p, ANDROID_ONLY_PREFIXES, ANDROID_SCRIPT_FILES) for p in paths)
     )
     windows = shared or any(
         _matches(
             p,
-            DESKTOP_ONLY_PREFIXES + WINDOWS_TEST_PREFIXES,
-            WINDOWS_TEST_FILES | {"composeApp/compose-desktop.pro"},
+            DESKTOP_ONLY_PREFIXES,
+            {"composeApp/compose-desktop.pro"},
         )
         for p in paths
     )
     signing_scripts = (not reuse_android_run) and any(p in SIGNING_TEST_TRIGGERS for p in paths)
     return {
         "desktop_tests": "true" if desktop_tests else "false",
+        "windows_tests": "true" if windows_tests else "false",
         "android": "true" if android else "false",
         "windows": "true" if windows else "false",
         "signing_scripts": "true" if signing_scripts else "false",

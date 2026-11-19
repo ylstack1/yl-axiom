@@ -47,9 +47,6 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyEvent
 import androidx.compose.ui.input.key.KeyEventType
-import androidx.compose.ui.input.key.isCtrlPressed
-import androidx.compose.ui.input.key.isMetaPressed
-import androidx.compose.ui.input.key.isShiftPressed
 import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
@@ -417,23 +414,29 @@ fun ParchmentApp(
                     if (isCompactScreen) showSidebar = false
                 }
 
-                /** Everything Ctrl+K can do: main actions, every settings page, and each chat by name. */
+                /** Everything the command palette can do: main actions, every settings page, and each chat by name. */
                 fun paletteCommands(): List<PaletteCommand> = buildList {
-                    add(PaletteCommand(Strings.newChat2, Strings.ctrlN, ::openNewChat))
+                    val custom = appState.preferences.customShortcuts
+                    fun hint(action: AppShortcutAction) = resolveShortcut(action, custom).format()
+                    add(PaletteCommand(Strings.newChat2, hint(AppShortcutAction.NEW_CHAT), ::openNewChat))
                     if (currentTabStream?.retryWait != null) {
                         add(PaletteCommand(Strings.retryNow) { currentTabStream?.retryControl?.retryNow() })
                     }
                     if (!isSettingsOpen && activeSession.messages.any { it.role == MessageRole.USER }) {
-                        add(PaletteCommand(Strings.jumpToPromptInChat, Strings.ctrlG) { showPromptJump = true })
+                        add(PaletteCommand(Strings.jumpToPromptInChat, hint(AppShortcutAction.PROMPT_JUMP)) { showPromptJump = true })
                     }
-                    add(PaletteCommand(if (isSettingsOpen) Strings.closeSettings else Strings.openSettings, Strings.ctrl) { openSettings(null) })
-                    if (!isCompactScreen) add(PaletteCommand(Strings.showOrHideTheSidebar, Strings.ctrlB) { showSidebar = !showSidebar })
+                    add(PaletteCommand(if (isSettingsOpen) Strings.closeSettings else Strings.openSettings, hint(AppShortcutAction.TOGGLE_SETTINGS)) { openSettings(null) })
+                    if (!isCompactScreen) add(PaletteCommand(Strings.showOrHideTheSidebar, hint(AppShortcutAction.TOGGLE_SIDEBAR)) { showSidebar = !showSidebar })
                     if (!isCompactScreen && !isSettingsOpen) {
-                        add(PaletteCommand(Strings.closeThisTab, Strings.ctrlW) { closeChatTab(appState.activeSessionId) })
+                        add(PaletteCommand(Strings.closeThisTab, hint(AppShortcutAction.CLOSE_TAB)) { closeChatTab(appState.activeSessionId) })
                         if (openTabIds.size > 1) {
-                            add(PaletteCommand(Strings.nextTab, Strings.ctrlTab) {
+                            add(PaletteCommand(Strings.nextTab, hint(AppShortcutAction.NEXT_TAB)) {
                                 val here = openTabIds.indexOf(appState.activeSessionId).coerceAtLeast(0)
                                 switchToTab(openTabIds[(here + 1) % openTabIds.size])
+                            })
+                            add(PaletteCommand(Strings.previousTab, hint(AppShortcutAction.PREV_TAB)) {
+                                val here = openTabIds.indexOf(appState.activeSessionId).coerceAtLeast(0)
+                                switchToTab(openTabIds[(here - 1 + openTabIds.size) % openTabIds.size])
                             })
                         }
                     }
@@ -533,30 +536,69 @@ fun ParchmentApp(
                 ) {
                     var horizontalSwipeDelta by remember { mutableStateOf(0f) }
                     var startedNearLeftEdge by remember { mutableStateOf(false) }
+                    var shortcutCaptureInterceptor by remember { mutableStateOf<((KeyEvent) -> Boolean)?>(null) }
 
                     // The one shortcut list: the root runs it first while something is focused, and the desktop
                     // window runs it for keys nothing focused consumed (at launch or after a click on empty space).
                     val handleAppShortcut: (KeyEvent) -> Boolean = handle@{ event ->
+                        val activeCapture = shortcutCaptureInterceptor
+                        if (activeCapture != null) return@handle activeCapture(event)
                         if (event.type != KeyEventType.KeyDown) return@handle false
-                        val ctrl = event.isCtrlPressed || event.isMetaPressed
-                        when {
-                            event.key == Key.Escape && showCommandPalette -> { showCommandPalette = false; true }
-                            event.key == Key.Escape && showPromptJump -> { showPromptJump = false; true }
-                            event.key == Key.Escape -> PlatformRuntime.handleSystemBackPressed()
-                            ctrl && event.key == Key.K -> { showPromptJump = false; showCommandPalette = !showCommandPalette; true }
-                            ctrl && event.key == Key.G && !isSettingsOpen -> { showCommandPalette = false; showPromptJump = !showPromptJump; true }
-                            ctrl && event.key == Key.N -> { openNewChat(); true }
-                            ctrl && event.key == Key.Comma -> { openSettings(null); true }
-                            ctrl && event.key == Key.B && !isCompactScreen -> { showSidebar = !showSidebar; true }
-                            ctrl && event.key == Key.W && !isCompactScreen && !isSettingsOpen -> { closeChatTab(appState.activeSessionId); true }
-                            // Ctrl+Tab / Ctrl+Shift+Tab cycle the open chat tabs, like a browser.
-                            ctrl && event.key == Key.Tab && !isCompactScreen && openTabIds.size > 1 -> {
-                                val here = openTabIds.indexOf(appState.activeSessionId).coerceAtLeast(0)
-                                val step = if (event.isShiftPressed) -1 else 1
-                                switchToTab(openTabIds[(here + step + openTabIds.size) % openTabIds.size])
+                        if (event.key == Key.Escape) {
+                            return@handle when {
+                                showCommandPalette -> { showCommandPalette = false; true }
+                                showPromptJump -> { showPromptJump = false; true }
+                                else -> PlatformRuntime.handleSystemBackPressed()
+                            }
+                        }
+                        when (matchShortcutAction(event, appState.preferences.customShortcuts)) {
+                            AppShortcutAction.COMMAND_PALETTE -> {
+                                showPromptJump = false
+                                showCommandPalette = !showCommandPalette
                                 true
                             }
-                            else -> false
+                            AppShortcutAction.PROMPT_JUMP -> {
+                                if (!isSettingsOpen) {
+                                    showCommandPalette = false
+                                    showPromptJump = !showPromptJump
+                                    true
+                                } else false
+                            }
+                            AppShortcutAction.NEW_CHAT -> {
+                                openNewChat()
+                                true
+                            }
+                            AppShortcutAction.TOGGLE_SETTINGS -> {
+                                openSettings(null)
+                                true
+                            }
+                            AppShortcutAction.TOGGLE_SIDEBAR -> {
+                                if (!isCompactScreen) {
+                                    showSidebar = !showSidebar
+                                    true
+                                } else false
+                            }
+                            AppShortcutAction.CLOSE_TAB -> {
+                                if (!isCompactScreen && !isSettingsOpen) {
+                                    closeChatTab(appState.activeSessionId)
+                                    true
+                                } else false
+                            }
+                            AppShortcutAction.NEXT_TAB -> {
+                                if (!isCompactScreen && openTabIds.size > 1) {
+                                    val here = openTabIds.indexOf(appState.activeSessionId).coerceAtLeast(0)
+                                    switchToTab(openTabIds[(here + 1) % openTabIds.size])
+                                    true
+                                } else false
+                            }
+                            AppShortcutAction.PREV_TAB -> {
+                                if (!isCompactScreen && openTabIds.size > 1) {
+                                    val here = openTabIds.indexOf(appState.activeSessionId).coerceAtLeast(0)
+                                    switchToTab(openTabIds[(here - 1 + openTabIds.size) % openTabIds.size])
+                                    true
+                                } else false
+                            }
+                            null -> false
                         }
                     }
                     if (shortcutDispatcher != null) {
@@ -1203,6 +1245,7 @@ fun ParchmentApp(
                                         },
                                         onDeleteChatSessionById = ::executeDeleteSingleSession,
                                         onInspectAttachment = ::openAttachmentInViewer,
+                                        onShortcutCaptureInterceptorChange = { shortcutCaptureInterceptor = it },
                                         onNotify = { bannerNotification = it },
                                         onClose = { isSettingsOpen = false }
                                     )
@@ -1365,6 +1408,8 @@ fun ParchmentApp(
                                         onImpersonateDraft = ::triggerImpersonateDraft,
                                         onAutoSummarizeStory = stableAction { triggerAutoSummarizeStory(autoMuteOlderTurns = false) },
                                         onCompactContext = stableAction { triggerAutoSummarizeStory(autoMuteOlderTurns = true) },
+                                        onSwitchWorkspaceMode = stableCallback { mode -> switchWorkspaceMode(mode) },
+                                        onSaveReplyAsSkill = ::saveReplyAsWorkspaceSkill,
                                         onRewindToNode = stableCallback { nodeIndex ->
                                             val sessId = activeSession.id
                                             stopSessionStream(sessId)

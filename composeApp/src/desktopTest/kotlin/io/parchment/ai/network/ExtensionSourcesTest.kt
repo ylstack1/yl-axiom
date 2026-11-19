@@ -1,6 +1,12 @@
 package io.parchment.ai.network
 
+import io.parchment.ai.model.McpServerConfig
+import io.parchment.ai.platform.LocalSkillSourceReader
 import kotlinx.coroutines.runBlocking
+import java.io.ByteArrayOutputStream
+import java.nio.file.Files
+import java.util.zip.ZipEntry
+import java.util.zip.ZipOutputStream
 import kotlin.test.*
 
 class ExtensionSourcesTest {
@@ -84,5 +90,224 @@ class ExtensionSourcesTest {
             assertTrue(reason in failure.message.orEmpty(), "$reason: ${failure.message}")
             assertTrue(sandbox.written.isEmpty(), reason)
         }
+    }
+
+    private fun buildZip(vararg entries: Pair<String, ByteArray>): ByteArray {
+        val out = ByteArrayOutputStream()
+        ZipOutputStream(out).use { zip ->
+            for ((name, data) in entries) {
+                zip.putNextEntry(ZipEntry(name))
+                if (!name.endsWith("/")) zip.write(data)
+                zip.closeEntry()
+            }
+        }
+        return out.toByteArray()
+    }
+
+    @Test fun localFolderSkillInstallsSkipsBinaryAndIgnoresGitMetadata() = runBlocking<Unit> {
+        val tmp = Files.createTempDirectory("parchment-local-skill-ok")
+        try {
+            val skillDir = tmp.resolve("offline-demo")
+            Files.createDirectories(skillDir.resolve("references"))
+            Files.createDirectories(skillDir.resolve("scripts"))
+            Files.createDirectories(skillDir.resolve(".git"))
+            Files.writeString(skillDir.resolve("SKILL.md"), skill)
+            Files.writeString(skillDir.resolve("references/guide.md"), "# Guide")
+            Files.writeString(skillDir.resolve("scripts/helper.py"), "print('inert')")
+            Files.write(skillDir.resolve("logo.png"), byteArrayOf(0x89.toByte(), 0x50, 0x4E, 0x47, 0x00))
+            Files.writeString(skillDir.resolve(".git/config"), "[core]")
+            Files.writeString(skillDir.resolve(".DS_Store"), "junk")
+
+            val bundle = LocalSkillSourceReader.readFolder(skillDir.toString()).getOrThrow()
+            val written = linkedMapOf<String, String>()
+            val order = mutableListOf<String>()
+            val msg = installSkillFromLocalBundle(
+                bundle = bundle,
+                exists = { it in written },
+                write = { path, text -> order += path; written[path] = text; Result.success("ok") }
+            ).getOrThrow()
+
+            assertEquals("Installed demo, without 1 binary file.", msg)
+            assertEquals(
+                setOf(
+                    ".parchment/skills/demo/SKILL.md",
+                    ".parchment/skills/demo/references/guide.md",
+                    ".parchment/skills/demo/scripts/helper.py"
+                ),
+                written.keys
+            )
+            assertEquals(".parchment/skills/demo/SKILL.md", order.last(), "SKILL.md must be written last")
+
+            // Re-installing into the same workspace must never overwrite an existing skill.
+            val dup = assertFails {
+                installSkillFromLocalBundle(bundle, exists = { it in written }, write = { _, _ -> Result.success("ok") }).getOrThrow()
+            }
+            assertTrue("already installed" in dup.message.orEmpty(), dup.message)
+        } finally {
+            tmp.toFile().deleteRecursively()
+        }
+    }
+
+    @Test fun localFolderSkillEnforcesCountSizeDepthAndFilenameGuards() {
+        val tmp = Files.createTempDirectory("parchment-local-skill-guards")
+        try {
+            // 1. > 64 files rejected
+            val manyDir = tmp.resolve("too-many")
+            Files.createDirectories(manyDir)
+            Files.writeString(manyDir.resolve("SKILL.md"), skill)
+            for (i in 1..65) Files.writeString(manyDir.resolve("f$i.txt"), "x")
+            assertTrue("too many files" in LocalSkillSourceReader.readFolder(manyDir.toString()).exceptionOrNull()?.message.orEmpty())
+
+            // 2. > 1 MB single file rejected
+            val bigDir = tmp.resolve("too-big")
+            Files.createDirectories(bigDir)
+            Files.writeString(bigDir.resolve("SKILL.md"), skill)
+            Files.write(bigDir.resolve("huge.txt"), ByteArray(1024 * 1024 + 16) { 'a'.code.toByte() })
+            assertTrue("larger than 1 MB" in LocalSkillSourceReader.readFolder(bigDir.toString()).exceptionOrNull()?.message.orEmpty())
+
+            // 3. Depth > 5 rejected
+            val deepDir = tmp.resolve("too-deep")
+            val nested = deepDir.resolve("a/b/c/d/e/f")
+            Files.createDirectories(nested)
+            Files.writeString(deepDir.resolve("SKILL.md"), skill)
+            Files.writeString(nested.resolve("leaf.txt"), "deep")
+            assertTrue("nested too deeply" in LocalSkillSourceReader.readFolder(deepDir.toString()).exceptionOrNull()?.message.orEmpty())
+
+            // 4. Unsafe filename rejected
+            val unsafeDir = tmp.resolve("unsafe-name")
+            Files.createDirectories(unsafeDir)
+            Files.writeString(unsafeDir.resolve("SKILL.md"), skill)
+            Files.writeString(unsafeDir.resolve("bad\$name.txt"), "x")
+            assertTrue("unsafe file name" in LocalSkillSourceReader.readFolder(unsafeDir.toString()).exceptionOrNull()?.message.orEmpty())
+        } finally {
+            tmp.toFile().deleteRecursively()
+        }
+    }
+
+    @Test fun localZipSkillUnwrapsRootFolderAndBlocksTraversalAndZipBombs() = runBlocking<Unit> {
+        val manifestNoName = "---\ndescription: Packed offline skill\n---\nBody"
+        val wrappedZip = buildZip(
+            "packed-skill/" to ByteArray(0),
+            "packed-skill/SKILL.md" to manifestNoName.encodeToByteArray(),
+            "packed-skill/notes.md" to "Hello".encodeToByteArray(),
+            "__MACOSX/packed-skill/._SKILL.md" to byteArrayOf(0, 1, 2),
+            "packed-skill/.DS_Store" to byteArrayOf(0, 1, 2)
+        )
+        assertTrue(isZipPayload("bundle.zip", wrappedZip))
+        assertTrue(isZipPayload("no-ext-upload", wrappedZip))
+        assertFalse(isZipPayload("SKILL.md", skill.encodeToByteArray()))
+
+        val bundle = LocalSkillSourceReader.readZip("upload.zip", wrappedZip).getOrThrow()
+        val written = linkedMapOf<String, String>()
+        val msg = installSkillFromLocalBundle(
+            bundle = bundle,
+            exists = { false },
+            write = { path, text -> written[path] = text; Result.success("ok") }
+        ).getOrThrow()
+        assertEquals("Installed packed-skill.", msg)
+        assertEquals(setOf(".parchment/skills/packed-skill/SKILL.md", ".parchment/skills/packed-skill/notes.md"), written.keys)
+
+        // Path traversal rejected
+        val traversalZip = buildZip(
+            "../escape.txt" to "pwn".encodeToByteArray(),
+            "SKILL.md" to skill.encodeToByteArray()
+        )
+        assertTrue("unsafe file name" in LocalSkillSourceReader.readZip("bad.zip", traversalZip).exceptionOrNull()?.message.orEmpty())
+
+        // Zip bomb (2 MB of highly compressible bytes inside a tiny zip) rejected by bounded decompression
+        val bombZip = buildZip(
+            "SKILL.md" to skill.encodeToByteArray(),
+            "bomb.txt" to ByteArray(2 * 1024 * 1024) { '0'.code.toByte() }
+        )
+        assertTrue(bombZip.size < 32 * 1024, "Expected highly compressed test zip")
+        assertTrue("larger than 1 MB" in LocalSkillSourceReader.readZip("bomb.zip", bombZip).exceptionOrNull()?.message.orEmpty())
+    }
+
+    @Test fun standaloneSkillFileInstallsCleanlyAndRejectsBinary() = runBlocking<Unit> {
+        val written = linkedMapOf<String, String>()
+        val ok = installSkillFromSingleFile(
+            fileName = "SKILL.md",
+            bytes = skill.encodeToByteArray(),
+            exists = { false },
+            write = { path, text -> written[path] = text; Result.success("ok") }
+        ).getOrThrow()
+        assertEquals("Installed demo.", ok)
+        assertEquals(setOf(".parchment/skills/demo/SKILL.md"), written.keys)
+
+        val binaryErr = installSkillFromSingleFile(
+            fileName = "SKILL.md",
+            bytes = byteArrayOf(0x00, 0x01, 0x02),
+            exists = { false },
+            write = { _, _ -> Result.success("ok") }
+        ).exceptionOrNull()
+        assertNotNull(binaryErr)
+        assertTrue("UTF-8" in binaryErr.message.orEmpty(), binaryErr.message)
+    }
+
+    @Test fun mcpConfigJsonParsesStandardFormatsDeduplicatesAndEnforcesSafety() {
+        val claudeJson = """
+            {
+              "mcpServers": {
+                "filesystem": {
+                  "command": "npx",
+                  "args": ["-y", "@modelcontextprotocol/server-filesystem", "C:\\My Docs\\Project"]
+                },
+                "local-http": {
+                  "url": "http://127.0.0.1:8080/mcp",
+                  "headers": {
+                    "Authorization": "Bearer secret-tok-42"
+                  }
+                },
+                "bad-scheme": {
+                  "url": "javascript:alert(1)"
+                },
+                "multiline-inject": {
+                  "command": "node server.js\ncalc.exe"
+                }
+              }
+            }
+        """.trimIndent()
+
+        // Desktop: imports both local stdio command and HTTP server, all disabled by default; rejects unsafe entries.
+        val desktop = parseMcpConfigJson(claudeJson, supportsLocalCommands = true).getOrThrow()
+        assertEquals(2, desktop.servers.size)
+        assertEquals(0, desktop.skippedLocalCommandCount)
+        assertEquals(2, desktop.skippedInvalidCount)
+        assertTrue(desktop.servers.all { !it.enabled }, "Imported MCP servers must always default to enabled = false")
+
+        val fsServer = desktop.servers.first { it.name == "filesystem" }
+        assertEquals("""npx -y @modelcontextprotocol/server-filesystem "C:\My Docs\Project"""", fsServer.command)
+        val httpServer = desktop.servers.first { it.name == "local-http" }
+        assertEquals("http://127.0.0.1:8080/mcp", httpServer.url)
+        assertEquals("secret-tok-42", httpServer.bearerToken)
+
+        // Android (supportsLocalCommands = false): drops local command cleanly, keeps HTTP endpoint disabled.
+        val android = parseMcpConfigJson(claudeJson, supportsLocalCommands = false).getOrThrow()
+        assertEquals(1, android.servers.size)
+        assertEquals("local-http", android.servers.single().name)
+        assertFalse(android.servers.single().enabled)
+        assertEquals(1, android.skippedLocalCommandCount)
+
+        // VS Code `servers` map format also parses cleanly.
+        val vsCodeJson = """{"servers":{"docs":{"type":"http","url":"https://docs.example.com/mcp"}}}"""
+        val vsCode = parseMcpConfigJson(vsCodeJson, supportsLocalCommands = false).getOrThrow()
+        assertEquals(1, vsCode.servers.size)
+        assertEquals("docs", vsCode.servers.single().name)
+        assertEquals("https://docs.example.com/mcp", vsCode.servers.single().url)
+        assertFalse(vsCode.servers.single().enabled)
+
+        // Merge deduplicates existing URLs and commands.
+        val existing = listOf(McpServerConfig(id = "existing-1", name = "Existing HTTP", url = "http://127.0.0.1:8080/mcp", enabled = true))
+        val (merged, addedCount) = mergeImportedMcpServers(existing, desktop.servers, idPrefix = "imp")
+        assertEquals(1, addedCount)
+        assertEquals(2, merged.size)
+        assertTrue(merged.first().enabled, "Existing enabled server must stay untouched")
+        assertFalse(merged.last().enabled, "Newly merged server must start disabled")
+
+        // Desktop file picker command formatting quotes paths with spaces and prefixes script runtimes cleanly.
+        assertEquals("""python "C:\My Scripts\mcp_server.py"""", formatPickedMcpCommand("""C:\My Scripts\mcp_server.py"""))
+        assertEquals("""node "C:\My Tools\server.mjs"""", formatPickedMcpCommand("""C:\My Tools\server.mjs"""))
+        assertEquals(""""C:\Program Files\MCP\server.exe"""", formatPickedMcpCommand("""C:\Program Files\MCP\server.exe"""))
+        assertEquals("""/usr/local/bin/my-mcp""", formatPickedMcpCommand("""/usr/local/bin/my-mcp"""))
     }
 }

@@ -36,6 +36,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.input.key.KeyEvent
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.text.font.FontWeight
@@ -65,6 +66,7 @@ enum class SettingsCategory(val icon: String, val label: String) {
     DEFAULT_MODEL("♡", Strings.defaultModel),
     WORKSPACE("📂", Strings.workspace2),
     WORLD_BOOK("📖", Strings.worldBookCards),
+    SHORTCUTS("⌨", Strings.shortcuts),
     BACKUP_OTA("☁", Strings.storageUpdates)
 }
 
@@ -101,6 +103,7 @@ fun ParchmentSettingsScreen(
     onWipeAllData: () -> Unit,
     onDeleteChatSessionById: (String) -> Unit = {},
     onInspectAttachment: (io.parchment.ai.model.PromptAttachment) -> Unit = {},
+    onShortcutCaptureInterceptorChange: (((KeyEvent) -> Boolean)?) -> Unit = {},
     onNotify: (String) -> Unit,
     onClose: () -> Unit
 ) {
@@ -298,6 +301,7 @@ fun ParchmentSettingsScreen(
                         onWipeAllData = onWipeAllData,
                         onDeleteChatSessionById = onDeleteChatSessionById,
                         onInspectAttachment = onInspectAttachment,
+                        onShortcutCaptureInterceptorChange = onShortcutCaptureInterceptorChange,
                         onNotify = onNotify
                     )
                 }
@@ -340,6 +344,11 @@ fun ParchmentSettingsScreen(
                 }
                 SettingsCategory.WORKSPACE -> Strings.agentApprovalsFileAccessWebAnd
                 SettingsCategory.WORLD_BOOK -> Strings.characterCardsPngJson(plural(appState.globalWorldBook.size + activeSession.fragments.size, "lore fragment"))
+                SettingsCategory.SHORTCUTS -> {
+                    val customCount = AppShortcutAction.entries.count { isShortcutCustomized(it, appState.preferences.customShortcuts) }
+                    val summary = if (customCount > 0) plural(customCount, "custom shortcut") else Strings.shortcutAllDefaults
+                    Strings.shortcutsCustomized(summary, appState.preferences.sendShortcut.label)
+                }
                 SettingsCategory.BACKUP_OTA -> Strings.storageBackupsAndAppUpdatesV(OtaUpdateEngine.currentAppVersion)
             }
 
@@ -489,6 +498,7 @@ fun ParchmentSettingsScreen(
                             onWipeAllData = onWipeAllData,
                             onDeleteChatSessionById = onDeleteChatSessionById,
                             onInspectAttachment = onInspectAttachment,
+                            onShortcutCaptureInterceptorChange = onShortcutCaptureInterceptorChange,
                             onNotify = onNotify
                         )
                     } else {
@@ -596,6 +606,7 @@ private fun SettingsSubpageContent(
     onWipeAllData: () -> Unit,
     onDeleteChatSessionById: (String) -> Unit = {},
     onInspectAttachment: (io.parchment.ai.model.PromptAttachment) -> Unit = {},
+    onShortcutCaptureInterceptorChange: (((KeyEvent) -> Boolean)?) -> Unit = {},
     onNotify: (String) -> Unit
 ) {
     if (searchQuery.trim().isNotEmpty()) {
@@ -674,6 +685,12 @@ private fun SettingsSubpageContent(
             onSavePresetToLibrary = onSavePresetToLibrary,
             onDeletePresetFromLibrary = onDeletePresetFromLibrary,
             onUpdateTheme = onUpdateTheme,
+            onNotify = onNotify
+        )
+        SettingsCategory.SHORTCUTS -> ShortcutsSubpage(
+            prefs = appState.preferences,
+            onUpdatePreferences = onUpdatePreferences,
+            onCaptureInterceptorChange = onShortcutCaptureInterceptorChange,
             onNotify = onNotify
         )
         SettingsCategory.BACKUP_OTA -> BackupAndOtaSubpage(

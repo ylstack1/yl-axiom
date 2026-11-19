@@ -126,6 +126,7 @@ private fun outline(icon: KissIcon): String = when (icon) {
     KissIcon.CORNER_DOWN_RIGHT -> "M5 4v7a3 3 0 0 0 3 3h11M15 10l4 4-4 4"
     KissIcon.WRAP_TEXT -> "M4 6h16M4 12h13a3 3 0 1 1 0 6h-5M14 15l-3 3 3 3M4 18h4"
     KissIcon.SPLIT_COLUMNS -> box(3.5, 4.5, 17.0, 15.0, 2.0) + "M12 4.500v15"
+    KissIcon.KEYBOARD -> box(2.5, 5.5, 19.0, 13.0, 2.0) + "M7 15h10"
     KissIcon.STOP, KissIcon.MORE_HORIZONTAL, KissIcon.CIRCLE_DOT -> ""
 }
 
@@ -139,6 +140,7 @@ private fun solid(icon: KissIcon): String = when (icon) {
     KissIcon.PALETTE -> circle(7.5, 11.5, 1.2) + circle(9.5, 7.5, 1.2) + circle(14.5, 7.5, 1.2)
     KissIcon.DICE -> listOf(8.5 to 8.5, 15.5 to 8.5, 12.0 to 12.0, 8.5 to 15.5, 15.5 to 15.5).joinToString("") { (x, y) -> circle(x, y, 1.3) }
     KissIcon.CALCULATOR -> listOf(11.5, 15.0, 18.5).joinToString("") { y -> listOf(8.8, 12.0, 15.2).joinToString("") { x -> circle(x, y, 1.0) } }
+    KissIcon.KEYBOARD -> listOf(9.5, 12.2).joinToString("") { y -> listOf(6.5, 9.5, 12.5, 15.5, 17.8).joinToString("") { x -> circle(x, y, 0.75) } }
     else -> ""
 }
 

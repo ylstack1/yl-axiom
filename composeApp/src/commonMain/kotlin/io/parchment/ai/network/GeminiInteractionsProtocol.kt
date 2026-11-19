@@ -280,7 +280,8 @@ private class GeminiInteractionsSession(
                     accessScope = ToolAccessScope(
                         toolPolicy,
                         goalModeActive = circuitBreaker.goalState != null,
-                        includeLocalWebSearchTool = profile.enableWebSearch && omitBuiltInToolsOnRetry
+                        includeLocalWebSearchTool = profile.enableWebSearch && omitBuiltInToolsOnRetry,
+                        expandedMcpTools = currentExpandedMcpTools()
                     ),
                     calls = round.turnToolCalls.map { (callId, fnPair) -> Triple(callId, fnPair.first, fnPair.second) },
                     firstThoughtSignature = stepSigString,
@@ -382,6 +383,7 @@ private class GeminiInteractionsSession(
             }
 
             // Built-in Tools + Local Workspace Harness Tools before `input` so static prefix stays cacheable
+            val expandedMcpTools = currentExpandedMcpTools()
             val workspaceTools = WorkspaceHarness.buildGeminiInteractionsTools(
                 session.workspaceMode,
                 session.workspacePath,
@@ -389,7 +391,8 @@ private class GeminiInteractionsSession(
                 goalModeActive = circuitBreaker.goalState != null,
                 enableWebTools = (profile.enableWebSearch && omitBuiltInToolsOnRetry) || profile.enableUrlContext,
                 includeLocalWebSearchTool = profile.enableWebSearch && omitBuiltInToolsOnRetry,
-                policy = toolPolicy
+                policy = toolPolicy,
+                expandedMcpTools = expandedMcpTools
             )
             val toolsArray = buildJsonArray {
                 if (!omitBuiltInToolsOnRetry || workspaceTools.isEmpty()) {

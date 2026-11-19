@@ -42,6 +42,7 @@ import io.parchment.ai.model.AssistantAgent
 import io.parchment.ai.model.ChatSession
 import io.parchment.ai.model.ContextFragment
 import io.parchment.ai.model.GeneratedMediaItem
+import io.parchment.ai.model.McpServerConfig
 import io.parchment.ai.model.MediaKind
 import io.parchment.ai.model.MessageNode
 import io.parchment.ai.model.MessageRole
@@ -1493,6 +1494,27 @@ class UiBehaviorRegressionTest {
             assertNotNull(rowGear)
             val dy = kotlin.math.abs(carbonText.boundsInRoot.center.y - rowGear.boundsInRoot.center.y)
             assertTrue(dy <= 2.5f, "Model text center.y (${carbonText.boundsInRoot.center.y}) must align with row controls (${rowGear.boundsInRoot.center.y}), dy=$dy")
+        }
+
+        // 4. Offline Skill & MCP import controls render cleanly on desktop Workspace settings
+        val mcpPrefs = PreferencesConfig(
+            mcpServers = listOf(McpServerConfig(id = "local-1", name = "Local Tool", command = "", enabled = false))
+        )
+        withUiScene(
+            width = 960,
+            height = 960,
+            content = {
+                Column {
+                    McpServersCard(prefs = mcpPrefs, onUpdatePreferences = {}, onNotify = {})
+                    SkillInstallCard(workspacePath = "C:\\tmp\\ws", canWrite = true, onNotify = {})
+                }
+            }
+        ) { scene ->
+            val allNodes = nodes(scene)
+            assertNotNull(allNodes.firstOrNull { text(it) == Strings.importMcpJson }, "McpServersCard must expose Import JSON")
+            assertNotNull(allNodes.firstOrNull { description(it) == Strings.browseLocalCommandDesc }, "Desktop McpServersCard must expose local command Browse button")
+            assertNotNull(allNodes.firstOrNull { text(it) == Strings.importFolder }, "SkillInstallCard must expose Import folder")
+            assertNotNull(allNodes.firstOrNull { text(it) == Strings.importFileOrZip }, "SkillInstallCard must expose Import file / .zip")
         }
     }
 }

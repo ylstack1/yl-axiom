@@ -19,6 +19,10 @@ on:
     branches:
       - main
       - master
+    paths-ignore:
+      - "CHANGELOG.md"
+      - ".release-please-manifest.json"
+      - "release-please-config.json"
   workflow_dispatch:
     inputs:
       reuse_android_run:
@@ -55,6 +59,7 @@ jobs:
       app_version_code: ${{ steps.plan.outputs.app_version_code }}
       release_tag: ${{ steps.plan.outputs.release_tag }}
       desktop_tests: ${{ steps.plan.outputs.desktop_tests }}
+      windows_tests: ${{ steps.plan.outputs.windows_tests }}
       android: ${{ steps.plan.outputs.android }}
       windows: ${{ steps.plan.outputs.windows }}
     steps:
@@ -131,8 +136,46 @@ jobs:
           read -r -a SHARD_ARGS <<< "$(python3 .github/scripts/shard_tests.py --index "${{ matrix.shard }}" --total 2)"
           python3 .github/scripts/run_gradle.py -- :composeApp:desktopTest "${SHARD_ARGS[@]}" \
             -Dorg.gradle.jvmargs="-Xmx5g -XX:+UseParallelGC -XX:MaxMetaspaceSize=1g -Dfile.encoding=UTF-8" \
+            -Pparchment.testForks=3 \
             --no-daemon --no-configuration-cache --max-workers=4 \
             -Pkotlin.compiler.execution.strategy=in-process
+
+  test-windows-native:
+    name: Windows Native Tests
+    needs: preflight
+    if: needs.preflight.outputs.windows_tests == 'true'
+    runs-on: windows-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 1
+          fetch-tags: false
+
+      - name: Set up JDK 25 (Temurin)
+        uses: actions/setup-java@77dd5b2ce225ea11469928ac317850245a74ae78 # v6.2.0
+        with:
+          distribution: "temurin"
+          java-version: "25"
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@8da46b539cd8fe6ab27ca75128919a18d757604c # v6.4.1
+
+      - name: Run Windows Native Test Suites
+        shell: pwsh
+        env:
+          GRADLE_OPTS: "-Xmx5g -XX:+UseParallelGC -XX:MaxMetaspaceSize=1g -Dfile.encoding=UTF-8"
+        run: |
+          $gradleHome = if ($env:GRADLE_USER_HOME) { $env:GRADLE_USER_HOME } else { "$HOME\.gradle" }
+          New-Item -ItemType Directory -Force -Path $gradleHome | Out-Null
+          Add-Content -Path "$gradleHome\gradle.properties" -Value "`norg.gradle.jvmargs=-Xmx5g -XX:+UseParallelGC -XX:MaxMetaspaceSize=1g -Dfile.encoding=UTF-8"
+          $winTests = (python .github/scripts/shard_tests.py --windows-native) -split ' '
+          python .github/scripts/run_gradle.py -- :composeApp:desktopTest @winTests `
+            -Pparchment.testForks=2 `
+            --no-daemon --no-configuration-cache --max-workers=4 '-Pkotlin.compiler.execution.strategy=in-process'
+          exit $LASTEXITCODE
 
   build-android-apk:
     name: Build Android .APK (Universal)
@@ -154,13 +197,19 @@ jobs:
           distribution: "temurin"
           java-version: "25"
 
-      - name: Cache Android SDK 37 Packages
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      - name: Restore Android Platform 37 Cache
+        id: cache-android-platform
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
-          path: |
-            /usr/local/lib/android/sdk/platforms/android-37*
-            /usr/local/lib/android/sdk/build-tools/37*
-          key: android-sdk-37-${{ runner.os }}-${{ hashFiles('gradle/libs.versions.toml') }}
+          path: /usr/local/lib/android/sdk/platforms/android-37*
+          key: android-platform-37-v2-${{ runner.os }}-${{ hashFiles('gradle/libs.versions.toml') }}
+
+      - name: Restore Android Build-Tools 37 Cache
+        id: cache-android-bt
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: /usr/local/lib/android/sdk/build-tools/37*
+          key: android-build-tools-37-v2-${{ runner.os }}-${{ hashFiles('gradle/libs.versions.toml') }}
 
       - name: Write Android SDK License Hashes
         run: |
@@ -195,7 +244,7 @@ jobs:
           else
             BUILD_VARIANT=release
             BUILD_TASK=:androidApp:assembleRelease
-            EXTRA_FLAGS=(-PofficialRelease=true)
+            EXTRA_FLAGS=(-PofficialRelease=true -x :androidApp:lintVitalRelease)
           fi
           echo "ANDROID_BUILD_VARIANT=$BUILD_VARIANT" >> "$GITHUB_ENV"
           chmod +x ./gradlew
@@ -216,17 +265,19 @@ jobs:
             cp androidApp/build/outputs/mapping/release/mapping.txt dist/Parchment-Android-R8-mapping.txt
           fi
 
-      # The SBOM lists every library in the app (CycloneDX). Dependency PRs already verify SBOM in quality-signals.yml,
-      # so build-installers generates it only on tag/manual release runs where publish-github-release attaches it.
-      - name: Generate SBOM
-        if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'
-        continue-on-error: true
-        run: |
-          # No build cache: a cached SBOM outlives the dependency changes it should show.
-          ./gradlew --init-script .github/scripts/sbom.init.gradle.kts cyclonedxBom \
-            --no-daemon --no-configuration-cache --no-build-cache --max-workers=4 -PappVersion=1.0.0
-          python3 .github/scripts/check_sbom.py build/reports/cyclonedx/bom.json
-          cp build/reports/cyclonedx/bom.json dist/Parchment-SBOM.cdx.json
+      - name: Save Android Platform 37 Cache (main only)
+        if: github.ref == 'refs/heads/main' && steps.cache-android-platform.outputs.cache-hit != 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: /usr/local/lib/android/sdk/platforms/android-37*
+          key: android-platform-37-v2-${{ runner.os }}-${{ hashFiles('gradle/libs.versions.toml') }}
+
+      - name: Save Android Build-Tools 37 Cache (main only)
+        if: github.ref == 'refs/heads/main' && steps.cache-android-bt.outputs.cache-hit != 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: /usr/local/lib/android/sdk/build-tools/37*
+          key: android-build-tools-37-v2-${{ runner.os }}-${{ hashFiles('gradle/libs.versions.toml') }}
 
       - name: Verify Staged APK Exists
         run: test -s dist/Parchment-Android-Universal.apk
@@ -279,7 +330,7 @@ jobs:
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@8da46b539cd8fe6ab27ca75128919a18d757604c # v6.4.1
 
-      - name: Verify Windows Native Suites and Build Windows Runtime
+      - name: Build Windows Packaged Runtime (ProGuard + Leyden AOT)
         shell: pwsh
         env:
           APP_VER: ${{ needs.preflight.outputs.app_version }}
@@ -290,8 +341,7 @@ jobs:
           $gradleHome = if ($env:GRADLE_USER_HOME) { $env:GRADLE_USER_HOME } else { "$HOME\.gradle" }
           New-Item -ItemType Directory -Force -Path $gradleHome | Out-Null
           Add-Content -Path "$gradleHome\gradle.properties" -Value "`norg.gradle.jvmargs=-Xmx5g -XX:+UseParallelGC -XX:MaxMetaspaceSize=1g -Dfile.encoding=UTF-8"
-          $winTests = (python .github/scripts/shard_tests.py --windows-native) -split ' '
-          python .github/scripts/run_gradle.py -- :composeApp:desktopTest @winTests :composeApp:createReleaseDistributable `
+          python .github/scripts/run_gradle.py -- :composeApp:createReleaseDistributable `
             "-PappVersion=$env:APP_VER" `
             "-PappVersionCode=$env:APP_CODE" `
             "-PgithubRepo=$env:GITHUB_REPOSITORY" `
@@ -340,9 +390,63 @@ jobs:
           retention-days: ${{ github.event_name == 'pull_request' && 7 || 30 }}
           if-no-files-found: error
 
+  release-sbom:
+    name: Generate Release SBOM
+    needs: preflight
+    if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'
+    continue-on-error: true
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 1
+          fetch-tags: false
+
+      - name: Set up JDK 25 (Temurin)
+        uses: actions/setup-java@77dd5b2ce225ea11469928ac317850245a74ae78 # v6.2.0
+        with:
+          distribution: "temurin"
+          java-version: "25"
+
+      - name: Restore Android Platform 37 Cache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: /usr/local/lib/android/sdk/platforms/android-37*
+          key: android-platform-37-v2-${{ runner.os }}-${{ hashFiles('gradle/libs.versions.toml') }}
+
+      - name: Write Android SDK License Hashes
+        run: |
+          mkdir -p "$ANDROID_HOME/licenses"
+          printf "\n8933bad161af4178b1185d1a37fbf41ea5269c55\nd56f5187479451eabf01fb78af6dfcb131a6481e\n24333f8a63b6825ea9c5514f83c2829b004d1fee\n" > "$ANDROID_HOME/licenses/android-sdk-license"
+          printf "\n84831b9409646a918e30573bab4c9c91346d8abd\n504667f4c0de7af1a06de9f4b1727b84351f2910\n" > "$ANDROID_HOME/licenses/android-sdk-preview-license"
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@8da46b539cd8fe6ab27ca75128919a18d757604c # v6.4.1
+
+      - name: Generate and Validate SBOM
+        run: |
+          chmod +x ./gradlew
+          ./gradlew --init-script .github/scripts/sbom.init.gradle.kts cyclonedxBom \
+            --no-daemon --no-configuration-cache --no-build-cache --max-workers=4 -PappVersion=1.0.0
+          python3 .github/scripts/check_sbom.py build/reports/cyclonedx/bom.json
+          mkdir -p dist
+          cp build/reports/cyclonedx/bom.json dist/Parchment-SBOM.cdx.json
+
+      - name: Upload SBOM Artifact
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: Parchment-SBOM
+          path: dist/Parchment-SBOM.cdx.json
+          compression-level: 1
+          retention-days: 30
+          if-no-files-found: error
+
   publish-github-release:
     name: Publish OTA Release Assets (.APK & .EXE)
-    needs: [preflight, test-desktop, build-android-apk, build-windows-exe]
+    needs: [preflight, test-desktop, test-windows-native, build-android-apk, build-windows-exe, release-sbom]
     # Releases come only from version tags (release-please starts this run for its tag) or a manual run; a push to
     # main just builds and tests, so merged updates reach users only when a release is cut.
     # A skipped job skips its dependents unless the condition says otherwise.
@@ -351,6 +455,7 @@ jobs:
       (startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch') &&
       needs.preflight.result == 'success' &&
       needs.test-desktop.result == 'success' &&
+      (needs.test-windows-native.result == 'success' || needs.test-windows-native.result == 'skipped') &&
       needs.build-windows-exe.result == 'success' &&
       (needs.build-android-apk.result == 'success' || (inputs.reuse_android_run && needs.build-android-apk.result == 'skipped'))
     runs-on: ubuntu-latest
@@ -371,6 +476,14 @@ jobs:
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: Parchment-Windows-EXE-Installer
+          path: release-assets
+
+      - name: Download Release SBOM Artifact
+        if: needs.release-sbom.result == 'success'
+        continue-on-error: true
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: Parchment-SBOM
           path: release-assets
 
       # release-please already wrote the notes from the commits; this adds the signing note and how to check a

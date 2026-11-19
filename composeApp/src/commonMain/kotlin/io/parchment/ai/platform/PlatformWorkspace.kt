@@ -17,6 +17,16 @@ interface McpProcess {
     fun close()
 }
 
+/** One validated text file read from a local skill folder or `.zip` archive. */
+data class LocalSkillTextFile(val relativePath: String, val content: String)
+
+/** Bounded local skill payload ready for validation and workspace installation. */
+data class LocalSkillBundle(
+    val fallbackName: String,
+    val files: List<LocalSkillTextFile>,
+    val skippedBinaryCount: Int = 0
+)
+
 expect object PlatformWorkspace {
     // Built-in Local File System Agent Harness (Sandboxed to workspaceRoot)
     fun workspaceList(workspaceRoot: String, relativePath: String = "", recursive: Boolean = false): Result<String>
@@ -29,6 +39,10 @@ expect object PlatformWorkspace {
     fun workspaceMultiEdit(workspaceRoot: String, relativePath: String, edits: List<Triple<String, String, Boolean>>): Result<String>
     fun workspaceMove(workspaceRoot: String, sourceRelativePath: String, destRelativePath: String): Result<String>
     fun workspaceDelete(workspaceRoot: String, relativePath: String): Result<String>
+    /** Content/revision fingerprint for stale-read checks (`null` when the file does not exist yet). */
+    fun workspaceFileStamp(workspaceRoot: String, relativePath: String): Result<String?>
+    /** Returns true if [path] is an existing local directory. */
+    fun workspaceDirectoryExists(path: String): Boolean
     fun workspaceSearch(
         workspaceRoot: String,
         query: String,
@@ -46,6 +60,12 @@ expect object PlatformWorkspace {
     fun fetchUrlText(url: String, maxChars: Int = 24000, isCancelled: (() -> Boolean)? = null): Result<String>
     /** Downloads from public internet addresses only, checking every redirect. */
     fun fetchPublicBytes(url: String, maxBytes: Int, isCancelled: (() -> Boolean)? = null): Result<ByteArray>
+    /** Reads a local skill folder with strict size, depth, filename, and symlink guards. */
+    fun readLocalSkillFolder(folderPath: String): Result<LocalSkillBundle>
+    /** Unpacks a local `.zip` skill bundle with strict zip-bomb, depth, and path-traversal guards. */
+    fun readLocalSkillZip(fileName: String, zipBytes: ByteArray): Result<LocalSkillBundle>
+    /** Zero-dep `.docx` text extraction from `word/document.xml` via ZipInputStream. */
+    fun extractDocxText(bytes: ByteArray): Result<String>
     val computerControl: ComputerControl
     val supportsLocalMcpServers: Boolean
     /** Starts a local MCP server, or returns null on platforms that cannot run one. */

@@ -15,8 +15,28 @@ import kotlinx.serialization.json.putJsonObject
 internal object WorkspaceToolCatalog {
 
     const val MCP_TOOL_PREFIX = "mcp__"
+    const val MCP_SCHEMA_TOOL_NAME = "mcp_schema"
+    const val DEFERRED_MCP_SCHEMA_THRESHOLD = 6
 
     fun isMcpToolName(name: String): Boolean = name.startsWith(MCP_TOOL_PREFIX)
+
+    internal val MCP_SCHEMA_TOOL = WorkspaceHarness.ToolDefinition(
+        name = MCP_SCHEMA_TOOL_NAME,
+        description = "Load full JSON parameter schemas and enable deferred MCP tools listed under Deferred MCP Tools.",
+        requiresWritePermission = false,
+        requiresWorkspaceFolder = false,
+        parametersSchema = buildJsonObject {
+            put("type", "object")
+            putJsonObject("properties") {
+                putJsonObject("names") {
+                    put("type", "array")
+                    putJsonObject("items") { put("type", "string") }
+                    put("description", "Exact mcp__... tool names or search keywords to inspect and enable.")
+                }
+            }
+            putJsonArray("required") { add(JsonPrimitive("names")) }
+        }
+    )
 
     @kotlin.concurrent.Volatile
     private var externalToolsProvider: () -> List<WorkspaceHarness.ToolDefinition> = { emptyList() }
@@ -387,8 +407,37 @@ internal object WorkspaceToolCatalog {
 
     fun allTools(): List<WorkspaceHarness.ToolDefinition> = ALL_TOOLS + externalToolsProvider()
 
+    fun allowedMcpTools(policy: AgentPermissionPolicy?): List<WorkspaceHarness.ToolDefinition> {
+        if (policy != null && !policy.toolsEnabled) return emptyList()
+        return externalToolsProvider().filter { tool -> policy == null || policy.allowsTool(tool.name) }
+    }
+
+    fun shouldDeferMcpSchemas(policy: AgentPermissionPolicy?): Boolean =
+        allowedMcpTools(policy).size > DEFERRED_MCP_SCHEMA_THRESHOLD
+
+    fun deferredMcpToolsCatalogPrompt(
+        policy: AgentPermissionPolicy?,
+        expandedMcpTools: Set<String> = emptySet()
+    ): String {
+        val allowed = allowedMcpTools(policy)
+        if (allowed.size <= DEFERRED_MCP_SCHEMA_THRESHOLD) return ""
+        return buildString {
+            appendLine("### Deferred MCP Tools (${allowed.size} available)")
+            appendLine("Full MCP parameter schemas are deferred to save context tokens. Call `$MCP_SCHEMA_TOOL_NAME(names=[...])` with exact tool name(s) or keywords to load schemas and enable them before calling:")
+            allowed.forEach { tool ->
+                val summary = tool.description.lineSequence().firstOrNull()?.trim().orEmpty().take(90)
+                val status = if (tool.name in expandedMcpTools) " [loaded]" else ""
+                if (summary.isNotEmpty()) {
+                    appendLine("- `${tool.name}`$status: $summary")
+                } else {
+                    appendLine("- `${tool.name}`$status")
+                }
+            }
+        }.trim()
+    }
+
     fun isParallelSafeReadOnlyTool(toolName: String): Boolean = when (toolName.lowercase()) {
-        "fs_read", "fs_list", "fs_glob", "fs_search", "skill_load",
+        "fs_read", "fs_list", "fs_glob", "fs_search", "skill_load", MCP_SCHEMA_TOOL_NAME,
         "web_search", "web_fetch", "calc_eval", "dice_roll" -> true
         else -> false
     }
@@ -400,14 +449,18 @@ internal object WorkspaceToolCatalog {
         goalModeActive: Boolean = false,
         enableWebTools: Boolean = false,
         includeLocalWebSearchTool: Boolean = enableWebTools,
-        policy: AgentPermissionPolicy? = null
+        policy: AgentPermissionPolicy? = null,
+        expandedMcpTools: Set<String>? = null
     ): List<WorkspaceHarness.ToolDefinition> {
         val hasMountedWorkspace = mode != WorkspaceMode.OFF && workspacePath.isNotBlank()
-        if (!hasMountedWorkspace && !goalModeActive && !enableWebTools && !includeLocalWebSearchTool && externalToolsProvider().isEmpty() && policy?.computerAccess != true) {
+        val externalTools = externalToolsProvider()
+        if (!hasMountedWorkspace && !goalModeActive && !enableWebTools && !includeLocalWebSearchTool && externalTools.isEmpty() && policy?.computerAccess != true) {
             return emptyList()
         }
-        return allTools().filter { tool ->
+        val deferMcp = expandedMcpTools != null && shouldDeferMcpSchemas(policy)
+        val base = allTools().filter { tool ->
             if (policy != null && !policy.allowsTool(tool.name)) return@filter false
+            if (isMcpToolName(tool.name) && deferMcp && tool.name !in expandedMcpTools) return@filter false
             if (tool.name == ComputerUse.TOOL_NAME && policy?.computerAccess != true) return@filter false
             if (tool.name in setOf("web_search", "web_fetch") && !enableWebTools) return@filter false
             if (tool.name == "web_search" && !includeLocalWebSearchTool) return@filter false
@@ -426,6 +479,11 @@ internal object WorkspaceToolCatalog {
                 writeOk && shellOk
             }
         }
+        return if (deferMcp && (policy == null || policy.allowsTool(MCP_SCHEMA_TOOL_NAME))) {
+            base + MCP_SCHEMA_TOOL
+        } else {
+            base
+        }
     }
 
     fun buildFlatFunctionTools(
@@ -435,9 +493,10 @@ internal object WorkspaceToolCatalog {
         goalModeActive: Boolean = false,
         enableWebTools: Boolean = false,
         includeLocalWebSearchTool: Boolean = enableWebTools,
-        policy: AgentPermissionPolicy? = null
+        policy: AgentPermissionPolicy? = null,
+        expandedMcpTools: Set<String>? = emptySet()
     ): JsonArray = JsonArray(
-        activeToolsForMode(mode, workspacePath, allowShell, goalModeActive, enableWebTools, includeLocalWebSearchTool, policy)
+        activeToolsForMode(mode, workspacePath, allowShell, goalModeActive, enableWebTools, includeLocalWebSearchTool, policy, expandedMcpTools)
             .map { it.flatFunctionJson }
     )
 
@@ -448,9 +507,10 @@ internal object WorkspaceToolCatalog {
         goalModeActive: Boolean = false,
         enableWebTools: Boolean = false,
         includeLocalWebSearchTool: Boolean = enableWebTools,
-        policy: AgentPermissionPolicy? = null
+        policy: AgentPermissionPolicy? = null,
+        expandedMcpTools: Set<String>? = emptySet()
     ): JsonArray = JsonArray(
-        activeToolsForMode(mode, workspacePath, allowShell, goalModeActive, enableWebTools, includeLocalWebSearchTool, policy)
+        activeToolsForMode(mode, workspacePath, allowShell, goalModeActive, enableWebTools, includeLocalWebSearchTool, policy, expandedMcpTools)
             .map { it.openAiChatJson }
     )
 
@@ -461,9 +521,10 @@ internal object WorkspaceToolCatalog {
         goalModeActive: Boolean = false,
         enableWebTools: Boolean = false,
         includeLocalWebSearchTool: Boolean = enableWebTools,
-        policy: AgentPermissionPolicy? = null
+        policy: AgentPermissionPolicy? = null,
+        expandedMcpTools: Set<String>? = emptySet()
     ): JsonArray = JsonArray(
-        activeToolsForMode(mode, workspacePath, allowShell, goalModeActive, enableWebTools, includeLocalWebSearchTool, policy)
+        activeToolsForMode(mode, workspacePath, allowShell, goalModeActive, enableWebTools, includeLocalWebSearchTool, policy, expandedMcpTools)
             .map { it.anthropicJson }
     )
 }

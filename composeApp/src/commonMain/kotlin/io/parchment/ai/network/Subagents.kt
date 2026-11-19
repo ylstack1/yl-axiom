@@ -37,7 +37,7 @@ private val SUBAGENT_DENIED_WITH_WEB: Map<String, Boolean> by lazy {
 }
 
 private fun buildSubagentDeniedOverrides(allowed: Set<String>): Map<String, Boolean> {
-    val allNames = WorkspaceHarness.allTools().map { it.name } + PROVIDER_SIDE_TOOLS
+    val allNames = WorkspaceHarness.allTools().map { it.name } + PROVIDER_SIDE_TOOLS + WorkspaceHarness.MCP_SCHEMA_TOOL_NAME
     return allNames.asSequence().filter { it !in allowed }.associateWith { false }
 }
 

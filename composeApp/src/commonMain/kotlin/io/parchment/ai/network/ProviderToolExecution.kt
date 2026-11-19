@@ -45,6 +45,9 @@ import kotlinx.serialization.json.jsonObject
 
 // Workspace tool authorization and execution for the agent loops.
 
+internal suspend fun currentExpandedMcpTools(): Set<String> =
+    currentCoroutineContext()[AgentToolRunContext]?.expandedMcpToolsSnapshot() ?: emptySet()
+
 private suspend fun AiProviderEngine.authorizeWorkspaceTool(
     scope: ToolAccessScope, callId: String, name: String, arguments: String,
     activityContext: RunActivityContext? = null
@@ -63,6 +66,62 @@ private suspend fun AiProviderEngine.authorizeWorkspaceTool(
     return withContext(activity ?: EmptyCoroutineContext) {
         (broker ?: ToolApprovalBroker("headless", "", { scope })).authorize(callId, name, arguments)
     }
+}
+
+/** Loads full JSON parameter schemas for deferred MCP tools and enables them in the active run. */
+private suspend fun runMcpSchemaTool(
+    scope: ToolAccessScope,
+    callId: String,
+    argumentsJson: String
+): ToolCallRecord {
+    fun record(text: String, isError: Boolean) = ToolCallRecord(
+        id = callId,
+        name = WorkspaceHarness.MCP_SCHEMA_TOOL_NAME,
+        argumentsJson = argumentsJson,
+        resultText = text,
+        isError = isError
+    )
+    val allowed = WorkspaceHarness.allowedMcpTools(scope.policy)
+    if (allowed.isEmpty()) return record("No MCP tools are currently enabled for this chat.", false)
+    val argsObj = runCatching { Json.parseToJsonElement(argumentsJson.ifBlank { "{}" }).jsonObject }.getOrNull()
+        ?: return record("Error: Tool arguments must be a valid JSON object.", true)
+    val rawQueries = when (val namesEl = argsObj["names"]) {
+        is JsonArray -> namesEl.mapNotNull { (it as? JsonPrimitive)?.contentOrNull?.trim() }.filter { it.isNotEmpty() }
+        is JsonPrimitive -> listOfNotNull(namesEl.contentOrNull?.trim()).filter { it.isNotEmpty() }
+        else -> emptyList()
+    }
+    if (rawQueries.isEmpty()) {
+        return record("Error: Provide one or more MCP tool names or keywords in 'names'.", true)
+    }
+    val matched = linkedSetOf<WorkspaceHarness.ToolDefinition>()
+    for (q in rawQueries) {
+        val exact = allowed.firstOrNull { it.name.equals(q, ignoreCase = true) }
+        if (exact != null) {
+            matched += exact
+        } else {
+            val low = q.lowercase()
+            allowed.filter { it.name.lowercase().contains(low) || it.description.lowercase().contains(low) }
+                .take(12)
+                .forEach { matched += it }
+        }
+        if (matched.size >= 12) break
+    }
+    if (matched.isEmpty()) {
+        val sample = allowed.take(20).joinToString(", ") { it.name }
+        return record("No matching MCP tools found for ${rawQueries.joinToString(", ")}. Available: $sample", false)
+    }
+    val selected = matched.take(12)
+    currentCoroutineContext()[AgentToolRunContext]?.expandMcpTools(selected.map { it.name })
+    val body = buildString {
+        appendLine("Loaded and enabled ${selected.size} MCP tool schema(s). You can now call these tools directly:")
+        selected.forEach { tool ->
+            appendLine()
+            appendLine("### ${tool.name}")
+            if (tool.description.isNotBlank()) appendLine(tool.description)
+            appendLine("Parameters JSON Schema: ${tool.parametersSchemaString}")
+        }
+    }.trim()
+    return record(body, false)
 }
 
 /** The permit is claimed here because this call does not go through the workspace executor. */
@@ -167,17 +226,21 @@ private suspend fun AiProviderEngine.executeWorkspaceToolWithLiveProgress(
     val liveChannel = kotlinx.coroutines.channels.Channel<String>(kotlinx.coroutines.channels.Channel.CONFLATED)
     val clock = activityContext?.activity?.let { activity -> { activity.elapsedMs } } ?: PlatformRuntime::monotonicTimeMillis
     val startMs = clock()
-    if (toolName == "ask_user" || toolName == "agent_delegate" || toolName == ComputerUse.TOOL_NAME || McpRegistry.isMcpTool(toolName)) {
+    if (toolName == "ask_user" || toolName == "agent_delegate" || toolName == ComputerUse.TOOL_NAME ||
+        toolName == WorkspaceHarness.MCP_SCHEMA_TOOL_NAME || McpRegistry.isMcpTool(toolName)) {
         val record = when {
             toolName == ComputerUse.TOOL_NAME -> runComputerTool(permit, callId, toolName, argumentsJson)
             toolName == "ask_user" -> answerFromUser(callId, argumentsJson)
             toolName == "agent_delegate" -> runHelper(callId, argumentsJson, intent, onStatus)
+            toolName == WorkspaceHarness.MCP_SCHEMA_TOOL_NAME -> runMcpSchemaTool(permit.scope, callId, argumentsJson)
             else -> runMcpTool(permit, callId, toolName, argumentsJson)
         }
         return record.copy(isRunning = false, durationMs = (clock() - startMs).coerceAtLeast(1L),
             thoughtSignature = thoughtSignature, precedingThinking = precedingThinking)
     }
-    val chatSessionId = currentCoroutineContext()[AgentToolRunContext]?.broker?.chatId.orEmpty()
+    val runCtx = currentCoroutineContext()[AgentToolRunContext]
+    val chatSessionId = runCtx?.broker?.chatId.orEmpty()
+    val runFileRevisions = runCtx?.fileRevisions
     // The blocking tool runs in `async(Dispatchers.IO)`, which never calls `emit()`; `liveChannel` is read on the
     // caller's coroutine. Emitting from another context would break Flow's context rule and throw.
     return kotlinx.coroutines.coroutineScope {
@@ -196,6 +259,7 @@ private suspend fun AiProviderEngine.executeWorkspaceToolWithLiveProgress(
                     permit = permit,
                     sessionId = chatSessionId,
                     isCancelled = { !workerJob.isActive || permit.isRevoked() },
+                    fileRevisions = runFileRevisions,
                     onOutputDelta = { partial ->
                         liveChannel.trySend(partial)
                     }

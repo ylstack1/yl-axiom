@@ -148,7 +148,8 @@ internal fun countCategorySearchMatches(
         SettingsCategory.WORKSPACE -> {
             listOf(
                 hit("Agent approvals and file access", "Agent permissions", "assistant defaults", "inherit", "web access", "network", "sandbox", "power", "keep awake", "tools", "Workspace Mode", "Read-Only", "Agent R/W", "fs_read", "fs_edit", "todo_write"),
-                hit("Shell full process access", "shell_exec", "terminal", "powershell", "bash", "Workspace")
+                hit("Shell full process access", "shell_exec", "terminal", "powershell", "bash", "Workspace"),
+                hit("MCP servers", "mcp.json", "Import JSON", "local command", "Skills", "SKILL.md", "Import folder", "zip", "offline")
             ).count { it }
         }
         SettingsCategory.WORLD_BOOK -> {
@@ -157,6 +158,19 @@ internal fun countCategorySearchMatches(
             }
             val cardHits = if (hit("Character Card", "PNG", "JSON", "ccv3", "chara", "System Prompt Preset", "World Book")) 1 else 0
             loreHits + cardHits
+        }
+        SettingsCategory.SHORTCUTS -> {
+            val actionHits = AppShortcutAction.entries.count { action ->
+                val chord = resolveShortcut(action, appState.preferences.customShortcuts).format()
+                hit(
+                    action.displayTitle(),
+                    action.displayDescription(),
+                    chord,
+                    "keyboard", "shortcut", "shortcuts", "hotkey", "keybinding", "rebind"
+                )
+            }
+            val sendHit = if (hit("Send Shortcut", "Enter", "Ctrl+Enter", "Shift+Enter", "keyboard", "shortcuts")) 1 else 0
+            actionHits + sendHit
         }
         SettingsCategory.BACKUP_OTA -> {
             listOf(
@@ -280,7 +294,8 @@ internal fun GlobalSettingsSearchResultsSubpage(
     // 3. Workspace.
     val hitWorkspaceMode = hit("Agent approvals and file access", "Agent permissions", "assistant defaults", "inherit", "web access", "network", "sandbox", "power", "keep awake", "tools", "Workspace Mode", "Read-Only", "Agent R/W", "fs_read", "fs_edit", "todo_write", "folder", "workspace")
     val hitShellExec = hit("Shell full process access", "shell_exec", "terminal", "powershell", "bash", "command", "workspace")
-    val anyWorkspaceMatch = hitWorkspaceMode || hitShellExec
+    val hitExtensions = hit("MCP servers", "mcp.json", "Import JSON", "local command", "Skills", "SKILL.md", "Import folder", "zip", "offline")
+    val anyWorkspaceMatch = hitWorkspaceMode || hitShellExec || hitExtensions
 
     // 4. Default models.
     val hitGlobalModel = hit("Global Default Chat Model", "Default Model", "primary model")
@@ -301,10 +316,22 @@ internal fun GlobalSettingsSearchResultsSubpage(
         }
     }
     val hitWorldBookGeneral = hit("World Book", "Lorebook", "Character Card", "PNG", "JSON", "chara", "ccv3", "System Prompt Preset")
+    val matchingShortcuts = remember(appState.preferences.customShortcuts, tokens) {
+        AppShortcutAction.entries.filter { action ->
+            val chord = resolveShortcut(action, appState.preferences.customShortcuts).format()
+            hit(
+                action.displayTitle(),
+                action.displayDescription(),
+                chord,
+                "keyboard", "shortcut", "shortcuts", "hotkey", "keybinding", "rebind", "reset"
+            )
+        }
+    }
+    val hitShortcutsSection = matchingShortcuts.isNotEmpty() || hit("Keyboard Shortcuts", "Shortcuts", "Keybindings", "Hotkeys", "Send Shortcut")
     val hitOtaBackup = hit("Backup & Updates", "OTA", "Check for Updates at Launch", "GitHub Release", "Update", "Export Backup", "Restore Backup", "Wipe All Local Data", "storage")
 
     val hasAnyResult = anyPrefMatch || anyProviderMatch || anyWorkspaceMatch || anyDefaultModelMatch ||
-        matchingAssistants.isNotEmpty() || matchingLore.isNotEmpty() || hitWorldBookGeneral || hitOtaBackup
+        matchingAssistants.isNotEmpty() || matchingLore.isNotEmpty() || hitWorldBookGeneral || hitShortcutsSection || hitOtaBackup
 
     Column(
         modifier = Modifier
@@ -1021,6 +1048,45 @@ internal fun GlobalSettingsSearchResultsSubpage(
                     text = "${plural(matchingLore.size, "matching World Book fragment")}.",
                     style = p.uiLabelStyle
                 )
+            }
+        }
+
+        if (hitShortcutsSection) {
+            SepiaSectionCard(
+                title = Strings.keyboardShortcuts,
+                subtitle = Strings.clickAnyShortcutToRecord,
+                headerAction = {
+                    SepiaButton(
+                        text = Strings.openShortcuts,
+                        compact = true,
+                        style = SepiaButtonStyle.OUTLINE,
+                        onClick = { onJumpToCategory(SettingsCategory.SHORTCUTS) }
+                    )
+                }
+            ) {
+                Column(verticalArrangement = Arrangement.spacedBy(Space.s8)) {
+                    val shown = matchingShortcuts.ifEmpty { AppShortcutAction.entries }
+                    shown.forEach { action ->
+                        val binding = resolveShortcut(action, prefs.customShortcuts)
+                        @OptIn(ExperimentalLayoutApi::class)
+                        FlowRow(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalArrangement = Arrangement.spacedBy(Space.s4),
+                            itemVerticalAlignment = Alignment.CenterVertically
+                        ) {
+                            BasicText(
+                                text = action.displayTitle(),
+                                style = p.uiBodyStyle,
+                                modifier = Modifier.weight(1f, fill = false).padding(end = Space.s8)
+                            )
+                            ShortcutKeycapRow(
+                                tokens = binding.keycapTokens(),
+                                highlighted = binding != action.defaultBinding
+                            )
+                        }
+                    }
+                }
             }
         }
 

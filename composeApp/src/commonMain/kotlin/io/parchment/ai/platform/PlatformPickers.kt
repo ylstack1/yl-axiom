@@ -179,6 +179,10 @@ expect object PlatformPickers {
     /** Copies a local media file to a chosen location without loading it into memory. Null means cancelled or missing. */
     suspend fun exportLocalFile(defaultFileName: String, filePath: String): String?
     suspend fun pickWorkspaceDirectory(currentPath: String): String?
+    /** Lets the user choose a local directory with a custom dialog title (reuses OS folder picker). */
+    suspend fun pickDirectory(dialogTitle: String, currentPath: String = ""): String?
+    /** Desktop-only native picker returning a local executable or script path without reading its bytes. */
+    suspend fun pickLocalCommandFile(dialogTitle: String = "Select Local MCP Server Executable or Script"): String?
     suspend fun pickFontFile(dialogTitle: String = "Select .TTF or .OTF Font"): String?
     fun loadCustomFontFamily(fontPath: String): FontFamily?
     fun loadBundledFontFamily(bundleName: String): FontFamily?

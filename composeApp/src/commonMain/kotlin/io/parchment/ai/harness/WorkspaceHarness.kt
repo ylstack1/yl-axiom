@@ -67,9 +67,27 @@ object WorkspaceHarness {
 
     data class WorkspaceSkill(val name: String, val description: String, val path: String)
 
+    data class WorkspaceSlashCommand(
+        val command: String,
+        val name: String,
+        val description: String,
+        val relativePath: String,
+        val template: String,
+        val takesArgument: Boolean = false
+    )
+
     internal const val MCP_TOOL_PREFIX = WorkspaceToolCatalog.MCP_TOOL_PREFIX
+    internal const val MCP_SCHEMA_TOOL_NAME = WorkspaceToolCatalog.MCP_SCHEMA_TOOL_NAME
 
     internal fun isMcpToolName(name: String): Boolean = WorkspaceToolCatalog.isMcpToolName(name)
+
+    internal fun deferredMcpToolsCatalogPrompt(
+        policy: AgentPermissionPolicy?,
+        expandedMcpTools: Set<String> = emptySet()
+    ): String = WorkspaceToolCatalog.deferredMcpToolsCatalogPrompt(policy, expandedMcpTools)
+
+    internal fun allowedMcpTools(policy: AgentPermissionPolicy?): List<ToolDefinition> =
+        WorkspaceToolCatalog.allowedMcpTools(policy)
 
     internal fun registerExternalToolsProvider(provider: () -> List<ToolDefinition>) =
         WorkspaceToolCatalog.registerExternalToolsProvider(provider)
@@ -86,6 +104,15 @@ object WorkspaceHarness {
     fun discoverSkills(workspaceRoot: String): List<WorkspaceSkill> =
         WorkspaceContextCache.discoverSkills(workspaceRoot)
 
+    fun discoverWorkspaceCommands(workspaceRoot: String): List<WorkspaceSlashCommand> =
+        WorkspaceContextCache.discoverCommands(workspaceRoot)
+
+    fun expandWorkspaceCommand(workspaceRoot: String, rawInput: String): String? =
+        WorkspaceContextCache.expandCommand(workspaceRoot, rawInput)
+
+    fun buildSkillMarkdown(titleHint: String, content: String): Pair<String, String> =
+        WorkspaceContextCache.buildSkillMarkdown(titleHint, content)
+
     fun listDiscoveredContextFileNames(workspaceRoot: String): List<String> =
         WorkspaceContextCache.listDiscoveredContextFileNames(workspaceRoot)
 
@@ -99,9 +126,10 @@ object WorkspaceHarness {
         goalModeActive: Boolean = false,
         enableWebTools: Boolean = false,
         includeLocalWebSearchTool: Boolean = enableWebTools,
-        policy: AgentPermissionPolicy? = null
+        policy: AgentPermissionPolicy? = null,
+        expandedMcpTools: Set<String>? = null
     ): List<ToolDefinition> = WorkspaceToolCatalog.activeToolsForMode(
-        mode, workspacePath, allowShell, goalModeActive, enableWebTools, includeLocalWebSearchTool, policy
+        mode, workspacePath, allowShell, goalModeActive, enableWebTools, includeLocalWebSearchTool, policy, expandedMcpTools
     )
 
     /**
@@ -127,9 +155,10 @@ object WorkspaceHarness {
         goalModeActive: Boolean = false,
         enableWebTools: Boolean = false,
         includeLocalWebSearchTool: Boolean = enableWebTools,
-        policy: AgentPermissionPolicy? = null
+        policy: AgentPermissionPolicy? = null,
+        expandedMcpTools: Set<String>? = emptySet()
     ): JsonArray = WorkspaceToolCatalog.buildFlatFunctionTools(
-        mode, workspacePath, allowShell, goalModeActive, enableWebTools, includeLocalWebSearchTool, policy
+        mode, workspacePath, allowShell, goalModeActive, enableWebTools, includeLocalWebSearchTool, policy, expandedMcpTools
     )
 
     fun buildGeminiInteractionsTools(
@@ -139,9 +168,10 @@ object WorkspaceHarness {
         goalModeActive: Boolean = false,
         enableWebTools: Boolean = false,
         includeLocalWebSearchTool: Boolean = enableWebTools,
-        policy: AgentPermissionPolicy? = null
+        policy: AgentPermissionPolicy? = null,
+        expandedMcpTools: Set<String>? = emptySet()
     ): JsonArray = WorkspaceToolCatalog.buildFlatFunctionTools(
-        mode, workspacePath, allowShell, goalModeActive, enableWebTools, includeLocalWebSearchTool, policy
+        mode, workspacePath, allowShell, goalModeActive, enableWebTools, includeLocalWebSearchTool, policy, expandedMcpTools
     )
 
     fun buildOpenAiResponsesTools(
@@ -151,9 +181,10 @@ object WorkspaceHarness {
         goalModeActive: Boolean = false,
         enableWebTools: Boolean = false,
         includeLocalWebSearchTool: Boolean = enableWebTools,
-        policy: AgentPermissionPolicy? = null
+        policy: AgentPermissionPolicy? = null,
+        expandedMcpTools: Set<String>? = emptySet()
     ): JsonArray = WorkspaceToolCatalog.buildFlatFunctionTools(
-        mode, workspacePath, allowShell, goalModeActive, enableWebTools, includeLocalWebSearchTool, policy
+        mode, workspacePath, allowShell, goalModeActive, enableWebTools, includeLocalWebSearchTool, policy, expandedMcpTools
     )
 
     /**
@@ -166,9 +197,10 @@ object WorkspaceHarness {
         goalModeActive: Boolean = false,
         enableWebTools: Boolean = false,
         includeLocalWebSearchTool: Boolean = enableWebTools,
-        policy: AgentPermissionPolicy? = null
+        policy: AgentPermissionPolicy? = null,
+        expandedMcpTools: Set<String>? = emptySet()
     ): JsonArray = WorkspaceToolCatalog.buildOpenAiChatCompletionsTools(
-        mode, workspacePath, allowShell, goalModeActive, enableWebTools, includeLocalWebSearchTool, policy
+        mode, workspacePath, allowShell, goalModeActive, enableWebTools, includeLocalWebSearchTool, policy, expandedMcpTools
     )
 
     /**
@@ -181,9 +213,10 @@ object WorkspaceHarness {
         goalModeActive: Boolean = false,
         enableWebTools: Boolean = false,
         includeLocalWebSearchTool: Boolean = enableWebTools,
-        policy: AgentPermissionPolicy? = null
+        policy: AgentPermissionPolicy? = null,
+        expandedMcpTools: Set<String>? = emptySet()
     ): JsonArray = WorkspaceToolCatalog.buildAnthropicTools(
-        mode, workspacePath, allowShell, goalModeActive, enableWebTools, includeLocalWebSearchTool, policy
+        mode, workspacePath, allowShell, goalModeActive, enableWebTools, includeLocalWebSearchTool, policy, expandedMcpTools
     )
 
     private fun parseArgs(argumentsJson: String): JsonObject =
@@ -241,6 +274,7 @@ object WorkspaceHarness {
             "goal_complete" -> "Verifying & completing goal"
             "ask_user" -> "Waiting for your answer"
             "skill_load" -> "Loading skill ${strArg("name")}"
+            MCP_SCHEMA_TOOL_NAME -> "Loading MCP tool schemas"
             "agent_delegate" -> "Helper working: ${strArg("task").take(80)}"
             ComputerUse.TOOL_NAME -> when (strArg("action")) {
                 "screenshot" -> "Looking at the screen"
@@ -273,7 +307,8 @@ object WorkspaceHarness {
         permit: ToolExecutionPermit? = null,
         sessionId: String = "",
         appStorageRoot: String = "",
-        isCancelled: () -> Boolean = { false }
+        isCancelled: () -> Boolean = { false },
+        fileRevisions: WorkspaceFileRevisionTracker? = null
     ): ToolCallRecord {
         val toolStartMs = PlatformRuntime.monotonicTimeMillis()
         val scope = accessScope ?: ToolAccessScope(AgentPermissionPolicy(
@@ -351,12 +386,19 @@ object WorkspaceHarness {
                 strArg("pattern"),
                 args["max_results"]?.jsonPrimitive?.intOrNull ?: 200
             )
-            "fs_read" -> PlatformWorkspace.workspaceRead(
-                workspaceRoot,
-                strArg("path"),
-                args["start_line"]?.jsonPrimitive?.intOrNull ?: 1,
-                args["max_lines"]?.jsonPrimitive?.intOrNull ?: 250
-            )
+            "fs_read" -> {
+                val readPath = strArg("path")
+                PlatformWorkspace.workspaceRead(
+                    workspaceRoot,
+                    readPath,
+                    args["start_line"]?.jsonPrimitive?.intOrNull ?: 1,
+                    args["max_lines"]?.jsonPrimitive?.intOrNull ?: 250
+                ).onSuccess {
+                    if (fileRevisions != null && readPath.isNotBlank()) {
+                        fileRevisions.recordRead(readPath, PlatformWorkspace.workspaceFileStamp(workspaceRoot, readPath).getOrNull())
+                    }
+                }
+            }
             "fs_search" -> PlatformWorkspace.workspaceSearch(
                 workspaceRoot,
                 strArg("query"),
@@ -365,33 +407,84 @@ object WorkspaceHarness {
                 args["max_results"]?.jsonPrimitive?.intOrNull ?: 0
             )
             "fs_write" -> requireWriteMode(mode, "to allow writing files") {
-                PlatformWorkspace.workspaceWrite(workspaceRoot, strArg("path"), strArg("content"))
+                val writePath = strArg("path")
+                val staleError = fileRevisions?.let { tracker ->
+                    PlatformWorkspace.workspaceFileStamp(workspaceRoot, writePath).getOrNull()
+                        ?.let { diskStamp -> tracker.checkWriteAllowed(writePath, diskStamp) }
+                }
+                if (staleError != null) {
+                    Result.failure(IllegalStateException(staleError))
+                } else {
+                    PlatformWorkspace.workspaceWrite(workspaceRoot, writePath, strArg("content")).onSuccess {
+                        if (fileRevisions != null && writePath.isNotBlank()) {
+                            fileRevisions.recordWrite(writePath, PlatformWorkspace.workspaceFileStamp(workspaceRoot, writePath).getOrNull())
+                        }
+                    }
+                }
             }
             "fs_edit" -> requireWriteMode(mode, "to allow editing files") {
-                PlatformWorkspace.workspaceEdit(
-                    workspaceRoot,
-                    strArg("path"),
-                    strArg("old_text"),
-                    strArg("new_text"),
-                    args["replace_all"]?.jsonPrimitive?.booleanOrNull ?: false
-                )
+                val editPath = strArg("path")
+                val staleError = fileRevisions?.let { tracker ->
+                    PlatformWorkspace.workspaceFileStamp(workspaceRoot, editPath).getOrNull()
+                        ?.let { diskStamp -> tracker.checkWriteAllowed(editPath, diskStamp) }
+                }
+                if (staleError != null) {
+                    Result.failure(IllegalStateException(staleError))
+                } else {
+                    PlatformWorkspace.workspaceEdit(
+                        workspaceRoot,
+                        editPath,
+                        strArg("old_text"),
+                        strArg("new_text"),
+                        args["replace_all"]?.jsonPrimitive?.booleanOrNull ?: false
+                    ).onSuccess {
+                        if (fileRevisions != null && editPath.isNotBlank()) {
+                            fileRevisions.recordWrite(editPath, PlatformWorkspace.workspaceFileStamp(workspaceRoot, editPath).getOrNull())
+                        }
+                    }
+                }
             }
             "fs_multi_edit" -> requireWriteMode(mode, "to allow editing files") {
-                val editsArr = args["edits"] as? JsonArray ?: JsonArray(emptyList())
-                val parsedEdits = editsArr.mapNotNull { el ->
-                    val obj = el as? JsonObject ?: return@mapNotNull null
-                    val oldTxt = obj["old_text"]?.jsonPrimitive?.contentOrNull ?: return@mapNotNull null
-                    val newTxt = obj["new_text"]?.jsonPrimitive?.contentOrNull ?: ""
-                    val repAll = obj["replace_all"]?.jsonPrimitive?.booleanOrNull ?: false
-                    Triple(oldTxt, newTxt, repAll)
+                val editPath = strArg("path")
+                val staleError = fileRevisions?.let { tracker ->
+                    PlatformWorkspace.workspaceFileStamp(workspaceRoot, editPath).getOrNull()
+                        ?.let { diskStamp -> tracker.checkWriteAllowed(editPath, diskStamp) }
                 }
-                PlatformWorkspace.workspaceMultiEdit(workspaceRoot, strArg("path"), parsedEdits)
+                if (staleError != null) {
+                    Result.failure(IllegalStateException(staleError))
+                } else {
+                    val editsArr = args["edits"] as? JsonArray ?: JsonArray(emptyList())
+                    val parsedEdits = editsArr.mapNotNull { el ->
+                        val obj = el as? JsonObject ?: return@mapNotNull null
+                        val oldTxt = obj["old_text"]?.jsonPrimitive?.contentOrNull ?: return@mapNotNull null
+                        val newTxt = obj["new_text"]?.jsonPrimitive?.contentOrNull ?: ""
+                        val repAll = obj["replace_all"]?.jsonPrimitive?.booleanOrNull ?: false
+                        Triple(oldTxt, newTxt, repAll)
+                    }
+                    PlatformWorkspace.workspaceMultiEdit(workspaceRoot, editPath, parsedEdits).onSuccess {
+                        if (fileRevisions != null && editPath.isNotBlank()) {
+                            fileRevisions.recordWrite(editPath, PlatformWorkspace.workspaceFileStamp(workspaceRoot, editPath).getOrNull())
+                        }
+                    }
+                }
             }
             "fs_move" -> requireWriteMode(mode, "to allow moving files") {
-                PlatformWorkspace.workspaceMove(workspaceRoot, strArg("source_path"), strArg("dest_path"))
+                val src = strArg("source_path")
+                val dst = strArg("dest_path")
+                PlatformWorkspace.workspaceMove(workspaceRoot, src, dst).onSuccess {
+                    if (fileRevisions != null) {
+                        fileRevisions.recordDeleted(src)
+                        if (dst.isNotBlank()) {
+                            fileRevisions.recordWrite(dst, PlatformWorkspace.workspaceFileStamp(workspaceRoot, dst).getOrNull())
+                        }
+                    }
+                }
             }
             "fs_delete" -> requireWriteMode(mode, "to allow deleting files") {
-                PlatformWorkspace.workspaceDelete(workspaceRoot, strArg("path"))
+                val delPath = strArg("path")
+                PlatformWorkspace.workspaceDelete(workspaceRoot, delPath).onSuccess {
+                    fileRevisions?.recordDeleted(delPath)
+                }
             }
             "web_search" -> {
                 val query = strArg("query")

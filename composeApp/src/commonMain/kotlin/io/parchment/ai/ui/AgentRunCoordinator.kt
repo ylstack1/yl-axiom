@@ -192,7 +192,7 @@ internal class ParchmentProcessState(initial: AppStateSnapshot, needsHydration: 
     suspend fun nextFrameNanos(): Long? {
         val clock = frameClock.value ?: return null
         return try {
-            withTimeoutOrNull(28L) { clock.withFrameNanos { it } }
+            withTimeoutOrNull(64L) { clock.withFrameNanos { it } }
         } catch (cancelled: CancellationException) {
             currentCoroutineContext().ensureActive()
             detachClock(clock)

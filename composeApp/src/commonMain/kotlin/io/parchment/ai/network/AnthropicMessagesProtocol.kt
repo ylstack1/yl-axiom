@@ -201,6 +201,7 @@ internal suspend fun AiProviderEngine.executeAnthropicMessagesLoop(
                     }
                 }
 
+                val expandedMcpTools = currentExpandedMcpTools()
                 val wsTools = WorkspaceHarness.buildAnthropicTools(
                     session.workspaceMode,
                     session.workspacePath,
@@ -208,7 +209,8 @@ internal suspend fun AiProviderEngine.executeAnthropicMessagesLoop(
                     goalModeActive = circuitBreaker.goalState != null,
                     enableWebTools = profile.enableWebSearch || profile.enableUrlContext,
                     includeLocalWebSearchTool = profile.enableWebSearch && omitNativeWebSearchOnRetry,
-                    policy = AgentPermissionResolver.resolve(session, profile = profile)
+                    policy = AgentPermissionResolver.resolve(session, profile = profile),
+                    expandedMcpTools = expandedMcpTools
                 )
                 val allAnthropicTools = buildJsonArray {
                     if (profile.enableWebSearch && !omitNativeWebSearchOnRetry) {
@@ -704,7 +706,8 @@ internal suspend fun AiProviderEngine.executeAnthropicMessagesLoop(
             accessScope = ToolAccessScope(
                 AgentPermissionResolver.resolve(session, profile = profile),
                 goalModeActive = circuitBreaker.goalState != null,
-                includeLocalWebSearchTool = profile.enableWebSearch && omitNativeWebSearchOnRetry
+                includeLocalWebSearchTool = profile.enableWebSearch && omitNativeWebSearchOnRetry,
+                expandedMcpTools = currentExpandedMcpTools()
             ),
             calls = turnToolCalls.map { (callId, fnPair) -> Triple(callId, fnPair.first, fnPair.second) },
             firstThoughtSignature = firstSignedThinking,

@@ -180,8 +180,11 @@ fun main(args: Array<String>) {
     // Enable hardware VSync and Swing frame pacing so Skia renders smoothly at 60Hz / 120Hz / 144Hz / 240Hz.
     System.setProperty("skiko.vsync.enabled", "true")
     System.setProperty("skiko.swing.frame.pacing", "true")
-    if (PlatformRuntime.isLowMemoryDevice && System.getProperty("skiko.gpu.resourceCacheLimit") == null) {
-        System.setProperty("skiko.gpu.resourceCacheLimit", "50331648")
+    // Cap Skia Ganesh GPU resource cache at 48 MiB (32 MiB on <4 GiB PCs): large enough for 4K HiDPI surfaces and
+    // DirectWrite glyph atlases with zero corruption, while preventing D3D12MA from ballooning past 250 MB on Intel Xe UMA.
+    if (System.getProperty("skiko.gpu.resourceCacheLimit") == null) {
+        val limitBytes = if (PlatformRuntime.isLowMemoryDevice) "33554432" else "50331648"
+        System.setProperty("skiko.gpu.resourceCacheLimit", limitBytes)
     }
     preloadProcessStateInBackground()
     preloadDesktopGraphicsInBackground()

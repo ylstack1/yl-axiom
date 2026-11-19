@@ -1,7 +1,10 @@
 package io.parchment.ai.platform
 
+import java.io.File
 import java.nio.file.Files
+import java.nio.file.LinkOption
 import java.nio.file.StandardCopyOption
+import java.security.MessageDigest
 
 /** Path-guarded workspace mutations, shared so both platforms enforce exactly the same rules. */
 internal object WorkspaceFileEditor {
@@ -94,5 +97,32 @@ internal object WorkspaceFileEditor {
         val deleted = if (target.isDirectory) target.deleteRecursively() else target.delete()
         require(deleted) { "Failed to delete '$relativePath'." }
         return "Deleted '$relativePath'."
+    }
+
+    private const val MAX_HASH_STAMP_BYTES = 4L * 1024L * 1024L
+
+    fun directoryExists(path: String): Boolean {
+        val trimmed = path.trim()
+        if (trimmed.isEmpty()) return false
+        return runCatching {
+            val file = File(trimmed)
+            file.exists() && file.isDirectory
+        }.getOrDefault(false)
+    }
+
+    fun fileStamp(workspaceRoot: String, relativePath: String): String? {
+        val path = WorkspacePathGuard.resolve(workspaceRoot, relativePath)
+        if (!Files.exists(path, LinkOption.NOFOLLOW_LINKS) || !Files.isRegularFile(path, LinkOption.NOFOLLOW_LINKS)) {
+            return null
+        }
+        val size = Files.size(path)
+        return if (size <= MAX_HASH_STAMP_BYTES) {
+            val digest = MessageDigest.getInstance("SHA-256").digest(Files.readAllBytes(path))
+            val hex = digest.joinToString("") { "%02x".format(it) }
+            "$size:$hex"
+        } else {
+            val mtime = Files.getLastModifiedTime(path, LinkOption.NOFOLLOW_LINKS).toInstant()
+            "$size:${mtime.epochSecond}:${mtime.nano}"
+        }
     }
 }

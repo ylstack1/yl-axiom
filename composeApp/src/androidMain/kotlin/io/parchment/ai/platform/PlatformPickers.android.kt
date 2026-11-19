@@ -123,6 +123,13 @@ actual object PlatformPickers {
         return wsDir.absolutePath
     }
 
+    actual suspend fun pickDirectory(dialogTitle: String, currentPath: String): String? {
+        val act = AndroidPlatformHost.mainActivityRef?.get() ?: return null
+        return act.requestPickWorkspaceDirectory(currentPath)
+    }
+
+    actual suspend fun pickLocalCommandFile(dialogTitle: String): String? = null
+
     fun buildInitialDocumentTreeUri(currentPath: String): Uri? = runCatching {
         val extRoot = Environment.getExternalStorageDirectory().absolutePath.trimEnd('/')
         val cleaned = currentPath.trim().trimEnd('/')

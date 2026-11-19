@@ -63,7 +63,7 @@ class PathFilteringTest(unittest.TestCase):
     def test_docs_and_release_please_metadata_skip_heavy_builds(self):
         paths = {"README.md", "docs/DESIGN.md", "CHANGELOG.md", ".release-please-manifest.json"}
         self.assertEqual(
-            {"desktop_tests": "false", "android": "false", "windows": "false", "signing_scripts": "false"},
+            {"desktop_tests": "false", "windows_tests": "false", "android": "false", "windows": "false", "signing_scripts": "false"},
             classify_installers(paths),
         )
         self.assertEqual({"coverage": "false", "gallery": "false", "sbom": "false"}, classify_quality_signals(paths))
@@ -74,7 +74,7 @@ class PathFilteringTest(unittest.TestCase):
     def test_android_only_changes_skip_desktop_tests_and_windows_installer(self):
         paths = {"composeApp/src/androidMain/kotlin/io/parchment/ai/MainActivity.kt", "androidApp/proguard-rules.pro"}
         self.assertEqual(
-            {"desktop_tests": "false", "android": "true", "windows": "false", "signing_scripts": "false"},
+            {"desktop_tests": "false", "windows_tests": "false", "android": "true", "windows": "false", "signing_scripts": "false"},
             classify_installers(paths),
         )
         self.assertEqual({"coverage": "false", "gallery": "false", "sbom": "false"}, classify_quality_signals(paths))
@@ -85,7 +85,7 @@ class PathFilteringTest(unittest.TestCase):
     def test_desktop_only_changes_skip_android_build(self):
         paths = {"composeApp/src/desktopMain/kotlin/io/parchment/ai/Main.kt"}
         self.assertEqual(
-            {"desktop_tests": "true", "android": "false", "windows": "true", "signing_scripts": "false"},
+            {"desktop_tests": "true", "windows_tests": "true", "android": "false", "windows": "true", "signing_scripts": "false"},
             classify_installers(paths),
         )
         self.assertEqual({"coverage": "true", "gallery": "true", "sbom": "false"}, classify_quality_signals(paths))
@@ -93,33 +93,33 @@ class PathFilteringTest(unittest.TestCase):
     def test_pure_non_windows_unit_test_runs_linux_shards_only(self):
         paths = {"composeApp/src/desktopTest/kotlin/io/parchment/ai/network/StreamRecoveryHttpTest.kt"}
         self.assertEqual(
-            {"desktop_tests": "true", "android": "false", "windows": "false", "signing_scripts": "false"},
+            {"desktop_tests": "true", "windows_tests": "false", "android": "false", "windows": "false", "signing_scripts": "false"},
             classify_installers(paths),
         )
         self.assertEqual({"coverage": "true", "gallery": "false", "sbom": "false"}, classify_quality_signals(paths))
         self.assertEqual("false", classify_codeql(paths)["has_targets"])
 
-    def test_windows_platform_test_runs_windows_job_too(self):
+    def test_windows_platform_test_runs_windows_tests_without_repackaging_installer(self):
         paths = {"composeApp/src/desktopTest/kotlin/io/parchment/ai/platform/WindowsChromeTest.kt"}
         self.assertEqual(
-            {"desktop_tests": "true", "android": "false", "windows": "true", "signing_scripts": "false"},
+            {"desktop_tests": "true", "windows_tests": "true", "android": "false", "windows": "false", "signing_scripts": "false"},
             classify_installers(paths),
         )
 
     def test_installer_script_change_builds_windows_without_android_or_desktop_tests(self):
         paths = {"installer/windows-installer.iss"}
         self.assertEqual(
-            {"desktop_tests": "false", "android": "false", "windows": "true", "signing_scripts": "false"},
+            {"desktop_tests": "false", "windows_tests": "false", "android": "false", "windows": "true", "signing_scripts": "false"},
             classify_installers(paths),
         )
 
     def test_fallback_none_runs_everything_and_respects_reuse_android_run(self):
         self.assertEqual(
-            {"desktop_tests": "true", "android": "true", "windows": "true", "signing_scripts": "true"},
+            {"desktop_tests": "true", "windows_tests": "true", "android": "true", "windows": "true", "signing_scripts": "true"},
             classify_installers(None, reuse_android_run=False),
         )
         self.assertEqual(
-            {"desktop_tests": "true", "android": "false", "windows": "true", "signing_scripts": "false"},
+            {"desktop_tests": "true", "windows_tests": "true", "android": "false", "windows": "true", "signing_scripts": "false"},
             classify_installers(None, reuse_android_run=True),
         )
 

@@ -30,7 +30,7 @@ SECRET_SUFFIXES = (".jks", ".keystore", ".p12", ".pfx")
 SECRET_NAMES = ("local.properties", ".env")
 MAX_KOTLIN_LINES = 3000
 MAX_REPORTED_PER_RULE = 15
-DOC_BUDGETS = {"AGENTS.md": 5000, "TODO.md": 10000, "MEMORY.md": 10000}  # characters; every session reads these
+DOC_BUDGETS = {"AGENTS.md": 20000, "TODO.md": 20000}  # characters; every session reads these
 STATUS_FIELDS = ("**Source:**", "**Last verified", "**Next action:**")
 STATUS_HEADING = "## Current status"
 MAX_STATUS_CHARS = 1400
@@ -59,7 +59,11 @@ _DECLARATION = re.compile(
 )
 _WORD = re.compile(r"[A-Za-z_]\w*")
 _IMPORT = re.compile(r"^import ([\w.]+?)(?: as (\w+))?$", re.M)
+_IMPORT_LINE = re.compile(r"^import .*$", re.M)
 _TASK_ID = re.compile(r"^- \[[ x]\] \*\*([0-9]+\.[0-9]+[a-z]?)\b", re.M)
+_COMMENT_OR_STRING = re.compile(
+    r'"""[\s\S]*?(?:"""|$)|"(?:\\.|[^"\\\n])*"|\'(?:\\.|[^\'\\\n]){0,9}\'|//[^\n]*|/\*[\s\S]*?(?:\*/|$)'
+)
 
 
 @dataclass(frozen=True)
@@ -74,41 +78,16 @@ class Problem:
         return f"{location} [{self.rule}] {self.message}"
 
 
+def _strip_match(match: re.Match[str]) -> str:
+    token = match.group(0)
+    if token[0] in "\"'":
+        return token
+    return "\n" * token.count("\n") if token.startswith("/*") else ""
+
+
 def strip_comments(text: str) -> str:
     """Removes comments only, so `"*/*"` in a string cannot hide code from the scanners."""
-    out: list[str] = []
-    i, n = 0, len(text)
-    while i < n:
-        pair = text[i:i + 2]
-        if text[i:i + 3] == '"""':
-            end = text.find('"""', i + 3)
-            end = n if end < 0 else end + 3
-            out.append(text[i:end])
-            i = end
-        elif text[i] == '"':
-            j = i + 1
-            while j < n and text[j] not in '"\n':
-                j += 2 if text[j] == "\\" else 1
-            out.append(text[i:j + 1])
-            i = j + 1
-        elif text[i] == "'":
-            j = i + 1
-            while j < n and text[j] not in "'\n" and j - i < 10:
-                j += 2 if text[j] == "\\" else 1
-            out.append(text[i:j + 1])
-            i = j + 1
-        elif pair == "//":
-            j = text.find("\n", i)
-            i = n if j < 0 else j
-        elif pair == "/*":
-            j = text.find("*/", i + 2)
-            j = n if j < 0 else j + 2
-            out.append("\n" * text.count("\n", i, j))
-            i = j
-        else:
-            out.append(text[i])
-            i += 1
-    return "".join(out)
+    return _COMMENT_OR_STRING.sub(_strip_match, text)
 
 
 def source_set(path: str) -> str:
@@ -145,21 +124,26 @@ def check_encoding(files: dict[str, bytes]) -> list[Problem]:
 def check_unused_imports(texts: dict[str, str]) -> list[Problem]:
     problems = []
     for path, text in texts.items():
-        body = re.sub(r"^import .*$", "", text, flags=re.M)
+        body_words = set(_WORD.findall(_IMPORT_LINE.sub("", text)))
         for match in _IMPORT.finditer(text):
             name = match.group(1)
             symbol = match.group(2) or name.rsplit(".", 1)[-1]
             if symbol in IMPLICIT_IMPORTS or symbol.startswith("component") or symbol == "*":
                 continue
-            if not re.search(r"\b" + re.escape(symbol) + r"\b", body):
+            if symbol not in body_words:
                 line = text.count("\n", 0, match.start()) + 1
                 problems.append(Problem("unused-import", path, line, f"Remove unused import {name}."))
     return problems
 
 
-def check_dead_code(texts: dict[str, str], baseline: dict) -> list[Problem]:
-    main = {p: strip_comments(t) for p, t in texts.items() if source_set(p) in MAIN_SETS}
-    tests = {p: strip_comments(t) for p, t in texts.items() if source_set(p) in TEST_SETS}
+def check_dead_code(
+    texts: dict[str, str],
+    baseline: dict,
+    stripped: dict[str, str] | None = None,
+) -> list[Problem]:
+    code_by_path = stripped if stripped is not None else {p: strip_comments(t) for p, t in texts.items()}
+    main = {p: code_by_path[p] for p in texts if source_set(p) in MAIN_SETS}
+    tests = {p: code_by_path[p] for p in texts if source_set(p) in TEST_SETS}
     main_words = collections.Counter(_WORD.findall("\n".join(main.values())))
     test_words = collections.Counter(_WORD.findall("\n".join(tests.values())))
     declarations: collections.Counter = collections.Counter()
@@ -202,12 +186,12 @@ def check_file_sizes(texts: dict[str, str], baseline: dict) -> list[Problem]:
     return problems
 
 
-def check_banned(texts: dict[str, str]) -> list[Problem]:
+def check_banned(texts: dict[str, str], stripped: dict[str, str] | None = None) -> list[Problem]:
     problems = []
     for path, text in texts.items():
         if source_set(path) not in MAIN_SETS:
             continue
-        code = strip_comments(text)
+        code = stripped[path] if stripped is not None else strip_comments(text)
         for pattern, message in BANNED_PATTERNS:
             for match in pattern.finditer(code):
                 problems.append(Problem("banned", path, code.count("\n", 0, match.start()) + 1, message))
@@ -288,12 +272,13 @@ def check_links(files: dict[str, bytes]) -> list[Problem]:
 
 def check_files(files: dict[str, bytes], baseline: dict) -> list[Problem]:
     texts = {p: d.decode("utf-8", "replace").replace("\r\n", "\n").lstrip("﻿") for p, d in files.items() if is_kotlin(p)}
+    stripped = {p: strip_comments(t) for p, t in texts.items()}
     return (
         check_encoding(files)
         + check_unused_imports(texts)
-        + check_dead_code(texts, baseline)
+        + check_dead_code(texts, baseline, stripped)
         + check_file_sizes(texts, baseline)
-        + check_banned(texts)
+        + check_banned(texts, stripped)
         + check_docs(files)
         + check_links(files)
         + check_secrets(sorted(files))

@@ -26,7 +26,7 @@ Run the desktop app with `.\gradlew.bat :composeApp:run`. Create an empty `compo
 
 ## Find your way
 
-[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) maps every source set, package, file, runtime flow and test suite, with a lookup table for common changes. Read the matching section of [MEMORY.md](MEMORY.md) before changing storage, protocols or platform code, and search portably across desktop/Windows environments with `git grep -n`.
+[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) maps every source set, package, file, runtime flow and test suite, with a lookup table for common changes. Read the matching section of [AGENTS.md](AGENTS.md#stable-contracts) before changing storage, protocols or platform code, and search portably across desktop/Windows environments with `git grep -n`.
 
 ## Build and test
 

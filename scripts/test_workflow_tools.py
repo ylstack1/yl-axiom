@@ -17,7 +17,7 @@ import verify  # noqa: E402
 MAIN = "composeApp/src/commonMain/kotlin/io/parchment/ai/ui/Sample.kt"
 TEST = "composeApp/src/commonTest/kotlin/io/parchment/ai/ui/SampleTest.kt"
 GOOD_TODO = "# T\n\n## Current status\n\n- **Source:** a\n- **Last verified:** b\n- **Next action:** c\n\n## Open\n\n- [ ] **1.1 Task:** x\n"
-GOOD_DOCS = {"AGENTS.md": b"use scripts/verify.py", "TODO.md": GOOD_TODO.encode(), "MEMORY.md": b"m"}
+GOOD_DOCS = {"AGENTS.md": b"use scripts/verify.py", "TODO.md": GOOD_TODO.encode()}
 
 
 def rules(problems: list[quality.Problem]) -> list[str]:
@@ -98,13 +98,21 @@ class KotlinRules(unittest.TestCase):
 
 class DocumentRules(unittest.TestCase):
     def test_budgets_are_enforced(self):
-        problems = quality.check_docs({**GOOD_DOCS, "AGENTS.md": b"scripts/verify.py" + b"x" * 9000})
+        problems = quality.check_docs({**GOOD_DOCS, "AGENTS.md": b"scripts/verify.py" + b"x" * 20000})
         self.assertEqual(["docs"], rules(problems))
+        todo_over = GOOD_TODO.encode() + b"x" * 20000
+        self.assertEqual(["docs"], rules(quality.check_docs({**GOOD_DOCS, "TODO.md": todo_over})))
+        # MEMORY.md is merged into AGENTS.md and has no separate budget cap.
+        self.assertEqual([], rules(quality.check_docs({**GOOD_DOCS, "MEMORY.md": b"x" * 25000})))
 
     def test_budgets_count_characters_not_bytes(self):
-        dashes = "—".encode() * 10000  # 10,000 characters, 30,000 bytes
-        self.assertEqual([], rules(quality.check_docs({**GOOD_DOCS, "MEMORY.md": dashes})))
-        self.assertEqual(["docs"], rules(quality.check_docs({**GOOD_DOCS, "MEMORY.md": dashes + b"x"})))
+        prefix = "scripts/verify.py\n"
+        dashes = prefix.encode() + "—".encode() * (20000 - len(prefix))  # 20,000 characters, >59,000 bytes
+        self.assertEqual([], rules(quality.check_docs({**GOOD_DOCS, "AGENTS.md": dashes})))
+        self.assertEqual(["docs"], rules(quality.check_docs({**GOOD_DOCS, "AGENTS.md": dashes + b"x"})))
+        todo_exact = GOOD_TODO.encode() + "—".encode() * (20000 - len(GOOD_TODO))
+        self.assertEqual([], rules(quality.check_docs({**GOOD_DOCS, "TODO.md": todo_exact})))
+        self.assertEqual(["docs"], rules(quality.check_docs({**GOOD_DOCS, "TODO.md": todo_exact + b"x"})))
 
     def test_status_fields_are_required(self):
         todo = GOOD_TODO.replace("- **Next action:** c\n", "")

@@ -77,6 +77,7 @@ jobs:
           python3 .github/scripts/run_gradle.py -- --init-script .github/scripts/kover.init.gradle.kts \
             :composeApp:koverXmlReport :composeApp:koverHtmlReport :composeApp:koverLog \
             -Dorg.gradle.jvmargs="-Xmx5g -XX:+UseParallelGC -XX:MaxMetaspaceSize=1g -Dfile.encoding=UTF-8" \
+            -Pparchment.testForks=4 \
             --no-daemon --no-configuration-cache --max-workers=4 \
             -Pkotlin.compiler.execution.strategy=in-process
 
@@ -152,13 +153,11 @@ jobs:
           distribution: "temurin"
           java-version: "25"
 
-      - name: Restore Android SDK 37 Packages
+      - name: Restore Android Platform 37 Cache
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
-          path: |
-            /usr/local/lib/android/sdk/platforms/android-37*
-            /usr/local/lib/android/sdk/build-tools/37*
-          key: android-sdk-37-${{ runner.os }}-${{ hashFiles('gradle/libs.versions.toml') }}
+          path: /usr/local/lib/android/sdk/platforms/android-37*
+          key: android-platform-37-v2-${{ runner.os }}-${{ hashFiles('gradle/libs.versions.toml') }}
 
       - name: Write Android SDK License Hashes
         run: |

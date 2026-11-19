@@ -327,6 +327,66 @@ fun parseShellApprovalPreview(command: String): ShellApprovalPreview {
     return ShellApprovalPreview(parts, writes, nested, background)
 }
 
-class AgentToolRunContext(val broker: ToolApprovalBroker?) : AbstractCoroutineContextElement(Key) {
+/**
+ * Run-scoped file revision tracker for the stale-read guard: remembers the disk fingerprint of every
+ * workspace file read or written during the current run so edits/overwrites never clobber unread or
+ * externally modified files.
+ */
+class WorkspaceFileRevisionTracker {
+    private val lock = Any()
+    private val seenStamps = HashMap<String, String>()
+
+    private fun normalize(relativePath: String): String =
+        relativePath.trim().replace('\\', '/').trimStart('/').lowercase()
+
+    fun recordRead(relativePath: String, stamp: String?) {
+        if (stamp == null) return
+        val key = normalize(relativePath)
+        if (key.isEmpty()) return
+        synchronized(lock) { seenStamps[key] = stamp }
+    }
+
+    fun recordWrite(relativePath: String, stamp: String?) {
+        if (stamp == null) return
+        val key = normalize(relativePath)
+        if (key.isEmpty()) return
+        synchronized(lock) { seenStamps[key] = stamp }
+    }
+
+    fun recordDeleted(relativePath: String) {
+        val key = normalize(relativePath)
+        if (key.isEmpty()) return
+        synchronized(lock) { seenStamps.remove(key) }
+    }
+
+    fun checkWriteAllowed(relativePath: String, currentDiskStamp: String?): String? {
+        // Creating a brand-new file that does not yet exist on disk never requires a prior fs_read.
+        if (currentDiskStamp == null) return null
+        val key = normalize(relativePath)
+        val seen = synchronized(lock) { seenStamps[key] }
+        return when {
+            seen == null ->
+                "Stale-read guard: '$relativePath' already exists and has not been read in this run. Call fs_read on '$relativePath' before editing or overwriting it."
+            seen != currentDiskStamp ->
+                "Stale-read guard: '$relativePath' changed on disk since your last fs_read. Call fs_read on '$relativePath' again before applying edits."
+            else -> null
+        }
+    }
+}
+
+class AgentToolRunContext(
+    val broker: ToolApprovalBroker?,
+    val fileRevisions: WorkspaceFileRevisionTracker = WorkspaceFileRevisionTracker()
+) : AbstractCoroutineContextElement(Key) {
+    private val mcpLock = Any()
+    private val expandedMcp = LinkedHashSet<String>()
+
+    fun expandMcpTools(names: Collection<String>) {
+        if (names.isEmpty()) return
+        synchronized(mcpLock) { expandedMcp.addAll(names) }
+    }
+
+    fun expandedMcpToolsSnapshot(): Set<String> = synchronized(mcpLock) { expandedMcp.toSet() }
+
     companion object Key : CoroutineContext.Key<AgentToolRunContext>
 }

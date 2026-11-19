@@ -1,21 +1,14 @@
 # Parchment TODO
 
-Updated 2026-11-18. AGENTS.md owns workflow; MEMORY holds contracts. Task IDs stay stable. Finished tasks are removed: CHANGELOG.md and the git history keep what was done.
+Updated 2026-11-19. AGENTS.md owns workflow, engineering rigor, and stable contracts. Task IDs stay stable. Finished tasks are removed: CHANGELOG.md and the git history keep what was done.
 
 ## Current status
 
-- **Source:** 2026-11-18 v2.5.1 regression & code-wrap hotfix: restored `< 200 MB` sustained memory (`-XX:TieredStopAtLevel=1`, `21.6 MB` `DEFLATED` `parchment-all.jar` instead of `51.8 MB` `STORED`, single active hydrated chat), restored true 120Hz VSync letter-by-letter SSE streaming & smooth `KissStreamingPulseDot`, removed decimals from `formatDurationFromMs` (`30s` instead of `30.8s`) with synchronized whole-second ticks, fixed `AtomicFileStorage` Windows 15.6 ms timer phase-lock, and enabled universal code/diff wrapping across standard fences, ````diff` fences, `SepiaFileDiffCard` (Unified & Split), short bubble turns, and the attachment preview modal.
-- **Last verified:** 2026-11-18, `verify.py final` (564 tests + 37 UI gallery captures, signed R8 APK, single-JAR ProGuard/Leyden AOT package) + `verify.py perf` (`desktop_title_ms=808`, `desktop_first_launch_title_ms=795`, `desktop_idle_private_mb=194.8`, `desktop_app_image_mb=173.1`, `apk_mb=4.4`, `live_turn_ab new_p95_ms=7.6`, `desktop_cds_archives_ok=True`).
-- **Next action:** Execute Batch 3 (`18.4`: Settings keyboard shortcuts subpage, click-to-record rebinding & `CommandPalette` reflection).
+- **Source:** 2026-11-19 Batches 3–6 (`18.4`–`18.7`), 2x CI overhaul & live VSync/CPU/RAM rescue: fixed `20–30 fps` SSE throttle (`GenerationRun` decoupled `content` from `thinkingSummary`, `visibleTextCopyIntervalMs` `48->16 ms`, `nextFrameNanos` `28->64 ms`), killed `84.3%` (`108.6%` core) Shenandoah GC spin loop (removed `-XX:SoftMaxHeapSize=16m`, set `UncommitDelay=5000`, `ControlIntervalMin=50`/`Max=900`, `GuaranteedGCInterval=0`), capped D3D12 Skia cache at `48 MiB` (`259 MB` GPU bloat fixed), deduplicated/trimmed `ModelsDevClient`, and added `> 512 KB` stub-fast cold start (`9 MB` chat `1,340->822 ms`).
+- **Last verified:** 2026-11-19, `verify.py final` (582 tests + 40 gallery PNGs, signed R8 APK, single-JAR ProGuard/Leyden AOT, 0 WiX) + `verify.py perf` (`desktop_title_ms=865`, `desktop_first_launch_title_ms=783`, `desktop_idle_private_mb=193.8`, `live_turn_ab new_p95_ms=6.8`, `apk_mb=4.5`) + 34 `.github/scripts` tests.
+- **Next action:** Open PR and release to publish Batches 3–6, CI 2x acceleration, and VSync/GC/GPU/cold-start fixes when approved.
 
 ## Open tasks
-
-### Planned batches
-
-- [ ] **18.4 Settings keyboard shortcuts subpage:** add `SettingsCategory.SHORTCUTS` (`SettingsShortcutsPage.kt`), keycap overview, click-to-record rebinding (`PreferencesConfig.customShortcuts`) with conflict check & Reset, send-key toggle, Settings search indexing, and live `handleAppShortcut`/`CommandPalette` reflection.
-- [ ] **18.5 Offline local import for Skills & MCP:** add local folder, `SKILL.md`, and `.zip` skill import (`MAX_SKILL_FILES = 64`, `1 MB`/file, `8 MB` total, traversal guard) plus `mcp.json`/`.mcp.json` and desktop command-picker MCP import (`enabled = false` default).
-- [ ] **18.6 `/plan` & `/build` modes, stale-read guard, missing-folder recovery & deferred MCP schemas:** add `/plan` (`READ_ONLY`) and `/build` (`READ_WRITE`) switches with `ToolApprovalBroker.invalidate()`, run-scoped `fs_read` revision guard before `fs_edit`/`fs_write`, active-chat missing `workspacePath` recovery prompt, and on-demand MCP schema expansion when `> 6` tools are enabled.
-- [ ] **18.7 Privacy retention badges, zero-dep `.docx` extraction & workspace `/` commands:** surface local-only server-storage/training-tier badges from catalog metadata, extract `.docx` `word/document.xml` via `ZipInputStream` (`0 KB` deps), and discover `.parchment/commands/*.md` + explicit Save-as-Skill.
 
 ### For the user
 

@@ -98,6 +98,7 @@ import io.parchment.ai.platform.PlatformVoice
 import io.parchment.ai.platform.PlatformWorkspace
 import io.parchment.ai.protocol.O200kTokenizer
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.IO
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.first
@@ -161,6 +162,8 @@ internal fun ManuscriptViewport(
     onImpersonateDraft: () -> Unit,
     onAutoSummarizeStory: () -> Unit,
     onCompactContext: () -> Unit,
+    onSwitchWorkspaceMode: (WorkspaceMode) -> Unit = {},
+    onSaveReplyAsSkill: ((titleHint: String, content: String) -> Unit)? = null,
     onRewindToNode: (Int) -> Unit,
     onForkSessionFromNode: (Int) -> Unit,
     onStopStream: () -> Unit,
@@ -238,8 +241,8 @@ internal fun ManuscriptViewport(
         }
     }
 
-    // Auto-scroll to bottom when opening or switching to a chat (when enabled in Settings -> Preferences)
-    LaunchedEffect(activeSession.id, preferences.autoScrollToBottomOnOpen) {
+    // Auto-scroll to bottom when opening, switching to, or finishing hydration of a large chat
+    LaunchedEffect(activeSession.id, activeSession.isCompactStub, preferences.autoScrollToBottomOnOpen) {
         userDisengagedAutoFollow = false
         wasScrolledUpSincePause = false
         isPointerInteracting = false
@@ -575,7 +578,7 @@ internal fun ManuscriptViewport(
             ) {
                 item(key = "top-spacer", contentType = "spacer") { Spacer(Modifier.height(Space.s10)) }
 
-                if (activeSession.messages.isEmpty()) {
+                if (activeSession.messages.isEmpty() && !(activeSession.isCompactStub && activeSession.displayMessageCount > 0)) {
                     item(key = "empty-intro", contentType = "intro") {
                         EmptyChatIntro(activeSession, activeAssistant, activeProfile, preferences, onUpdateSession, onOpenProviderSettings)
                     }
@@ -684,6 +687,11 @@ internal fun ManuscriptViewport(
                     val itemOnRegenerate = remember(node.id, onRegenerateNode) { { onRegenerateNode(latestIndex.value) } }
                     val itemOnTranslate = remember(node.id, onTranslateNode) { { onTranslateNode(latestIndex.value) } }
                     val itemOnContinue = remember(node.id, onContinueAssistantNode) { { onContinueAssistantNode(latestIndex.value) } }
+                    val itemOnSaveAsSkill: (() -> Unit)? = if (onSaveReplyAsSkill != null && node.role == MessageRole.ASSISTANT) {
+                        remember(node.id, activeSession.title, node.activeVariant.content, onSaveReplyAsSkill) {
+                            { onSaveReplyAsSkill(activeSession.title, node.activeVariant.content) }
+                        }
+                    } else null
                     MessageTurnItem(
                         node = node,
                         nodeIndex = index,
@@ -709,6 +717,7 @@ internal fun ManuscriptViewport(
                         onRegenerate = itemOnRegenerate,
                         onTranslate = itemOnTranslate,
                         onContinue = itemOnContinue,
+                        onSaveAsSkill = itemOnSaveAsSkill,
                         onInspectAttachment = onInspectAttachment,
                         onInspectGeneratedImage = onInspectGeneratedImage
                     )
@@ -1495,6 +1504,97 @@ internal fun ManuscriptViewport(
                     }
                 }
 
+                val hasMountedComposerWorkspace = effectiveComposerWsMode != WorkspaceMode.OFF && effectiveComposerWsPath.isNotBlank()
+                var missingWorkspaceFolder by remember(effectiveComposerWsPath, effectiveComposerWsMode) { mutableStateOf(false) }
+                LaunchedEffect(effectiveComposerWsPath, effectiveComposerWsMode) {
+                    missingWorkspaceFolder = if (hasMountedComposerWorkspace) {
+                        withContext(Dispatchers.IO) { !PlatformWorkspace.workspaceDirectoryExists(effectiveComposerWsPath) }
+                    } else {
+                        false
+                    }
+                }
+                if (missingWorkspaceFolder) {
+                    val recoveryShape = RoundedCornerShape(Radius.r10)
+                    @OptIn(ExperimentalLayoutApi::class)
+                    FlowRow(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(recoveryShape)
+                            .background(p.danger.copy(alpha = 0.10f))
+                            .border(LineWidth.emphasis, p.danger.copy(alpha = 0.55f), recoveryShape)
+                            .padding(horizontal = Space.s12, vertical = Space.s8),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalArrangement = Arrangement.spacedBy(Space.s8),
+                        itemVerticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Row(
+                            modifier = Modifier.weight(1f, fill = false).padding(end = Space.s8),
+                            horizontalArrangement = Arrangement.spacedBy(Space.s8),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            KissVectorIcon(icon = KissIcon.FOLDER, tint = p.danger, size = IconSize.md)
+                            Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                                BasicText(
+                                    text = Strings.missingWorkspaceFolderTitle(effectiveComposerWsPath),
+                                    style = p.uiLabelStyle.copy(color = p.primaryInk, fontWeight = FontWeight.SemiBold),
+                                    maxLines = 2,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                                BasicText(
+                                    text = Strings.missingWorkspaceFolderSubtitle,
+                                    style = p.uiLabelStyle.copy(color = p.mutedInk)
+                                )
+                            }
+                        }
+                        Row(
+                            horizontalArrangement = Arrangement.spacedBy(Space.s6),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            SepiaButton(
+                                text = Strings.chooseFolder,
+                                compact = true,
+                                style = SepiaButtonStyle.PRIMARY,
+                                onClick = {
+                                    scope.launch {
+                                        val picked = PlatformPickers.pickWorkspaceDirectory("")
+                                        if (!picked.isNullOrBlank()) {
+                                            onUpdateSession { sess ->
+                                                val base = sess.permissionOverrides ?: AgentPermissionResolver.legacyOverrides(sess, activeProfile)
+                                                sess.copy(
+                                                    workspacePath = picked,
+                                                    workspaceMode = if (effectiveComposerWsMode == WorkspaceMode.OFF) WorkspaceMode.READ_ONLY else effectiveComposerWsMode,
+                                                    permissionOverrides = base.copy(
+                                                        workspacePath = picked,
+                                                        workspaceMode = if (effectiveComposerWsMode == WorkspaceMode.OFF) WorkspaceMode.READ_ONLY else base.workspaceMode
+                                                    )
+                                                )
+                                            }
+                                        }
+                                    }
+                                }
+                            )
+                            SepiaButton(
+                                text = Strings.clearFolder,
+                                compact = true,
+                                style = SepiaButtonStyle.OUTLINE,
+                                onClick = {
+                                    onUpdateSession { sess ->
+                                        val base = sess.permissionOverrides ?: AgentPermissionResolver.legacyOverrides(sess, activeProfile)
+                                        sess.copy(
+                                            workspacePath = "",
+                                            workspaceMode = WorkspaceMode.OFF,
+                                            permissionOverrides = base.copy(
+                                                workspacePath = "",
+                                                workspaceMode = WorkspaceMode.OFF
+                                            )
+                                        )
+                                    }
+                                }
+                            )
+                        }
+                    }
+                }
+
                 if (pendingAttachments.isNotEmpty()) {
                     Row(
                         modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
@@ -1576,18 +1676,37 @@ internal fun ManuscriptViewport(
                         modifier = Modifier.fillMaxWidth()
                     )
                 }
-                // Slash-command suggestions while typing `/`. They close at the first space (`/goal `), so they
-                // never get in the way of typing the argument.
+                // Slash-command suggestions while typing `/`. Built-in commands come first; custom
+                // `.parchment/commands/*.md` entries load off-UI and merge below them.
                 val trimmedSlashPrefix = userPromptInput.trimStart()
                 val showSlashSuggestions = trimmedSlashPrefix.startsWith("/") &&
                     !trimmedSlashPrefix.contains('\n') &&
                     !trimmedSlashPrefix.contains(' ')
-                val matchingSlashCommands = remember(trimmedSlashPrefix, showSlashSuggestions) {
+                var workspaceSlashSpecs by remember(effectiveComposerWsPath, effectiveComposerWsMode) {
+                    mutableStateOf<List<SlashCommandSpec>>(emptyList())
+                }
+                LaunchedEffect(effectiveComposerWsPath, effectiveComposerWsMode, showSlashSuggestions) {
+                    if (hasMountedComposerWorkspace && showSlashSuggestions) {
+                        workspaceSlashSpecs = withContext(Dispatchers.IO) {
+                            WorkspaceHarness.discoverWorkspaceCommands(effectiveComposerWsPath).map { cmd ->
+                                SlashCommandSpec(
+                                    command = cmd.command,
+                                    label = "✦ ${cmd.command}",
+                                    description = cmd.description.ifBlank { Strings.workspaceCommandDefaultDesc },
+                                    takesArgument = cmd.takesArgument
+                                )
+                            }
+                        }
+                    } else if (!hasMountedComposerWorkspace) {
+                        workspaceSlashSpecs = emptyList()
+                    }
+                }
+                val matchingSlashCommands = remember(trimmedSlashPrefix, showSlashSuggestions, workspaceSlashSpecs) {
                     if (!showSlashSuggestions) emptyList()
                     else {
                         val cmdToken = trimmedSlashPrefix.lowercase()
-                        BUILTIN_SLASH_COMMANDS.filter { spec ->
-                            spec.command.startsWith(cmdToken)
+                        (BUILTIN_SLASH_COMMANDS + workspaceSlashSpecs).filter { spec ->
+                            spec.command.lowercase().startsWith(cmdToken)
                         }
                     }
                 }
@@ -1610,6 +1729,8 @@ internal fun ManuscriptViewport(
                         // Commands without an argument run on a single tap.
                         onUserPromptChange("")
                         when (spec.command) {
+                            "/plan" -> onSwitchWorkspaceMode(WorkspaceMode.READ_ONLY)
+                            "/build" -> onSwitchWorkspaceMode(WorkspaceMode.READ_WRITE)
                             "/compact" -> onCompactContext()
                             "/summarize" -> onAutoSummarizeStory()
                             "/clear" -> onRequestClearCurrentChat()
@@ -1621,6 +1742,11 @@ internal fun ManuscriptViewport(
                                 if (activeSession.messages.isNotEmpty()) {
                                     onRewindToNode(activeSession.messages.lastIndex)
                                 }
+                            }
+                            else -> {
+                                // Custom workspace command from `.parchment/commands/*.md`
+                                onUserPromptChange(spec.command)
+                                onSend()
                             }
                         }
                     }

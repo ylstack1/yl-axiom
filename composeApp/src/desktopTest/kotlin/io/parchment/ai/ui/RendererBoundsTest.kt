@@ -162,8 +162,8 @@ class RendererBoundsTest {
 
     @Test fun onlyVeryLongRepliesRefreshLessOften() {
         assertEquals(0L, visibleTextCopyIntervalMs(31_999))
-        assertTrue(visibleTextCopyIntervalMs(32_000) in 1..100)
-        assertTrue(visibleTextCopyIntervalMs(128_000) in 1..100)
+        assertTrue(visibleTextCopyIntervalMs(32_000) in 1..16, "32 KB..128 KB streaming must stay at >=60Hz VSync (<=16ms)")
+        assertTrue(visibleTextCopyIntervalMs(128_000) in 1..32)
     }
 
     @Test fun theStreamingWordCountMatchesAFullCountAcrossAnySplit() {

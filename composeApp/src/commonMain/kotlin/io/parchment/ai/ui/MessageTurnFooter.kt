@@ -79,6 +79,7 @@ internal fun MessageTurnActionFooter(
     onRegenerate: () -> Unit,
     onTranslate: () -> Unit,
     onContinue: () -> Unit,
+    onSaveAsSkill: (() -> Unit)? = null,
     onToggleRawWireDrawer: () -> Unit
 ) {
     if (!isAssistant && !preferences.showUserMessageActions) return
@@ -202,6 +203,17 @@ internal fun MessageTurnActionFooter(
                         style = SepiaButtonStyle.GHOST,
                         onClick = onTranslate
                     )
+                    if (isAssistant && onSaveAsSkill != null) {
+                        SepiaButton(
+                            text = Strings.saveAsSkill,
+                            compact = true,
+                            style = SepiaButtonStyle.GHOST,
+                            onClick = {
+                                onToggleMoreActions()
+                                onSaveAsSkill()
+                            }
+                        )
+                    }
                 }
                 SepiaButton(
                     text = Strings.branch,

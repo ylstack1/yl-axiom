@@ -155,15 +155,18 @@ actual object PlatformPickers {
     }
 
     actual suspend fun pickWorkspaceDirectory(currentPath: String): String? =
+        pickDirectory("Select Local Workspace Folder for Agent Harness", currentPath)
+
+    actual suspend fun pickDirectory(dialogTitle: String, currentPath: String): String? =
         withContext(Dispatchers.IO) {
             // The native Windows folder picker first (Quick access, OneDrive, search); Swing only if COM fails.
             if (WindowsNative.isWindows) {
-                WindowsFolderDialog.pickFolder("Select Local Workspace Folder for Agent Harness", currentPath, activeWindowHwnd())
+                WindowsFolderDialog.pickFolder(dialogTitle, currentPath, activeWindowHwnd())
                     .onSuccess { return@withContext it }
             }
             runCatching {
                 val chooser = JFileChooser()
-                chooser.dialogTitle = "Select Local Workspace Folder for Agent Harness"
+                chooser.dialogTitle = dialogTitle
                 chooser.fileSelectionMode = JFileChooser.DIRECTORIES_ONLY
                 if (currentPath.isNotBlank()) {
                     val cur = File(currentPath)
@@ -172,6 +175,32 @@ actual object PlatformPickers {
                 val res = chooser.showOpenDialog(null)
                 if (res == JFileChooser.APPROVE_OPTION && chooser.selectedFile != null) {
                     chooser.selectedFile.absolutePath
+                } else null
+            }.getOrNull()
+        }
+
+    actual suspend fun pickLocalCommandFile(dialogTitle: String): String? =
+        withContext(Dispatchers.IO) {
+            if (WindowsNative.isWindows) {
+                WindowsFolderDialog.pickFiles(
+                    title = dialogTitle,
+                    filters = listOf(
+                        FileDialogFilter("Executables & Scripts (*.exe; *.cmd; *.bat; *.py; *.js; *.mjs; *.cjs; *.ps1)", "*.exe;*.cmd;*.bat;*.py;*.js;*.mjs;*.cjs;*.ps1"),
+                        FileDialogFilter("All Files (*.*)", "*.*")
+                    ),
+                    allowMultiple = false,
+                    ownerHwnd = activeWindowHwnd()
+                ).onSuccess { paths ->
+                    return@withContext paths.firstOrNull()?.let(::File)?.takeIf { it.isFile }?.absolutePath
+                }
+            }
+            runCatching {
+                val dialog = FileDialog(null as Frame?, dialogTitle, FileDialog.LOAD)
+                dialog.isVisible = true
+                val dir = dialog.directory
+                val file = dialog.file
+                if (dir != null && file != null) {
+                    File(dir, file).takeIf { it.isFile }?.absolutePath
                 } else null
             }.getOrNull()
         }

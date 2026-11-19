@@ -24,7 +24,8 @@ class McpEndToEndTest {
         val streamed: Boolean = false,
         val onMethod: ((String) -> Unit)? = null,
         /** Ends the first session at its first tool call (HTTP 404), as a restarted server would. */
-        val loseSessionOnCall: Boolean = false
+        val loseSessionOnCall: Boolean = false,
+        val customTools: List<String> = emptyList()
     ) : AutoCloseable {
         @Volatile private var sessionEnded = false
         val requests = Collections.synchronizedList(mutableListOf<Pair<JsonObject, Map<String, String>>>())
@@ -47,6 +48,9 @@ class McpEndToEndTest {
                 val result: JsonElement? = when {
                     method == "initialize" && stateless -> null
                     method == "initialize" -> buildJsonObject { put("protocolVersion", "2025-06-18"); put("capabilities", JsonObject(emptyMap())); put("serverInfo", buildJsonObject { put("name", "fixture") }) }
+                    method == "tools/list" && customTools.isNotEmpty() -> buildJsonObject {
+                        putJsonArray("tools") { customTools.forEach { add(tool(it)) } }
+                    }
                     method == "tools/list" && message["params"]?.jsonObject?.get("cursor") == null -> buildJsonObject {
                         putJsonArray("tools") { add(tool("first one")) }
                         put("nextCursor", "page-2")
@@ -536,6 +540,93 @@ for line in sys.stdin:
             }
         } finally {
             strictStateless.stop(0)
+        }
+    }
+
+    @Test fun deferredMcpSchemasExpandOnDemandPastSixToolsAndKeepApproval() = runBlocking<Unit> {
+        val eightTools = (1..8).map { "tool_$it" }
+        HttpMcp(stateless = false, customTools = eightTools).use { mcp ->
+            connected(listOf(McpServerConfig("bulk", "Bulk", url = mcp.url, enabled = true))) {
+                assertEquals(8, McpRegistry.definitions.value.size)
+                val step = AtomicInteger()
+                val requests = Collections.synchronizedList(mutableListOf<JsonObject>())
+                val providerServer = HttpServer.create(InetSocketAddress("127.0.0.1", 0), 0).apply {
+                    executor = Executors.newCachedThreadPool { Thread(it).apply { isDaemon = true } }
+                    createContext("/") { exchange ->
+                        requests += Json.parseToJsonElement(exchange.requestBody.bufferedReader().readText()).jsonObject
+                        val idx = step.getAndIncrement()
+                        val body = buildJsonObject {
+                            put("id", "r$idx"); put("status", "completed"); put("model", "fixture-model")
+                            putJsonArray("output") {
+                                when (idx) {
+                                    0 -> add(buildJsonObject {
+                                        put("type", "function_call"); put("call_id", "c1")
+                                        put("name", WorkspaceHarness.MCP_SCHEMA_TOOL_NAME)
+                                        put("arguments", """{"names":["mcp__Bulk__tool_5"]}""")
+                                    })
+                                    1 -> add(buildJsonObject {
+                                        put("type", "function_call"); put("call_id", "c2")
+                                        put("name", "mcp__Bulk__tool_5")
+                                        put("arguments", """{}""")
+                                    })
+                                    else -> add(buildJsonObject {
+                                        put("type", "message"); put("role", "assistant")
+                                        putJsonArray("content") { add(buildJsonObject { put("type", "output_text"); put("text", "Expanded and ran.") }) }
+                                    })
+                                }
+                            }
+                        }.toString().toByteArray()
+                        exchange.responseHeaders.set("Content-Type", "application/json")
+                        exchange.sendResponseHeaders(200, body.size.toLong())
+                        exchange.responseBody.use { it.write(body) }
+                    }
+                    start()
+                }
+                try {
+                    val profile = ProviderProfile(
+                        "fixture-bulk", "Fixture", ProviderProtocol.CUSTOM,
+                        customDialect = CUSTOM_DIALECT_OPENAI_RESPONSES,
+                        baseUrl = "http://127.0.0.1:${providerServer.address.port}",
+                        defaultModel = "fixture-model", thinkingEffort = "none",
+                        customModelSpecs = mapOf("fixture-model" to ModelPricingSpec("fixture-model"))
+                    )
+                    val session = ChatSession(
+                        "chat-bulk", "Bulk", 1L, 1L, profile.id,
+                        workspacePath = "", workspaceMode = WorkspaceMode.OFF,
+                        permissionOverrides = noWorkspace.asOverrides()
+                    )
+                    val broker = ToolApprovalBroker("run-bulk", "chat-bulk", { ToolAccessScope(noWorkspace) })
+                    val run = async(AgentToolRunContext(broker)) {
+                        withTimeout(12_000) {
+                            AiProviderEngine.streamGeneration(
+                                profile = profile,
+                                session = session,
+                                historyNodes = listOf(MessageNode("u", MessageRole.USER, listOf(MessageVariant("v", content = "Use tool 5"))))
+                            ).toList()
+                        }
+                    }
+                    // Step 1 (mcp_schema) runs without blocking for approval; Step 2 (mcp__Bulk__tool_5) still requires approval.
+                    val approvalReq = withTimeout(8_000) { broker.requests.first { it.isNotEmpty() }.single() }
+                    assertEquals("mcp__Bulk__tool_5", approvalReq.toolName)
+                    assertTrue(broker.respond(approvalReq.requestId, ToolApprovalDecision.ALLOW_ONCE))
+                    val completed = run.await().filterIsInstance<StreamUpdate.Completed>().single()
+                    assertEquals("Expanded and ran.", completed.fullContent)
+                    assertEquals(3, requests.size)
+
+                    val req0Tools = requests[0].getValue("tools").jsonArray.map { it.jsonObject.getValue("name").jsonPrimitive.content }
+                    assertTrue(WorkspaceHarness.MCP_SCHEMA_TOOL_NAME in req0Tools, "Request 0 must advertise mcp_schema: $req0Tools")
+                    assertTrue(req0Tools.none { WorkspaceHarness.isMcpToolName(it) }, "Request 0 must defer all 8 raw MCP schemas: $req0Tools")
+                    assertTrue("Deferred MCP Tools (8 available)" in requests[0].toString(), "Request 0 prompt must list deferred MCP catalog")
+
+                    val req1Tools = requests[1].getValue("tools").jsonArray.map { it.jsonObject.getValue("name").jsonPrimitive.content }
+                    assertTrue("mcp__Bulk__tool_5" in req1Tools, "Request 1 must advertise expanded mcp__Bulk__tool_5: $req1Tools")
+                    assertFalse("mcp__Bulk__tool_1" in req1Tools, "Unrequested MCP tools must remain deferred: $req1Tools")
+                    assertTrue("http says hi" in requests[2].toString())
+                    broker.close()
+                } finally {
+                    providerServer.stop(0)
+                }
+            }
         }
     }
 }

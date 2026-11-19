@@ -17,6 +17,7 @@ import io.parchment.ai.model.ProviderProfile
 import io.parchment.ai.model.ProviderProtocol
 import io.parchment.ai.model.QueuedPromptItem
 import io.parchment.ai.harness.AgentToolRunContext
+import io.parchment.ai.harness.WorkspaceHarness
 import io.parchment.ai.network.cancelBackgroundInteraction
 import io.parchment.ai.network.stripInlineErrorNotices
 import io.parchment.ai.platform.MAX_INLINE_ATTACHMENT_BYTES
@@ -25,6 +26,7 @@ import io.parchment.ai.strings.Strings
 import io.parchment.ai.platform.inlineAttachmentText
 import io.parchment.ai.model.AgentPermissionResolver
 import io.parchment.ai.model.AgentPermissionOverrides
+import io.parchment.ai.model.WorkspaceMode
 import io.parchment.ai.model.withLegacyWorkspaceChangeFrom
 import io.parchment.ai.network.AiProviderEngine
 import io.parchment.ai.network.OtaReleaseInfo
@@ -37,6 +39,7 @@ import io.parchment.ai.platform.PickedBinaryFile
 import io.parchment.ai.platform.PlatformRuntime
 import io.parchment.ai.platform.PlatformStorage
 import io.parchment.ai.platform.PlatformVoice
+import io.parchment.ai.platform.PlatformWorkspace
 import io.parchment.ai.platform.normalizePickedBinaryFile
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.IO
@@ -245,6 +248,8 @@ internal class ParchmentAppController(
                 lower.endsWith(".mp3") || lower.endsWith(".wav") || lower.endsWith(".ogg") ||
                 lower.endsWith(".flac") || lower.endsWith(".m4a")
             val isPdf = resolvedMime == "application/pdf" || lower.endsWith(".pdf")
+            val isDocx = lower.endsWith(".docx") ||
+                resolvedMime == "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
 
             when {
                 isImg -> {
@@ -298,6 +303,31 @@ internal class ParchmentAppController(
                         mimeType = mime,
                         base64Data = "",
                         localFilePath = savedPath
+                    )
+                }
+                isDocx -> {
+                    val savedPath = PlatformStorage.saveGeneratedMediaFile("att-$now-${picked.fileName}", picked.bytes, sessionId = activeSession.id)
+                    val extracted = PlatformWorkspace.extractDocxText(picked.bytes)
+                    extracted.fold(
+                        onSuccess = { docText ->
+                            PromptAttachment(
+                                id = "att-$now",
+                                fileName = picked.fileName,
+                                mimeType = "text/plain",
+                                textContent = docText,
+                                localFilePath = savedPath
+                            )
+                        },
+                        onFailure = { err ->
+                            bannerNotification = Strings.unableToExtractDocx(picked.fileName, err.message.orEmpty())
+                            PromptAttachment(
+                                id = "att-$now",
+                                fileName = picked.fileName,
+                                mimeType = "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                                localFilePath = savedPath,
+                                textContent = "[${Strings.binaryFile} attached: ${picked.fileName} (${picked.bytes.size / 1024} KB)]"
+                            )
+                        }
                     )
                 }
                 else -> {
@@ -925,14 +955,40 @@ internal class ParchmentAppController(
             return
         }
 
-        // `/btw <question>` asks a side question; once answered it is left out of later context.
-        val isBtw = rawInput.startsWith("/btw ", ignoreCase = true)
-        val cleanedInput = if (isBtw) {
-            "[Side Question (/btw): ${rawInput.substringAfter(" ").trim()}]"
-        } else if (isGoalModeEnabled && !rawInput.startsWith("/goal", ignoreCase = true)) {
-            "/goal $rawInput"
+        // `/plan` (Read-Only) and `/build` (Agent R/W) mode switches invalidate active approval grants immediately.
+        val isPlanCommand = rawInput.equals("/plan", ignoreCase = true) || rawInput.startsWith("/plan ", ignoreCase = true)
+        val isBuildCommand = rawInput.equals("/build", ignoreCase = true) || rawInput.startsWith("/build ", ignoreCase = true)
+        val effectiveInput = if (isPlanCommand || isBuildCommand) {
+            val targetMode = if (isPlanCommand) WorkspaceMode.READ_ONLY else WorkspaceMode.READ_WRITE
+            val rest = rawInput.substringAfter(' ', "").trim()
+            val switched = switchWorkspaceMode(targetMode)
+            if (rest.isEmpty() && currentAtts.isEmpty()) {
+                userPromptInput = ""
+                updateActiveSession { it.copy(draftInput = "") }
+                return
+            }
+            if (!switched) return
+            rest
         } else {
             rawInput
+        }
+
+        // Custom workspace slash command (`.parchment/commands/<name>.md`) expansion when a folder is mounted.
+        val expandedWorkspacePrompt = if (effectiveInput.startsWith("/")) {
+            val effectiveWs = AgentPermissionResolver.resolve(activeSession, activeAssistant, activeProfile)
+            if (effectiveWs.hasWorkspace) WorkspaceHarness.expandWorkspaceCommand(effectiveWs.workspacePath, effectiveInput)
+            else null
+        } else null
+        val promptAfterCommands = expandedWorkspacePrompt ?: effectiveInput
+
+        // `/btw <question>` asks a side question; once answered it is left out of later context.
+        val isBtw = promptAfterCommands.startsWith("/btw ", ignoreCase = true)
+        val cleanedInput = if (isBtw) {
+            "[Side Question (/btw): ${promptAfterCommands.substringAfter(" ").trim()}]"
+        } else if (isGoalModeEnabled && !promptAfterCommands.startsWith("/goal", ignoreCase = true)) {
+            "/goal $promptAfterCommands"
+        } else {
+            promptAfterCommands
         }
 
         // Support "Paste long text as file" threshold
@@ -1006,6 +1062,22 @@ internal class ParchmentAppController(
             triggerAutoSummarizeStory(autoMuteOlderTurns = false)
             return
         }
+        val steerIsPlan = steerText.equals("/plan", ignoreCase = true) || steerText.startsWith("/plan ", ignoreCase = true)
+        val steerIsBuild = steerText.equals("/build", ignoreCase = true) || steerText.startsWith("/build ", ignoreCase = true)
+        val effectiveSteerText = if (steerIsPlan || steerIsBuild) {
+            val targetMode = if (steerIsPlan) WorkspaceMode.READ_ONLY else WorkspaceMode.READ_WRITE
+            val rest = steerText.substringAfter(' ', "").trim()
+            val switched = switchWorkspaceMode(targetMode)
+            if (rest.isEmpty() && atts.isEmpty()) {
+                userPromptInput = ""
+                updateActiveSession { it.copy(draftInput = "") }
+                return
+            }
+            if (!switched) return
+            rest
+        } else {
+            steerText
+        }
 
         userPromptInput = ""
         assistantPrefillInput = ""
@@ -1014,10 +1086,67 @@ internal class ParchmentAppController(
             stopSessionStream(targetSessId)?.join()
             dispatchPromptItem(
                 sessionId = targetSessId,
-                text = steerText,
+                text = effectiveSteerText,
                 prefill = prefill,
                 attachments = atts,
                 isGuidedDirection = false
+            )
+        }
+    }
+
+    /** Switches the active chat between `/plan` (Read-Only) and `/build` (Agent R/W) and invalidates approval grants. */
+    fun switchWorkspaceMode(targetMode: WorkspaceMode): Boolean {
+        val sessId = activeSession.id
+        val effective = AgentPermissionResolver.resolve(activeSession, activeAssistant, activeProfile)
+        if (targetMode == WorkspaceMode.READ_WRITE && effective.workspacePath.isBlank()) {
+            bannerNotification = Strings.chooseWorkspaceFolderFirst
+            return false
+        }
+        updateActiveSession(immediate = true) { sess ->
+            val baseOverrides = sess.permissionOverrides ?: AgentPermissionResolver.legacyOverrides(sess, activeProfile)
+            sess.copy(
+                workspaceMode = targetMode,
+                permissionOverrides = baseOverrides.copy(workspaceMode = targetMode)
+            )
+        }
+        activeStreamsBySession[sessId]?.toolApprovalBroker?.let { broker ->
+            broker.invalidate()
+            appProcessScope.launch { broker.refreshPolicy() }
+        }
+        bannerNotification = if (targetMode == WorkspaceMode.READ_ONLY) Strings.switchedToPlanMode else Strings.switchedToBuildMode
+        return true
+    }
+
+    /** Explicitly saves an assistant reply into `.parchment/skills/<slug>/SKILL.md` without overwriting existing skills. */
+    fun saveReplyAsWorkspaceSkill(titleHint: String, content: String) {
+        val trimmed = content.trim()
+        if (trimmed.isEmpty()) return
+        val effective = AgentPermissionResolver.resolve(activeSession, activeAssistant, activeProfile)
+        if (effective.workspaceMode != WorkspaceMode.READ_WRITE || effective.workspacePath.isBlank()) {
+            bannerNotification = Strings.chooseAFolderWithWriteAccess
+            return
+        }
+        val wsPath = effective.workspacePath
+        val (baseSlug, markdown) = WorkspaceHarness.buildSkillMarkdown(titleHint, trimmed)
+        uiScope.launch {
+            val result = withContext(Dispatchers.IO) {
+                runCatching {
+                    var candidate = baseSlug
+                    var suffix = 2
+                    while (PlatformWorkspace.workspaceRead(wsPath, ".parchment/skills/$candidate/SKILL.md", 1, 1).isSuccess && suffix <= 50) {
+                        candidate = "${baseSlug.take(44)}-$suffix"
+                        suffix++
+                    }
+                    val finalMarkdown = if (candidate == baseSlug) markdown
+                    else markdown.replaceFirst("name: $baseSlug", "name: $candidate")
+                    PlatformWorkspace.workspaceWrite(wsPath, ".parchment/skills/$candidate/SKILL.md", finalMarkdown).getOrThrow()
+                    WorkspaceHarness.invalidateWorkspaceCache(wsPath)
+                    candidate
+                }
+            }
+            result.fold(
+                onSuccess = { savedName -> bannerNotification = Strings.savedWorkspaceSkill(savedName) },
+                onFailure = { err -> bannerNotification = Strings.unableToSaveSkill(err.message.orEmpty()) }
             )
         }
     }

@@ -166,13 +166,15 @@ internal suspend fun AiProviderEngine.executeOpenAiChatCompletionsLoop(
                         add(JsonPrimitive("image"))
                     }
                 }
+                val expandedMcpTools = currentExpandedMcpTools()
                 val wsTools = WorkspaceHarness.buildOpenAiChatCompletionsTools(
                     session.workspaceMode,
                     session.workspacePath,
                     AgentPermissionResolver.resolve(session, profile = profile).allowShell,
                     goalModeActive = circuitBreaker.goalState != null,
                     enableWebTools = profile.enableWebSearch || profile.enableUrlContext,
-                    policy = AgentPermissionResolver.resolve(session, profile = profile)
+                    policy = AgentPermissionResolver.resolve(session, profile = profile),
+                    expandedMcpTools = expandedMcpTools
                 )
                 if (wsTools.isNotEmpty()) {
                     put("tools", wsTools)
@@ -487,7 +489,8 @@ internal suspend fun AiProviderEngine.executeOpenAiChatCompletionsLoop(
             accessScope = ToolAccessScope(
                 AgentPermissionResolver.resolve(session, profile = profile),
                 goalModeActive = circuitBreaker.goalState != null,
-                includeLocalWebSearchTool = profile.enableWebSearch
+                includeLocalWebSearchTool = profile.enableWebSearch,
+                expandedMcpTools = currentExpandedMcpTools()
             ),
             calls = validCalls.map { (callId, fnName, argsSb) -> Triple(callId, fnName, argsSb.toString().ifBlank { "{}" }) },
             circuitBreaker = circuitBreaker,

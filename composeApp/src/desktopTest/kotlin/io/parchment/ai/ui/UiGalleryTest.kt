@@ -116,11 +116,25 @@ class UiGalleryTest {
 
     private var conversationCopies = 1
     private var frame = 0L
-    private suspend fun settle(scene: ImageComposeScene, frames: Int = 40) = repeat(frames) {
-        Snapshot.sendApplyNotifications()
-        frame += 16_000_000L
-        scene.render(frame).close()
-        delay(12)
+
+    /**
+     * Advances Compose's virtual frame clock until animations/hydration settle without burning
+     * 12 ms of real wall-clock sleep on every frame (keeps all 37 PNG captures crisp and ~8x faster).
+     */
+    private suspend fun settle(scene: ImageComposeScene, maxFrames: Int = 24, yieldFrames: Int = 3) {
+        var quietFrames = 0
+        for (i in 0 until maxFrames) {
+            Snapshot.sendApplyNotifications()
+            frame += 16_000_000L
+            scene.render(frame).close()
+            if (i < yieldFrames) {
+                delay(2)
+            } else if (!scene.hasInvalidations()) {
+                if (++quietFrames >= 2) break
+            } else {
+                quietFrames = 0
+            }
+        }
     }
 
     /** The active chat waiting to try again after a busy server, as a run shows it. */
@@ -158,14 +172,14 @@ class UiGalleryTest {
             process.snapshot.value = loadFastInitialAppState().first.copy(theme = theme)
             setup(process)
             scene.setContent { ParchmentApp() }
-            settle(scene, 130)
+            settle(scene, maxFrames = 42, yieldFrames = 4)
             for (step in steps) {
                 val clickable = nodes(scene).filter { it.config.contains(SemanticsActions.OnClick) }
                 val target = clickable.firstOrNull { label(it).equals(step, ignoreCase = true) }
                     ?: clickable.firstOrNull { label(it).contains(step, ignoreCase = true) }
                 if (target != null) target.config[SemanticsActions.OnClick].action?.invoke()
                 else File(output, "${viewport.name}-$name-missing.txt").writeText(step)
-                settle(scene)
+                settle(scene, maxFrames = 24, yieldFrames = 2)
             }
             File(output, "${viewport.name}-$name.txt").writeText(
                 nodes(scene).filter { it.config.contains(SemanticsActions.OnClick) }.joinToString("\n", transform = ::label)
@@ -187,7 +201,7 @@ class UiGalleryTest {
         try {
             parchmentProcessState.snapshot.value = loadFastInitialAppState().first
             scene.setContent { ParchmentApp() }
-            settle(scene, 130)
+            settle(scene, maxFrames = 42, yieldFrames = 4)
             val prompt = nodes(scene).first { "Does that also cover" in label(it) }.boundsInRoot
             val reply = nodes(scene).first { "The export built each file" in label(it) }.boundsInRoot
             assertTrue(prompt.left > reply.left + 100f, "A short message of yours must sit on the right: $prompt against $reply")
@@ -242,7 +256,7 @@ class UiGalleryTest {
         try {
             parchmentProcessState.snapshot.value = loadFastInitialAppState().first
             scene.setContent { ParchmentApp() }
-            settle(scene, 130)
+            settle(scene, maxFrames = 42, yieldFrames = 4)
             val before = image()
             assertEquals(before, image(), "The page must be still before scrolling")
             val margin = Offset(330f, 400f) // beside the sidebar, left of the reading column

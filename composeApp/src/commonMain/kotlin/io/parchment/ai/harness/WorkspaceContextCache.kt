@@ -16,7 +16,8 @@ internal object WorkspaceContextCache {
         val timestampMs: Long,
         val fileNames: List<String>,
         val combinedContent: String,
-        val skills: List<WorkspaceHarness.WorkspaceSkill> = emptyList()
+        val skills: List<WorkspaceHarness.WorkspaceSkill> = emptyList(),
+        val commands: List<WorkspaceHarness.WorkspaceSlashCommand> = emptyList()
     )
 
     private data class CachedGlobalMemory(
@@ -30,8 +31,16 @@ internal object WorkspaceContextCache {
     private const val MAX_CACHED_WORKSPACES = 8
     private const val SKILL_MAX_DESCRIPTION_CHARS = 1_024
     private const val SKILL_MAX_COUNT = 64
+    private const val COMMAND_MAX_COUNT = 32
+    private const val COMMAND_MAX_LINES = 400
+    private const val COMMAND_MAX_CHARS = 64 * 1024
     private val SKILL_FOLDERS = listOf(".parchment/skills", ".agents/skills", ".claude/skills")
+    private const val COMMANDS_FOLDER = ".parchment/commands"
     private val SKILL_NAME = Regex("[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}")
+    private val COMMAND_NAME = Regex("[a-zA-Z0-9][a-zA-Z0-9_-]{0,47}")
+    private val RESERVED_BUILTIN_COMMANDS = setOf(
+        "goal", "btw", "compact", "summarize", "continue", "rewind", "clear", "plan", "build"
+    )
 
     fun invalidate(workspaceRoot: String = "") {
         synchronized(workspaceContextCache) {
@@ -92,6 +101,50 @@ internal object WorkspaceContextCache {
         return found.values.toList()
     }
 
+    private fun stripFrontmatterBody(text: String): String {
+        val lines = text.lines()
+        if (lines.firstOrNull()?.trim() != "---") return text.trim()
+        val end = lines.drop(1).indexOfFirst { it.trim() == "---" }
+        if (end < 0) return text.trim()
+        return lines.drop(end + 2).joinToString("\n").trim()
+    }
+
+    private fun scanCommands(root: String): List<WorkspaceHarness.WorkspaceSlashCommand> {
+        val entries = PlatformWorkspace.workspaceList(root, COMMANDS_FOLDER, recursive = false).getOrNull() ?: return emptyList()
+        val found = linkedMapOf<String, WorkspaceHarness.WorkspaceSlashCommand>()
+        for (rawEntry in entries.lines().map { it.trim() }.filter { it.isNotEmpty() && !it.endsWith("/") }.sorted()) {
+            val cleanPath = rawEntry.substringBeforeLast(" (").trim()
+            val fileName = cleanPath.substringAfterLast('/')
+            if (!fileName.endsWith(".md", ignoreCase = true)) continue
+            val stem = fileName.dropLast(3).trim()
+            val key = stem.lowercase()
+            if (!COMMAND_NAME.matches(stem) || key in RESERVED_BUILTIN_COMMANDS || key in found) continue
+            val relPath = "$COMMANDS_FOLDER/$fileName"
+            val numbered = PlatformWorkspace.workspaceRead(root, relPath, startLine = 1, maxLines = COMMAND_MAX_LINES).getOrNull() ?: continue
+            val text = stripReadNumbering(numbered).take(COMMAND_MAX_CHARS)
+            val header = parseSkillHeader(text)
+            val body = stripFrontmatterBody(text)
+            if (body.isBlank()) continue
+            val description = header?.second?.trim().orEmpty().ifBlank {
+                body.lineSequence()
+                    .map { it.trim().trimStart('#', '-', '*', ' ').trim() }
+                    .firstOrNull { it.isNotBlank() }
+                    .orEmpty()
+                    .take(120)
+            }
+            found[key] = WorkspaceHarness.WorkspaceSlashCommand(
+                command = "/$stem",
+                name = stem,
+                description = description,
+                relativePath = relPath,
+                template = body,
+                takesArgument = "\$ARGUMENTS" in body
+            )
+            if (found.size >= COMMAND_MAX_COUNT) break
+        }
+        return found.values.toList()
+    }
+
     private fun getOrLoad(workspaceRoot: String): CachedWorkspaceContext {
         val cleanRoot = workspaceRoot.trim()
         if (cleanRoot.isEmpty()) return CachedWorkspaceContext(0L, emptyList(), "")
@@ -122,6 +175,7 @@ internal object WorkspaceContextCache {
             }
         }
         val skills = scanSkills(cleanRoot)
+        val commands = scanCommands(cleanRoot)
         if (skills.isNotEmpty()) {
             sb.appendLine("#### Available skills")
             sb.appendLine("Call `skill_load` with a skill's name when its description fits the task.")
@@ -131,6 +185,7 @@ internal object WorkspaceContextCache {
             timestampMs = now,
             fileNames = foundNames,
             skills = skills,
+            commands = commands,
             combinedContent = sb.toString().trim()
         )
         synchronized(workspaceContextCache) {
@@ -146,6 +201,65 @@ internal object WorkspaceContextCache {
 
     fun discoverSkills(workspaceRoot: String): List<WorkspaceHarness.WorkspaceSkill> =
         if (workspaceRoot.isBlank()) emptyList() else getOrLoad(workspaceRoot).skills
+
+    fun discoverCommands(workspaceRoot: String): List<WorkspaceHarness.WorkspaceSlashCommand> =
+        if (workspaceRoot.isBlank()) emptyList() else getOrLoad(workspaceRoot).commands
+
+    fun expandCommand(workspaceRoot: String, rawInput: String): String? {
+        val trimmed = rawInput.trim()
+        if (!trimmed.startsWith("/") || workspaceRoot.isBlank()) return null
+        val cmdToken = trimmed.substringBefore(' ').substringBefore('\n').lowercase()
+        val matched = discoverCommands(workspaceRoot).firstOrNull { it.command.lowercase() == cmdToken } ?: return null
+        val remainder = trimmed.removePrefix(trimmed.substringBefore(' ').substringBefore('\n')).trim()
+        return when {
+            "\$ARGUMENTS" in matched.template -> matched.template.replace("\$ARGUMENTS", remainder).trim()
+            remainder.isNotEmpty() -> "${matched.template}\n\n$remainder"
+            else -> matched.template
+        }
+    }
+
+    /** Formats arbitrary assistant prose into a valid `SKILL.md` with slugified name and non-blank description. */
+    fun buildSkillMarkdown(titleHint: String, content: String): Pair<String, String> {
+        val trimmed = content.trim()
+        val existingHeader = parseSkillHeader(trimmed)
+        if (existingHeader != null && existingHeader.second.isNotBlank()) {
+            val validSlug = slugifySkillName(existingHeader.first.ifBlank { titleHint })
+            return validSlug to trimmed
+        }
+        val firstHeading = trimmed.lineSequence()
+            .map { it.trim() }
+            .firstOrNull { it.startsWith("#") }
+            ?.trimStart('#', ' ')
+            ?.trim()
+            .orEmpty()
+        val slug = slugifySkillName(firstHeading.ifBlank { titleHint })
+        val firstLine = trimmed.lineSequence()
+            .map { it.trim().trimStart('#', '-', '*', '>', ' ').trim() }
+            .firstOrNull { it.isNotBlank() }
+            .orEmpty()
+            .replace("\"", "'")
+            .take(180)
+            .ifBlank { "Saved reusable workflow skill." }
+        val md = buildString {
+            appendLine("---")
+            appendLine("name: $slug")
+            appendLine("description: \"$firstLine\"")
+            appendLine("---")
+            appendLine()
+            appendLine(trimmed)
+        }
+        return slug to md
+    }
+
+    internal fun slugifySkillName(raw: String): String {
+        val cleaned = raw.lowercase()
+            .replace(Regex("[^a-z0-9_-]+"), "-")
+            .trim('-', '_')
+            .take(48)
+            .trimEnd('-', '_')
+        val candidate = if (cleaned.isEmpty() || !cleaned.first().isLetterOrDigit()) "saved-skill" else cleaned
+        return if (SKILL_NAME.matches(candidate)) candidate else "saved-skill"
+    }
 
     fun listDiscoveredContextFileNames(workspaceRoot: String): List<String> =
         if (workspaceRoot.isBlank()) emptyList() else getOrLoad(workspaceRoot).fileNames

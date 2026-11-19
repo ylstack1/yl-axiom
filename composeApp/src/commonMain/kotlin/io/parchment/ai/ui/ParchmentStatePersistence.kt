@@ -135,7 +135,9 @@ internal val BUILTIN_SLASH_COMMANDS = listOf(
     SlashCommandSpec("/summarize", "✦ /summarize", Strings.updateRollingStoryContinuitySummary, takesArgument = false),
     SlashCommandSpec("/continue", "→ /continue", Strings.continueTheLastAssistantReplySeamlessly, takesArgument = false),
     SlashCommandSpec("/rewind", "↺ /rewind", Strings.removeTheLastTurnPairFrom, takesArgument = false),
-    SlashCommandSpec("/clear", "🗑 /clear", Strings.clearAllMessagesInTheCurrent, takesArgument = false)
+    SlashCommandSpec("/clear", "🗑 /clear", Strings.clearAllMessagesInTheCurrent, takesArgument = false),
+    SlashCommandSpec("/plan", "🔍 /plan", Strings.switchToPlanModeDesc, takesArgument = false),
+    SlashCommandSpec("/build", "🔧 /build", Strings.switchToBuildModeDesc, takesArgument = false)
 )
 
 /** Maximum number of simultaneously open chat tabs before MRU eviction kicks in. */
@@ -862,6 +864,9 @@ internal suspend fun pickAndDecodeChatImports(): List<ChatImportOutcome<List<Cha
  * `chats/<activeSessionId>/chat.json` file synchronously before drawing the first frame.
  * Remaining historical chats are hydrated as lightweight stubs in the background on `Dispatchers.Default`.
  */
+/** Active chats larger than this open from `chat-index.json` on Frame 1 and hydrate off-UI right after paint. */
+private const val DEFERRED_ACTIVE_CHAT_DECODE_BYTES = 512L * 1024L
+
 internal fun loadFastInitialAppState(): Pair<AppStateSnapshot, Boolean> {
     val rawSettings = PlatformStorage.loadAppStateJson()?.let { migrateLegacyProviderJson(it) }
     if (!rawSettings.isNullOrBlank()) {
@@ -871,7 +876,18 @@ internal fun loadFastInitialAppState(): Pair<AppStateSnapshot, Boolean> {
             runCatching { recoverAppStateFromPartialJson(rawSettings) }.getOrNull()
         }
         if (baseLoaded != null && baseLoaded.sessions.isEmpty()) {
-            val activeRaw = PlatformStorage.loadChatSessionJsonById(baseLoaded.activeSessionId)
+            val activeId = baseLoaded.activeSessionId
+            val activeFolder = PlatformStorage.chatFolderName(activeId)
+            val stamps = runCatching { PlatformStorage.chatFileStamps() }.getOrDefault(emptyMap())
+            val activeStamp = stamps[activeFolder]
+            if (activeStamp != null && activeStamp.length > DEFERRED_ACTIVE_CHAT_DECODE_BYTES) {
+                val indexEntry = readChatStubIndex().entries[activeFolder]
+                if (indexEntry != null && indexEntry.matches(activeStamp) && indexEntry.stub.id == activeId) {
+                    val sanitized = sanitizeLoadedSnapshot(baseLoaded.copy(sessions = listOf(indexEntry.restoredStub())))
+                    return sanitized to true
+                }
+            }
+            val activeRaw = PlatformStorage.loadChatSessionJsonById(activeId)
             val activeSession = activeRaw?.let {
                 runCatching { compactStateJson.decodeFromString<ChatSession>(it) }.getOrNull()
             }?.let { stripRedundantAttachmentBase64(it) }
@@ -935,7 +951,21 @@ internal fun loadRemainingHistoricalSessionsDehydrated(
         mergedById[id] = entry.restoredStub()
     }
     // One chat at a time: each file's text and full decode are dropped once its stub is kept.
-    for (rawChat in PlatformStorage.chatSessionJsons(skipFolders = nextEntries.keys.toSet())) {
+    // Skip re-reading the active chat folder when it is already present in state (hydrated separately on tab effect).
+    val skipFolders = HashSet<String>(nextEntries.keys)
+    val activeFolderName = PlatformStorage.chatFolderName(activeId)
+    if (activeId.isNotBlank() && activeId in mergedById && activeFolderName in stamps) {
+        val existingActive = mergedById[activeId]
+        val existingEntry = index.entries[activeFolderName]
+        if (existingActive != null && existingEntry != null && existingEntry.matches(stamps.getValue(activeFolderName))) {
+            nextEntries[activeFolderName] = existingEntry
+            skipFolders += activeFolderName
+        } else if (existingActive != null && !existingActive.isCompactStub) {
+            nextEntries[activeFolderName] = ChatIndexEntry.of(stamps.getValue(activeFolderName), dehydrateChatSessionToCompactStub(existingActive))
+            skipFolders += activeFolderName
+        }
+    }
+    for (rawChat in PlatformStorage.chatSessionJsons(skipFolders = skipFolders)) {
         loadedAny = true
         val decoded = runCatching { compactStateJson.decodeFromString<ChatSession>(rawChat) }.getOrNull() ?: continue
         if (decoded.id.isBlank()) continue

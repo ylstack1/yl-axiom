@@ -88,6 +88,11 @@ internal class RegistryCatalogClient(
     @Volatile
     private var lastFailureEpochMs: Long = Long.MIN_VALUE
 
+    fun clearCache() {
+        cachedCatalog = emptyMap()
+        lastFetchEpochMs = Long.MIN_VALUE
+    }
+
     private fun isCacheFreshLocked(now: Long): Boolean =
         cachedCatalog.isNotEmpty() &&
             lastFetchEpochMs != Long.MIN_VALUE &&
@@ -502,9 +507,17 @@ object ModelsDevClient {
             }
         }.distinct()
 
+        var merged = spec
+        var distinctPrev: ModelPricingSpec? = null
         for (key in keys) {
             val prev = catalog[key]
-            catalog[key] = if (prev == null) spec else mergeModelSpecs(prev, spec)
+            if (prev != null && prev !== distinctPrev) {
+                merged = mergeModelSpecs(prev, merged)
+                distinctPrev = prev
+            }
+        }
+        for (key in keys) {
+            catalog[key] = merged
         }
     }
 
@@ -558,6 +571,11 @@ object ModelsDevClient {
      */
     fun getCachedOutputModalities(modelId: String): List<String> =
         lookupSpecInCatalog(defaultCatalogClient.cachedCatalog, modelId)?.outputModalities.orEmpty()
+
+    /** Releases the bulk multi-thousand-model catalog from heap when the app is minimized or under memory pressure. */
+    fun trimMemoryCache() {
+        defaultCatalogClient.clearCache()
+    }
 
     internal fun getCachedSpec(modelId: String): ModelPricingSpec? =
         lookupSpecInCatalog(defaultCatalogClient.cachedCatalog, modelId)
