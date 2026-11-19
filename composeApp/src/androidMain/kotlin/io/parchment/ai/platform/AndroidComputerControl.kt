@@ -15,9 +15,13 @@ private const val DOUBLE_TAP_GAP_MS = 60L
 /** Works only after the user turns on Parchment in Android's Accessibility settings. */
 internal object AndroidComputerControl : ComputerControl {
     @Volatile private var scale = 0.0
+
     @Volatile private var screenWidth = 0
+
     @Volatile private var screenHeight = 0
+
     @Volatile private var screenshotWidth = 0
+
     @Volatile private var screenshotHeight = 0
 
     private val service: ParchmentAccessibilityService
@@ -50,11 +54,10 @@ internal object AndroidComputerControl : ComputerControl {
         return x to y
     }
 
-    private fun point(action: ComputerAction): Pair<Float, Float> =
-        mapCoordinate(
-            checkNotNull(action.x) { "That action needs a point." },
-            checkNotNull(action.y) { "That action needs a point." }
-        )
+    private fun point(action: ComputerAction): Pair<Float, Float> = mapCoordinate(
+        checkNotNull(action.x) { "That action needs a point." },
+        checkNotNull(action.y) { "That action needs a point." }
+    )
 
     private fun Boolean.orFail(what: String) = check(this) { "$what did not work." }
 

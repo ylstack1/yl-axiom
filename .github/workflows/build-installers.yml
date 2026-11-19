@@ -42,7 +42,7 @@ concurrency:
 # Earlier runs keep 2.0.<run number>, so a Windows-only rebuild reusing one still matches its APK.
 # The Android version code stays 200 + run number, so it only ever grows.
 env:
-  VERSION_LINE: "2.1"
+  VERSION_LINE: "3.0"
   VERSION_BASE_RUN: "73"
 
 jobs:
@@ -58,10 +58,11 @@ jobs:
       app_version: ${{ steps.plan.outputs.app_version }}
       app_version_code: ${{ steps.plan.outputs.app_version_code }}
       release_tag: ${{ steps.plan.outputs.release_tag }}
+      rust_core: ${{ steps.plan.outputs.rust_core }}
+      rust_windows: ${{ steps.plan.outputs.rust_windows }}
       desktop_tests: ${{ steps.plan.outputs.desktop_tests }}
       windows_tests: ${{ steps.plan.outputs.windows_tests }}
       android: ${{ steps.plan.outputs.android }}
-      windows: ${{ steps.plan.outputs.windows }}
     steps:
       - name: Checkout Repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -70,7 +71,12 @@ jobs:
           fetch-depth: 1
           fetch-tags: false
 
-      - name: Run Quality Gates, Tool Tests, and Resolve Affected Jobs
+      - name: Set up Rust Toolchain
+        uses: dtolnay/rust-toolchain@39008827e6b4319a349e9a42dfc90579dd25f1ca # stable
+        with:
+          components: rustfmt
+
+      - name: Run Quality Gates, xtask Tests, and Resolve Affected Jobs
         id: plan
         env:
           GH_TOKEN: ${{ github.token }}
@@ -78,29 +84,45 @@ jobs:
           REUSE_ANDROID_RUN: ${{ inputs.reuse_android_run }}
         run: |
           set -euo pipefail
-          python3 scripts/quality.py &
-          PID_Q=$!
-          git -c core.safecrlf=false diff --check &
-          PID_D=$!
-          python3 -I -X utf8 scripts/test_workflow_tools.py &
-          PID_W=$!
-          PYTHONPATH=.github/scripts python3 -m unittest \
-            test_run_gradle \
-            test_check_sbom \
-            test_shard_tests \
-            test_ci_changes &
-          PID_U=$!
-          python3 .github/scripts/ci_changes.py installers
-          if grep -q '^signing_scripts=true$' "$GITHUB_OUTPUT"; then
-            PYTHONPATH=.github/scripts python3 .github/scripts/test_stage_android_signing.py &
-          else
-            PYTHONPATH=.github/scripts python3 -m unittest test_stage_android_signing -k PrivateSignerTest &
-          fi
-          PID_S=$!
-          wait "$PID_Q" "$PID_D" "$PID_W" "$PID_U" "$PID_S"
+          cargo test -p parchment-xtask
+          cargo xtask review
+          cargo xtask ci plan installers
+
+  rust-core-check:
+    name: Rust Core (fmt, clippy, tests)
+    needs: preflight
+    if: needs.preflight.outputs.rust_core == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 1
+          fetch-tags: false
+
+      - name: Set up Rust Toolchain
+        uses: dtolnay/rust-toolchain@39008827e6b4319a349e9a42dfc90579dd25f1ca # stable
+        with:
+          components: rustfmt, clippy
+
+      - name: Cache Rust Dependencies
+        uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          shared-key: rust-core
+
+      - name: Verify Rust Format, Clippy, and Tests
+        run: |
+          set -euo pipefail
+          cargo fmt --all -- --check
+          cargo clippy --workspace --exclude parchment-desktop --all-targets -- -D warnings
+          cargo clippy -p parchment-core --no-default-features --features android-jni -- -D warnings
+          cargo test --workspace --exclude parchment-desktop
+          cargo test -p parchment-core --no-default-features --features android-jni
 
   test-desktop:
-    name: Desktop Tests (Shard ${{ matrix.label }})
+    name: Kotlin Tests & Lint (Shard ${{ matrix.label }})
     needs: preflight
     if: needs.preflight.outputs.desktop_tests == 'true'
     runs-on: ubuntu-latest
@@ -121,6 +143,9 @@ jobs:
           fetch-depth: 1
           fetch-tags: false
 
+      - name: Set up Rust Toolchain
+        uses: dtolnay/rust-toolchain@39008827e6b4319a349e9a42dfc90579dd25f1ca # stable
+
       - name: Set up JDK 25 (Temurin)
         uses: actions/setup-java@d1374f8ac74474200d16ef8ecee22c7ae7a51880 # v6.3.0
         with:
@@ -130,18 +155,23 @@ jobs:
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@8da46b539cd8fe6ab27ca75128919a18d757604c # v6.4.1
 
-      - name: Run Desktop Test Shard
+      - name: Run Kotlin Lint and Test Shard
         run: |
+          set -euo pipefail
           chmod +x ./gradlew
-          read -r -a SHARD_ARGS <<< "$(python3 .github/scripts/shard_tests.py --index "${{ matrix.shard }}" --total 2)"
-          python3 .github/scripts/run_gradle.py -- :composeApp:desktopTest "${SHARD_ARGS[@]}" \
+          read -r -a SHARD_ARGS <<< "$(cargo xtask ci shard-tests --index "${{ matrix.shard }}" --total 2)"
+          GRADLE_TASKS=(:composeApp:desktopTest)
+          if [[ "${{ matrix.shard }}" == "0" ]]; then
+            GRADLE_TASKS=(ktlintCheck :composeApp:desktopTest)
+          fi
+          cargo xtask ci run-gradle -- "${GRADLE_TASKS[@]}" "${SHARD_ARGS[@]}" \
             -Dorg.gradle.jvmargs="-Xmx5g -XX:+UseParallelGC -XX:MaxMetaspaceSize=1g -Dfile.encoding=UTF-8" \
             -Pparchment.testForks=3 \
             --no-daemon --no-configuration-cache --max-workers=4 \
             -Pkotlin.compiler.execution.strategy=in-process
 
   test-windows-native:
-    name: Windows Native Tests
+    name: Windows Native Kotlin Tests
     needs: preflight
     if: needs.preflight.outputs.windows_tests == 'true'
     runs-on: windows-latest
@@ -154,8 +184,11 @@ jobs:
           fetch-depth: 1
           fetch-tags: false
 
+      - name: Set up Rust Toolchain
+        uses: dtolnay/rust-toolchain@39008827e6b4319a349e9a42dfc90579dd25f1ca # stable
+
       - name: Set up JDK 25 (Temurin)
-        uses: actions/setup-java@77dd5b2ce225ea11469928ac317850245a74ae78 # v6.2.0
+        uses: actions/setup-java@d1374f8ac74474200d16ef8ecee22c7ae7a51880 # v6.3.0
         with:
           distribution: "temurin"
           java-version: "25"
@@ -171,14 +204,14 @@ jobs:
           $gradleHome = if ($env:GRADLE_USER_HOME) { $env:GRADLE_USER_HOME } else { "$HOME\.gradle" }
           New-Item -ItemType Directory -Force -Path $gradleHome | Out-Null
           Add-Content -Path "$gradleHome\gradle.properties" -Value "`norg.gradle.jvmargs=-Xmx5g -XX:+UseParallelGC -XX:MaxMetaspaceSize=1g -Dfile.encoding=UTF-8"
-          $winTests = (python .github/scripts/shard_tests.py --windows-native) -split ' '
-          python .github/scripts/run_gradle.py -- :composeApp:desktopTest @winTests `
+          $winTests = (cargo xtask ci shard-tests --windows-native) -split ' '
+          cargo xtask ci run-gradle -- :composeApp:desktopTest @winTests `
             '-Pparchment.testForks=2' `
             --no-daemon --no-configuration-cache --max-workers=4 '-Pkotlin.compiler.execution.strategy=in-process'
           exit $LASTEXITCODE
 
   build-android-apk:
-    name: Build Android .APK (Universal)
+    name: Build Android .APK (arm64-v8a + Rust JNI)
     needs: preflight
     if: needs.preflight.outputs.android == 'true'
     runs-on: ubuntu-latest
@@ -190,6 +223,41 @@ jobs:
           persist-credentials: false
           fetch-depth: 1
           fetch-tags: false
+
+      - name: Set up Rust Toolchain (aarch64-linux-android)
+        uses: dtolnay/rust-toolchain@39008827e6b4319a349e9a42dfc90579dd25f1ca # stable
+        with:
+          targets: aarch64-linux-android
+
+      - name: Cache Rust Dependencies (Android)
+        uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          shared-key: rust-android
+
+      - name: Restore cargo-ndk Binary Cache
+        id: cache-cargo-ndk
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cargo/bin/cargo-ndk
+          key: cargo-ndk-4.1.2-${{ runner.os }}-${{ runner.arch }}
+
+      - name: Install cargo-ndk if Missing
+        if: steps.cache-cargo-ndk.outputs.cache-hit != 'true'
+        run: cargo install cargo-ndk --version 4.1.2 --locked
+
+      - name: Save cargo-ndk Cache (main only)
+        if: github.ref == 'refs/heads/main' && steps.cache-cargo-ndk.outputs.cache-hit != 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cargo/bin/cargo-ndk
+          key: cargo-ndk-4.1.2-${{ runner.os }}-${{ runner.arch }}
+
+      - name: Build Slim 16 KB-Aligned Rust JNI Core (arm64-v8a)
+        run: |
+          set -euo pipefail
+          export ANDROID_NDK_HOME="${ANDROID_NDK_HOME:-${ANDROID_NDK_LATEST_HOME:-}}"
+          test -d "$ANDROID_NDK_HOME"
+          cargo xtask android-so
 
       - name: Set up JDK 25 (Temurin)
         uses: actions/setup-java@d1374f8ac74474200d16ef8ecee22c7ae7a51880 # v6.3.0
@@ -227,7 +295,7 @@ jobs:
           ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
           ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
           ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
-        run: python3 .github/scripts/stage_android_signing.py
+        run: cargo xtask ci stage-signing
 
       - name: Build Android APK
         env:
@@ -248,7 +316,7 @@ jobs:
           fi
           echo "ANDROID_BUILD_VARIANT=$BUILD_VARIANT" >> "$GITHUB_ENV"
           chmod +x ./gradlew
-          python3 .github/scripts/run_gradle.py -- "$BUILD_TASK" \
+          cargo xtask ci run-gradle -- "$BUILD_TASK" \
             -Dorg.gradle.jvmargs="-Xmx5g -XX:+UseParallelGC -XX:MaxMetaspaceSize=1g -Dfile.encoding=UTF-8" \
             -PappVersion="$APP_VER" \
             -PappVersionCode="$APP_CODE" \
@@ -256,14 +324,18 @@ jobs:
             "${EXTRA_FLAGS[@]}" \
             --no-daemon --no-configuration-cache --max-workers=4 -Pkotlin.compiler.execution.strategy=in-process
 
-      - name: Rename APK for Clean Download
+      - name: Rename APK and Verify Budget & Bundled JNI
         run: |
+          set -euo pipefail
           mkdir -p dist
           cp androidApp/build/outputs/apk/"$ANDROID_BUILD_VARIANT"/*.apk dist/Parchment-Android-Universal.apk
-          # R8 renames classes, so a release's crash reports can only be read with its own mapping file.
           if [[ "$ANDROID_BUILD_VARIANT" == release ]]; then
             cp androidApp/build/outputs/mapping/release/mapping.txt dist/Parchment-Android-R8-mapping.txt
+            SIZE=$(stat -c%s dist/Parchment-Android-Universal.apk)
+            test "$SIZE" -le 7864320
           fi
+          test -s dist/Parchment-Android-Universal.apk
+          unzip -l dist/Parchment-Android-Universal.apk | grep -q 'lib/arm64-v8a/libparchment_core.so'
 
       - name: Save Android Platform 37 Cache (main only)
         if: github.ref == 'refs/heads/main' && steps.cache-android-platform.outputs.cache-hit != 'true'
@@ -279,9 +351,6 @@ jobs:
           path: /usr/local/lib/android/sdk/build-tools/37*
           key: android-build-tools-37-v2-${{ runner.os }}-${{ hashFiles('gradle/libs.versions.toml') }}
 
-      - name: Verify Staged APK Exists
-        run: test -s dist/Parchment-Android-Universal.apk
-
       - name: Upload Android APK Artifact
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
@@ -294,23 +363,24 @@ jobs:
       - name: Remove Staged Private Signer
         if: always() && github.event_name != 'pull_request'
         run: |
-          python3 - <<'PY'
-          import os
-          from pathlib import Path
-          value = os.environ.get('ANDROID_KEYSTORE_PATH')
-          if value:
-              target = Path(value).resolve()
-              target.relative_to(Path(os.environ['RUNNER_TEMP']).resolve())
-              if not target.parent.name.startswith('parchment-signing-'):
-                  raise ValueError('Unexpected signer staging directory')
-              target.unlink(missing_ok=True)
-              target.parent.rmdir()
-          PY
+          if [[ -n "${ANDROID_KEYSTORE_PATH:-}" ]]; then
+            dir=$(dirname "$ANDROID_KEYSTORE_PATH")
+            case "$dir" in
+              "$RUNNER_TEMP"/parchment-signing-*)
+                rm -f "$ANDROID_KEYSTORE_PATH"
+                rmdir "$dir" 2>/dev/null || true
+                ;;
+              *)
+                echo "Unexpected signer staging directory: $dir" >&2
+                exit 1
+                ;;
+            esac
+          fi
 
   build-windows-exe:
-    name: Build Windows .EXE Installer (Zero-Trace Uninstall & Silent OTA)
+    name: Build Windows .EXE Installer (Native Rust + GPUI)
     needs: preflight
-    if: needs.preflight.outputs.windows == 'true'
+    if: needs.preflight.outputs.rust_windows == 'true'
     runs-on: windows-latest
     timeout-minutes: 30
     steps:
@@ -321,35 +391,36 @@ jobs:
           fetch-depth: 1
           fetch-tags: false
 
-      - name: Set up JDK 25 (Temurin)
-        uses: actions/setup-java@d1374f8ac74474200d16ef8ecee22c7ae7a51880 # v6.3.0
+      - name: Set up Rust Toolchain
+        uses: dtolnay/rust-toolchain@39008827e6b4319a349e9a42dfc90579dd25f1ca # stable
         with:
-          distribution: "temurin"
-          java-version: "25"
+          components: rustfmt, clippy
 
-      - name: Set up Gradle
-        uses: gradle/actions/setup-gradle@8da46b539cd8fe6ab27ca75128919a18d757604c # v6.4.1
+      - name: Cache Rust Dependencies (Windows)
+        uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          shared-key: rust-windows
 
-      - name: Build Windows Packaged Runtime (ProGuard + Leyden AOT)
+      - name: Verify Full Windows Workspace and Build Release GPUI .EXE
         shell: pwsh
         env:
-          APP_VER: ${{ needs.preflight.outputs.app_version }}
-          APP_CODE: ${{ needs.preflight.outputs.app_version_code }}
-          OFFICIAL_RELEASE: ${{ github.event_name != 'pull_request' && 'true' || 'false' }}
-          GRADLE_OPTS: "-Xmx5g -XX:+UseParallelGC -XX:MaxMetaspaceSize=1g -Dfile.encoding=UTF-8"
+          AWS_LC_SYS_PREBUILT_NASM: "1"
         run: |
-          $gradleHome = if ($env:GRADLE_USER_HOME) { $env:GRADLE_USER_HOME } else { "$HOME\.gradle" }
-          New-Item -ItemType Directory -Force -Path $gradleHome | Out-Null
-          Add-Content -Path "$gradleHome\gradle.properties" -Value "`norg.gradle.jvmargs=-Xmx5g -XX:+UseParallelGC -XX:MaxMetaspaceSize=1g -Dfile.encoding=UTF-8"
-          python .github/scripts/run_gradle.py -- :composeApp:createReleaseDistributable `
-            "-PappVersion=$env:APP_VER" `
-            "-PappVersionCode=$env:APP_CODE" `
-            "-PgithubRepo=$env:GITHUB_REPOSITORY" `
-            "-PofficialRelease=$env:OFFICIAL_RELEASE" `
-            --no-daemon --no-configuration-cache --max-workers=4 '-Pkotlin.compiler.execution.strategy=in-process'
+          if (-not $env:GPUI_FXC_PATH) {
+            $fxc = Get-ChildItem "C:\Program Files (x86)\Windows Kits\10\bin\*\x64\fxc.exe" -ErrorAction SilentlyContinue |
+              Sort-Object FullName -Descending | Select-Object -First 1
+            if ($fxc) { $env:GPUI_FXC_PATH = $fxc.FullName }
+          }
+          cargo clippy --workspace --all-targets -- -D warnings
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          python -c "import sys; sys.path.insert(0, 'scripts'); import verify; m = verify.missing_service_classes(); sys.exit('\n'.join(m) if m else 0)"
-          exit $LASTEXITCODE
+          cargo test --workspace
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          cargo build --release -p parchment-desktop
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $exe = Get-Item "target\release\parchment-desktop.exe" -ErrorAction Stop
+          $mb = [math]::Round($exe.Length / 1MB, 2)
+          Write-Host "Built parchment-desktop.exe: $mb MB"
+          if ($exe.Length -gt 36700160) { throw "parchment-desktop.exe ($mb MB) exceeds 35 MB budget" }
 
       - name: Package Minimal Zero-Trace .EXE Installer with Inno Setup
         shell: pwsh
@@ -358,26 +429,19 @@ jobs:
           INNO_COMPRESSION: ${{ github.event_name == 'pull_request' && 'lzma2/fast' || 'lzma2/max' }}
         run: iscc.exe "/DMyAppVersion=$env:APP_VER" "/DMyCompression=$env:INNO_COMPRESSION" installer\windows-installer.iss
 
-      - name: Verify Installed .EXE Maps Leyden AOT Cache Across Timezones
+      - name: Verify Silent Inno Setup Install Lands Standalone Parchment.exe
         shell: pwsh
         run: |
-          $origTz = (Get-TimeZone).Id
-          $testDir = Join-Path ([System.IO.Path]::GetTempPath()) "parchment-inno-aot-check"
+          $testDir = Join-Path ([System.IO.Path]::GetTempPath()) "parchment-inno-smoke"
           Remove-Item -Recurse -Force $testDir -ErrorAction SilentlyContinue
           try {
-            tzutil /s "SE Asia Standard Time"
             $proc = Start-Process -FilePath "build\installer\Parchment-Windows-x64-Setup.exe" `
               -ArgumentList "/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART", "/DIR=$testDir" `
               -Wait -PassThru
             if ($proc.ExitCode -ne 0) { throw "Silent installer exited with $($proc.ExitCode)" }
-            $env:JAVA_TOOL_OPTIONS = "-Xlog:aot*=info"
-            $out = & "$testDir\Parchment.exe" --aot-verify 2>&1 | Out-String
-            Remove-Item Env:JAVA_TOOL_OPTIONS -ErrorAction SilentlyContinue
-            if ($LASTEXITCODE -ne 0 -or $out -notmatch "Using AOT-linked classes: true" -or $out -match "Unable to map shared spaces") {
-              throw "Installed Parchment.exe rejected parchment.aot:`n$out"
-            }
+            $installed = Get-Item "$testDir\Parchment.exe" -ErrorAction Stop
+            if ($installed.Length -lt 1048576) { throw "Installed Parchment.exe is unexpectedly small: $($installed.Length) B" }
           } finally {
-            tzutil /s $origTz
             Remove-Item -Recurse -Force $testDir -ErrorAction SilentlyContinue
           }
 
@@ -405,8 +469,11 @@ jobs:
           fetch-depth: 1
           fetch-tags: false
 
+      - name: Set up Rust Toolchain
+        uses: dtolnay/rust-toolchain@39008827e6b4319a349e9a42dfc90579dd25f1ca # stable
+
       - name: Set up JDK 25 (Temurin)
-        uses: actions/setup-java@77dd5b2ce225ea11469928ac317850245a74ae78 # v6.2.0
+        uses: actions/setup-java@d1374f8ac74474200d16ef8ecee22c7ae7a51880 # v6.3.0
         with:
           distribution: "temurin"
           java-version: "25"
@@ -429,9 +496,9 @@ jobs:
       - name: Generate and Validate SBOM
         run: |
           chmod +x ./gradlew
-          ./gradlew --init-script .github/scripts/sbom.init.gradle.kts cyclonedxBom \
+          cargo xtask ci run-gradle -- --init-script .github/scripts/sbom.init.gradle.kts cyclonedxBom \
             --no-daemon --no-configuration-cache --no-build-cache --max-workers=4 -PappVersion=1.0.0
-          python3 .github/scripts/check_sbom.py build/reports/cyclonedx/bom.json
+          cargo xtask ci check-sbom build/reports/cyclonedx/bom.json
           mkdir -p dist
           cp build/reports/cyclonedx/bom.json dist/Parchment-SBOM.cdx.json
 
@@ -446,7 +513,7 @@ jobs:
 
   publish-github-release:
     name: Publish OTA Release Assets (.APK & .EXE)
-    needs: [preflight, test-desktop, test-windows-native, build-android-apk, build-windows-exe, release-sbom]
+    needs: [preflight, rust-core-check, test-desktop, test-windows-native, build-android-apk, build-windows-exe, release-sbom]
     # Releases come only from version tags (release-please starts this run for its tag) or a manual run; a push to
     # main just builds and tests, so merged updates reach users only when a release is cut.
     # A skipped job skips its dependents unless the condition says otherwise.
@@ -454,7 +521,8 @@ jobs:
       !cancelled() &&
       (startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch') &&
       needs.preflight.result == 'success' &&
-      needs.test-desktop.result == 'success' &&
+      (needs.rust-core-check.result == 'success' || needs.rust-core-check.result == 'skipped') &&
+      (needs.test-desktop.result == 'success' || needs.test-desktop.result == 'skipped') &&
       (needs.test-windows-native.result == 'success' || needs.test-windows-native.result == 'skipped') &&
       needs.build-windows-exe.result == 'success' &&
       (needs.build-android-apk.result == 'success' || (inputs.reuse_android_run && needs.build-android-apk.result == 'skipped'))

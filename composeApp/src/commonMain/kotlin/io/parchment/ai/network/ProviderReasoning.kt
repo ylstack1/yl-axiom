@@ -31,17 +31,19 @@ internal fun normalizeReasoningModelId(name: String): String = name.trim().remov
  * Maps a rejected explicit reasoning level to the next supported tier (`max` -> `xhigh` -> `high`),
  * or steps `minimal` up to `low` when an endpoint explicitly rejects minimal reasoning.
  */
-internal fun stepDownReasoningEffort(currentEffort: String, errMsg: String): Pair<String, String>? =
-    when (currentEffort.trim().lowercase()) {
-        "max" -> "xhigh" to io.parchment.ai.strings.Strings.endpointRejectedMaxThinkingRetryingWith
-        "xhigh" -> "high" to io.parchment.ai.strings.Strings.endpointRejectedXhighThinkingRetryingWith
-        "minimal" -> if (errMsg.contains("minimal") || errMsg.contains("effort") || errMsg.contains("reasoning") ||
-            errMsg.contains("unsupported_value") || errMsg.contains("invalid_value")
-        ) {
-            "low" to io.parchment.ai.strings.Strings.endpointRejectedMinimalThinkingSteppingUp
-        } else null
-        else -> null
-    }
+internal fun stepDownReasoningEffort(currentEffort: String, errMsg: String): Pair<String, String>? = when (currentEffort.trim().lowercase()) {
+    "max" -> "xhigh" to io.parchment.ai.strings.Strings.endpointRejectedMaxThinkingRetryingWith
+    "xhigh" -> "high" to io.parchment.ai.strings.Strings.endpointRejectedXhighThinkingRetryingWith
+    "minimal" -> if (errMsg.contains("minimal") ||
+        errMsg.contains("effort") ||
+        errMsg.contains("reasoning") ||
+        errMsg.contains("unsupported_value") ||
+        errMsg.contains("invalid_value")
+    ) {
+        "low" to io.parchment.ai.strings.Strings.endpointRejectedMinimalThinkingSteppingUp
+    } else null
+    else -> null
+}
 
 internal fun isSameReasoningModel(
     savedModel: String,

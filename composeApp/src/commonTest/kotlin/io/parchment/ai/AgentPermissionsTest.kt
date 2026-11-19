@@ -10,12 +10,25 @@ import kotlinx.serialization.json.Json
 import kotlin.test.*
 
 class AgentPermissionsTest {
-    private val assistant = AssistantAgent("assistant", "Agent", permissionDefaults = AgentPermissionPolicy(
-        workspacePath = "project", workspaceMode = WorkspaceMode.READ_WRITE,
-        shellAccess = ShellAccess.FULL_ACCESS, webAccess = true
-    ))
-    private val chat = ChatSession("chat", "Chat", 1L, 1L, "provider", assistantId = assistant.id,
-        permissionOverrides = AgentPermissionOverrides())
+    private val assistant = AssistantAgent(
+        "assistant",
+        "Agent",
+        permissionDefaults = AgentPermissionPolicy(
+            workspacePath = "project",
+            workspaceMode = WorkspaceMode.READ_WRITE,
+            shellAccess = ShellAccess.FULL_ACCESS,
+            webAccess = true
+        )
+    )
+    private val chat = ChatSession(
+        "chat",
+        "Chat",
+        1L,
+        1L,
+        "provider",
+        assistantId = assistant.id,
+        permissionOverrides = AgentPermissionOverrides()
+    )
 
     @Test fun offAndUnmountAreExplicitOverrides() {
         assertEquals(WorkspaceMode.READ_WRITE, AgentPermissionResolver.resolve(chat, assistant).workspaceMode)
@@ -31,8 +44,12 @@ class AgentPermissionsTest {
     }
 
     @Test fun overridesPreserveIndependentInheritanceAndRoundTrip() {
-        val changed = chat.copy(permissionOverrides = AgentPermissionOverrides(webAccess = false,
-            toolOverrides = mapOf("fs_read" to false)))
+        val changed = chat.copy(
+            permissionOverrides = AgentPermissionOverrides(
+                webAccess = false,
+                toolOverrides = mapOf("fs_read" to false)
+            )
+        )
         val policy = AgentPermissionResolver.resolve(changed, assistant)
         assertEquals(WorkspaceMode.READ_WRITE, policy.workspaceMode)
         assertFalse(policy.webAccess)
@@ -62,8 +79,11 @@ class AgentPermissionsTest {
     }
 
     @Test fun disabledUnknownAndUnadvertisedCallsAreRejectedBeforeEffects() {
-        val policy = AgentPermissionPolicy(workspacePath = "unused", workspaceMode = WorkspaceMode.READ_WRITE,
-            toolOverrides = mapOf("fs_write" to false))
+        val policy = AgentPermissionPolicy(
+            workspacePath = "unused",
+            workspaceMode = WorkspaceMode.READ_WRITE,
+            toolOverrides = mapOf("fs_write" to false)
+        )
         val scope = ToolAccessScope(policy)
         assertNotNull(AgentPermissionGate.denial(scope, "fs_write", """{"path":"file","content":"data"}"""))
         assertNotNull(AgentPermissionGate.denial(scope, "FS_READ", "{}"))

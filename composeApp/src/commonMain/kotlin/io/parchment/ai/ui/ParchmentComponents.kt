@@ -195,7 +195,11 @@ private class KissMotionNode(
     private var pressScale: Float,
     private var hoverScale: Float,
     private var focusColor: Color
-) : Modifier.Node(), LayoutModifierNode, DrawModifierNode, FocusEventModifierNode, PointerInputModifierNode {
+) : Modifier.Node(),
+    LayoutModifierNode,
+    DrawModifierNode,
+    FocusEventModifierNode,
+    PointerInputModifierNode {
     private val presses = HashSet<PressInteraction.Press>()
     private val hovers = HashSet<HoverInteraction.Enter>()
     private var hasFocus = false
@@ -453,8 +457,7 @@ fun Modifier.kissClickable(
         )
 }
 
-internal fun Modifier.sepiaFocusRing(focused: Boolean, color: Color): Modifier =
-    if (focused) border(LineWidth.focus, color, REGULAR_BTN_SHAPE) else this
+internal fun Modifier.sepiaFocusRing(focused: Boolean, color: Color): Modifier = if (focused) border(LineWidth.focus, color, REGULAR_BTN_SHAPE) else this
 
 /** Links from model output and imported chats may only open in a browser, never as local files. */
 internal fun openWebLink(target: String) {
@@ -462,8 +465,7 @@ internal fun openWebLink(target: String) {
 }
 
 /** Names a control that has no visible text. */
-fun Modifier.accessibilityLabel(label: String?): Modifier =
-    if (label == null) this else semantics { contentDescription = label }
+fun Modifier.accessibilityLabel(label: String?): Modifier = if (label == null) this else semantics { contentDescription = label }
 
 /** Dismisses from a scrim by pointer only, so it adds no reader target and absorbs no dialog text. */
 @Composable
@@ -522,12 +524,12 @@ fun SepiaButton(
         SepiaButtonStyle.PRIMARY, SepiaButtonStyle.DANGER -> if (enabled) onFillInk(baseBg) else p.mutedInk
         SepiaButtonStyle.SECONDARY -> if (enabled) p.primaryInk else p.mutedInk
         SepiaButtonStyle.OUTLINE -> when {
-            !enabled -> p.mutedInk.copy(alpha = Alpha.disabledInk)
+            !enabled -> p.mutedInk.copy(alpha = Alpha.DISABLED_INK)
             isPressed || isHovered -> p.accent
             else -> p.primaryInk
         }
         SepiaButtonStyle.GHOST -> when {
-            !enabled -> p.mutedInk.copy(alpha = Alpha.disabledInk)
+            !enabled -> p.mutedInk.copy(alpha = Alpha.DISABLED_INK)
             isPressed || isHovered -> p.accent
             else -> p.narrationInk
         }

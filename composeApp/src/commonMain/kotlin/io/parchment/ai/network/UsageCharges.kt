@@ -14,8 +14,11 @@ internal fun parseProviderCharges(dialect: UsageDialect, usage: JsonObject?, res
         val value = (raw as? JsonPrimitive)?.takeUnless { it.isString }?.longOrNull
         if (value == null || value < 0) invalid = true else units[key] = value
     }
-    val rawCost = if (dialect == UsageDialect.OPENAI_CHAT || dialect == UsageDialect.OPENAI_RESPONSES ||
-        dialect == UsageDialect.IMAGE_GENERATION || dialect == UsageDialect.VIDEO_GENERATION)
+    val rawCost = if (dialect == UsageDialect.OPENAI_CHAT ||
+        dialect == UsageDialect.OPENAI_RESPONSES ||
+        dialect == UsageDialect.IMAGE_GENERATION ||
+        dialect == UsageDialect.VIDEO_GENERATION
+    )
         usage?.get("cost")?.takeUnless { it is JsonNull } else null
     val cost = (rawCost as? JsonPrimitive)?.takeUnless { it.isString }?.doubleOrNull
         ?.takeIf { it.isFinite() && it >= 0 }
@@ -29,8 +32,10 @@ internal fun parseProviderCharges(dialect: UsageDialect, usage: JsonObject?, res
     server?.forEach { (key, value) ->
         if (key != "web_search_requests" && value != JsonPrimitive(0) && value !is JsonNull) observed += "other server tools"
     }
-    if (dialect == UsageDialect.OPENAI_CHAT || dialect == UsageDialect.OPENAI_RESPONSES ||
-        dialect == UsageDialect.IMAGE_GENERATION || dialect == UsageDialect.VIDEO_GENERATION
+    if (dialect == UsageDialect.OPENAI_CHAT ||
+        dialect == UsageDialect.OPENAI_RESPONSES ||
+        dialect == UsageDialect.IMAGE_GENERATION ||
+        dialect == UsageDialect.VIDEO_GENERATION
     ) {
         val usesPromptCompletion = usesPromptCompletionUsageFields(dialect, usage)
         val input = usage?.get(if (usesPromptCompletion) "prompt_tokens_details" else "input_tokens_details") as? JsonObject
@@ -77,7 +82,8 @@ internal fun parseProviderCharges(dialect: UsageDialect, usage: JsonObject?, res
     (response?.get("candidates") as? JsonArray)?.forEach { candidate ->
         val grounding = (candidate as? JsonObject)?.get("groundingMetadata") as? JsonObject
         if ((grounding?.get("webSearchQueries") as? JsonArray)?.isNotEmpty() == true ||
-            (grounding?.get("groundingChunks") as? JsonArray)?.isNotEmpty() == true) observed += "web_search"
+            (grounding?.get("groundingChunks") as? JsonArray)?.isNotEmpty() == true
+        ) observed += "web_search"
     }
     if (dialect == UsageDialect.IMAGE_GENERATION && "output_image" !in units) {
         val generatedImages = (response?.get("data") as? JsonArray)?.size
@@ -92,9 +98,8 @@ internal fun parseProviderCharges(dialect: UsageDialect, usage: JsonObject?, res
     return ProviderChargeUsage(cost, units, observed, invalid)
 }
 
-internal fun requestChargePricing(profile: ProviderProfile, model: String): ChargePricing =
-    profile.customModelSpecs[model]?.chargePricing?.takeIf { it.perUnitUsd.isNotEmpty() }
-        ?: ModelsDevClient.getCachedSpec(model)?.chargePricing ?: ChargePricing()
+internal fun requestChargePricing(profile: ProviderProfile, model: String): ChargePricing = profile.customModelSpecs[model]?.chargePricing?.takeIf { it.perUnitUsd.isNotEmpty() }
+    ?: ModelsDevClient.getCachedSpec(model)?.chargePricing ?: ChargePricing()
 
 internal data class RequestCostEstimate(val usd: Double, val unavailable: Set<String>, val reported: Boolean = false)
 
@@ -122,12 +127,19 @@ internal fun estimateRequestCost(record: ApiUsageRecord): RequestCostEstimate {
     val audioCached = charges.units["cached_input_audio"]
     val audioOut = charges.units["output_audio"] ?: 0
     val imageOut = charges.units["output_image"] ?: 0
-    if (charges.units.values.any { it < 0 } || audioIn > part.inputTokens || audioCached != null && audioCached > audioIn ||
-        audioOut > part.outputTokens || imageOut > part.outputTokens - audioOut.coerceAtMost(part.outputTokens)) {
+    if (charges.units.values.any { it < 0 } ||
+        audioIn > part.inputTokens ||
+        audioCached != null &&
+        audioCached > audioIn ||
+        audioOut > part.outputTokens ||
+        imageOut > part.outputTokens - audioOut.coerceAtMost(part.outputTokens)
+    ) {
         return RequestCostEstimate(0.0, setOf("invalid media usage"))
     }
-    val unsupportedInput = charges.units.any { (key, count) -> count > 0 &&
-        (key.startsWith("input_") && key != "input_audio" || key.startsWith("cached_input_") && key != "cached_input_audio") }
+    val unsupportedInput = charges.units.any { (key, count) ->
+        count > 0 &&
+            (key.startsWith("input_") && key != "input_audio" || key.startsWith("cached_input_") && key != "cached_input_audio")
+    }
     val unsupportedOutput = charges.units.any { (key, count) ->
         count > 0 && key.startsWith("output_") && key !in setOf("output_audio", "output_image", "output_image_count")
     }
@@ -138,9 +150,15 @@ internal fun estimateRequestCost(record: ApiUsageRecord): RequestCostEstimate {
         pricedUnits.keys.removeAll { it.startsWith("input_") || it.startsWith("cached_input_") }
     }
     if (audioIn > 0 && !unsupportedInput && !missingInputSplit) {
-        if (part.cacheCreationInputTokens > 0 || part.cachedInputTokens > 0 && audioCached == null ||
-            audioCached != null && (audioCached > part.cachedInputTokens ||
-                audioIn - audioCached > part.inputTokens - part.cachedInputTokens)) {
+        if (part.cacheCreationInputTokens > 0 ||
+            part.cachedInputTokens > 0 &&
+            audioCached == null ||
+            audioCached != null &&
+            (
+                audioCached > part.cachedInputTokens ||
+                    audioIn - audioCached > part.inputTokens - part.cachedInputTokens
+                )
+        ) {
             // Unknown cache overlap cannot be billed twice or assigned the ordinary input rate.
             missing += "audio input/cache split"
             part = part.copy(inputTokens = 0, cachedInputTokens = 0, cacheCreationInputTokens = 0, cacheCreationCostUnits = 0.0)
@@ -157,13 +175,21 @@ internal fun estimateRequestCost(record: ApiUsageRecord): RequestCostEstimate {
         part = part.copy(outputTokens = 0)
         pricedUnits.keys.removeAll { it.startsWith("output_") }
     }
-    val priceUsageKnown = usage.isComplete && (part.inputTokens == 0L ||
-        usage.cachedInputTokens != null && usage.cacheCreationInputTokens != null)
-    val ttlKnown = part.cacheCreationInputTokens == 0L || usage.shortCacheCreationInputTokens != null &&
+    val priceUsageKnown = usage.isComplete &&
+        (
+            part.inputTokens == 0L ||
+                usage.cachedInputTokens != null &&
+                usage.cacheCreationInputTokens != null
+            )
+    val ttlKnown = part.cacheCreationInputTokens == 0L ||
+        usage.shortCacheCreationInputTokens != null &&
         usage.longCacheCreationInputTokens != null &&
         saturatingTokenSum(usage.shortCacheCreationInputTokens, usage.longCacheCreationInputTokens) == part.cacheCreationInputTokens
-    val tokenCost = if (priceUsageKnown && ttlKnown) recordPricing(record).estimate(part,
-        usage.shortCacheCreationInputTokens, usage.longCacheCreationInputTokens) else null
+    val tokenCost = if (priceUsageKnown && ttlKnown) recordPricing(record).estimate(
+        part,
+        usage.shortCacheCreationInputTokens,
+        usage.longCacheCreationInputTokens
+    ) else null
     if (tokenCost == null) missing += "token usage/prices"
     if ("request" in record.chargePricing.perUnitUsd) {
         if (usage.isFinal && usage.isComplete) pricedUnits["request"] = 1 else missing += "request fee"
@@ -176,8 +202,10 @@ internal fun estimateRequestCost(record: ApiUsageRecord): RequestCostEstimate {
         if (cost == null) missing += label(key) else total += cost
     }
     for (key in charges.observedComponents) {
-        val coveredByPerImage = key == "output_image" && charges.units["output_image"] == null &&
-            charges.units["output_image_count"] != null && part.outputTokens == 0L &&
+        val coveredByPerImage = key == "output_image" &&
+            charges.units["output_image"] == null &&
+            charges.units["output_image_count"] != null &&
+            part.outputTokens == 0L &&
             record.chargePricing.perUnitUsd["output_image_count"] != null
         if (coveredByPerImage) continue
         if (charges.units[key] == null || key == "output_image" && record.chargePricing.perUnitUsd[key] == null) missing += label(key)
@@ -206,9 +234,14 @@ internal fun spendTowardLimit(records: Collection<ApiUsageRecord>): Double {
         val usage = record.usage
         val splitMissing = usage.isComplete && (usage.cachedInputTokens == null || usage.cacheCreationInputTokens == null)
         val estimate = estimateRequestCost(record)
-        if (!splitMissing || estimate.reported) estimate.usd else estimateRequestCost(record.copy(usage = usage.copy(
-            cachedInputTokens = usage.cachedInputTokens ?: usage.inputTokens,
-            cacheCreationInputTokens = usage.cacheCreationInputTokens ?: 0L))).usd
+        if (!splitMissing || estimate.reported) estimate.usd else estimateRequestCost(
+            record.copy(
+                usage = usage.copy(
+                    cachedInputTokens = usage.cachedInputTokens ?: usage.inputTokens,
+                    cacheCreationInputTokens = usage.cacheCreationInputTokens ?: 0L
+                )
+            )
+        ).usd
     }
     return total.takeIf { it.isFinite() && it >= 0 } ?: 0.0
 }

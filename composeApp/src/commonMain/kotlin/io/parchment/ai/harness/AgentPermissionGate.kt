@@ -46,10 +46,16 @@ object AgentPermissionGate {
             else "Tool '$name' is not available in this run."
         }
         if (WorkspaceHarness.activeToolsForMode(
-                policy.workspaceMode, policy.workspacePath, policy.allowShell,
-                scope.goalModeActive, policy.webAccess, scope.includeLocalWebSearchTool, policy,
+                policy.workspaceMode,
+                policy.workspacePath,
+                policy.allowShell,
+                scope.goalModeActive,
+                policy.webAccess,
+                scope.includeLocalWebSearchTool,
+                policy,
                 expandedMcpTools = scope.expandedMcpTools
-            ).none { it.name == name }) {
+            ).none { it.name == name }
+        ) {
             if (WorkspaceHarness.isMcpToolName(name) && scope.expandedMcpTools != null && WorkspaceToolCatalog.shouldDeferMcpSchemas(policy)) {
                 return "MCP tool '$name' schema is deferred. Call ${WorkspaceHarness.MCP_SCHEMA_TOOL_NAME}(names=[\"$name\"]) first to inspect its parameters and enable it."
             }
@@ -70,11 +76,13 @@ object AgentPermissionGate {
         return ToolEffect(
             // Asking the person is itself the check, so it never needs its own approval.
             // Control of the whole device always asks, whatever the setting for other tools.
-            requiresApproval = name == ComputerUse.TOOL_NAME || name != "ask_user" && when (scope.policy.approvalMode) {
-                ToolApprovalMode.ASK_EVERY_TOOL -> true
-                ToolApprovalMode.ASK_FOR_CHANGES -> changesFiles || changesState || usesWeb || external
-                ToolApprovalMode.NEVER -> false
-            },
+            requiresApproval = name == ComputerUse.TOOL_NAME ||
+                name != "ask_user" &&
+                when (scope.policy.approvalMode) {
+                    ToolApprovalMode.ASK_EVERY_TOOL -> true
+                    ToolApprovalMode.ASK_FOR_CHANGES -> changesFiles || changesState || usesWeb || external
+                    ToolApprovalMode.NEVER -> false
+                },
             changesFiles = changesFiles
         )
     }

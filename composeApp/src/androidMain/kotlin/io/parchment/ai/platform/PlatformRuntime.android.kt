@@ -26,8 +26,10 @@ actual object PlatformRuntime {
 
     @Volatile
     private var stateFlushCallback: ((Boolean) -> Unit)? = null
+
     @Volatile
     private var backHandlerCallback: (() -> Boolean)? = null
+
     @Volatile
     private var lastReportedDecodeSec: Int = -1
 
@@ -42,8 +44,7 @@ actual object PlatformRuntime {
         runCatching { stateFlushCallback?.invoke(true) }
     }
 
-    actual fun takeCrashReport(): CrashReport? =
-        CrashRecorder.takeReport(AndroidPlatformHost.resolveStorageDir())?.let { CrashReport(it, CrashRecorder.reportSaysSaved(it)) }
+    actual fun takeCrashReport(): CrashReport? = CrashRecorder.takeReport(AndroidPlatformHost.resolveStorageDir())?.let { CrashReport(it, CrashRecorder.reportSaysSaved(it)) }
 
     actual fun flushPendingStateAsync() {
         runCatching { stateFlushCallback?.invoke(false) }
@@ -53,9 +54,7 @@ actual object PlatformRuntime {
         backHandlerCallback = handler
     }
 
-    actual fun handleSystemBackPressed(): Boolean {
-        return runCatching { backHandlerCallback?.invoke() == true }.getOrDefault(false)
-    }
+    actual fun handleSystemBackPressed(): Boolean = runCatching { backHandlerCallback?.invoke() == true }.getOrDefault(false)
 
     actual fun isIgnoringBatteryOptimizations(): Boolean = runCatching {
         val ctx = AndroidPlatformHost.appContext ?: return true

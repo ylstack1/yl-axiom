@@ -23,16 +23,17 @@ import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.swing.Swing
 import kotlinx.serialization.encodeToString
 import org.jetbrains.skia.FontMgr
-import org.jetbrains.skia.impl.Library as SkiaLibrary
 import java.io.File
 import java.nio.file.Files
 import kotlin.system.exitProcess
+import org.jetbrains.skia.impl.Library as SkiaLibrary
 
 /** Packaging runs `MainKt --cds-warmup` under `-XX:AOTCacheOutput=$APPDIR/parchment.aot` to record classes & JIT profiles. */
 internal const val CDS_WARMUP_FLAG = "--cds-warmup"
 
 /** Generous for 2-core machines; this i5 needs about 13 s including the archive dump. */
 private const val WARMUP_TIME_LIMIT_MS = 60_000L
+
 /** Exit code of a warm-up the watchdog ended; the installer ignores it, `perf.py` reports it. */
 private const val WARMUP_TIMED_OUT = 3
 private const val WARMUP_FRAMES = 90
@@ -100,10 +101,18 @@ private fun seedWarmupData() {
         title = "Warm-up",
         messages = listOf(
             MessageNode("u", MessageRole.USER, listOf(MessageVariant("uv", content = "Show me the formats."))),
-            MessageNode("a", MessageRole.ASSISTANT, listOf(MessageVariant(
-                "av", content = WARMUP_MARKDOWN, thinkingSummary = "Thinking about the formats.",
-                toolCalls = listOf(ToolCallRecord("t", "fs_read", "{\"path\":\"README.md\"}", resultText = "text"))
-            )))
+            MessageNode(
+                "a",
+                MessageRole.ASSISTANT,
+                listOf(
+                    MessageVariant(
+                        "av",
+                        content = WARMUP_MARKDOWN,
+                        thinkingSummary = "Thinking about the formats.",
+                        toolCalls = listOf(ToolCallRecord("t", "fs_read", "{\"path\":\"README.md\"}", resultText = "text"))
+                    )
+                )
+            )
         )
     )
     PlatformStorage.saveChatSessionJson(primary.id, compactStateJson.encodeToString(primary))

@@ -1,57 +1,69 @@
 # Contributing to Parchment
 
-Thanks for helping. This page covers the principles, the setup and how to land a change. [AGENTS.md](AGENTS.md) holds the working rules, which apply to people and AI agents alike.
+Thanks for helping. This page covers principles, dual-stack setup (Rust Desktop + Kotlin Android), and verification commands. [AGENTS.md](AGENTS.md) holds the binding rules and stable contracts for people and AI agents alike.
 
 ## Principles
 
-1. **Compose Foundation only.** UI uses `compose.runtime`, `compose.foundation` and `compose.ui`. No Material, Fluent, WebView or third-party widget kits.
-2. **Our own icons.** Icons are vector paths in `ui/KissIconGlyphs.kt` (exposed via `ui/ParchmentIcons.kt`) on a 24-unit grid, never OS emoji. See [docs/DESIGN.md](docs/DESIGN.md).
-3. **Nothing hardcoded about models or devices.** No model names, versions or vendor branches; read capabilities from the provider. Blank generation settings are omitted from requests, and `0` means unlimited.
-4. **Plain words.** Sentence case and no internal jargon on screen. DESIGN.md has the word list.
-5. **Fits every screen.** Check compact phone widths (under 600 dp) and wide desktop windows.
-6. **Safe by default.** Tools need explicit permission, imports carry no tool access, and user data is never dropped to save effort.
+1. **Minimal, direct code.** Prefer the smallest flat implementation with optimal complexity and zero unnecessary abstractions or dependencies.
+2. **Native UI only.** Windows desktop uses native Rust + GPUI (`crates/parchment-desktop`); Android uses Jetpack Compose Foundation (`compose.runtime`, `compose.foundation`, `compose.ui`). No Electron, WebView, or Material.
+3. **Our own icons.** Vector paths on a 24-unit grid (`KissIconGlyphs.kt` / `ParchmentIcons.kt` and GPUI SVG assets), never OS emoji. See [docs/DESIGN.md](docs/DESIGN.md).
+4. **Nothing hardcoded about models or devices.** Discover capabilities and limits from providers and public registries; blank generation settings are omitted, and `0` means unlimited.
+5. **Fits every screen & safe by default.** Verify compact phone widths (`< 600 dp`) and wide desktop windows; require explicit tool approval, revoke tool authority on imports, and never drop user data.
 
 ## Setup
 
-| Tool | Get it | Then |
+### Rust Desktop (Windows GPUI & shared core)
+
+| Tool | Get it | Notes |
 |---|---|---|
-| JDK 25 (Temurin) | [adoptium.net](https://adoptium.net/temurin/releases/?version=25) | Set `JAVA_HOME` to the JDK folder and add its `bin` to `PATH` |
-| Android SDK command-line tools | [developer.android.com](https://developer.android.com/studio#command-tools) | Unzip to `%LOCALAPPDATA%\Android\Sdk\cmdline-tools\latest`, set `ANDROID_HOME` and `ANDROID_SDK_ROOT` to the `Sdk` folder, add `cmdline-tools\latest\bin` and `platform-tools` to `PATH` |
-| Android packages | `sdkmanager --licenses`, then `sdkmanager "platform-tools" "platforms;android-37.0" "build-tools;37.0.0"` | |
-| Python 3.10 or later | [python.org](https://www.python.org/downloads/) | Standard library only |
+| Rust (`stable`, edition 2024) | [rustup.rs](https://rustup.rs/) | Includes `cargo`, `rustfmt`, `clippy` |
+| Windows SDK (`fxc.exe`), `cmake`, `nasm` | Visual Studio Build Tools + NASM | Required for GPUI shaders and `aws-lc-sys` on Windows |
 
-Gradle and Kotlin need no install: `gradlew.bat` fetches the right versions.
+Run the native Windows desktop app with `cargo run --release -p parchment-desktop`.
 
-Run the desktop app with `.\gradlew.bat :composeApp:run`. Create an empty `composeApp\parchment-portable-data` folder first and the run keeps its chats and settings there instead of in your real data folder.
+### Kotlin Mobile (Android + slim Rust JNI `.so`)
+
+| Tool | Get it | Notes |
+|---|---|---|
+| JDK 25 (Temurin) | [adoptium.net](https://adoptium.net/temurin/releases/?version=25) | Set `JAVA_HOME` and add `bin` to `PATH` |
+| Android SDK & NDK | [developer.android.com](https://developer.android.com/studio#command-tools) | Set `ANDROID_HOME` and `ANDROID_NDK_HOME`; install `platform-tools`, `platforms;android-37.0`, `build-tools;37.0.0`, and NDK |
+| Android Rust target & `cargo-ndk` | `rustup target add aarch64-linux-android` && `cargo install cargo-ndk --version 4.1.2 --locked` | Builds the 16 KB-aligned `arm64-v8a` `libparchment_core.so` |
+
+Gradle and Kotlin need no separate install (`gradlew` / `gradlew.bat` fetches the pinned wrapper). Enable the local git pre-commit hook once after cloning:
+
+```sh
+cargo xtask install-hooks
+```
 
 ## Find your way
 
-[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) maps every source set, package, file, runtime flow and test suite, with a lookup table for common changes. Read the matching section of [AGENTS.md](AGENTS.md#stable-contracts) before changing storage, protocols or platform code, and search portably across desktop/Windows environments with `git grep -n`.
+[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) maps every Rust crate, Gradle source set, runtime flow, and lookup table. Read [AGENTS.md](AGENTS.md#stable-contracts) before changing storage, protocols, permissions, or platform code, and search portably with `git grep -n`.
 
-## Build and test
+## Build, lint, and test
 
-`scripts/verify.py` is the only build and test entry point. It uses `JAVA_HOME` and `ANDROID_HOME`, and it remembers what has already passed.
+`cargo xtask` (`crates/parchment-xtask`, zero external dependencies) is the single build, lint, test, and benchmark entry point for both stacks. It prevents concurrent Gradle/Cargo runs and remembers verified file hashes.
 
 | Need | Command |
 |---|---|
-| What to do next and what is verified | `python scripts/verify.py status` |
-| After a batch of changes | `python scripts/verify.py affected` |
-| Docs-only review, no build | `python scripts/verify.py review` |
-| Chosen tests while iterating | `python scripts/verify.py test '*SessionSpendTest'` |
-| Screenshots of every screen | `python scripts/verify.py test UiGalleryTest` |
-| Android Kotlin compile | `python scripts/verify.py android` |
-| Start-up, memory and size | `python scripts/verify.py perf` (budgets in [docs/PERFORMANCE.md](docs/PERFORMANCE.md)) |
-| Final desktop, Android and package gate | `. .\scripts\load-private-signer.ps1`, then `python scripts/verify.py final` |
+| Session status, pending checks, and `TODO.md` | `cargo xtask status` |
+| Auto-format Rust (`rustfmt`) and Kotlin (`ktlintFormat`) | `cargo xtask fmt` |
+| Fast static checks (`rustfmt --check`, encoding, dead code, links, doc budgets) | `cargo xtask review` |
+| Verify changed targets (ledger-backed Rust and/or Kotlin + `ktlintCheck`) | `cargo xtask affected` |
+| Full Rust gate (`rustfmt`, `clippy -D warnings`, workspace + slim `android-jni` tests) | `cargo xtask rust` |
+| Kotlin formatting & lint gate (`ktlintCheck`) | `cargo xtask ktlint` |
+| Build & verify 16 KB-aligned Android `arm64-v8a` `libparchment_core.so` | `cargo xtask android-so` |
+| Targeted Kotlin JVM/UI tests (e.g. `UiGalleryTest`) | `cargo xtask test '*SessionSpendTest'` |
+| Compile Android Kotlin sources | `cargo xtask android` |
+| Desktop `.exe` + Android APK/phone benchmarks | `cargo xtask perf` ([docs/PERFORMANCE.md](docs/PERFORMANCE.md)) |
+| Full release gate (review, Rust, `.so`, desktop `.exe`, `ktlint`, Kotlin tests, signed APK) | `. .\scripts\load-private-signer.ps1`, then `cargo xtask final` |
 
-Add `--dry-run` to see what a build command would run. Failures print compiler errors and failed tests, and full logs are in `.parchment-local/verification/`. Run `python -m unittest scripts/test_workflow_tools.py` after changing verification or quality scripts.
-
-`scripts/quality.py` enforces encoding, unused imports, dead code, file-size limits, banned patterns, documentation budgets, working links and tracked secrets. Don't raise a limit in `scripts/quality-baseline.json` to get a pass.
+Pass `--dry-run` to preview commands. Full Gradle logs live in `.parchment-local/verification/`.
 
 ## Submitting a change
 
-- Keep a change to one behavior, with a test when it fixes a real failure.
-- Run `python scripts/verify.py affected` and make sure it passes.
-- Update [TODO.md](TODO.md) if you finish or find work, and MEMORY only for a new lasting rule.
-- Describe what changed, how you checked it and what you didn't check.
+- Keep each change focused on one behavior, with a regression test for bug fixes.
+- Run `cargo xtask affected` (or `cargo xtask final` for build/packaging/signing edits) and confirm all checks pass.
+- Use Conventional Commits (`feat:`, `fix:`, `perf:` drive `release-please` and `CHANGELOG.md`).
+- Update [TODO.md](TODO.md) if you finish or uncover work, and report only checks actually run.
 
 Release signing is covered in [docs/RELEASE_SIGNING.md](docs/RELEASE_SIGNING.md).

@@ -82,8 +82,11 @@ class PerformanceBaselineTest {
         }
 
         val nodes = (1..2000).map { number ->
-            MessageNode("m$number", if (number % 2 == 0) MessageRole.ASSISTANT else MessageRole.USER,
-                listOf(MessageVariant("v$number", content = "Message $number. ".repeat(80))))
+            MessageNode(
+                "m$number",
+                if (number % 2 == 0) MessageRole.ASSISTANT else MessageRole.USER,
+                listOf(MessageVariant("v$number", content = "Message $number. ".repeat(80)))
+            )
         }
         val encoded = compactStateJson.encodeToString(ChatSession.serializer(), ChatSession("large", "Large", 1L, 1L, "p", messages = nodes))
         measure("decode_chat_${encoded.length}_chars") { compactStateJson.decodeFromString(ChatSession.serializer(), encoded) }

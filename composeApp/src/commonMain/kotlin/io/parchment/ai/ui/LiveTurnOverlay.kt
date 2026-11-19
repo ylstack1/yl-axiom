@@ -45,29 +45,29 @@ internal object LiveTurns {
         byVariant.remove(variantId)
     }
 
-    fun forSession(sessionId: String): List<LiveTurnOverlay> =
-        byVariant.values.map { it.value }.filter { it.sessionId == sessionId }
+    fun forSession(sessionId: String): List<LiveTurnOverlay> = byVariant.values.map { it.value }.filter { it.sessionId == sessionId }
 
     fun sessionIds(): Set<String> = byVariant.values.mapTo(HashSet()) { it.value.sessionId }
 }
 
 /** This variant with [live]'s text, when [live] is this variant's stream. */
-internal fun MessageVariant.withLiveTurn(live: LiveTurnOverlay?): MessageVariant =
-    if (live == null || live.variantId != id) this else copy(
-        content = live.content,
-        thinkingSummary = live.thinkingSummary,
-        trailingThinking = live.trailingThinking,
-        thinkingSignature = live.thinkingSignature,
-        thinkingDurationMs = live.thinkingDurationMs,
-        tokenMetrics = if (live.tokensPerSec > 0.0) tokenMetrics.copy(tokensPerSec = live.tokensPerSec) else tokenMetrics
-    )
+internal fun MessageVariant.withLiveTurn(live: LiveTurnOverlay?): MessageVariant = if (live == null || live.variantId != id) this else copy(
+    content = live.content,
+    thinkingSummary = live.thinkingSummary,
+    trailingThinking = live.trailingThinking,
+    thinkingSignature = live.thinkingSignature,
+    thinkingDurationMs = live.thinkingDurationMs,
+    tokenMetrics = if (live.tokensPerSec > 0.0) tokenMetrics.copy(tokensPerSec = live.tokensPerSec) else tokenMetrics
+)
 
 /** This chat with each streaming reply's live text in place of its last checkpoint. */
 internal fun ChatSession.withLiveTurns(): ChatSession {
     val lives = LiveTurns.forSession(id)
     if (lives.isEmpty()) return this
-    return copy(messages = messages.map { node ->
-        val live = lives.firstOrNull { it.nodeId == node.id } ?: return@map node
-        node.copy(variants = node.variants.map { it.withLiveTurn(live) })
-    })
+    return copy(
+        messages = messages.map { node ->
+            val live = lives.firstOrNull { it.nodeId == node.id } ?: return@map node
+            node.copy(variants = node.variants.map { it.withLiveTurn(live) })
+        }
+    )
 }

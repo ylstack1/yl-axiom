@@ -18,11 +18,9 @@ actual object PlatformWorkspace {
         )
     )
 
-    actual fun workspaceList(workspaceRoot: String, relativePath: String, recursive: Boolean): Result<String> =
-        workspaceScanner.list(workspaceRoot, relativePath, recursive)
+    actual fun workspaceList(workspaceRoot: String, relativePath: String, recursive: Boolean): Result<String> = workspaceScanner.list(workspaceRoot, relativePath, recursive)
 
-    actual fun workspaceGlob(workspaceRoot: String, pattern: String, maxResults: Int): Result<String> =
-        workspaceScanner.glob(workspaceRoot, pattern, maxResults)
+    actual fun workspaceGlob(workspaceRoot: String, pattern: String, maxResults: Int): Result<String> = workspaceScanner.glob(workspaceRoot, pattern, maxResults)
 
     actual fun workspaceRead(workspaceRoot: String, relativePath: String, startLine: Int, maxLines: Int): Result<String> = runCatching {
         val target = WorkspacePathGuard.resolve(workspaceRoot, relativePath).toFile()
@@ -68,8 +66,7 @@ actual object PlatformWorkspace {
         WorkspaceFileEditor.fileStamp(workspaceRoot, relativePath)
     }
 
-    actual fun workspaceDirectoryExists(path: String): Boolean =
-        WorkspaceFileEditor.directoryExists(path)
+    actual fun workspaceDirectoryExists(path: String): Boolean = WorkspaceFileEditor.directoryExists(path)
 
     actual fun workspaceShellExec(
         workspaceRoot: String,
@@ -91,20 +88,15 @@ actual object PlatformWorkspace {
         maxResults: Int
     ): Result<String> = workspaceScanner.search(workspaceRoot, query, fileGlob, relativePath, maxResults)
 
-    actual fun fetchUrlText(url: String, maxChars: Int, isCancelled: (() -> Boolean)?): Result<String> =
-        PublicWebTransport.fetch(url, maxChars, isCancelled)
+    actual fun fetchUrlText(url: String, maxChars: Int, isCancelled: (() -> Boolean)?): Result<String> = PublicWebTransport.fetch(url, maxChars, isCancelled)
 
-    actual fun fetchPublicBytes(url: String, maxBytes: Int, isCancelled: (() -> Boolean)?): Result<ByteArray> =
-        PublicWebTransport.fetchBytes(url, maxBytes, isCancelled)
+    actual fun fetchPublicBytes(url: String, maxBytes: Int, isCancelled: (() -> Boolean)?): Result<ByteArray> = PublicWebTransport.fetchBytes(url, maxBytes, isCancelled)
 
-    actual fun readLocalSkillFolder(folderPath: String): Result<LocalSkillBundle> =
-        LocalSkillSourceReader.readFolder(folderPath)
+    actual fun readLocalSkillFolder(folderPath: String): Result<LocalSkillBundle> = LocalSkillSourceReader.readFolder(folderPath)
 
-    actual fun readLocalSkillZip(fileName: String, zipBytes: ByteArray): Result<LocalSkillBundle> =
-        LocalSkillSourceReader.readZip(fileName, zipBytes)
+    actual fun readLocalSkillZip(fileName: String, zipBytes: ByteArray): Result<LocalSkillBundle> = LocalSkillSourceReader.readZip(fileName, zipBytes)
 
-    actual fun extractDocxText(bytes: ByteArray): Result<String> =
-        DocxTextExtractor.extractText(bytes)
+    actual fun extractDocxText(bytes: ByteArray): Result<String> = DocxTextExtractor.extractText(bytes)
 
     actual val computerControl: ComputerControl get() = DesktopComputerControl
     actual val supportsLocalMcpServers: Boolean = true

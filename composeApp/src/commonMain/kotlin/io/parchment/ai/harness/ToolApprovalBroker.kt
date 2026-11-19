@@ -73,6 +73,7 @@ class ToolApprovalBroker(
     private val pendingQuestions = mutableMapOf<String, PendingQuestion>()
     private val questionsState = MutableStateFlow<List<UserQuestion>>(emptyList())
     val questions: StateFlow<List<UserQuestion>> = questionsState.asStateFlow()
+
     /** Set by the run that owns this broker, because only it can start and pay for a helper. */
     var subagentRunner: (suspend (task: String, onProgress: suspend (String) -> Unit) -> Result<String>)? = null
     private val closed = MutableStateFlow(false)
@@ -82,6 +83,7 @@ class ToolApprovalBroker(
     private var sequence = 0L
 
     fun currentScope(): ToolAccessScope? = if (closed.value) null else policySource()
+
     /** Call synchronously from policy/path edits so even an Off→On change invalidates old grants. */
     fun invalidate() { revision.update { it + 1L } }
 
@@ -233,13 +235,13 @@ class ToolApprovalBroker(
         return AgentPermissionGate.denial(scope, permit.toolName, permit.argumentsJson)
     }
 
-    internal fun isPermitRevoked(permit: ToolExecutionPermit): Boolean =
-        closed.value || revision.value != permit.policyRevision || currentScope() != permit.scope
+    internal fun isPermitRevoked(permit: ToolExecutionPermit): Boolean = closed.value || revision.value != permit.policyRevision || currentScope() != permit.scope
 
     companion object {
         private val activeLock = Any()
         private val activeEntries = LinkedHashMap<ToolApprovalBroker, List<ToolApprovalRequest>>()
         private val pendingRequestsState = MutableStateFlow<List<ToolApprovalRequest>>(emptyList())
+
         /** Pending requests across active runs in this process, for out-of-activity system surfaces. */
         val pendingRequests: StateFlow<List<ToolApprovalRequest>> = pendingRequestsState.asStateFlow()
 
@@ -315,7 +317,8 @@ fun parseShellApprovalPreview(command: String): ShellApprovalPreview {
             c == ';' || c == '\n' -> { flush(";"); i++; continue }
             c == '|' -> { flush("|"); i++; continue }
             c == '>' -> if (next != '&') writes = true
-            c == '&' && command.substring(i + 1).trimStart().let { it.isEmpty() || it[0] == ';' || it[0] == '\n' } &&
+            c == '&' &&
+                command.substring(i + 1).trimStart().let { it.isEmpty() || it[0] == ';' || it[0] == '\n' } &&
                 command.getOrNull(i - 1) != '>' -> {
                 background = true; flush(";"); i++; continue
             }
@@ -336,8 +339,7 @@ class WorkspaceFileRevisionTracker {
     private val lock = Any()
     private val seenStamps = HashMap<String, String>()
 
-    private fun normalize(relativePath: String): String =
-        relativePath.trim().replace('\\', '/').trimStart('/').lowercase()
+    private fun normalize(relativePath: String): String = relativePath.trim().replace('\\', '/').trimStart('/').lowercase()
 
     fun recordRead(relativePath: String, stamp: String?) {
         if (stamp == null) return

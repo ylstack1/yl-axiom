@@ -7,8 +7,7 @@ import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
 class FirstRunSetupTest {
-    private fun profile(baseUrl: String, apiKey: String = "") =
-        ProviderProfile("p", "Provider", ProviderProtocol.OPENAI_RESPONSES, baseUrl = baseUrl, apiKey = apiKey)
+    private fun profile(baseUrl: String, apiKey: String = "") = ProviderProfile("p", "Provider", ProviderProtocol.OPENAI_RESPONSES, baseUrl = baseUrl, apiKey = apiKey)
 
     @Test
     fun aHostedProviderWithoutAKeyNeedsSetup() {

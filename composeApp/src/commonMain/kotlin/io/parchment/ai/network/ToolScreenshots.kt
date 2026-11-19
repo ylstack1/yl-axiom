@@ -19,8 +19,7 @@ private const val SCREENSHOT_LABEL = "Screenshot from the computer_use tool."
 
 internal val ToolCallRecord.hasScreenshot: Boolean get() = screenshotJpegBase64.isNotEmpty()
 
-private fun JsonObject.isScreenshotEntry(): Boolean =
-    ((this["content"] as? JsonArray)?.firstOrNull() as? JsonObject)?.get("text")?.let { (it as? JsonPrimitive)?.content } == SCREENSHOT_LABEL
+private fun JsonObject.isScreenshotEntry(): Boolean = ((this["content"] as? JsonArray)?.firstOrNull() as? JsonObject)?.get("text")?.let { (it as? JsonPrimitive)?.content } == SCREENSHOT_LABEL
 
 /** For the formats where a screenshot is its own message: Responses, Chat and Interactions. */
 internal fun MutableList<JsonObject>.dropOlderScreenshotEntries() {
@@ -32,11 +31,17 @@ internal fun MutableList<JsonObject>.dropOlderAnthropicScreenshots() {
     replaceAll { message ->
         val blocks = message["content"] as? JsonArray ?: return@replaceAll message
         if (blocks.none { (it as? JsonObject)?.get("content") is JsonArray }) return@replaceAll message
-        JsonObject(message + ("content" to JsonArray(blocks.map { block ->
-            val result = block as? JsonObject
-            val text = ((result?.get("content") as? JsonArray)?.firstOrNull() as? JsonObject)?.get("text")
-            if (result == null || text == null) block else JsonObject(result + ("content" to text))
-        })))
+        JsonObject(
+            message + (
+                "content" to JsonArray(
+                    blocks.map { block ->
+                        val result = block as? JsonObject
+                        val text = ((result?.get("content") as? JsonArray)?.firstOrNull() as? JsonObject)?.get("text")
+                        if (result == null || text == null) block else JsonObject(result + ("content" to text))
+                    }
+                )
+                )
+        )
     }
 }
 
@@ -93,8 +98,13 @@ internal fun geminiScreenshotPart(record: ToolCallRecord): JsonObject = buildJso
 
 internal fun interactionsScreenshotStep(record: ToolCallRecord): JsonObject = buildJsonObject {
     put("type", "user_input")
-    put("content", JsonArray(listOf(
-        buildJsonObject { put("type", "text"); put("text", SCREENSHOT_LABEL) },
-        buildJsonObject { put("type", "image"); put("mime_type", SCREENSHOT_MIME); put("data", record.screenshotJpegBase64) }
-    )))
+    put(
+        "content",
+        JsonArray(
+            listOf(
+                buildJsonObject { put("type", "text"); put("text", SCREENSHOT_LABEL) },
+                buildJsonObject { put("type", "image"); put("mime_type", SCREENSHOT_MIME); put("data", record.screenshotJpegBase64) }
+            )
+        )
+    )
 }

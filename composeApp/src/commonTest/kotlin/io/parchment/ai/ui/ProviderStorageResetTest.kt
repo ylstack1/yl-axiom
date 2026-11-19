@@ -16,7 +16,7 @@ class ProviderStorageResetTest {
         val profile = it.jsonObject
         profile["id"]!!.jsonPrimitive.content to (
             profile["useStatefulChaining"]!!.jsonPrimitive.boolean || profile["storeServerSide"]!!.jsonPrimitive.boolean
-        )
+            )
     }
 
     @Test fun olderSettingsResetOnlyTheBuiltInProfiles() {

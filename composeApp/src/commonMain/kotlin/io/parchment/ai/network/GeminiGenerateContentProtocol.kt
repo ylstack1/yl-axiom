@@ -1,7 +1,5 @@
 package io.parchment.ai.network
 
-import io.parchment.ai.strings.Strings
-
 import io.ktor.client.request.get
 import io.ktor.client.request.header
 import io.ktor.client.request.preparePost
@@ -14,9 +12,6 @@ import io.ktor.http.isSuccess
 import io.ktor.serialization.kotlinx.json.json
 import io.parchment.ai.harness.ToolAccessScope
 import io.parchment.ai.harness.WorkspaceHarness
-import io.parchment.ai.protocol.isGeminiServerSideToolSignature
-import io.parchment.ai.protocol.sanitizeGeminiThoughtSignature
-import io.parchment.ai.model.turnTextLayout
 import io.parchment.ai.model.AgentPermissionResolver
 import io.parchment.ai.model.CUSTOM_DIALECT_GEMINI
 import io.parchment.ai.model.ChatSession
@@ -28,8 +23,12 @@ import io.parchment.ai.model.ProviderProfile
 import io.parchment.ai.model.ProviderProtocol
 import io.parchment.ai.model.ToolApprovalMode
 import io.parchment.ai.model.ToolCallRecord
+import io.parchment.ai.model.turnTextLayout
 import io.parchment.ai.network.AiProviderEngine.RawWebCitation
 import io.parchment.ai.network.AiProviderEngine.StepRetriesExhaustedException
+import io.parchment.ai.protocol.isGeminiServerSideToolSignature
+import io.parchment.ai.protocol.sanitizeGeminiThoughtSignature
+import io.parchment.ai.strings.Strings
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
@@ -143,17 +142,21 @@ internal suspend fun AiProviderEngine.executeGeminiGenerateContentLoop(
                         if (profile.enableUrlContext) add(buildJsonObject { putJsonObject("url_context") {} })
                     }
                     if (activeWorkspaceTools.isNotEmpty() && (allowMixedTools || !hasBuiltInTools)) {
-                        add(buildJsonObject {
-                            putJsonArray("function_declarations") {
-                                for (t in activeWorkspaceTools) {
-                                    add(buildJsonObject {
-                                        put("name", t.name)
-                                        put("description", t.description)
-                                        put("parameters", t.parametersSchema)
-                                    })
+                        add(
+                            buildJsonObject {
+                                putJsonArray("function_declarations") {
+                                    for (t in activeWorkspaceTools) {
+                                        add(
+                                            buildJsonObject {
+                                                put("name", t.name)
+                                                put("description", t.description)
+                                                put("parameters", t.parametersSchema)
+                                            }
+                                        )
+                                    }
                                 }
                             }
-                        })
+                        )
                     }
                 }
                 if (toolsArr.isNotEmpty()) {
@@ -260,7 +263,6 @@ internal suspend fun AiProviderEngine.executeGeminiGenerateContentLoop(
                         throw providerHttpError("Gemini streamGenerateContent", response, err)
                     }
 
-
                     suspend fun processCandidateParts(parts: JsonArray) {
                         for (p in parts) {
                             val partObj = p as? JsonObject ?: continue
@@ -364,12 +366,20 @@ internal suspend fun AiProviderEngine.executeGeminiGenerateContentLoop(
                         val usage = obj["usageMetadata"] as? JsonObject
                         val respId = (obj["responseId"] as? JsonPrimitive)?.contentOrNull.orEmpty()
                         if (firstCand?.get("groundingMetadata") is JsonObject) {
-                            onUsage(usageRequestId, "", UsageDialect.GEMINI_CONTENT,
-                                parseProviderUsage(UsageDialect.GEMINI_CONTENT, null, response = obj))
+                            onUsage(
+                                usageRequestId,
+                                "",
+                                UsageDialect.GEMINI_CONTENT,
+                                parseProviderUsage(UsageDialect.GEMINI_CONTENT, null, response = obj)
+                            )
                         }
                         if (usage != null) {
-                            onUsage(usageRequestId, respId, UsageDialect.GEMINI_CONTENT,
-                                parseProviderUsage(UsageDialect.GEMINI_CONTENT, usage, isFinal = forceFinalUsage || !finishReason.isNullOrBlank(), response = obj))
+                            onUsage(
+                                usageRequestId,
+                                respId,
+                                UsageDialect.GEMINI_CONTENT,
+                                parseProviderUsage(UsageDialect.GEMINI_CONTENT, usage, isFinal = forceFinalUsage || !finishReason.isNullOrBlank(), response = obj)
+                            )
                         }
                     }
 
@@ -409,7 +419,8 @@ internal suspend fun AiProviderEngine.executeGeminiGenerateContentLoop(
                         onStatus(Strings.endpointRejectedSamplingParametersRetryingWith)
                         continue
                     }
-                    if (!forceImageModalityOnRetry && !omitImageModalityOnRetry &&
+                    if (!forceImageModalityOnRetry &&
+                        !omitImageModalityOnRetry &&
                         (errMsg.contains("responsemodalities") || errMsg.contains("response_modalities") || errMsg.contains("image")) &&
                         (errMsg.contains("only supports") || errMsg.contains("must include") || errMsg.contains("modality"))
                     ) {
@@ -418,21 +429,25 @@ internal suspend fun AiProviderEngine.executeGeminiGenerateContentLoop(
                         onStatus(Strings.modelOutputsImagesEnablingTextImage)
                         continue
                     }
-                    if (!omitImageModalityOnRetry && (modelOutputsImages || forceImageModalityOnRetry) &&
+                    if (!omitImageModalityOnRetry &&
+                        (modelOutputsImages || forceImageModalityOnRetry) &&
                         (errMsg.contains("responsemodalities") || errMsg.contains("response_modalities"))
                     ) {
                         omitImageModalityOnRetry = true
                         onStatus(Strings.endpointRejectedResponsemodalitiesRetryingWithText)
                         continue
                     }
-                    if (!disableMixedToolsOnRetry && hasBuiltInTools && activeWorkspaceTools.isNotEmpty() &&
+                    if (!disableMixedToolsOnRetry &&
+                        hasBuiltInTools &&
+                        activeWorkspaceTools.isNotEmpty() &&
                         (errMsg.contains("validated") || errMsg.contains("includeserversidetoolinvocations") || errMsg.contains("tool") || errMsg.contains("function_declarations") || errMsg.contains("google_search"))
                     ) {
                         disableMixedToolsOnRetry = true
                         onStatus(Strings.endpointRejectedMixedBuiltInFunction)
                         continue
                     }
-                    if (!upgradeMinimalToLowOnRetry && !useBudgetDialectOnRetry &&
+                    if (!upgradeMinimalToLowOnRetry &&
+                        !useBudgetDialectOnRetry &&
                         (profile.thinkingEffort.equals("minimal", ignoreCase = true) || profile.thinkingEffort.equals("none", ignoreCase = true) || profile.thinkingEffort.equals("off", ignoreCase = true)) &&
                         (errMsg.contains("minimal") || errMsg.contains("thinkinglevel") || errMsg.contains("thinking_level"))
                     ) {
@@ -440,7 +455,8 @@ internal suspend fun AiProviderEngine.executeGeminiGenerateContentLoop(
                         onStatus(Strings.modelRejectedMinimalThinkinglevelSteppingUp)
                         continue
                     }
-                    if (!downgradeXhighToHighOnRetry && !useBudgetDialectOnRetry &&
+                    if (!downgradeXhighToHighOnRetry &&
+                        !useBudgetDialectOnRetry &&
                         (profile.thinkingEffort.equals("xhigh", ignoreCase = true) || profile.thinkingEffort.equals("max", ignoreCase = true)) &&
                         (errMsg.contains("xhigh") || errMsg.contains("thinkinglevel") || errMsg.contains("thinking_level"))
                     ) {
@@ -458,9 +474,17 @@ internal suspend fun AiProviderEngine.executeGeminiGenerateContentLoop(
                         onStatus(Strings.endpointRejectedThinkingconfigRetryingWithDefault)
                         continue
                     }
-                    if (!foldHistoricalToolsOnRetry && hasHistoricalToolsOrSigs &&
-                        (errMsg.contains("couldn't process") || errMsg.contains("invalid_request") || errMsg.contains("thought") ||
-                            errMsg.contains("signature") || errMsg.contains("functioncall") || errMsg.contains("function_call") || errMsg.contains("tool type"))
+                    if (!foldHistoricalToolsOnRetry &&
+                        hasHistoricalToolsOrSigs &&
+                        (
+                            errMsg.contains("couldn't process") ||
+                                errMsg.contains("invalid_request") ||
+                                errMsg.contains("thought") ||
+                                errMsg.contains("signature") ||
+                                errMsg.contains("functioncall") ||
+                                errMsg.contains("function_call") ||
+                                errMsg.contains("tool type")
+                            )
                     ) {
                         foldHistoricalToolsOnRetry = true
                         onStatus(Strings.endpointRejectedHistoricalToolSignatureContext)
@@ -490,17 +514,21 @@ internal suspend fun AiProviderEngine.executeGeminiGenerateContentLoop(
             val stopHookPrompt = circuitBreaker.evaluateStopHookPrompt()
             if (stopHookPrompt != null) {
                 if (roundModelParts.isNotEmpty()) {
-                    extraLoopContentTurns.add(buildJsonObject {
-                        put("role", "model")
-                        put("parts", JsonArray(roundModelParts))
-                    })
+                    extraLoopContentTurns.add(
+                        buildJsonObject {
+                            put("role", "model")
+                            put("parts", JsonArray(roundModelParts))
+                        }
+                    )
                 }
-                extraLoopContentTurns.add(buildJsonObject {
-                    put("role", "user")
-                    putJsonArray("parts") {
-                        add(buildJsonObject { put("text", stopHookPrompt) })
+                extraLoopContentTurns.add(
+                    buildJsonObject {
+                        put("role", "user")
+                        putJsonArray("parts") {
+                            add(buildJsonObject { put("text", stopHookPrompt) })
+                        }
                     }
-                })
+                )
                 onStatus(Strings.goalWorkCheckContinuingIncompleteChecklist)
                 continue
             }
@@ -518,10 +546,12 @@ internal suspend fun AiProviderEngine.executeGeminiGenerateContentLoop(
                 JsonObject(mutable)
             } else part
         }
-        extraLoopContentTurns.add(buildJsonObject {
-            put("role", "model")
-            put("parts", JsonArray(signedModelParts))
-        })
+        extraLoopContentTurns.add(
+            buildJsonObject {
+                put("role", "model")
+                put("parts", JsonArray(signedModelParts))
+            }
+        )
 
         val batchRecords = executeWorkspaceToolBatchWithLiveProgress(
             workspaceRoot = session.workspacePath,
@@ -554,10 +584,12 @@ internal suspend fun AiProviderEngine.executeGeminiGenerateContentLoop(
                 }
             }
         }
-        extraLoopContentTurns.add(buildJsonObject {
-            put("role", "user")
-            put("parts", JsonArray(responseParts + batchRecords.filter { it.hasScreenshot }.map(::geminiScreenshotPart)))
-        })
+        extraLoopContentTurns.add(
+            buildJsonObject {
+                put("role", "user")
+                put("parts", JsonArray(responseParts + batchRecords.filter { it.hasScreenshot }.map(::geminiScreenshotPart)))
+            }
+        )
         val trippedReason = circuitBreaker.checkTripped()
         if (trippedReason != null) {
             onStatus(trippedReason)
@@ -590,10 +622,12 @@ internal fun AiProviderEngine.buildGeminiGenerateContentContents(
             val existingHasFunction = existingParts.any { it.containsKey("functionCall") || it.containsKey("functionResponse") }
             val newHasFunction = newParts.any { it.containsKey("functionCall") || it.containsKey("functionResponse") }
             if (existingHasFunction && newHasFunction) {
-                rollingContents.add(buildJsonObject {
-                    put("role", roleStr)
-                    put("parts", JsonArray(newParts))
-                })
+                rollingContents.add(
+                    buildJsonObject {
+                        put("role", roleStr)
+                        put("parts", JsonArray(newParts))
+                    }
+                )
                 return
             }
             val existingTextIdx = existingParts.indexOfLast {
@@ -630,10 +664,12 @@ internal fun AiProviderEngine.buildGeminiGenerateContentContents(
                 put("parts", JsonArray(existingParts))
             }
         } else {
-            rollingContents.add(buildJsonObject {
-                put("role", roleStr)
-                put("parts", JsonArray(newParts))
-            })
+            rollingContents.add(
+                buildJsonObject {
+                    put("role", roleStr)
+                    put("parts", JsonArray(newParts))
+                }
+            )
         }
     }
 
@@ -644,12 +680,13 @@ internal fun AiProviderEngine.buildGeminiGenerateContentContents(
 
         if (role == MessageRole.ASSISTANT) {
             val cleanText = stripInlineErrorNotices(text)
-            val isForeignProtocol = nodeVar != null && !isNativeReasoningCompatible(
-                variant = nodeVar,
-                targetProtocol = ProviderProtocol.GEMINI_INTERACTIONS,
-                targetWireDialect = CUSTOM_DIALECT_GEMINI,
-                currentModel = currentModel
-            )
+            val isForeignProtocol = nodeVar != null &&
+                !isNativeReasoningCompatible(
+                    variant = nodeVar,
+                    targetProtocol = ProviderProtocol.GEMINI_INTERACTIONS,
+                    targetWireDialect = CUSTOM_DIALECT_GEMINI,
+                    currentModel = currentModel
+                )
             val rawSavedSig = if (isForeignProtocol) "" else nodeVar?.thinkingSignature.orEmpty()
             val savedSig = sanitizeGeminiThoughtSignature(rawSavedSig, forFunctionCall = false)
             val thinkSummary = nodeVar?.thinkingSummary.orEmpty()
@@ -699,27 +736,31 @@ internal fun AiProviderEngine.buildGeminiGenerateContentContents(
                         val effSig = cleanBatchSig.ifBlank { "skip_thought_signature_validator" }
                         val modelStepParts = mutableListOf<JsonObject>()
                         if (batch.precedingThinking.isNotBlank() && !isForeignProtocol && !handoffCarriesReasoning) {
-                            modelStepParts.add(buildJsonObject {
-                                put("thought", true)
-                                put("text", batch.precedingThinking)
-                            })
+                            modelStepParts.add(
+                                buildJsonObject {
+                                    put("thought", true)
+                                    put("text", batch.precedingThinking)
+                                }
+                            )
                         }
                         if (batch.precedingText.isNotBlank()) modelStepParts.add(buildJsonObject { put("text", batch.precedingText) })
                         batch.calls.forEachIndexed { tcIdx, tc ->
                             val parsedArgs = runCatching { json.parseToJsonElement(tc.argumentsJson.ifBlank { "{}" }).jsonObject }
                                 .getOrElse { JsonObject(emptyMap()) }
-                            modelStepParts.add(buildJsonObject {
-                                putJsonObject("functionCall") {
-                                    if (tc.id.isNotBlank() && !tc.id.startsWith("synth_call_")) {
-                                        put("id", tc.id)
+                            modelStepParts.add(
+                                buildJsonObject {
+                                    putJsonObject("functionCall") {
+                                        if (tc.id.isNotBlank() && !tc.id.startsWith("synth_call_")) {
+                                            put("id", tc.id)
+                                        }
+                                        put("name", tc.name)
+                                        put("args", parsedArgs)
                                     }
-                                    put("name", tc.name)
-                                    put("args", parsedArgs)
+                                    if (tcIdx == 0) {
+                                        put("thoughtSignature", effSig)
+                                    }
                                 }
-                                if (tcIdx == 0) {
-                                    put("thoughtSignature", effSig)
-                                }
-                            })
+                            )
                         }
                         appendOrMergeContentTurn("model", modelStepParts, allowMergeWithPrevious = modelStepParts.none { it.containsKey("functionCall") })
 
@@ -761,17 +802,21 @@ internal fun AiProviderEngine.buildGeminiGenerateContentContents(
         } else {
             val turnParts = buildList {
                 if (text.isNotBlank() || binaryAttachments.isEmpty()) {
-                    add(buildJsonObject {
-                        put("text", text)
-                    })
+                    add(
+                        buildJsonObject {
+                            put("text", text)
+                        }
+                    )
                 }
                 for (att in binaryAttachments) {
-                    add(buildJsonObject {
-                        putJsonObject("inline_data") {
-                            put("mime_type", att.mimeType)
-                            put("data", att.base64Data)
+                    add(
+                        buildJsonObject {
+                            putJsonObject("inline_data") {
+                                put("mime_type", att.mimeType)
+                                put("data", att.base64Data)
+                            }
                         }
-                    })
+                    )
                 }
             }
             appendOrMergeContentTurn("user", turnParts)

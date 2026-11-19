@@ -112,11 +112,9 @@ internal data class ShortcutBinding(
 
         internal fun isReserved(binding: ShortcutBinding): Boolean = binding in RESERVED_CHORDS
 
-        internal fun hasAllowedModifiers(binding: ShortcutBinding): Boolean =
-            binding.ctrl || binding.alt || isFunctionKeyCode(binding.keyCode)
+        internal fun hasAllowedModifiers(binding: ShortcutBinding): Boolean = binding.ctrl || binding.alt || isFunctionKeyCode(binding.keyCode)
 
-        internal fun isValidBinding(binding: ShortcutBinding): Boolean =
-            hasAllowedModifiers(binding) && !isReserved(binding)
+        internal fun isValidBinding(binding: ShortcutBinding): Boolean = hasAllowedModifiers(binding) && !isReserved(binding)
 
         fun parse(raw: String): ShortcutBinding? {
             val trimmed = raw.trim()

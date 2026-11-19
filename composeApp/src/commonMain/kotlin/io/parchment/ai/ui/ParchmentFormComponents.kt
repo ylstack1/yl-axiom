@@ -311,8 +311,10 @@ fun SepiaTextField(
                             if (onClipboardPaste != null &&
                                 keyEvent.type == KeyEventType.KeyDown &&
                                 !keyEvent.isAltPressed &&
-                                (((keyEvent.isCtrlPressed || keyEvent.isMetaPressed) && keyEvent.key == Key.V) ||
-                                    (keyEvent.isShiftPressed && keyEvent.key == Key.Insert))
+                                (
+                                    ((keyEvent.isCtrlPressed || keyEvent.isMetaPressed) && keyEvent.key == Key.V) ||
+                                        (keyEvent.isShiftPressed && keyEvent.key == Key.Insert)
+                                    )
                             ) {
                                 if (onClipboardPaste()) {
                                     return@onPreviewKeyEvent true
@@ -424,7 +426,7 @@ fun SepiaTextField(
                                     text = parsedPlaceholder.cleanText,
                                     maxLines = if (singleLine) 1 else 2,
                                     overflow = TextOverflow.Ellipsis,
-                                    style = textStyle.copy(color = p.mutedInk.copy(alpha = Alpha.placeholder))
+                                    style = textStyle.copy(color = p.mutedInk.copy(alpha = Alpha.PLACEHOLDER))
                                 )
                             }
                             innerTextField()
@@ -459,6 +461,7 @@ fun SepiaSectionCard(
     ) {
         if (title.isNotBlank() || headerAction != null) {
             val parsedTitle = remember(title) { parseKissLabelIcons(title) }
+
             @Composable
             fun RenderSectionTitle() {
                 if (title.isNotBlank()) {

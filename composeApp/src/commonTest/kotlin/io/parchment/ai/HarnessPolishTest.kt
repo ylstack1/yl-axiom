@@ -19,14 +19,16 @@ class HarnessPolishTest {
         assertEquals("Bearer token", stripInvisibleCredentialChars(" Bearer token\t"), "inner spaces in header values stay")
     }
 
-    private fun tool(id: String, name: String, running: Boolean = false, error: Boolean = false, thinking: String = "") =
-        ToolCallRecord(id = id, name = name, argumentsJson = "{}", isRunning = running, isError = error, precedingThinking = thinking)
+    private fun tool(id: String, name: String, running: Boolean = false, error: Boolean = false, thinking: String = "") = ToolCallRecord(id = id, name = name, argumentsJson = "{}", isRunning = running, isError = error, precedingThinking = thinking)
 
     @Test fun consecutiveFinishedLookupsFoldIntoOneRun() {
         val tools = listOf(
-            tool("1", "fs_read"), tool("2", "fs_search"), tool("3", "fs_glob"),
+            tool("1", "fs_read"),
+            tool("2", "fs_search"),
+            tool("3", "fs_glob"),
             tool("4", "fs_edit"),
-            tool("5", "fs_read"), tool("6", "web_fetch", running = true)
+            tool("5", "fs_read"),
+            tool("6", "web_fetch", running = true)
         )
         val runs = groupConsecutiveTimelineSteps(tools, showThinking = true) { "" }
         assertEquals(listOf(0..2, 3..3, 4..4, 5..5), runs)

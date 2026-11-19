@@ -23,8 +23,6 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.withContext
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -47,6 +45,8 @@ import io.parchment.ai.model.PreferencesConfig
 import io.parchment.ai.platform.PlatformVoice
 import io.parchment.ai.protocol.O200kTokenizer
 import io.parchment.ai.strings.Strings
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 
 /**
  * Turn footer containing copy/speak/branch/edit/delete actions and assistant token/cost stats.
@@ -84,6 +84,7 @@ internal fun MessageTurnActionFooter(
 ) {
     if (!isAssistant && !preferences.showUserMessageActions) return
     val win = LocalParchmentWindowSize.current
+
     @Suppress("DEPRECATION")
     val clipboard = LocalClipboardManager.current
 
@@ -263,7 +264,9 @@ internal fun MessageTurnActionFooter(
         }
 
         // Token counts for a reply, with written text counted apart from tool payloads.
-        if (isAssistant && preferences.showTokenAndContextStats && (!win.isCompact || showMoreActions) &&
+        if (isAssistant &&
+            preferences.showTokenAndContextStats &&
+            (!win.isCompact || showMoreActions) &&
             (activeVar.content.isNotBlank() || activeVar.toolCalls.isNotEmpty() || activeVar.tokenMetrics.outputTokens > 0)
         ) {
             AssistantTurnUsageStats(
@@ -356,10 +359,15 @@ private fun AssistantTurnUsageStats(
     val costUnavailable = hasReportedRequests && !m.costIsAvailable && costVal == 0.0
     val costIsKnown = costVal > 0.0 || (hasReportedRequests && m.costIsAvailable)
     val isPartial = hasReportedRequests && (!m.usageIsComplete || !m.costIsAvailable || m.unpricedCostComponents.isNotEmpty())
-    val isReportedExact = hasReportedRequests && m.reportedCostRequests == m.reportedRequests &&
-        m.costIsAvailable && m.usageIsComplete && m.unpricedCostComponents.isEmpty()
-    val hasWholeTurnCounts = m.inputTokens > 0L || m.outputTokens > 0L ||
-        m.cachedInputTokens > 0L || m.cacheCreationInputTokens > 0L
+    val isReportedExact = hasReportedRequests &&
+        m.reportedCostRequests == m.reportedRequests &&
+        m.costIsAvailable &&
+        m.usageIsComplete &&
+        m.unpricedCostComponents.isEmpty()
+    val hasWholeTurnCounts = m.inputTokens > 0L ||
+        m.outputTokens > 0L ||
+        m.cachedInputTokens > 0L ||
+        m.cacheCreationInputTokens > 0L
     val showCostUnavailableBadge = costUnavailable && !activeVar.isStreaming
     val usageDetailLines = remember(
         costUnavailable, hasWholeTurnCounts, hasReportedRequests,

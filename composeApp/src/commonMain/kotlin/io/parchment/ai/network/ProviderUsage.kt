@@ -1,11 +1,11 @@
 package io.parchment.ai.network
 
 import io.parchment.ai.model.ApiUsageRecord
+import io.parchment.ai.model.ContextPricingTier
 import io.parchment.ai.model.ProviderProfile
 import io.parchment.ai.model.ProviderTokenUsage
 import io.parchment.ai.model.TokenMetrics
 import io.parchment.ai.model.TokenPricing
-import io.parchment.ai.model.ContextPricingTier
 import io.parchment.ai.model.legacyTokenPricing
 import io.parchment.ai.model.saturatingTokenSum
 import io.parchment.ai.platform.PlatformRuntime
@@ -28,15 +28,21 @@ internal enum class UsageDialect(val wireName: String) {
 internal typealias UsageReporter = suspend (String?, String, UsageDialect, ProviderTokenUsage) -> Unit
 internal typealias UsageRequestStarter = suspend (UsageDialect) -> String
 
-internal fun usesPromptCompletionUsageFields(dialect: UsageDialect, usage: JsonObject?): Boolean =
-    dialect == UsageDialect.OPENAI_CHAT || (
+internal fun usesPromptCompletionUsageFields(dialect: UsageDialect, usage: JsonObject?): Boolean = dialect == UsageDialect.OPENAI_CHAT ||
+    (
         (dialect == UsageDialect.IMAGE_GENERATION || dialect == UsageDialect.VIDEO_GENERATION) &&
             usage != null &&
-            "input_tokens" !in usage && "output_tokens" !in usage &&
-            "input_tokens_details" !in usage && "output_tokens_details" !in usage &&
-            ("prompt_tokens" in usage || "completion_tokens" in usage ||
-                "prompt_tokens_details" in usage || "completion_tokens_details" in usage)
-    )
+            "input_tokens" !in usage &&
+            "output_tokens" !in usage &&
+            "input_tokens_details" !in usage &&
+            "output_tokens_details" !in usage &&
+            (
+                "prompt_tokens" in usage ||
+                    "completion_tokens" in usage ||
+                    "prompt_tokens_details" in usage ||
+                    "completion_tokens_details" in usage
+                )
+        )
 
 /** Only usage is normalized here; request payloads and opaque reasoning remain untouched. */
 internal fun parseProviderUsage(dialect: UsageDialect, obj: JsonObject?, isFinal: Boolean = false, response: JsonObject? = null): ProviderTokenUsage {
@@ -62,8 +68,11 @@ internal fun parseProviderUsage(dialect: UsageDialect, obj: JsonObject?, isFinal
         return total
     }
     var combined = dialect == UsageDialect.OPENAI_RESPONSES || dialect == UsageDialect.OPENAI_CHAT || dialect == UsageDialect.ANTHROPIC
-    if (obj == null) return ProviderTokenUsage(outputIncludesReasoning = combined, isFinal = isFinal,
-        charges = parseProviderCharges(dialect, null, response))
+    if (obj == null) return ProviderTokenUsage(
+        outputIncludesReasoning = combined,
+        isFinal = isFinal,
+        charges = parseProviderCharges(dialect, null, response)
+    )
     val input: Long?
     val cached: Long?
     var created: Long? = null
@@ -82,8 +91,11 @@ internal fun parseProviderUsage(dialect: UsageDialect, obj: JsonObject?, isFinal
             val rawInput = count(obj, if (usesPromptCompletion) "prompt_tokens" else "input_tokens")
             output = count(obj, if (usesPromptCompletion) "completion_tokens" else "output_tokens")
             val rawTotal = if (isMedia && rawInput == null) count(obj, "total_tokens") else null
-            input = rawInput ?: if (isMedia && output != null && !invalid &&
-                hasAbsentOrNull(obj, "input_tokens") && hasAbsentOrNull(obj, "prompt_tokens") &&
+            input = rawInput ?: if (isMedia &&
+                output != null &&
+                !invalid &&
+                hasAbsentOrNull(obj, "input_tokens") &&
+                hasAbsentOrNull(obj, "prompt_tokens") &&
                 (rawTotal == null || rawTotal == output)
             ) 0L else null
             val rawCached = count(inputDetails, "cached_tokens")
@@ -101,7 +113,9 @@ internal fun parseProviderUsage(dialect: UsageDialect, obj: JsonObject?, isFinal
                     if (short == null && hasAbsentOrNull(ttl, "ttl_30m_tokens")) short = 0L
                     if (long == null && hasAbsentOrNull(ttl, "ttl_12h_tokens")) long = 0L
                 }
-                if (ttl == null && created == null && input != null &&
+                if (ttl == null &&
+                    created == null &&
+                    input != null &&
                     hasAbsentOrNull(inputDetails, "cache_write_tokens") &&
                     hasAbsentOrNull(inputDetails, "cache_write_tokens_details")
                 ) {
@@ -137,7 +151,8 @@ internal fun parseProviderUsage(dialect: UsageDialect, obj: JsonObject?, isFinal
             output = rawOutput ?: if (isFinal && input != null && hasAbsentOrNull(obj, "total_output_tokens")) 0L else null
             thinking = count(obj, "total_thought_tokens")
                 ?: count(obj, "total_reasoning_tokens")
-                ?: if ((isFinal || rawOutput != null) && input != null &&
+                ?: if ((isFinal || rawOutput != null) &&
+                    input != null &&
                     hasAbsentOrNull(obj, "total_thought_tokens") &&
                     hasAbsentOrNull(obj, "total_reasoning_tokens")
                 ) 0L else null
@@ -158,8 +173,10 @@ internal fun parseProviderUsage(dialect: UsageDialect, obj: JsonObject?, isFinal
     if (input != null && (cached ?: 0L) > input) invalid = true
     if (input != null && (created ?: 0L) > input - (cached ?: 0L).coerceAtMost(input)) invalid = true
     if (combined && thinking != null && output != null && thinking > output) invalid = true
-    return ProviderTokenUsage(input, cached, created, short, long, thinking, output, combined, invalid, uncachedInput, isFinal,
-        parseProviderCharges(dialect, obj, response))
+    return ProviderTokenUsage(
+        input, cached, created, short, long, thinking, output, combined, invalid, uncachedInput, isFinal,
+        parseProviderCharges(dialect, obj, response)
+    )
 }
 
 /** Effective write-token units at the short-TTL rate, with each token counted exactly once. */
@@ -192,8 +209,15 @@ internal fun requestPricing(profile: ProviderProfile, model: String): Pair<Token
     val providerOverride = profile.knownPricing != null && (profile.pricingModelId.isBlank() || profile.pricingModelId == model)
     val base = profile.tokenPricing(model)
     val pricing = if (explicit?.knownPricing != null || providerOverride) base else {
-        val known = catalog?.knownPricing ?: catalog?.let { legacyTokenPricing(it.inputPricePerM, it.outputPricePerM,
-            it.cacheReadPricePerM, it.cacheWritePricePerM, it.reasoningPricePerM) } ?: TokenPricing()
+        val known = catalog?.knownPricing ?: catalog?.let {
+            legacyTokenPricing(
+                it.inputPricePerM,
+                it.outputPricePerM,
+                it.cacheReadPricePerM,
+                it.cacheWritePricePerM,
+                it.reasoningPricePerM
+            )
+        } ?: TokenPricing()
         base.withMissingFrom(known)
     }
     val tiers = when {
@@ -232,23 +256,30 @@ internal class ProviderUsageLedger(
         return begin(dialect.wireName, initial.copy(charges = initial.charges.copy(observedComponents = observedComponents)))
     }
 
-    fun beginMedia(wireDialect: String, component: String): ApiUsageRecord = begin(wireDialect,
-        ProviderTokenUsage(charges = io.parchment.ai.model.ProviderChargeUsage(observedComponents = setOf(component))))
+    fun beginMedia(wireDialect: String, component: String): ApiUsageRecord = begin(
+        wireDialect,
+        ProviderTokenUsage(charges = io.parchment.ai.model.ProviderChargeUsage(observedComponents = setOf(component)))
+    )
 
     private fun begin(wireDialect: String, usage: ProviderTokenUsage): ApiUsageRecord {
         val (pricing, tiers) = requestPricing(profile, model)
-        val record = ApiUsageRecord("$prefix-${++sequence}", wireDialect = wireDialect, profileId = profile.id,
+        val record = ApiUsageRecord(
+            "$prefix-${++sequence}", wireDialect = wireDialect, profileId = profile.id,
             model = model, pricing = pricing, usage = usage,
             ownerSessionId = ownerSessionId, ownerRunId = ownerRunId, purpose = purpose, contextPricingTiers = tiers,
-            chargePricing = requestChargePricing(profile, model))
+            chargePricing = requestChargePricing(profile, model)
+        )
         records[record.requestId] = record
         return record
     }
 
     fun update(requestId: String?, responseId: String, dialect: UsageDialect, usage: ProviderTokenUsage): ApiUsageRecord? {
         val previous = if (requestId != null) records[requestId] else records.values.lastOrNull {
-            responseId.isNotBlank() && it.responseId == responseId && it.profileId == profile.id &&
-                it.model == model && it.wireDialect == dialect.wireName
+            responseId.isNotBlank() &&
+                it.responseId == responseId &&
+                it.profileId == profile.id &&
+                it.model == model &&
+                it.wireDialect == dialect.wireName
         }
         if (previous == null || previous.wireDialect != dialect.wireName) return null
         val updated = previous.copy(responseId = responseId.ifBlank { previous.responseId }, usage = previous.usage.updatedBy(usage))
@@ -258,13 +289,19 @@ internal class ProviderUsageLedger(
     }
 
     fun snapshots(): List<ApiUsageRecord> = records.values.toList()
+
     /** Counts a helper's request as part of this run, keeping its own price and purpose. */
     fun adopt(record: ApiUsageRecord) { records[record.requestId] = record }
     fun observeChargeComponent(component: String): ApiUsageRecord? {
         val record = records.values.lastOrNull() ?: return null
         if (component in record.usage.charges.observedComponents) return null
-        val updated = record.copy(usage = record.usage.copy(charges = record.usage.charges.copy(
-            observedComponents = record.usage.charges.observedComponents + component)))
+        val updated = record.copy(
+            usage = record.usage.copy(
+                charges = record.usage.charges.copy(
+                    observedComponents = record.usage.charges.observedComponents + component
+                )
+            )
+        )
         records[record.requestId] = updated
         return updated
     }
@@ -274,7 +311,6 @@ internal class ProviderUsageLedger(
 
     fun metrics(): TokenMetrics = aggregateApiUsageRecords(records.values, legacy)
 }
-
 
 internal fun aggregateApiUsageRecords(inputRecords: Collection<ApiUsageRecord>, legacy: TokenMetrics = TokenMetrics()): TokenMetrics {
     val records = inputRecords.filter { it.requestId.isNotBlank() }.associateBy { it.requestId }
@@ -295,7 +331,8 @@ internal fun aggregateApiUsageRecords(inputRecords: Collection<ApiUsageRecord>, 
         if (part.inputTokens > Long.MAX_VALUE - input.coerceAtLeast(0L) ||
             part.cachedInputTokens > Long.MAX_VALUE - cached.coerceAtLeast(0L) ||
             part.outputTokens > Long.MAX_VALUE - output.coerceAtLeast(0L) ||
-            part.reasoningTokens > Long.MAX_VALUE - reasoning.coerceAtLeast(0L)) {
+            part.reasoningTokens > Long.MAX_VALUE - reasoning.coerceAtLeast(0L)
+        ) {
             complete = false
             costAvailable = false
         }
@@ -314,11 +351,13 @@ internal fun aggregateApiUsageRecords(inputRecords: Collection<ApiUsageRecord>, 
         cost += estimate.usd
     }
     if (!cost.isFinite()) costAvailable = false
-    return TokenMetrics(inputTokens = input, cachedInputTokens = cached, outputTokens = output, reasoningTokens = reasoning,
+    return TokenMetrics(
+        inputTokens = input, cachedInputTokens = cached, outputTokens = output, reasoningTokens = reasoning,
         cacheCreationInputTokens = created, cacheCreationCostUnits = writeUnits,
         reportedRequests = records.size, usageIsComplete = complete,
         costIsAvailable = costAvailable && (records.isNotEmpty() || legacy.totalTokens > 0L),
         estimatedCostUsd = cost.takeIf { it.isFinite() && it >= 0.0 } ?: 0.0,
         outputIncludesUnreportedReasoning = unreportedReasoning,
-        unpricedCostComponents = unpriced, reportedCostRequests = reportedCosts)
+        unpricedCostComponents = unpriced, reportedCostRequests = reportedCosts
+    )
 }

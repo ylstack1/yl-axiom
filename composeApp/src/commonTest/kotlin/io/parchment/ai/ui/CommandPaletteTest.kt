@@ -44,8 +44,7 @@ class CommandPaletteTest {
         assertTrue(wordStarts > scattered, "word starts outrank scattered letters")
     }
 
-    private fun node(id: String, role: MessageRole, text: String) =
-        MessageNode(id = id, role = role, variants = listOf(MessageVariant(id = "v-$id", content = text)))
+    private fun node(id: String, role: MessageRole, text: String) = MessageNode(id = id, role = role, variants = listOf(MessageVariant(id = "v-$id", content = text)))
 
     @Test
     fun promptJumpListsPromptsNewestFirstAndTheMapCanShowOnlyPrompts() {

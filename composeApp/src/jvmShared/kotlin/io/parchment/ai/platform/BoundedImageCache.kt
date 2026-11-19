@@ -85,8 +85,7 @@ internal class BoundedImageCache(
         }
     }
 
-    private fun bitmapBytes(bitmap: ImageBitmap): Long =
-        bitmap.width.toLong() * bitmap.height * 4L
+    private fun bitmapBytes(bitmap: ImageBitmap): Long = bitmap.width.toLong() * bitmap.height * 4L
 
     private fun normalizeCacheKey(raw: String): String {
         val trimmed = raw.trim()

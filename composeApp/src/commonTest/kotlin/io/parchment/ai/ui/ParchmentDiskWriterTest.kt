@@ -17,16 +17,21 @@ import kotlin.test.assertFailsWith
 import kotlin.test.assertTrue
 
 class ParchmentDiskWriterTest {
-    private fun chat(id: String, title: String = id) =
-        ChatSession(id = id, title = title, createdAt = 1L, updatedAt = 1L, profileId = "profile")
+    private fun chat(id: String, title: String = id) = ChatSession(id = id, title = title, createdAt = 1L, updatedAt = 1L, profileId = "profile")
 
     @Test
     fun liveRepliesFollowTheirChatsFullSaveAndAFullSaveSupersedesThem() = runBlocking {
         val scope = CoroutineScope(SupervisorJob())
         val operations = mutableListOf<String>()
         try {
-            val writer = ParchmentDiskWriter(scope, {}, { operations += "full:" + it.title }, {},
-                saveLiveTurn = { session, turn -> operations += "live:" + session.title + ":" + turn.variantId }, debounceMs = 60_000)
+            val writer = ParchmentDiskWriter(
+                scope,
+                {},
+                { operations += "full:" + it.title },
+                {},
+                saveLiveTurn = { session, turn -> operations += "live:" + session.title + ":" + turn.variantId },
+                debounceMs = 60_000
+            )
             val turn = LiveTurnRef("node", "variant")
             writer.enqueue(sessions = listOf(chat("a", "start")), notify = false)
             writer.enqueueLiveTurn(chat("a", "partial"), turn, notify = false)
@@ -49,8 +54,14 @@ class ParchmentDiskWriterTest {
         val operations = mutableListOf<String>()
         var failFull = true
         try {
-            val writer = ParchmentDiskWriter(scope, {}, { if (failFull) error("disk full"); operations += "full" }, {},
-                saveLiveTurn = { _, _ -> operations += "live" }, debounceMs = 60_000)
+            val writer = ParchmentDiskWriter(
+                scope,
+                {},
+                { if (failFull) error("disk full"); operations += "full" },
+                {},
+                saveLiveTurn = { _, _ -> operations += "live" },
+                debounceMs = 60_000
+            )
             writer.enqueue(sessions = listOf(chat("a")), notify = false)
             writer.enqueueLiveTurn(chat("a"), LiveTurnRef("n", "v"), notify = false)
             assertFailsWith<IllegalStateException> { writer.flush() }
@@ -222,8 +233,12 @@ class ParchmentDiskWriterTest {
                 if (session.id == "broken" && fail) throw IllegalStateException("unwritable chat")
                 operations.add(session.id)
             }, {}, debounceMs = 60_000)
-            writer.enqueue(settings = AppStateSnapshot(), sessions = listOf(chat("broken"), chat("healthy")), notify = false,
-                settingsRequiresSessions = true)
+            writer.enqueue(
+                settings = AppStateSnapshot(),
+                sessions = listOf(chat("broken"), chat("healthy")),
+                notify = false,
+                settingsRequiresSessions = true
+            )
             assertFailsWith<IllegalStateException> { writer.flush() }
             assertEquals(listOf("healthy"), operations)
             fail = false
@@ -260,8 +275,13 @@ class ParchmentDiskWriterTest {
         var saved: AppStateSnapshot? = null
         val settings = AppStateSnapshot(autoCheckOtaOnStartup = false)
         try {
-            val writer = ParchmentDiskWriter(scope, { saved = it }, { throw IllegalStateException("unwritable chat") }, {},
-                debounceMs = 60_000)
+            val writer = ParchmentDiskWriter(
+                scope,
+                { saved = it },
+                { throw IllegalStateException("unwritable chat") },
+                {},
+                debounceMs = 60_000
+            )
             writer.enqueue(settings = settings, sessions = listOf(chat("broken")), notify = false)
             assertFailsWith<IllegalStateException> { writer.flush() }
             assertEquals(settings, saved)

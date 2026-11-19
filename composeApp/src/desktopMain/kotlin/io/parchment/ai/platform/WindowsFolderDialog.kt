@@ -43,6 +43,7 @@ internal object WindowsFolderDialog {
     const val FOS_FILEMUSTEXIST = 0x1000
 
     private const val SIGDN_FILESYSPATH = 0x80058000.toInt()
+
     /** HRESULT_FROM_WIN32(ERROR_CANCELLED): the person closed the dialog. */
     private const val HR_CANCELLED = 0x800704C7.toInt()
 
@@ -76,8 +77,7 @@ internal object WindowsFolderDialog {
     )
 
     private val linker: Linker by lazy { Linker.nativeLinker() }
-    private fun function(library: String, name: String, descriptor: FunctionDescriptor): MethodHandle =
-        linker.downcallHandle(SymbolLookup.libraryLookup(library, Arena.global()).find(name).orElseThrow(), descriptor)
+    private fun function(library: String, name: String, descriptor: FunctionDescriptor): MethodHandle = linker.downcallHandle(SymbolLookup.libraryLookup(library, Arena.global()).find(name).orElseThrow(), descriptor)
 
     private val coInitializeEx by lazy { function("ole32", "CoInitializeEx", FunctionDescriptor.of(JAVA_INT, ADDRESS, JAVA_INT)) }
     private val coUninitialize by lazy { function("ole32", "CoUninitialize", FunctionDescriptor.ofVoid()) }
@@ -140,8 +140,7 @@ internal object WindowsFolderDialog {
             return out.get(JAVA_INT, 0)
         }
 
-        fun setOptions(options: Int) =
-            check(call(self, SET_OPTIONS, FunctionDescriptor.of(JAVA_INT, ADDRESS, JAVA_INT), options) as Int, "SetOptions")
+        fun setOptions(options: Int) = check(call(self, SET_OPTIONS, FunctionDescriptor.of(JAVA_INT, ADDRESS, JAVA_INT), options) as Int, "SetOptions")
 
         fun setTitle(title: String) = check(
             call(self, SET_TITLE, FunctionDescriptor.of(JAVA_INT, ADDRESS, ADDRESS), arena.allocateFrom(title, Charsets.UTF_16LE)) as Int,
@@ -194,7 +193,10 @@ internal object WindowsFolderDialog {
         fun setFolder(directory: String): Boolean {
             val item = arena.allocate(ADDRESS)
             val hr = shCreateItemFromParsingName.invokeWithArguments(
-                arena.allocateFrom(directory, Charsets.UTF_16LE), MemorySegment.NULL, guid(arena, IID_SHELL_ITEM), item
+                arena.allocateFrom(directory, Charsets.UTF_16LE),
+                MemorySegment.NULL,
+                guid(arena, IID_SHELL_ITEM),
+                item
             ) as Int
             if (hr < 0) return false
             val shellItem = item.get(ADDRESS, 0)
@@ -259,7 +261,11 @@ internal object WindowsFolderDialog {
     internal fun create(arena: Arena): Dialog {
         val out = arena.allocate(ADDRESS)
         val hr = coCreateInstance.invokeWithArguments(
-            guid(arena, CLSID_FILE_OPEN_DIALOG), MemorySegment.NULL, CLSCTX_INPROC_SERVER, guid(arena, IID_FILE_OPEN_DIALOG), out
+            guid(arena, CLSID_FILE_OPEN_DIALOG),
+            MemorySegment.NULL,
+            CLSCTX_INPROC_SERVER,
+            guid(arena, IID_FILE_OPEN_DIALOG),
+            out
         ) as Int
         check(hr, "CoCreateInstance(FileOpenDialog)")
         return Dialog(arena, out.get(ADDRESS, 0))
@@ -269,7 +275,11 @@ internal object WindowsFolderDialog {
     internal fun createSave(arena: Arena): Dialog {
         val out = arena.allocate(ADDRESS)
         val hr = coCreateInstance.invokeWithArguments(
-            guid(arena, CLSID_FILE_SAVE_DIALOG), MemorySegment.NULL, CLSCTX_INPROC_SERVER, guid(arena, IID_FILE_SAVE_DIALOG), out
+            guid(arena, CLSID_FILE_SAVE_DIALOG),
+            MemorySegment.NULL,
+            CLSCTX_INPROC_SERVER,
+            guid(arena, IID_FILE_SAVE_DIALOG),
+            out
         ) as Int
         check(hr, "CoCreateInstance(FileSaveDialog)")
         return Dialog(arena, out.get(ADDRESS, 0))

@@ -50,8 +50,8 @@ data class DiffLine(
  * A unified line diff using the longest common subsequence, with unchanged runs over 6 lines collapsed.
  */
 fun computeUnifiedLineDiff(oldText: String, newText: String): List<DiffLine> {
-    val oldLines = if (oldText.isEmpty()) emptyList() else oldText.replace("\r\n", "\n").lines()
-    val newLines = if (newText.isEmpty()) emptyList() else newText.replace("\r\n", "\n").lines()
+    val oldLines = if (oldText.isEmpty()) emptyList() else oldText.lines()
+    val newLines = if (newText.isEmpty()) emptyList() else newText.lines()
     if (oldLines.isEmpty() && newLines.isEmpty()) return emptyList()
     if (oldLines.isEmpty()) return newLines.take(120).map { DiffLine(DiffLineKind.ADDED, it) }
     if (newLines.isEmpty()) return oldLines.take(120).map { DiffLine(DiffLineKind.REMOVED, it) }
@@ -107,13 +107,17 @@ private fun appendMiddleDiffLines(
 
     val m = midOld.size
     val n = midNew.size
-    val dp = Array(m + 1) { IntArray(n + 1) }
+    val stride = n + 1
+    val dp = IntArray((m + 1) * stride)
     for (i in m - 1 downTo 0) {
+        val rowOff = i * stride
+        val nextRowOff = rowOff + stride
+        val oldLine = midOld[i]
         for (j in n - 1 downTo 0) {
-            dp[i][j] = if (midOld[i] == midNew[j]) {
-                1 + dp[i + 1][j + 1]
+            dp[rowOff + j] = if (oldLine == midNew[j]) {
+                1 + dp[nextRowOff + j + 1]
             } else {
-                maxOf(dp[i + 1][j], dp[i][j + 1])
+                maxOf(dp[nextRowOff + j], dp[rowOff + j + 1])
             }
         }
     }
@@ -124,7 +128,7 @@ private fun appendMiddleDiffLines(
             rawDiff.add(DiffLine(DiffLineKind.CONTEXT, midOld[i]))
             i++
             j++
-        } else if (dp[i + 1][j] >= dp[i][j + 1]) {
+        } else if (dp[(i + 1) * stride + j] >= dp[i * stride + (j + 1)]) {
             rawDiff.add(DiffLine(DiffLineKind.REMOVED, midOld[i]))
             i++
         } else {

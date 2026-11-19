@@ -353,12 +353,13 @@ internal fun AiProviderEngine.buildCompiledSystemPrompt(
     }
 
     val workspacePolicy = AgentPermissionResolver.resolve(session)
-    val anyAgentToolsActive = workspacePolicy.toolsEnabled && (
-        workspacePolicy.hasWorkspace ||
-            workspacePolicy.webAccess ||
-            workspacePolicy.computerAccess ||
-            activeGoalState != null
-        )
+    val anyAgentToolsActive = workspacePolicy.toolsEnabled &&
+        (
+            workspacePolicy.hasWorkspace ||
+                workspacePolicy.webAccess ||
+                workspacePolicy.computerAccess ||
+                activeGoalState != null
+            )
     if (workspacePolicy.hasWorkspace && workspacePolicy.allowsTool("fs_read")) {
         sb.appendLine("### Local Workspace Agent Harness")
         sb.appendLine("Use only the tools advertised for the mounted directory (`${workspacePolicy.workspacePath}`). Inspect files before editing, keep edits surgical, and keep the project tree clean: `todo_write` updates this chat session's TODO checklist (never project files), and `agent_memory` reads or updates Parchment's global `memory/AGENT.md` when needed or requested by the user. Verify before `goal_complete`. An approval does not expand permissions; denied tools remain disabled.")

@@ -1,6 +1,7 @@
 package io.parchment.ai.protocol
 
 import io.parchment.ai.harness.WorkspaceHarness
+import io.parchment.ai.model.AgentPermissionResolver
 import io.parchment.ai.model.AssistantAgent
 import io.parchment.ai.model.ChatSession
 import io.parchment.ai.model.FragmentActivationMode
@@ -10,7 +11,6 @@ import io.parchment.ai.model.MessageVariant
 import io.parchment.ai.model.PromptAttachment
 import io.parchment.ai.model.ProviderProfile
 import io.parchment.ai.model.ToolCallRecord
-import io.parchment.ai.model.AgentPermissionResolver
 
 data class ContextCompactionPlan(
     val mutedNodeIds: Set<String>,
@@ -28,8 +28,8 @@ data class ContextCompactionPlan(
  * Implements OpenAI's official `o200k_base` pre-tokenization regex pattern (`tiktoken_ext/openai_public.py`)
  * combined with UTF-8 subword BPE chunking, so the context ring, context breakdown and message token counts agree.
  */
-    @androidx.compose.runtime.Immutable
-    data class ContextWindowBreakdown(
+@androidx.compose.runtime.Immutable
+data class ContextWindowBreakdown(
     val systemAndPersonaTokens: Int,
     val lorebookAndMemoryTokens: Int,
     val workspaceAndToolsTokens: Int,
@@ -183,10 +183,12 @@ object O200kTokenizer {
             val sampleTail = text.substring(text.length - 6_000)
             var sampleTokens = 0
             for (match in O200K_PAT_REGEX.findAll(sampleHead)) {
-                if (match.value.isNotEmpty()) sampleTokens += estimateBpeSubwordsForPiece(match.value)
+                val r = match.range
+                if (r.first <= r.last) sampleTokens += estimateBpeSubwordsForRange(sampleHead, r.first, r.last + 1)
             }
             for (match in O200K_PAT_REGEX.findAll(sampleTail)) {
-                if (match.value.isNotEmpty()) sampleTokens += estimateBpeSubwordsForPiece(match.value)
+                val r = match.range
+                if (r.first <= r.last) sampleTokens += estimateBpeSubwordsForRange(sampleTail, r.first, r.last + 1)
             }
             val scaled = ((sampleTokens.toDouble() * text.length.toDouble()) / 12_000.0).toInt().coerceAtLeast(1)
             if (cacheResult) {
@@ -199,9 +201,10 @@ object O200kTokenizer {
 
         var total = 0
         for (match in O200K_PAT_REGEX.findAll(text)) {
-            val piece = match.value
-            if (piece.isEmpty()) continue
-            total += estimateBpeSubwordsForPiece(piece)
+            val r = match.range
+            if (r.first <= r.last) {
+                total += estimateBpeSubwordsForRange(text, r.first, r.last + 1)
+            }
         }
         val finalCount = total.coerceAtLeast(1)
         if (cacheResult) {
@@ -212,25 +215,27 @@ object O200kTokenizer {
         return finalCount
     }
 
-    private fun estimateBpeSubwordsForPiece(piece: String): Int {
-        val trimmed = piece.trimStart(' ')
-        if (trimmed.isEmpty()) {
+    private fun estimateBpeSubwordsForRange(text: String, rawStart: Int, end: Int): Int {
+        var start = rawStart
+        while (start < end && text[start] == ' ') start++
+        if (start >= end) {
             // Pure whitespace run: o200k_base merges up to 4 spaces or 2 newlines per token
-            return ((piece.length + 3) / 4).coerceAtLeast(1)
+            return (((end - rawStart) + 3) / 4).coerceAtLeast(1)
         }
 
-        val firstChar = trimmed[0]
+        val firstChar = text[start]
         // 1-to-3 digit numbers are always 1 token in o200k_base
         if (firstChar.isDigit()) return 1
 
-        // Check for non-ASCII / CJK / emoji characters
+        // Check for non-ASCII / CJK / emoji characters without allocating substrings
         var nonAsciiChars = 0
-        for (i in 0 until trimmed.length) {
-            if (trimmed[i].code > 127) nonAsciiChars++
+        for (i in start until end) {
+            if (text[i].code > 127) nonAsciiChars++
         }
+        val len = end - start
         if (nonAsciiChars > 0) {
             // In o200k_base's 200k multilingual vocabulary, common CJK characters are 1 token (~1.25 tokens/char on rare hanzi)
-            val asciiPart = trimmed.length - nonAsciiChars
+            val asciiPart = len - nonAsciiChars
             val asciiToks = if (asciiPart == 0) 0 else ((asciiPart + 4) / 5).coerceAtLeast(1)
             val unicodeToks = ((nonAsciiChars * 5 + 3) / 4).coerceAtLeast(1)
             return asciiToks + unicodeToks
@@ -238,7 +243,6 @@ object O200kTokenizer {
 
         // ASCII word or punctuation cluster:
         // In o200k_base, words <= 7 chars are almost always 1 token; longer words split into ~4.5-char subwords
-        val len = trimmed.length
         if (!firstChar.isLetter()) {
             // Punctuation/operator run (e.g. `});`, `->`, `===`, `/**`): ~1 token per 2.5 chars
             return ((len + 2) / 3).coerceAtLeast(1)
@@ -258,14 +262,18 @@ object O200kTokenizer {
         if (att.textContent.isNotBlank()) {
             return countTokens(att.textContent) + 8 // includes `[Attached File: ...]` header overhead
         }
-        val mime = att.mimeType.lowercase()
-        val lower = att.fileName.lowercase()
+        val mime = att.mimeType
+        val name = att.fileName
         return when {
-            mime == "application/pdf" || lower.endsWith(".pdf") -> 1024
-            mime.startsWith("video/") || lower.endsWith(".mp4") || lower.endsWith(".webm") -> 1536
-            mime.startsWith("audio/") || lower.endsWith(".mp3") || lower.endsWith(".wav") -> 512
-            mime.startsWith("image/") || lower.endsWith(".png") || lower.endsWith(".jpg") ||
-                lower.endsWith(".jpeg") || lower.endsWith(".webp") || lower.endsWith(".gif") -> 258
+            mime.equals("application/pdf", ignoreCase = true) || name.endsWith(".pdf", ignoreCase = true) -> 1024
+            mime.startsWith("video/", ignoreCase = true) || name.endsWith(".mp4", ignoreCase = true) || name.endsWith(".webm", ignoreCase = true) -> 1536
+            mime.startsWith("audio/", ignoreCase = true) || name.endsWith(".mp3", ignoreCase = true) || name.endsWith(".wav", ignoreCase = true) -> 512
+            mime.startsWith("image/", ignoreCase = true) ||
+                name.endsWith(".png", ignoreCase = true) ||
+                name.endsWith(".jpg", ignoreCase = true) ||
+                name.endsWith(".jpeg", ignoreCase = true) ||
+                name.endsWith(".webp", ignoreCase = true) ||
+                name.endsWith(".gif", ignoreCase = true) -> 258
             else -> 128
         }
     }
@@ -449,9 +457,10 @@ object O200kTokenizer {
                 FragmentActivationMode.PINNED -> true
                 FragmentActivationMode.MUTED -> false
                 FragmentActivationMode.KEYWORD -> {
-                    frag.keywords.isEmpty() || frag.keywords.any { kw ->
-                        kw.isNotBlank() && recentWindowText.contains(kw.trim(), ignoreCase = true)
-                    }
+                    frag.keywords.isEmpty() ||
+                        frag.keywords.any { kw ->
+                            kw.isNotBlank() && recentWindowText.contains(kw.trim(), ignoreCase = true)
+                        }
                 }
             }
         }
@@ -660,8 +669,7 @@ object O200kTokenizer {
 
     const val COMPACTED_TOOL_MARKER = "[Compacted into Continuity Memory]"
 
-    fun isToolResultCompacted(tc: ToolCallRecord): Boolean =
-        tc.resultText.contains(COMPACTED_TOOL_MARKER)
+    fun isToolResultCompacted(tc: ToolCallRecord): Boolean = tc.resultText.contains(COMPACTED_TOOL_MARKER)
 
     fun compactToolCallRecord(tc: ToolCallRecord, maxKeepChars: Int = 220): ToolCallRecord {
         val cleanSig = if (tc.thoughtSignature.length > 2048) {
@@ -697,15 +705,23 @@ object O200kTokenizer {
             if (v.thinkingSignature.length > 4096) return@any true
             val completedTools = v.toolCalls.filter { !it.isRunning }
             completedTools.any { it.thoughtSignature.length > 4096 } ||
-                (completedTools.size > 2 && completedTools.dropLast(2).any { tc ->
-                    tc.resultText.length > 280 && !isToolResultCompacted(tc)
-                }) || completedTools.any { tc -> tc.resultText.length > 1800 && !isToolResultCompacted(tc) }
+                (
+                    completedTools.size > 2 &&
+                        completedTools.dropLast(2).any { tc ->
+                            tc.resultText.length > 280 && !isToolResultCompacted(tc)
+                        }
+                    ) ||
+                completedTools.any { tc -> tc.resultText.length > 1800 && !isToolResultCompacted(tc) }
         }
         if (hasUncompactedNodeTools) return true
         val completedLiveTools = liveTargetTools.filter { !it.isRunning }
-        val hasUncompactedLiveTools = (completedLiveTools.size > 2 && completedLiveTools.dropLast(2).any { tc ->
-            tc.resultText.length > 280 && !isToolResultCompacted(tc)
-        }) || completedLiveTools.any { tc -> tc.resultText.length > 1800 && !isToolResultCompacted(tc) }
+        val hasUncompactedLiveTools = (
+            completedLiveTools.size > 2 &&
+                completedLiveTools.dropLast(2).any { tc ->
+                    tc.resultText.length > 280 && !isToolResultCompacted(tc)
+                }
+            ) ||
+            completedLiveTools.any { tc -> tc.resultText.length > 1800 && !isToolResultCompacted(tc) }
         if (hasUncompactedLiveTools) return true
         if (liveTargetThinking.length > 3600) return true
         return false
@@ -744,10 +760,15 @@ object O200kTokenizer {
             return tools.mapIndexed { idx, tc ->
                 val isRecentTwo = idx >= lastIndex - 1
                 val hasBloatedSig = tc.thoughtSignature.length > 2048
-                val shouldCompact = !tc.isRunning && (!isToolResultCompacted(tc) && (
-                    (!isRecentTwo && tc.resultText.length > 280) ||
-                        (isRecentTwo && tc.resultText.length > 2400)
-                    ) || hasBloatedSig)
+                val shouldCompact = !tc.isRunning &&
+                    (
+                        !isToolResultCompacted(tc) &&
+                            (
+                                (!isRecentTwo && tc.resultText.length > 280) ||
+                                    (isRecentTwo && tc.resultText.length > 2400)
+                                ) ||
+                            hasBloatedSig
+                        )
                 if (shouldCompact) {
                     anyToolOrThinkingCompacted = true
                     if (!isToolResultCompacted(tc) && tc.resultText.length > 280) {

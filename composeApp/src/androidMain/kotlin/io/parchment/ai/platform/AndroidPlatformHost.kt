@@ -8,6 +8,7 @@ import java.lang.ref.WeakReference
 internal object AndroidPlatformHost {
     @Volatile
     var appContext: Context? = null
+
     @Volatile
     var mainActivityRef: WeakReference<MainActivity>? = null
 

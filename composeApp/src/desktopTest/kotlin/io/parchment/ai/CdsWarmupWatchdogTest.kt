@@ -39,8 +39,11 @@ class CdsWarmupWatchdogTest {
         val java = File(System.getProperty("java.home"), "bin/java.exe").takeIf { it.isFile }
             ?: File(System.getProperty("java.home"), "bin/java")
         val process = ProcessBuilder(
-            java.path, "-XX:ArchiveClassesAtExit=${archive.path}", "--enable-native-access=ALL-UNNAMED",
-            File(dir, "Probe.java").path, mode
+            java.path,
+            "-XX:ArchiveClassesAtExit=${archive.path}",
+            "--enable-native-access=ALL-UNNAMED",
+            File(dir, "Probe.java").path,
+            mode
         ).redirectErrorStream(true).start()
         process.inputStream.bufferedReader().readText()
         assertTrue(process.waitFor(60, TimeUnit.SECONDS), "probe did not finish")

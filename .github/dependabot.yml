@@ -1,7 +1,18 @@
-# Weekly update pull requests for Gradle dependencies and the pinned GitHub Actions. Patch and minor updates whose
+# Weekly update pull requests for Cargo, Gradle, and pinned GitHub Actions. Patch and minor updates whose
 # checks pass are merged by .github/workflows/dependabot-automerge.yml; major updates wait for a person.
 version: 2
 updates:
+  - package-ecosystem: cargo
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: deps
+    groups:
+      rust-minor-and-patch:
+        update-types: ["minor", "patch"]
+
   - package-ecosystem: gradle
     directory: /
     schedule:

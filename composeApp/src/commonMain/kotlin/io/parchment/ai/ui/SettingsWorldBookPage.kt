@@ -1,7 +1,6 @@
 package io.parchment.ai.ui
 
 import androidx.compose.foundation.background
-import io.parchment.ai.strings.Strings
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
@@ -39,6 +38,7 @@ import io.parchment.ai.model.ThemeConfig
 import io.parchment.ai.platform.PlatformPickers
 import io.parchment.ai.platform.PlatformRuntime
 import io.parchment.ai.protocol.CardAndPromptCodec
+import io.parchment.ai.strings.Strings
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext

@@ -6,10 +6,10 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.selection.selectableGroup
 import androidx.compose.foundation.selection.toggleable
-import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.BasicText
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.verticalScroll
@@ -25,36 +25,39 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
-import io.parchment.ai.harness.ToolApprovalBroker
-import io.parchment.ai.harness.ToolApprovalDecision
 import io.parchment.ai.harness.AgentPermissionGate
 import io.parchment.ai.harness.ToolAccessScope
+import io.parchment.ai.harness.ToolApprovalBroker
+import io.parchment.ai.harness.ToolApprovalDecision
 import io.parchment.ai.harness.WorkspaceHarness
 import io.parchment.ai.harness.parseShellApprovalPreview
+import io.parchment.ai.model.AgentPermissionOverrides
+import io.parchment.ai.model.AgentPermissionPolicy
+import io.parchment.ai.model.ShellAccess
+import io.parchment.ai.model.ToolApprovalMode
+import io.parchment.ai.model.WorkspaceMode
+import io.parchment.ai.network.McpRegistry
+import io.parchment.ai.platform.PlatformPickers
+import io.parchment.ai.platform.PlatformRuntime
+import io.parchment.ai.strings.Strings
+import kotlinx.coroutines.launch
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonPrimitive
-import io.parchment.ai.model.AgentPermissionOverrides
-import io.parchment.ai.model.AgentPermissionPolicy
-import io.parchment.ai.network.McpRegistry
-import io.parchment.ai.strings.Strings
-import io.parchment.ai.model.ShellAccess
-import io.parchment.ai.model.ToolApprovalMode
-import io.parchment.ai.model.WorkspaceMode
-import io.parchment.ai.platform.PlatformPickers
-import io.parchment.ai.platform.PlatformRuntime
-import kotlinx.coroutines.launch
 
 /** A single focus/touch/reader target; policy choices have radio semantics and no motion. */
 @Composable
 private fun PermissionOption(
-    title: String, checked: Boolean, onChange: (Boolean) -> Unit,
-    subtitle: String = "", choice: Boolean = false
+    title: String,
+    checked: Boolean,
+    onChange: (Boolean) -> Unit,
+    subtitle: String = "",
+    choice: Boolean = false
 ) {
     val p = LocalParchmentPalette.current
     val action = if (choice) Modifier.selectable(checked, role = Role.RadioButton, onClick = { onChange(true) })
-        else Modifier.toggleable(checked, role = Role.Switch, onValueChange = onChange)
+    else Modifier.toggleable(checked, role = Role.Switch, onValueChange = onChange)
     Row(
         Modifier.fillMaxWidth().heightIn(min = 48.dp).then(action).padding(horizontal = Space.s6, vertical = Space.s10),
         verticalAlignment = Alignment.CenterVertically,
@@ -66,7 +69,8 @@ private fun PermissionOption(
         }
         KissVectorIcon(
             if (!checked) KissIcon.CIRCLE_EMPTY else if (choice) KissIcon.CIRCLE_DOT else KissIcon.CHECK,
-            tint = if (checked) p.accent else p.mutedInk, size = 20.dp
+            tint = if (checked) p.accent else p.mutedInk,
+            size = 20.dp
         )
     }
 }
@@ -90,67 +94,109 @@ internal fun AgentPermissionEditor(
                 if (overrides == AgentPermissionOverrides()) "Following assistant defaults" else "Chat overrides are active",
                 style = palette.uiLabelStyle
             )
-            SepiaButton(text = Strings.followAssistantDefaults, modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp),
-                wrapText = true, style = SepiaButtonStyle.OUTLINE, onClick = onReset)
+            SepiaButton(
+                text = Strings.followAssistantDefaults,
+                modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp),
+                wrapText = true,
+                style = SepiaButtonStyle.OUTLINE,
+                onClick = onReset
+            )
         }
-        PermissionOption(Strings.enableAgentTools, policy.toolsEnabled, { onChange(overrides.copy(toolsEnabled = it)) },
-            subtitle = if (onReset != null && overrides.toolsEnabled == null) "Follows assistant default" else "")
+        PermissionOption(
+            Strings.enableAgentTools,
+            policy.toolsEnabled,
+            { onChange(overrides.copy(toolsEnabled = it)) },
+            subtitle = if (onReset != null && overrides.toolsEnabled == null) "Follows assistant default" else ""
+        )
         if (!policy.toolsEnabled) BasicText(Strings.agentToolsAreOffTheChoices, style = palette.uiLabelStyle)
         BasicText(Strings.approval, style = palette.uiBodyStyle.copy(fontWeight = FontWeight.Medium))
         Column(Modifier.selectableGroup()) {
             ToolApprovalMode.entries.forEach { mode ->
-                PermissionOption(mode.label, policy.approvalMode == mode, { onChange(overrides.copy(approvalMode = mode)) }, choice = true,
-                    subtitle = if (onReset != null && overrides.approvalMode == null && defaults.approvalMode == mode) "Assistant default" else "")
+                PermissionOption(
+                    mode.label,
+                    policy.approvalMode == mode,
+                    { onChange(overrides.copy(approvalMode = mode)) },
+                    choice = true,
+                    subtitle = if (onReset != null && overrides.approvalMode == null && defaults.approvalMode == mode) "Assistant default" else ""
+                )
             }
         }
         BasicText(Strings.fileAccess, style = palette.uiBodyStyle.copy(fontWeight = FontWeight.Medium))
-        Column(Modifier.selectableGroup()) { WorkspaceMode.entries.forEach { mode ->
-            val label = when (mode) {
-                WorkspaceMode.OFF -> Strings.off
-                WorkspaceMode.READ_ONLY -> Strings.readFiles
-                WorkspaceMode.READ_WRITE -> Strings.readAndEditFiles
+        Column(Modifier.selectableGroup()) {
+            WorkspaceMode.entries.forEach { mode ->
+                val label = when (mode) {
+                    WorkspaceMode.OFF -> Strings.off
+                    WorkspaceMode.READ_ONLY -> Strings.readFiles
+                    WorkspaceMode.READ_WRITE -> Strings.readAndEditFiles
+                }
+                PermissionOption(
+                    label,
+                    policy.workspaceMode == mode,
+                    { onChange(overrides.copy(workspaceMode = mode)) },
+                    choice = true,
+                    subtitle = if (onReset != null && overrides.workspaceMode == null && defaults.workspaceMode == mode) "Assistant default" else ""
+                )
             }
-            PermissionOption(label, policy.workspaceMode == mode, { onChange(overrides.copy(workspaceMode = mode)) }, choice = true,
-                subtitle = if (onReset != null && overrides.workspaceMode == null && defaults.workspaceMode == mode) "Assistant default" else "")
-        } }
+        }
         SelectionContainer { BasicText(policy.workspacePath.ifBlank { Strings.noFolderChosen }, style = palette.monoStyle) }
         if (policy.workspacePath.isNotBlank() && policy.workspaceMode == WorkspaceMode.OFF) {
             BasicText(Strings.folderSavedFileAccessIsOff, style = palette.uiLabelStyle)
         }
         SepiaButton(
             text = if (policy.workspacePath.isBlank()) Strings.chooseFolder else Strings.changeFolder,
-            modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp), wrapText = true,
+            modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp),
+            wrapText = true,
             style = SepiaButtonStyle.OUTLINE,
             onClick = {
                 scope.launch {
                     val path = PlatformPickers.pickWorkspaceDirectory(policy.workspacePath)
-                    if (!path.isNullOrBlank()) onChange(overrides.copy(
-                        workspacePath = path,
-                        workspaceMode = if (policy.workspaceMode == WorkspaceMode.OFF) WorkspaceMode.READ_ONLY else policy.workspaceMode
-                    ))
+                    if (!path.isNullOrBlank()) onChange(
+                        overrides.copy(
+                            workspacePath = path,
+                            workspaceMode = if (policy.workspaceMode == WorkspaceMode.OFF) WorkspaceMode.READ_ONLY else policy.workspaceMode
+                        )
+                    )
                 }
             }
         )
         if (policy.workspacePath.isNotBlank()) SepiaButton(
-            text = Strings.unmountFolder, compact = true, style = SepiaButtonStyle.GHOST,
-            modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp), wrapText = true,
+            text = Strings.unmountFolder,
+            compact = true,
+            style = SepiaButtonStyle.GHOST,
+            modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp),
+            wrapText = true,
             onClick = { onChange(overrides.copy(workspacePath = "", workspaceMode = WorkspaceMode.OFF)) }
         )
         SepiaDivider()
-        PermissionOption(Strings.allowWebSearchAndUrlFetching, policy.webAccess, { onChange(overrides.copy(webAccess = it)) },
-            subtitle = if (onReset != null && overrides.webAccess == null) "Follows assistant default" else "")
+        PermissionOption(
+            Strings.allowWebSearchAndUrlFetching,
+            policy.webAccess,
+            { onChange(overrides.copy(webAccess = it)) },
+            subtitle = if (onReset != null && overrides.webAccess == null) "Follows assistant default" else ""
+        )
         BasicText(Strings.thisControlsWhetherTheAgentCan, style = palette.uiLabelStyle)
         BasicText(Strings.approvalModesUseLocalWebTools, style = palette.uiLabelStyle)
-        Column(Modifier.selectableGroup()) { ShellAccess.entries.forEach { access ->
-            PermissionOption(access.label, policy.shellAccess == access, { onChange(overrides.copy(shellAccess = access)) }, choice = true,
-                subtitle = if (onReset != null && overrides.shellAccess == null && defaults.shellAccess == access) "Assistant default" else "")
-        } }
+        Column(Modifier.selectableGroup()) {
+            ShellAccess.entries.forEach { access ->
+                PermissionOption(
+                    access.label,
+                    policy.shellAccess == access,
+                    { onChange(overrides.copy(shellAccess = access)) },
+                    choice = true,
+                    subtitle = if (onReset != null && overrides.shellAccess == null && defaults.shellAccess == access) "Assistant default" else ""
+                )
+            }
+        }
         BasicText(
             Strings.fileToolsUseTheChosenFolder,
             style = palette.uiLabelStyle
         )
-        PermissionOption(Strings.letTheAgentSeeAndControl, policy.computerAccess, { onChange(overrides.copy(computerAccess = it)) },
-            subtitle = Strings.offByDefaultScreenshotsGo)
+        PermissionOption(
+            Strings.letTheAgentSeeAndControl,
+            policy.computerAccess,
+            { onChange(overrides.copy(computerAccess = it)) },
+            subtitle = Strings.offByDefaultScreenshotsGo
+        )
         BasicText(Strings.keepAwakeRequestsFollowActiveWork, style = palette.uiLabelStyle)
         if (backgroundNotice.isNotBlank()) BasicText(backgroundNotice, style = palette.uiLabelStyle)
     }
@@ -169,8 +215,14 @@ internal fun AgentToolRegistry(
     val remoteTools by McpRegistry.definitions.collectAsState()
     val tools = remember(remoteTools) { WorkspaceHarness.allTools() }
     val available = remember(policy, goalModeActive, remoteTools) {
-        WorkspaceHarness.activeToolsForMode(policy.workspaceMode, policy.workspacePath, policy.allowShell,
-            goalModeActive = goalModeActive, enableWebTools = policy.webAccess, policy = policy).map { it.name }.toSet()
+        WorkspaceHarness.activeToolsForMode(
+            policy.workspaceMode,
+            policy.workspacePath,
+            policy.allowShell,
+            goalModeActive = goalModeActive,
+            enableWebTools = policy.webAccess,
+            policy = policy
+        ).map { it.name }.toSet()
     }
     val matches = remember(query, tools) {
         val words = query.trim().lowercase().split(Regex("\\s+")).filter { it.isNotEmpty() }
@@ -179,8 +231,14 @@ internal fun AgentToolRegistry(
     Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(Space.s10)) {
         BasicText(Strings.ofToolsAvailable(available.size, tools.size), style = p.uiBodyStyle.copy(fontWeight = FontWeight.SemiBold))
         BasicText(Strings.perToolChoicesAlsoRequireThe, style = p.uiLabelStyle)
-        SepiaTextField(query, { query = it }, placeholder = Strings.searchToolNamesAndDescriptions,
-            modifier = Modifier.fillMaxWidth(), singleLine = true, minHeight = 48.dp)
+        SepiaTextField(
+            query,
+            { query = it },
+            placeholder = Strings.searchToolNamesAndDescriptions,
+            modifier = Modifier.fillMaxWidth(),
+            singleLine = true,
+            minHeight = 48.dp
+        )
         if (matches.isEmpty()) BasicText(Strings.noMatchingTools, style = p.uiLabelStyle)
         matches.forEach { tool ->
             val allowed = policy.toolOverrides[tool.name] != false

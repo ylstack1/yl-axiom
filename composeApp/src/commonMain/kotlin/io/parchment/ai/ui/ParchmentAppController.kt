@@ -1,11 +1,15 @@
 package io.parchment.ai.ui
 
-import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.size
+import androidx.compose.runtime.MutableState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
-import androidx.compose.runtime.withFrameNanos
+import io.parchment.ai.harness.AgentToolRunContext
+import io.parchment.ai.harness.WorkspaceHarness
+import io.parchment.ai.model.AgentPermissionOverrides
+import io.parchment.ai.model.AgentPermissionResolver
+import io.parchment.ai.model.ApiUsageRecord
 import io.parchment.ai.model.AppStateSnapshot
 import io.parchment.ai.model.AssistantAgent
 import io.parchment.ai.model.ChatSession
@@ -16,16 +20,6 @@ import io.parchment.ai.model.PromptAttachment
 import io.parchment.ai.model.ProviderProfile
 import io.parchment.ai.model.ProviderProtocol
 import io.parchment.ai.model.QueuedPromptItem
-import io.parchment.ai.harness.AgentToolRunContext
-import io.parchment.ai.harness.WorkspaceHarness
-import io.parchment.ai.network.cancelBackgroundInteraction
-import io.parchment.ai.network.stripInlineErrorNotices
-import io.parchment.ai.platform.MAX_INLINE_ATTACHMENT_BYTES
-import io.parchment.ai.platform.MAX_INLINE_TEXT_ATTACHMENT_BYTES
-import io.parchment.ai.strings.Strings
-import io.parchment.ai.platform.inlineAttachmentText
-import io.parchment.ai.model.AgentPermissionResolver
-import io.parchment.ai.model.AgentPermissionOverrides
 import io.parchment.ai.model.WorkspaceMode
 import io.parchment.ai.model.withLegacyWorkspaceChangeFrom
 import io.parchment.ai.network.AiProviderEngine
@@ -33,14 +27,20 @@ import io.parchment.ai.network.OtaReleaseInfo
 import io.parchment.ai.network.OtaUpdateEngine
 import io.parchment.ai.network.OtaUpdateState
 import io.parchment.ai.network.StreamUpdate
+import io.parchment.ai.network.cancelBackgroundInteraction
+import io.parchment.ai.network.stripInlineErrorNotices
 import io.parchment.ai.network.updateBlockedReason
-import io.parchment.ai.model.ApiUsageRecord
+import io.parchment.ai.platform.MAX_INLINE_ATTACHMENT_BYTES
+import io.parchment.ai.platform.MAX_INLINE_TEXT_ATTACHMENT_BYTES
 import io.parchment.ai.platform.PickedBinaryFile
 import io.parchment.ai.platform.PlatformRuntime
 import io.parchment.ai.platform.PlatformStorage
 import io.parchment.ai.platform.PlatformVoice
 import io.parchment.ai.platform.PlatformWorkspace
+import io.parchment.ai.platform.inlineAttachmentText
 import io.parchment.ai.platform.normalizePickedBinaryFile
+import io.parchment.ai.strings.Strings
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.IO
 import kotlinx.coroutines.Job
@@ -48,8 +48,6 @@ import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlin.io.encoding.ExperimentalEncodingApi
-import androidx.compose.runtime.MutableState
-import kotlinx.coroutines.CoroutineScope
 
 /**
  * The app's state and actions. ParchmentApp keeps the layout and the effects; each frame it copies in the values it
@@ -76,10 +74,13 @@ internal class ParchmentAppController(
     var streamingInteractionId: String = ""
     lateinit var queuedPrompts: List<QueuedPromptItem>
     lateinit var openTabIds: List<String>
+
     @kotlin.concurrent.Volatile
     private var pendingDraftSessionId: String = ""
+
     @kotlin.concurrent.Volatile
     private var pendingDraftPrompt: String = ""
+
     @kotlin.concurrent.Volatile
     private var pendingDraftPrefill: String = ""
 
@@ -135,10 +136,12 @@ internal class ParchmentAppController(
 
     // Chats just deleted, kept until the notice offering Undo goes away.
     var pendingUndo by mutableStateOf<DeletedChats?>(null)
+
     // The previous run's crash report, offered by its notice (Copy details) until the notice goes away.
     var pendingCrashReport by mutableStateOf<io.parchment.ai.platform.CrashReport?>(null)
 
     var showCommandPalette by mutableStateOf(false)
+
     /** Ctrl+G: the palette listing this chat's prompts. */
     var showPromptJump by mutableStateOf(false)
 
@@ -173,15 +176,31 @@ internal class ParchmentAppController(
     fun openAttachmentInViewer(att: PromptAttachment) {
         val mime = att.mimeType.lowercase().trim()
         val lower = att.fileName.lowercase().trim()
-        val isSvg = mime == "image/svg+xml" || lower.endsWith(".svg") ||
+        val isSvg = mime == "image/svg+xml" ||
+            lower.endsWith(".svg") ||
             (att.textContent.contains("<svg", ignoreCase = true) && att.textContent.contains("</svg>", ignoreCase = true))
         val isPdf = mime == "application/pdf" || lower.endsWith(".pdf")
-        val isVideoOrAudio = mime.startsWith("video/") || mime.startsWith("audio/") ||
-            lower.endsWith(".mp4") || lower.endsWith(".webm") || lower.endsWith(".mov") ||
-            lower.endsWith(".mkv") || lower.endsWith(".avi") || lower.endsWith(".mp3") ||
-            lower.endsWith(".wav") || lower.endsWith(".ogg") || lower.endsWith(".flac")
-        val isRasterImage = !isSvg && (mime.startsWith("image/") || lower.endsWith(".png") || lower.endsWith(".jpg") ||
-            lower.endsWith(".jpeg") || lower.endsWith(".webp") || lower.endsWith(".gif") || lower.endsWith(".bmp"))
+        val isVideoOrAudio = mime.startsWith("video/") ||
+            mime.startsWith("audio/") ||
+            lower.endsWith(".mp4") ||
+            lower.endsWith(".webm") ||
+            lower.endsWith(".mov") ||
+            lower.endsWith(".mkv") ||
+            lower.endsWith(".avi") ||
+            lower.endsWith(".mp3") ||
+            lower.endsWith(".wav") ||
+            lower.endsWith(".ogg") ||
+            lower.endsWith(".flac")
+        val isRasterImage = !isSvg &&
+            (
+                mime.startsWith("image/") ||
+                    lower.endsWith(".png") ||
+                    lower.endsWith(".jpg") ||
+                    lower.endsWith(".jpeg") ||
+                    lower.endsWith(".webp") ||
+                    lower.endsWith(".gif") ||
+                    lower.endsWith(".bmp")
+                )
 
         when {
             isPdf || isVideoOrAudio -> {
@@ -239,14 +258,24 @@ internal class ParchmentAppController(
             val lower = picked.fileName.lowercase()
             val resolvedMime = picked.mimeType.lowercase()
             val isImg = resolvedMime.startsWith("image/") ||
-                lower.endsWith(".png") || lower.endsWith(".jpg") || lower.endsWith(".jpeg") ||
-                lower.endsWith(".webp") || lower.endsWith(".gif") || lower.endsWith(".bmp")
+                lower.endsWith(".png") ||
+                lower.endsWith(".jpg") ||
+                lower.endsWith(".jpeg") ||
+                lower.endsWith(".webp") ||
+                lower.endsWith(".gif") ||
+                lower.endsWith(".bmp")
             val isVid = resolvedMime.startsWith("video/") ||
-                lower.endsWith(".mp4") || lower.endsWith(".webm") || lower.endsWith(".mov") ||
-                lower.endsWith(".mkv") || lower.endsWith(".avi")
+                lower.endsWith(".mp4") ||
+                lower.endsWith(".webm") ||
+                lower.endsWith(".mov") ||
+                lower.endsWith(".mkv") ||
+                lower.endsWith(".avi")
             val isAudio = resolvedMime.startsWith("audio/") ||
-                lower.endsWith(".mp3") || lower.endsWith(".wav") || lower.endsWith(".ogg") ||
-                lower.endsWith(".flac") || lower.endsWith(".m4a")
+                lower.endsWith(".mp3") ||
+                lower.endsWith(".wav") ||
+                lower.endsWith(".ogg") ||
+                lower.endsWith(".flac") ||
+                lower.endsWith(".m4a")
             val isPdf = resolvedMime == "application/pdf" || lower.endsWith(".pdf")
             val isDocx = lower.endsWith(".docx") ||
                 resolvedMime == "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
@@ -443,8 +472,11 @@ internal class ParchmentAppController(
                 val mod = if (touch) changed.copy(updatedAt = PlatformRuntime.currentTimeMillis()) else changed
                 if (mod.permissionOverrides != complete.permissionOverrides) activeStreamsBySession[sessionId]?.toolApprovalBroker?.invalidate()
                 modifiedSession = mod
-                if (target.isCompactStub && sessionId != currentSnap.activeSessionId && sessionId !in activeStreamsBySession &&
-                    mod.messages.none { node -> node.activeVariant.isStreaming }) {
+                if (target.isCompactStub &&
+                    sessionId != currentSnap.activeSessionId &&
+                    sessionId !in activeStreamsBySession &&
+                    mod.messages.none { node -> node.activeVariant.isStreaming }
+                ) {
                     dehydrateChatSessionToCompactStub(mod)
                 } else mod
             } else it
@@ -459,12 +491,10 @@ internal class ParchmentAppController(
         }
     }
 
-    fun updateSessionById(sessionId: String, immediate: Boolean = false, transform: (ChatSession) -> ChatSession) =
-        updateSession(sessionId, immediate, touch = true, transform = transform)
+    fun updateSessionById(sessionId: String, immediate: Boolean = false, transform: (ChatSession) -> ChatSession) = updateSession(sessionId, immediate, touch = true, transform = transform)
 
     /** A streaming checkpoint: the chat updates in memory and only the reply [turn] is saved now. */
-    fun updateLiveTurnById(sessionId: String, turn: LiveTurnRef, transform: (ChatSession) -> ChatSession) =
-        updateSession(sessionId, immediate = true, touch = true, liveTurn = turn, transform = transform)
+    fun updateLiveTurnById(sessionId: String, turn: LiveTurnRef, transform: (ChatSession) -> ChatSession) = updateSession(sessionId, immediate = true, touch = true, liveTurn = turn, transform = transform)
 
     fun syncPendingDraftTracking(sessionId: String, draftInput: String, draftPrefill: String) {
         if (pendingDraftSessionId != sessionId) {
@@ -508,8 +538,7 @@ internal class ParchmentAppController(
     }
 
     // Pinning is bookkeeping, not new content, so the chat keeps its place in the list.
-    fun togglePinnedReply(sessionId: String, nodeId: String) =
-        updateSession(sessionId, immediate = true, touch = false) { it.togglePinned(nodeId) }
+    fun togglePinnedReply(sessionId: String, nodeId: String) = updateSession(sessionId, immediate = true, touch = false) { it.togglePinned(nodeId) }
 
     /** Patches a streaming reply [turn] in memory; it reaches disk with the next write, as a live checkpoint. */
     fun updateLiveTurnInMemory(sessionId: String, turn: LiveTurnRef, transform: (ChatSession) -> ChatSession) {
@@ -590,12 +619,25 @@ internal class ParchmentAppController(
         }
     }
 
-    suspend fun generateTrackedUtility(sessionId: String, purpose: String, profile: ProviderProfile,
-        model: String, prompt: String, maxOutputTokens: Int? = null): Result<String> {
+    suspend fun generateTrackedUtility(
+        sessionId: String,
+        purpose: String,
+        profile: ProviderProfile,
+        model: String,
+        prompt: String,
+        maxOutputTokens: Int? = null
+    ): Result<String> {
         val runId = kotlinx.coroutines.currentCoroutineContext()[AgentToolRunContext]?.broker?.runId ?: PlatformRuntime.createRunId()
-        return AiProviderEngine.generateUtilityText(profile, model, prompt, maxOutputTokens,
-            ownerSessionId = sessionId, ownerRunId = runId, purpose = purpose,
-            onUsage = { record, _ -> withContext(Dispatchers.Main.immediate) { recordUtilityUsage(sessionId, record) } })
+        return AiProviderEngine.generateUtilityText(
+            profile,
+            model,
+            prompt,
+            maxOutputTokens,
+            ownerSessionId = sessionId,
+            ownerRunId = runId,
+            purpose = purpose,
+            onUsage = { record, _ -> withContext(Dispatchers.Main.immediate) { recordUtilityUsage(sessionId, record) } }
+        )
     }
 
     fun generateTopicTitle(sessionId: String, forceRegenerate: Boolean = false) {
@@ -693,12 +735,27 @@ internal class ParchmentAppController(
         }
         val profile = appState.profiles.find { it.id == requestedSession.profileId } ?: activeProfile
         val model = requestedSession.modelOverride.ifBlank { profile.defaultModel }
-        val identity = AgentRunIdentity(PlatformRuntime.createRunId(), sessionId, targetAssistantNodeId, targetVariantId,
-            profile.id, model, if (profile.protocol == ProviderProtocol.CUSTOM) profile.customDialect
-            else io.parchment.ai.model.mapProtocolToDialect(profile.protocol.name))
+        val identity = AgentRunIdentity(
+            PlatformRuntime.createRunId(),
+            sessionId,
+            targetAssistantNodeId,
+            targetVariantId,
+            profile.id,
+            model,
+            if (profile.protocol == ProviderProtocol.CUSTOM) profile.customDialect
+            else io.parchment.ai.model.mapProtocolToDialect(profile.protocol.name)
+        )
         val persistedIds = requestedSession.messages.map { it.id }.toSet()
-        processState.runs.prepare(identity, SessionStreamRuntime(sessionId,
-            targetNodeId = targetAssistantNodeId, statusText = Strings.preparingGeneration, providerContext = RunProviderContext(profile)), appProcessScope) { previous ->
+        processState.runs.prepare(
+            identity,
+            SessionStreamRuntime(
+                sessionId,
+                targetNodeId = targetAssistantNodeId,
+                statusText = Strings.preparingGeneration,
+                providerContext = RunProviderContext(profile)
+            ),
+            appProcessScope
+        ) { previous ->
             previous.forEach { old ->
                 val producer = old.providerContext?.profile ?: profile
                 if (old.interactionId.isNotBlank() && producer.useBackgroundLongDecode) {
@@ -710,9 +767,14 @@ internal class ParchmentAppController(
             val target = current.messages.find { it.id == targetAssistantNodeId }?.variants?.find { it.id == targetVariantId }
                 ?: return@prepare
             val continuingSameVariant = previous.any { it.identity?.let { old -> old.nodeId == targetAssistantNodeId && old.variantId == targetVariantId } == true }
-            beginGeneration(sessionId, refreshGenerationHistory(historyForCall, persistedIds, current), targetAssistantNodeId,
-                targetVariantId, if (continuingSameVariant) AiProviderEngine.stripInlineErrorNotices(target.content) else continuePrefix,
-                autoMuteNodeIdsOnFinish)
+            beginGeneration(
+                sessionId,
+                refreshGenerationHistory(historyForCall, persistedIds, current),
+                targetAssistantNodeId,
+                targetVariantId,
+                if (continuingSameVariant) AiProviderEngine.stripInlineErrorNotices(target.content) else continuePrefix,
+                autoMuteNodeIdsOnFinish
+            )
         }
     }
 
@@ -1181,8 +1243,13 @@ internal class ParchmentAppController(
         if (activeStreamsBySession.containsKey(targetSessId)) return
         val now = PlatformRuntime.currentTimeMillis()
         val draftProfile = (appState.profiles.find { it.id == complete.profileId } ?: activeProfile).copy(
-            enableWebSearch = false, enableUrlContext = false, enableCodeExecution = false,
-            enableImageGeneration = false, enableVideoGeneration = false, useBackgroundLongDecode = false)
+            enableWebSearch = false,
+            enableUrlContext = false,
+            enableCodeExecution = false,
+            enableImageGeneration = false,
+            enableVideoGeneration = false,
+            useBackgroundLongDecode = false
+        )
         val draftRunId = PlatformRuntime.createRunId()
         val seedHint = userPromptInput.trim()
         val instruction = if (seedHint.isNotEmpty()) {
@@ -1236,8 +1303,12 @@ internal class ParchmentAppController(
             }
         }
         updateSessionStreamState(targetSessId) {
-            SessionStreamRuntime(sessionId = targetSessId, statusText = Strings.draftingSTurn(activeSession.userName), job = impJob,
-                providerContext = RunProviderContext(draftProfile))
+            SessionStreamRuntime(
+                sessionId = targetSessId,
+                statusText = Strings.draftingSTurn(activeSession.userName),
+                job = impJob,
+                providerContext = RunProviderContext(draftProfile)
+            )
         }
     }
 
@@ -1625,10 +1696,9 @@ internal class ParchmentAppController(
         }
     }
 
-    private fun coldStubIdsNeedingDiskRead(removed: List<ChatSession>): List<String> =
-        removed.mapNotNull { s ->
-            if (s.isCompactStub && appDiskWriter.pendingFullSession(s.id) == null) s.id else null
-        }
+    private fun coldStubIdsNeedingDiskRead(removed: List<ChatSession>): List<String> = removed.mapNotNull { s ->
+        if (s.isCompactStub && appDiskWriter.pendingFullSession(s.id) == null) s.id else null
+    }
 
     private fun commitDeleteSingleSession(targetId: String, targetSession: ChatSession, coldJsonById: Map<String, String>) {
         pendingUndo = buildDeletedChats(listOf(targetSession), coldJsonById)

@@ -18,6 +18,7 @@ internal object CrashRecorder {
     private const val MAX_FRAMES = 40
     private const val MAX_CAUSES = 8
     internal const val FLUSH_LIMIT_MS = 3_000L
+
     /** An error that repeats (a failing background loop) is recorded at most this often. */
     private const val MIN_RECORD_INTERVAL_MS = 10_000L
 

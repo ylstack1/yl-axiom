@@ -27,10 +27,12 @@ internal fun geminiThoughtStep(signature: String, summary: String = ""): JsonObj
     put("signature", signature)
     if (summary.isNotBlank()) {
         putJsonArray("summary") {
-            add(buildJsonObject {
-                put("type", "text")
-                put("text", summary)
-            })
+            add(
+                buildJsonObject {
+                    put("type", "text")
+                    put("text", summary)
+                }
+            )
         }
     }
 }
@@ -38,20 +40,24 @@ internal fun geminiThoughtStep(signature: String, summary: String = ""): JsonObj
 internal fun geminiModelOutputStep(text: String): JsonObject = buildJsonObject {
     put("type", "model_output")
     putJsonArray("content") {
-        add(buildJsonObject {
-            put("type", "text")
-            put("text", text)
-        })
+        add(
+            buildJsonObject {
+                put("type", "text")
+                put("text", text)
+            }
+        )
     }
 }
 
 internal fun geminiUserInputStep(text: String): JsonObject = buildJsonObject {
     put("type", "user_input")
     putJsonArray("content") {
-        add(buildJsonObject {
-            put("type", "text")
-            put("text", text)
-        })
+        add(
+            buildJsonObject {
+                put("type", "text")
+                put("text", text)
+            }
+        )
     }
 }
 
@@ -149,31 +155,40 @@ private fun appendMergedUserInteractionStep(
 ) {
     val newContentItems = mutableListOf<JsonObject>()
     if (text.isNotBlank()) {
-        newContentItems.add(buildJsonObject {
-            put("type", "text")
-            put("text", text)
-        })
+        newContentItems.add(
+            buildJsonObject {
+                put("type", "text")
+                put("text", text)
+            }
+        )
     }
     for (att in attachments) {
         val m = att.mimeType.lowercase()
         val cType = when {
             m.startsWith("video/") -> "video"
             m.startsWith("audio/") -> "audio"
-            m == "application/pdf" || m.contains("document") || m.contains("msword") ||
-                m.contains("officedocument") || m == "text/csv" -> "document"
+            m == "application/pdf" ||
+                m.contains("document") ||
+                m.contains("msword") ||
+                m.contains("officedocument") ||
+                m == "text/csv" -> "document"
             else -> "image"
         }
-        newContentItems.add(buildJsonObject {
-            put("type", cType)
-            put("mime_type", att.mimeType)
-            put("data", att.base64Data)
-        })
+        newContentItems.add(
+            buildJsonObject {
+                put("type", cType)
+                put("mime_type", att.mimeType)
+                put("data", att.base64Data)
+            }
+        )
     }
     if (newContentItems.isEmpty()) {
-        newContentItems.add(buildJsonObject {
-            put("type", "text")
-            put("text", " ")
-        })
+        newContentItems.add(
+            buildJsonObject {
+                put("type", "text")
+                put("text", " ")
+            }
+        )
     }
 
     val lastStep = stepsList.lastOrNull()
@@ -181,7 +196,8 @@ private fun appendMergedUserInteractionStep(
         val prevContent = (lastStep["content"] as? JsonArray)?.mapNotNull { it as? JsonObject }.orEmpty().toMutableList()
         val existingTextIdx = prevContent.indexOfLast { it["type"]?.jsonPrimitive?.contentOrNull == "text" }
         val firstNewItem = newContentItems.firstOrNull()
-        if (existingTextIdx >= 0 && firstNewItem != null &&
+        if (existingTextIdx >= 0 &&
+            firstNewItem != null &&
             firstNewItem["type"]?.jsonPrimitive?.contentOrNull == "text"
         ) {
             val prevTxt = prevContent[existingTextIdx]["text"]?.jsonPrimitive?.contentOrNull.orEmpty()
@@ -200,10 +216,12 @@ private fun appendMergedUserInteractionStep(
             put("content", JsonArray(prevContent))
         }
     } else {
-        stepsList.add(buildJsonObject {
-            put("type", "user_input")
-            put("content", JsonArray(newContentItems))
-        })
+        stepsList.add(
+            buildJsonObject {
+                put("type", "user_input")
+                put("content", JsonArray(newContentItems))
+            }
+        )
     }
 }
 
@@ -217,12 +235,13 @@ private fun AiProviderEngine.appendAssistantInteractionSteps(
     currentModel: String = ""
 ) {
     val cleanText = stripInlineErrorNotices(text)
-    val isForeignProtocol = nodeVar != null && !isNativeReasoningCompatible(
-        variant = nodeVar,
-        targetProtocol = ProviderProtocol.GEMINI_INTERACTIONS,
-        targetWireDialect = CUSTOM_DIALECT_GEMINI,
-        currentModel = currentModel
-    )
+    val isForeignProtocol = nodeVar != null &&
+        !isNativeReasoningCompatible(
+            variant = nodeVar,
+            targetProtocol = ProviderProtocol.GEMINI_INTERACTIONS,
+            targetWireDialect = CUSTOM_DIALECT_GEMINI,
+            currentModel = currentModel
+        )
     val rawSig = if (isForeignProtocol) "" else nodeVar?.thinkingSignature.orEmpty()
     val sig = sanitizeGeminiThoughtSignature(rawSig, forFunctionCall = false)
     val thinkSummary = nodeVar?.thinkingSummary.orEmpty()
@@ -292,7 +311,9 @@ private fun AiProviderEngine.appendAssistantInteractionSteps(
         }
     }
 
-    if (toolCalls.isNotEmpty() && trailingThink.isNotBlank() && sig.isNotBlank() &&
+    if (toolCalls.isNotEmpty() &&
+        trailingThink.isNotBlank() &&
+        sig.isNotBlank() &&
         toolCalls.none { sanitizeGeminiThoughtSignature(it.thoughtSignature, forFunctionCall = false) == sig }
     ) {
         stepsList.add(geminiThoughtStep(signature = sig, summary = trailingThink))

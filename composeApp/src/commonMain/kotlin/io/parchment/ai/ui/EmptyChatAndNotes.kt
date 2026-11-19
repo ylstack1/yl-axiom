@@ -1,7 +1,5 @@
 package io.parchment.ai.ui
 
-import androidx.compose.ui.draw.alpha
-import io.parchment.ai.strings.Strings
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
@@ -21,12 +19,11 @@ import androidx.compose.foundation.text.BasicText
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.key
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.input.key.key
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -38,6 +35,7 @@ import io.parchment.ai.model.MessageVariant
 import io.parchment.ai.model.PreferencesConfig
 import io.parchment.ai.model.ProviderProfile
 import io.parchment.ai.platform.PlatformRuntime
+import io.parchment.ai.strings.Strings
 
 /** Chat notes and memory: extra instructions, a style reminder and the remembered summary, opened from Notes in the top bar. */
 @Composable

@@ -4,7 +4,10 @@ import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 
 internal enum class WindowsPowerLeaseStatus {
-    IDLE, STARTING, ACTIVE, UNAVAILABLE
+    IDLE,
+    STARTING,
+    ACTIVE,
+    UNAVAILABLE
 }
 
 internal data class WindowsPowerLeaseSnapshot(
@@ -28,6 +31,7 @@ internal class WindowsPowerLease(
     private val lock = Any()
     private var owners = 0
     private var closed = false
+
     /** Released to end the current hold; the holder thread then clears the request on its own thread. */
     private var holdRelease: CountDownLatch? = null
     private var holder: Thread? = null

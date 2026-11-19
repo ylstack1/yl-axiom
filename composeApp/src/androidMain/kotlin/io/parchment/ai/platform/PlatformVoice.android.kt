@@ -6,10 +6,13 @@ import android.speech.tts.UtteranceProgressListener
 
 actual object PlatformVoice {
     private var ttsEngine: TextToSpeech? = null
+
     @Volatile
     private var ttsReady: Boolean = false
+
     @Volatile
     private var pendingTtsFinishedCallback: (() -> Unit)? = null
+
     @Volatile
     private var pendingUtteranceToSpeak: String? = null
 
@@ -32,6 +35,7 @@ actual object PlatformVoice {
                                 cb?.invoke()
                             }
                         }
+
                         @Suppress("OVERRIDE_DEPRECATION")
                         override fun onError(utteranceId: String?) {
                             val cb = pendingTtsFinishedCallback

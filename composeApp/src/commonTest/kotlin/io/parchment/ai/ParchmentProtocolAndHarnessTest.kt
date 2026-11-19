@@ -1,21 +1,21 @@
 package io.parchment.ai
 
 import io.parchment.ai.harness.WorkspaceHarness
-import io.parchment.ai.model.CharacterOrScenarioCard
 import io.parchment.ai.model.AssistantAgent
+import io.parchment.ai.model.CharacterOrScenarioCard
 import io.parchment.ai.model.ChatSession
+import io.parchment.ai.model.GeneratedMediaItem
+import io.parchment.ai.model.MediaKind
 import io.parchment.ai.model.MessageNode
 import io.parchment.ai.model.MessageRole
 import io.parchment.ai.model.MessageVariant
 import io.parchment.ai.model.PromptAttachment
+import io.parchment.ai.model.ProviderProfile
 import io.parchment.ai.model.ProviderProtocol
 import io.parchment.ai.model.SystemPromptPreset
 import io.parchment.ai.model.ThemeConfig
 import io.parchment.ai.model.ToolCallRecord
 import io.parchment.ai.model.WorkspaceMode
-import io.parchment.ai.model.GeneratedMediaItem
-import io.parchment.ai.model.MediaKind
-import io.parchment.ai.model.ProviderProfile
 import io.parchment.ai.network.AiProviderEngine
 import io.parchment.ai.network.OtaUpdateEngine
 import io.parchment.ai.network.appendSignatureChunkSafe
@@ -52,24 +52,24 @@ import io.parchment.ai.protocol.CardAndPromptCodec
 import io.parchment.ai.protocol.O200kTokenizer
 import io.parchment.ai.protocol.isGeminiServerSideToolSignature
 import io.parchment.ai.protocol.sanitizeGeminiThoughtSignature
+import io.parchment.ai.ui.AiGeneratedChatArtifact
 import io.parchment.ai.ui.BUILTIN_LAB_SVG_PATHS
+import io.parchment.ai.ui.BUILTIN_SLASH_COMMANDS
 import io.parchment.ai.ui.DiffLineKind
+import io.parchment.ai.ui.KissIcon
+import io.parchment.ai.ui.SettingsCategory
+import io.parchment.ai.ui.buildExportFileNameForChat
 import io.parchment.ai.ui.computeUnifiedLineDiff
+import io.parchment.ai.ui.decodeChatSessionsFromRawJson
 import io.parchment.ai.ui.extractLatestThoughtPeek
+import io.parchment.ai.ui.extractSessionVaultItems
 import io.parchment.ai.ui.findClosingMarkdownLinkParen
 import io.parchment.ai.ui.formatDurationFromMs
+import io.parchment.ai.ui.parseKissLabelIcons
 import io.parchment.ai.ui.parseSvgColorString
 import io.parchment.ai.ui.parseSvgPathNormalized
 import io.parchment.ai.ui.parseSvgSceneDocument
 import io.parchment.ai.ui.resolveLabSlugForModelOrProvider
-import io.parchment.ai.ui.AiGeneratedChatArtifact
-import io.parchment.ai.ui.BUILTIN_SLASH_COMMANDS
-import io.parchment.ai.ui.KissIcon
-import io.parchment.ai.ui.SettingsCategory
-import io.parchment.ai.ui.buildExportFileNameForChat
-import io.parchment.ai.ui.decodeChatSessionsFromRawJson
-import io.parchment.ai.ui.extractSessionVaultItems
-import io.parchment.ai.ui.parseKissLabelIcons
 import io.parchment.ai.ui.resolveToolKissIcon
 import io.parchment.ai.ui.saveSingleChatSessionToDisk
 import kotlinx.coroutines.launch
@@ -1033,6 +1033,7 @@ class ParchmentProtocolAndHarnessTest {
         assertTrue(deepList.contains("DeepModule.kt"), "workspaceList(recursive=true) must find files at depth 9+: $deepList")
         PlatformWorkspace.workspaceDelete(deepRoot, "composeApp")
     }
+
     @Test
     fun testShellExecLargeOutputAndStdinEofNoDeadlock() {
         val tempRoot = "${PlatformStorage.getAppStorageDirectoryPath()}/test-shell-${PlatformRuntime.currentTimeMillis()}"
@@ -1362,7 +1363,7 @@ class ParchmentProtocolAndHarnessTest {
                     durationMs = 40_000L
                 )
             ),
-            totalDurationMs = 45_000L,      // 45s wall clock (40s spent in shell_exec + 1s TTFT + 4s active LLM streaming)
+            totalDurationMs = 45_000L, // 45s wall clock (40s spent in shell_exec + 1s TTFT + 4s active LLM streaming)
             ttftMs = 1_000L,
             activeDecodeDurationMs = 4_000L, // 4.0s actual LLM token streaming burst
             totalToolExecutionMs = 40_000L
@@ -2115,7 +2116,7 @@ class ParchmentProtocolAndHarnessTest {
         val workers = (1..8).map { worker ->
             launch(kotlinx.coroutines.Dispatchers.Default) {
                 repeat(40) { iter ->
-                    val name = "concurrent-model-${worker}-${iter}"
+                    val name = "concurrent-model-$worker-$iter"
                     AiProviderEngine.recordDiscoveredModality(name, listOf("text", "image"))
                     AiProviderEngine.recordDiscoveredVendor(name, "vendor-$worker")
                     val resolved = AiProviderEngine.resolveKnownOutputModalities(null, name)
@@ -2152,5 +2153,4 @@ class ParchmentProtocolAndHarnessTest {
         assertFalse(io.parchment.ai.network.hasUninlinedBinaryAttachments(listOf(alreadyInlined)))
         assertTrue(io.parchment.ai.network.hasUninlinedBinaryAttachments(listOf(alreadyInlined, uninlined)))
     }
-
 }

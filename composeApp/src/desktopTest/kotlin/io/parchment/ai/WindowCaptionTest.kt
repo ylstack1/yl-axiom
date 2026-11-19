@@ -1,7 +1,7 @@
 package io.parchment.ai
 
-import kotlin.test.Test
 import java.awt.Rectangle
+import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertTrue

@@ -1,10 +1,25 @@
 # Architecture
 
-Parchment is a Kotlin Multiplatform application built with Compose Multiplatform (Foundation only, no Material). It targets Windows desktop and Android from shared protocol, agent-harness, storage and UI code.
+Parchment v3 combines a shared pure-Rust core (`crates/*`, SQLite WAL + FTS5, provider protocols, zero-copy prose engine, agent harness), a native Windows GPUI desktop shell (`crates/parchment-desktop`), and the Kotlin Multiplatform / Compose Foundation Android app (`composeApp` + `androidApp`) backed by the shared Rust core via direct zero-JNA JNI (`arm64-v8a` `libparchment_core.so`).
 
-New contributors and AI harnesses should start with [AGENTS.md](../AGENTS.md) for working rules, engineering standards, and stable system contracts, and [CONTRIBUTING.md](../CONTRIBUTING.md) for local setup and verification commands.
+New contributors and AI harnesses should start with [AGENTS.md](../AGENTS.md) for working rules, engineering rigor, and stable system contracts, and [CONTRIBUTING.md](../CONTRIBUTING.md) for local setup and verification commands.
 
-## Modules and source sets
+## Rust workspace (v3 native core & Windows GPUI desktop)
+
+`Cargo.toml` defines 8 workspace crates (Rust 2024 edition):
+
+| Crate | Role |
+|---|---|
+| `crates/parchment-model` | Exact v2-compatible camelCase serde models (`AppStateSnapshot`, `ChatSession`, `MessageNode`, `MessageVariant`, opaque signatures, transient screenshot skip, `with_imported_permissions`) |
+| `crates/parchment-storage` | Normalized SQLite WAL + FTS5 store (`> 64 KiB` tool blob spill, per-request fork usage deduplication), non-destructive idempotent v2 JSON migrator (exact `(length, mtime)` `live.json` folding), atomic `.parchment`/`.zip`/`.json` archive codec |
+| `crates/parchment-protocol` | Zero-copy SSE framer, all 5 wire dialects (`GEMINI_INTERACTIONS`, `OPENAI_RESPONSES`, `ANTHROPIC_MESSAGES`, `OPENAI_CHAT`, `GEMINI_GENERATE_CONTENT`), `CUSTOM` strict routing, HTTP 400 self-healing, retry policy, `O200kTokenizer`, single-flight `RegistryCatalogClient` (`2.5 s` modality wait + `models.dev` gap-fill) |
+| `crates/parchment-prose` | Monotonic `StreamingTextBuffer`, zero-copy incremental Markdown parser (cached prefix split invariant), multi-language highlighter, bounded LaTeX & sanitized SVG parsers, LCS unified diff |
+| `crates/parchment-harness` | `WorkspacePathGuard` (+ desktop `ripgrep` feature / slim Android walker), SSRF-pinned `PublicWebTransport`, 21 built-in tools + `mcp__*`, `AgentPermissionGate`, one-use `ToolApprovalBroker`, `.docx`/PNG card codecs, MCP (`2025-11-25`/`2026-07-28`), `AgentTurnRunner` + `RunActivity` |
+| `crates/parchment-core` | Shared facade (`ParchmentCore`): default `network` build for desktop; slim `--no-default-features --features android-jni` `cdylib` (`libparchment_core.so`, `0x4000` 16 KB ELF LOAD alignment) exporting 9 direct-JNI methods for `io.parchment.ai.platform.ParchmentNativeCore` |
+| `crates/parchment-desktop` | Native Windows GPUI desktop app (single standalone `.exe`, DWM caption tinting, COM `IFileOpenDialog`/`IFileSaveDialog`, dedicated keep-awake thread, FIPS 180-4 SHA-256 OTA verification, all 9 WCAG-verified themes, MRU-12 tabs, FTS5 search, `Ctrl+K`/`Ctrl+G`) |
+| `crates/parchment-xtask` | Zero-dependency Rust automation (`cargo xtask`): dual-stack verification ledger, static quality checks, CI planner/sharder/SBOM/signer stager, and desktop + Android benchmarks |
+
+## Gradle modules and source sets
 
 Gradle defines two modules sharing one version catalog (`gradle/libs.versions.toml`):
 
@@ -28,10 +43,10 @@ Gradle defines two modules sharing one version catalog (`gradle/libs.versions.to
 
 Top-level files and tooling outside `composeApp/src`:
 
-- **Build & dependencies:** `build.gradle.kts`, `settings.gradle.kts`, `gradle/libs.versions.toml`, `composeApp/build.gradle.kts`, `androidApp/build.gradle.kts`, `androidApp/proguard-rules.pro`, `androidApp/src/main/AndroidManifest.xml`.
-- **Verification & automation scripts:** `scripts/verify.py` (ledger-backed test/gate runner), `scripts/quality.py` (encoding, dead-code, banned-pattern, link and doc-budget checks), `scripts/quality-baseline.json`, `scripts/perf.py` (300-chat startup/frame benchmark), `scripts/test_workflow_tools.py` (Python script tests), `scripts/create-private-signer.ps1`, `scripts/load-private-signer.ps1`.
-- **Installers & assets:** `installer/windows-installer.iss`, `installer/parchment-icon.ico`, `installer/release-badge.svg`, `composeApp/src/commonMain/resources/icon/parchment-icon.png`.
-- **CI & releases:** `.github/workflows/` (`build-installers.yml`, `release-please.yml`, `quality-signals.yml`, `codeql.yml`, `scorecard.yml`, `dependency-submission.yml`, `dependabot-automerge.yml`, `stale.yml`), `.github/scripts/` (`ci_changes.py`, `shard_tests.py`, `run_gradle.py`, `stage_android_signing.py`, `check_sbom.py`, `kover.init.gradle.kts`, `sbom.init.gradle.kts`), `release-please-config.json`, `.release-please-manifest.json`.
+- **Build & formatting:** `Cargo.toml`, `rustfmt.toml`, `.cargo/config.toml`, `.editorconfig`, `.githooks/pre-commit`, `build.gradle.kts`, `settings.gradle.kts`, `gradle/libs.versions.toml`, `composeApp/build.gradle.kts`, `androidApp/build.gradle.kts`, `androidApp/proguard-rules.pro`, `androidApp/src/main/AndroidManifest.xml`.
+- **Verification & signing scripts:** `crates/parchment-xtask/` (`cargo xtask` verification, quality gates, CI tools, and benchmarks), `scripts/create-private-signer.ps1`, `scripts/load-private-signer.ps1`.
+- **Installers & assets:** `installer/windows-installer.iss` (packages standalone `parchment-desktop.exe`), `installer/parchment-icon.ico`, `installer/release-badge.svg`, `composeApp/src/commonMain/resources/icon/parchment-icon.png`.
+- **CI & releases:** `.github/workflows/` (`build-installers.yml`, `release-please.yml`, `quality-signals.yml`, `codeql.yml`, `scorecard.yml`, `dependency-submission.yml`, `dependabot-automerge.yml`, `stale.yml`), `.github/scripts/` (`kover.init.gradle.kts`, `sbom.init.gradle.kts`, `ValidateAndroidSigningKey.java`), `.github/dependabot.yml`, `release-please-config.json`, `.release-please-manifest.json`.
 - **Docs:** `README.md`, `AGENTS.md` (consolidated rules, engineering rigor and stable contracts, with harness shims `CLAUDE.md`, `GEMINI.md`, `.github/copilot-instructions.md`), `CONTRIBUTING.md`, `TODO.md`, `docs/DESIGN.md`, `docs/PERFORMANCE.md`, `docs/RELEASE_SIGNING.md`.
 
 ## Common package and file map
@@ -93,27 +108,31 @@ All Kotlin files below sit under `composeApp/src/commonMain/kotlin/io/parchment/
 
 ## Testing, verification and quality gates
 
-Never run Gradle directly or in parallel; use `python scripts/verify.py`:
+Never run Gradle directly or in parallel; use `cargo xtask` (`crates/parchment-xtask`):
 
 | Command | When to run |
 |---|---|
-| `python scripts/verify.py status` | Start of every session: prints git status, unverified files, last pass and `TODO.md` summary |
-| `python scripts/verify.py review` | Docs-only or non-code changes: runs `scripts/quality.py` only |
-| `python scripts/verify.py affected` | End of every batch: always runs `quality.py`, runs desktop tests when Kotlin/build inputs changed, adds Android compile when Android-reachable code changed, skips clean targets |
-| `python scripts/verify.py test <Filter>` | Fast inner loop for targeted Kotlin test classes or patterns (for example `UiGalleryTest` to render gallery screenshots) |
-| `python scripts/verify.py android` | Explicit Android compile check |
-| `python scripts/verify.py perf` | Synthetic 300-chat startup and frame-budget check (`scripts/perf.py`) |
-| `python scripts/verify.py final` | Release builds (`bundle`, Gradle/R8/signing/packaging edits) with the private signer loaded |
-| `python -m unittest scripts/test_workflow_tools.py` | When modifying `scripts/verify.py` or `scripts/quality.py` |
+| `cargo xtask status` | Start of every session: prints git status, unverified files, last pass, and `TODO.md` summary |
+| `cargo xtask install-hooks` | Once per clone: configures `core.hooksPath = .githooks` so `pre-commit` runs review + `rustfmt` + staged `clippy`/`ktlint` |
+| `cargo xtask fmt` | Auto-format both Rust (`cargo fmt --all`) and Kotlin (`ktlintFormat`) |
+| `cargo xtask review` | Docs-only or fast review: static quality gates + `git diff --check` + `cargo fmt --all -- --check` |
+| `cargo xtask affected` | End of every batch: ledger-backed Rust (`rustfmt`, `clippy -D warnings`, workspace + slim JNI tests) and/or Kotlin (`ktlintCheck`, `:composeApp:desktopTest`, Android compile) |
+| `cargo xtask rust` | Full Rust gate across all 8 workspace crates and slim `--no-default-features --features android-jni` |
+| `cargo xtask ktlint` | Kotlin formatting and style check (`ktlintCheck` on `:composeApp` and `:androidApp`) |
+| `cargo xtask android-so` | Cross-compile slim `arm64-v8a` `libparchment_core.so` (`<= 2.50 MB`) and verify 16 KB (`0x4000`) ELF alignment |
+| `cargo xtask test <Filter>` | Fast inner loop for targeted Kotlin tests (for example `UiGalleryTest` to render gallery screenshots) |
+| `cargo xtask android` | Explicit Android Kotlin compile check (`:composeApp:compileAndroidMain`) |
+| `cargo xtask perf` | Native desktop `.exe` (300-chat startup/RAM/streaming) and Android APK/phone benchmark |
+| `cargo xtask final` | Full release gate (review, Rust, `.so`, desktop `.exe`, `ktlint`, Kotlin tests + gallery, signed APK) with private signer loaded |
 
-For interactive desktop UI work (a person, not a check), `./gradlew :composeApp:hotRunDesktop` runs the app with Compose Hot Reload; it needs a JetBrains Runtime (add `-Pcompose.reload.jbr.autoProvisioningEnabled=true` to download one). Streaming replies are drawn from `ui/LiveTurnOverlay.kt` between checkpoints.
+For interactive Kotlin Compose UI work (a person, not a check), `./gradlew :composeApp:hotRunDesktop` runs with Compose Hot Reload. Streaming replies are drawn from `ui/LiveTurnOverlay.kt` between checkpoints.
 
 Conventions enforced by tests and quality gates:
 
 - **Search portably:** use `git grep -n` (Windows environments may not have `rg` installed).
 - **UI tests:** use Compose Skiko `ImageComposeScene` on the AWT EDT (`runBlocking(Dispatchers.Swing)` with `Dispatchers.Swing` / `Dispatchers.Swing.immediate` so tests serialize with Compose Desktop's internal `SwingDispatcher`), calling `Snapshot.sendApplyNotifications()` after mutating state before rendering. See `desktopTest/kotlin/io/parchment/ai/ui/` (`AgentPermissionUiTest.kt`, `TurnUsageUiTest.kt`, `UiBehaviorRegressionTest.kt`, `KeyboardShortcutTest.kt`, `SharedActionSemanticsUiTest.kt`, `UiGalleryTest.kt`, `PerformanceBaselineTest.kt`).
-- **Network tests:** use local HTTP/SSE fixtures (`desktopTest/network/`, including `StreamRecoveryHttpTest.kt`, `McpEndToEndTest.kt`, `ModelRegistrySyncTest.kt`), never live endpoints.
-- **Static checks (`scripts/quality.py`):** enforces LF line endings (except `.bat`/`.iss`), UTF-8 without BOM, ASCII `.ps1` scripts, no unused imports or dead code outside `scripts/quality-baseline.json`, 3000-line limit per main Kotlin file, banned APIs (`androidx.compose.material`, `GlobalScope`, `println(`, `FIXME`, `TODO(`, `.clickable(enabled = false)`), valid relative Markdown links and `#heading` anchors, no tracked secrets, and strict doc character budgets (`AGENTS.md`, `TODO.md` at 20,000 chars each).
+- **Network tests:** use local HTTP/SSE fixtures (`desktopTest/network/` and `crates/parchment-protocol/tests/`), never live endpoints.
+- **Static checks (`cargo xtask review` + `ktlintCheck` + `clippy -D warnings`):** enforces `rustfmt.toml`, `.editorconfig`, LF line endings (except `.bat`/`.iss` CRLF), UTF-8 without BOM, ASCII `.ps1` scripts, zero unused imports or dead code, 3000-line limit per main Kotlin file, banned APIs (`androidx.compose.material`, `GlobalScope`, `println(`, `FIXME`, `TODO(`, `.clickable(enabled = false)`), valid relative Markdown links and `#heading` anchors, no tracked secrets, and strict 10,000-char doc budgets (`AGENTS.md`, `TODO.md`).
 
 ## Where to change what
 
@@ -134,4 +153,4 @@ Conventions enforced by tests and quality gates:
 
 ## Releases
 
-Versioning and changelogs are automated with `release-please` (`.github/workflows/release-please.yml`, `release-please-config.json`, `.release-please-manifest.json`). Conventional Commits of type `feat:`, `fix:` and `perf:` advance the release PR and [CHANGELOG.md](../CHANGELOG.md); `docs:`, `chore:`, `ci:`, `refactor:` and `test:` are hidden in `release-please-config.json` and do not open a release PR. Merging the release PR creates the version tag, which triggers `.github/workflows/build-installers.yml` to build signed desktop (`.exe`) and Android (`.apk`) artifacts when secrets are present. Signed release setup lives in [docs/RELEASE_SIGNING.md](RELEASE_SIGNING.md); unsigned local builds are covered in [CONTRIBUTING.md#build-and-test](../CONTRIBUTING.md#build-and-test).
+Versioning and changelogs are automated with `release-please` (`.github/workflows/release-please.yml`, `release-please-config.json`, `.release-please-manifest.json`). Conventional Commits of type `feat:`, `fix:` and `perf:` advance the release PR and [CHANGELOG.md](../CHANGELOG.md); `docs:`, `chore:`, `ci:`, `refactor:` and `test:` are hidden in `release-please-config.json` and do not open a release PR. Merging the release PR creates the version tag, which triggers `.github/workflows/build-installers.yml` to build the standalone Rust GPUI desktop installer (`.exe`) and signed Android APK (`.apk` bundling `libparchment_core.so`). Signed release setup lives in [docs/RELEASE_SIGNING.md](RELEASE_SIGNING.md); local verification is covered in [CONTRIBUTING.md#build-lint-and-test](../CONTRIBUTING.md#build-lint-and-test).

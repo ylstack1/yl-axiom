@@ -166,12 +166,11 @@ class LongDecodeForegroundService : Service() {
         }
     }
 
-    private fun notifyOrStop(statusText: String): Boolean =
-        runCatching { notify(statusText); true }.getOrElse {
-            reportFailure(it)
-            shutdownForTimeout()
-            false
-        }
+    private fun notifyOrStop(statusText: String): Boolean = runCatching { notify(statusText); true }.getOrElse {
+        reportFailure(it)
+        shutdownForTimeout()
+        false
+    }
 
     private fun acquireLocksIfNeeded() {
         runCatching {
@@ -188,6 +187,7 @@ class LongDecodeForegroundService : Service() {
         runCatching {
             if (wifiLock == null) {
                 val wm = applicationContext.getSystemService(Context.WIFI_SERVICE) as? WifiManager
+
                 @Suppress("DEPRECATION")
                 val mode = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
                     WifiManager.WIFI_MODE_FULL_LOW_LATENCY
@@ -257,6 +257,7 @@ class LongDecodeForegroundService : Service() {
 
     companion object {
         private val instanceLock = Any()
+
         @Volatile private var runningInstance: LongDecodeForegroundService? = null
         private val mainHandler = Handler(Looper.getMainLooper())
 
@@ -301,7 +302,8 @@ class LongDecodeForegroundService : Service() {
         private fun clearCpuFailure() = synchronized(noticeLock) { cpuFailure = ""; publishNotice() }
         fun refreshNotificationNotice(context: Context, clearRecoveredFailure: Boolean = false) {
             val manager = context.getSystemService(Context.NOTIFICATION_SERVICE) as? NotificationManager
-            val enabled = manager != null && manager.areNotificationsEnabled() &&
+            val enabled = manager != null &&
+                manager.areNotificationsEnabled() &&
                 (manager.getNotificationChannel(CHANNEL_ID)?.importance != NotificationManager.IMPORTANCE_NONE)
             synchronized(noticeLock) {
                 if (clearRecoveredFailure) foregroundFailure = ""

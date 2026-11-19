@@ -43,7 +43,14 @@ object CardAndPromptCodec {
     private const val MAX_PRESERVED_CARD_CHARS = 512 * 1024
 
     private val PNG_SIGNATURE = byteArrayOf(
-        0x89.toByte(), 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A
+        0x89.toByte(),
+        0x50,
+        0x4E,
+        0x47,
+        0x0D,
+        0x0A,
+        0x1A,
+        0x0A
     )
 
     sealed class ImportResult {
@@ -438,8 +445,8 @@ object CardAndPromptCodec {
         val ihdr = ByteArray(13)
         writeIntBigEndian(ihdr, 0, width)
         writeIntBigEndian(ihdr, 4, height)
-        ihdr[8] = 8  // Bit depth: 8
-        ihdr[9] = 2  // Color type: 2 (Truecolor RGB)
+        ihdr[8] = 8 // Bit depth: 8
+        ihdr[9] = 2 // Color type: 2 (Truecolor RGB)
         ihdr[10] = 0 // Compression: 0
         ihdr[11] = 0 // Filter: 0
         ihdr[12] = 0 // Interlace: 0
@@ -522,12 +529,10 @@ object CardAndPromptCodec {
         for (b in crcBytes) out.add(b)
     }
 
-    private fun readIntBigEndian(bytes: ByteArray, offset: Int): Int {
-        return ((bytes[offset].toInt() and 0xFF) shl 24) or
-            ((bytes[offset + 1].toInt() and 0xFF) shl 16) or
-            ((bytes[offset + 2].toInt() and 0xFF) shl 8) or
-            (bytes[offset + 3].toInt() and 0xFF)
-    }
+    private fun readIntBigEndian(bytes: ByteArray, offset: Int): Int = ((bytes[offset].toInt() and 0xFF) shl 24) or
+        ((bytes[offset + 1].toInt() and 0xFF) shl 16) or
+        ((bytes[offset + 2].toInt() and 0xFF) shl 8) or
+        (bytes[offset + 3].toInt() and 0xFF)
 
     private fun writeIntBigEndian(bytes: ByteArray, offset: Int, value: Int) {
         bytes[offset] = ((value ushr 24) and 0xFF).toByte()

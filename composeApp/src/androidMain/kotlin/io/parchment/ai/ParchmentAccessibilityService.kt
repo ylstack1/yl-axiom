@@ -33,6 +33,12 @@ import io.parchment.ai.harness.ToolApprovalRequest
 import io.parchment.ai.harness.WorkspaceHarness
 import io.parchment.ai.runtime.AppForeground
 import io.parchment.ai.strings.Strings
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.launch
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
@@ -40,12 +46,6 @@ import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicReference
-import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.SupervisorJob
-import kotlinx.coroutines.cancel
-import kotlinx.coroutines.flow.combine
-import kotlinx.coroutines.launch
 
 /** Does nothing by itself: it only carries out actions the user approved in a chat. */
 class ParchmentAccessibilityService : AccessibilityService() {
@@ -86,8 +86,7 @@ class ParchmentAccessibilityService : AccessibilityService() {
     }
 
     @Synchronized
-    private fun obtainScreenshotExecutor(): ExecutorService =
-        screenshotExecutor ?: Executors.newSingleThreadExecutor().also { screenshotExecutor = it }
+    private fun obtainScreenshotExecutor(): ExecutorService = screenshotExecutor ?: Executors.newSingleThreadExecutor().also { screenshotExecutor = it }
 
     @Synchronized
     private fun obtainGestureHandler(): Handler {
@@ -189,8 +188,7 @@ class ParchmentAccessibilityService : AccessibilityService() {
         }
     }
 
-    private fun dp(value: Int): Int =
-        TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_DIP, value.toFloat(), resources.displayMetrics).toInt()
+    private fun dp(value: Int): Int = TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_DIP, value.toFloat(), resources.displayMetrics).toInt()
 
     private fun buildOverlayView(request: ToolApprovalRequest): View {
         val paneTitleText = "${Strings.approval2("Parchment")} · ${request.toolName}"
@@ -240,56 +238,63 @@ class ParchmentAccessibilityService : AccessibilityService() {
         argsScroll.addView(argsView)
         root.addView(argsScroll)
 
-        root.addView(styledButton(Strings.allowOnce, fill = 0xFF7C4A1E.toInt(), ink = 0xFFFFFFFF.toInt(), stroke = 0xFF7C4A1E.toInt()) {
-            onOverlayDecision(request.requestId, ToolApprovalDecision.ALLOW_ONCE)
-        })
+        root.addView(
+            styledButton(Strings.allowOnce, fill = 0xFF7C4A1E.toInt(), ink = 0xFFFFFFFF.toInt(), stroke = 0xFF7C4A1E.toInt()) {
+                onOverlayDecision(request.requestId, ToolApprovalDecision.ALLOW_ONCE)
+            }
+        )
         if (request.toolName != ComputerUse.TOOL_NAME) {
-            root.addView(styledButton(Strings.allowThisExactActionForThis, fill = 0xFFF2EBDD.toInt(), ink = 0xFF231D16.toInt(), stroke = 0xFFB8A88F.toInt()) {
-                onOverlayDecision(request.requestId, ToolApprovalDecision.ALLOW_EXACT_ACTION_FOR_RUN)
-            })
+            root.addView(
+                styledButton(Strings.allowThisExactActionForThis, fill = 0xFFF2EBDD.toInt(), ink = 0xFF231D16.toInt(), stroke = 0xFFB8A88F.toInt()) {
+                    onOverlayDecision(request.requestId, ToolApprovalDecision.ALLOW_EXACT_ACTION_FOR_RUN)
+                }
+            )
         }
-        root.addView(styledButton(Strings.deny, fill = 0xFFF2EBDD.toInt(), ink = 0xFF231D16.toInt(), stroke = 0xFFB8A88F.toInt()) {
-            onOverlayDecision(request.requestId, ToolApprovalDecision.DENY)
-        })
-        root.addView(styledButton(Strings.stopRun, fill = 0xFFA62626.toInt(), ink = 0xFFFFFFFF.toInt(), stroke = 0xFFA62626.toInt()) {
-            onOverlayDecision(request.requestId, ToolApprovalDecision.STOP)
-        })
+        root.addView(
+            styledButton(Strings.deny, fill = 0xFFF2EBDD.toInt(), ink = 0xFF231D16.toInt(), stroke = 0xFFB8A88F.toInt()) {
+                onOverlayDecision(request.requestId, ToolApprovalDecision.DENY)
+            }
+        )
+        root.addView(
+            styledButton(Strings.stopRun, fill = 0xFFA62626.toInt(), ink = 0xFFFFFFFF.toInt(), stroke = 0xFFA62626.toInt()) {
+                onOverlayDecision(request.requestId, ToolApprovalDecision.STOP)
+            }
+        )
         return root
     }
 
-    private fun styledButton(label: String, fill: Int, ink: Int, stroke: Int, onClick: () -> Unit): TextView =
-        TextView(this).apply {
-            text = label
-            contentDescription = label
-            setTextColor(ink)
-            setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
-            setTypeface(typeface, Typeface.BOLD)
-            gravity = Gravity.CENTER
-            minHeight = dp(48)
-            val hPad = dp(12)
-            val vPad = dp(10)
-            setPadding(hPad, vPad, hPad, vPad)
-            background = GradientDrawable().apply {
-                setColor(fill)
-                cornerRadius = dp(8).toFloat()
-                setStroke(dp(1).coerceAtLeast(1), stroke)
-            }
-            isClickable = true
-            isFocusable = false
-            accessibilityDelegate = object : View.AccessibilityDelegate() {
-                override fun onInitializeAccessibilityNodeInfo(host: View, info: AccessibilityNodeInfo) {
-                    super.onInitializeAccessibilityNodeInfo(host, info)
-                    info.className = Button::class.java.name
-                }
-            }
-            layoutParams = LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT,
-                LinearLayout.LayoutParams.WRAP_CONTENT
-            ).apply {
-                topMargin = dp(8)
-            }
-            setOnClickListener { onClick() }
+    private fun styledButton(label: String, fill: Int, ink: Int, stroke: Int, onClick: () -> Unit): TextView = TextView(this).apply {
+        text = label
+        contentDescription = label
+        setTextColor(ink)
+        setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
+        setTypeface(typeface, Typeface.BOLD)
+        gravity = Gravity.CENTER
+        minHeight = dp(48)
+        val hPad = dp(12)
+        val vPad = dp(10)
+        setPadding(hPad, vPad, hPad, vPad)
+        background = GradientDrawable().apply {
+            setColor(fill)
+            cornerRadius = dp(8).toFloat()
+            setStroke(dp(1).coerceAtLeast(1), stroke)
         }
+        isClickable = true
+        isFocusable = false
+        accessibilityDelegate = object : View.AccessibilityDelegate() {
+            override fun onInitializeAccessibilityNodeInfo(host: View, info: AccessibilityNodeInfo) {
+                super.onInitializeAccessibilityNodeInfo(host, info)
+                info.className = Button::class.java.name
+            }
+        }
+        layoutParams = LinearLayout.LayoutParams(
+            LinearLayout.LayoutParams.MATCH_PARENT,
+            LinearLayout.LayoutParams.WRAP_CONTENT
+        ).apply {
+            topMargin = dp(8)
+        }
+        setOnClickListener { onClick() }
+    }
 
     fun captureScreenshot(): Result<Bitmap> {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) {
@@ -303,21 +308,25 @@ class ParchmentAccessibilityService : AccessibilityService() {
                 val done = CountDownLatch(1)
                 val image = AtomicReference<Bitmap?>()
                 val failureCode = AtomicInteger(0)
-                takeScreenshot(Display.DEFAULT_DISPLAY, exec, object : TakeScreenshotCallback {
-                    override fun onSuccess(result: ScreenshotResult) {
-                        val buffer = result.hardwareBuffer
-                        try {
-                            image.set(Bitmap.wrapHardwareBuffer(buffer, result.colorSpace)?.copy(Bitmap.Config.ARGB_8888, false))
-                        } finally {
-                            buffer.close()
+                takeScreenshot(
+                    Display.DEFAULT_DISPLAY,
+                    exec,
+                    object : TakeScreenshotCallback {
+                        override fun onSuccess(result: ScreenshotResult) {
+                            val buffer = result.hardwareBuffer
+                            try {
+                                image.set(Bitmap.wrapHardwareBuffer(buffer, result.colorSpace)?.copy(Bitmap.Config.ARGB_8888, false))
+                            } finally {
+                                buffer.close()
+                                done.countDown()
+                            }
+                        }
+                        override fun onFailure(errorCode: Int) {
+                            failureCode.set(errorCode)
                             done.countDown()
                         }
                     }
-                    override fun onFailure(errorCode: Int) {
-                        failureCode.set(errorCode)
-                        done.countDown()
-                    }
-                })
+                )
                 val finished = done.await(TIMEOUT_SECONDS, TimeUnit.SECONDS)
                 image.get()?.let { return Result.success(it) }
                 lastError = if (!finished) -1 else failureCode.get()
@@ -341,26 +350,27 @@ class ParchmentAccessibilityService : AccessibilityService() {
     private fun perform(gesture: GestureDescription): Boolean {
         val done = CountDownLatch(1)
         val completed = AtomicBoolean(false)
-        val started = dispatchGesture(gesture, object : GestureResultCallback() {
-            override fun onCompleted(description: GestureDescription?) {
-                completed.set(true)
-                done.countDown()
-            }
-            override fun onCancelled(description: GestureDescription?) = done.countDown()
-        }, obtainGestureHandler())
+        val started = dispatchGesture(
+            gesture,
+            object : GestureResultCallback() {
+                override fun onCompleted(description: GestureDescription?) {
+                    completed.set(true)
+                    done.countDown()
+                }
+                override fun onCancelled(description: GestureDescription?) = done.countDown()
+            },
+            obtainGestureHandler()
+        )
         return started && done.await(TIMEOUT_SECONDS, TimeUnit.SECONDS) && completed.get()
     }
 
-    private fun stroke(path: Path, durationMs: Long) =
-        GestureDescription.Builder().addStroke(GestureDescription.StrokeDescription(path, 0, durationMs)).build()
+    private fun stroke(path: Path, durationMs: Long) = GestureDescription.Builder().addStroke(GestureDescription.StrokeDescription(path, 0, durationMs)).build()
 
     fun press(x: Float, y: Float, durationMs: Long): Boolean = perform(stroke(Path().apply { moveTo(x, y) }, durationMs))
 
-    fun swipe(fromX: Float, fromY: Float, toX: Float, toY: Float): Boolean =
-        perform(stroke(Path().apply { moveTo(fromX, fromY); lineTo(toX, toY) }, 300))
+    fun swipe(fromX: Float, fromY: Float, toX: Float, toY: Float): Boolean = perform(stroke(Path().apply { moveTo(fromX, fromY); lineTo(toX, toY) }, 300))
 
-    private fun AccessibilityNodeInfo.acceptsTextInput(): Boolean =
-        isEditable || actionList.any { it.id == AccessibilityNodeInfo.ACTION_SET_TEXT }
+    private fun AccessibilityNodeInfo.acceptsTextInput(): Boolean = isEditable || actionList.any { it.id == AccessibilityNodeInfo.ACTION_SET_TEXT }
 
     private fun findFocusedInput(): AccessibilityNodeInfo? {
         val activeRoot = rootInActiveWindow
@@ -419,6 +429,7 @@ class ParchmentAccessibilityService : AccessibilityService() {
         private const val TIMEOUT_SECONDS = 8L
         private const val SCREENSHOT_MAX_ATTEMPTS = 3
         private const val SCREENSHOT_RETRY_DELAY_MS = 550L
+
         @Volatile var instance: ParchmentAccessibilityService? = null
             private set
     }

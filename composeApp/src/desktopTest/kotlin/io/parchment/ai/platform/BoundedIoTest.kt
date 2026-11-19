@@ -191,10 +191,16 @@ class BoundedIoTest {
         val bundle = ByteArrayOutputStream()
         ChatArchiveWriter.writeBundle(
             bundle,
-            sequenceOf(ChatBundleEntry("chat-1/chat.json", json, listOf(
-                "chat-1/media/photo.png" to photo.absolutePath,
-                "chat-1/media/missing.png" to File(root, "missing.png").absolutePath
-            )))
+            sequenceOf(
+                ChatBundleEntry(
+                    "chat-1/chat.json",
+                    json,
+                    listOf(
+                        "chat-1/media/photo.png" to photo.absolutePath,
+                        "chat-1/media/missing.png" to File(root, "missing.png").absolutePath
+                    )
+                )
+            )
         ) { path -> File(path).takeIf { it.isFile } }
 
         val storage = File(root, "storage").apply { mkdirs() }

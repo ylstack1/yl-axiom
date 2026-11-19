@@ -293,10 +293,12 @@ internal fun resolveModelPrivacyBadges(
     val kp = spec?.knownPricing
     val isKnownFree = modelId.trim().endsWith(":free", ignoreCase = true) ||
         (kp != null && kp.inputPerM == 0.0 && kp.outputPerM == 0.0)
-    val isKnownPaid = !isKnownFree && spec != null && (
-        (kp?.inputPerM ?: spec.inputPricePerM) > 0.0 ||
-            (kp?.outputPerM ?: spec.outputPricePerM) > 0.0
-        )
+    val isKnownPaid = !isKnownFree &&
+        spec != null &&
+        (
+            (kp?.inputPerM ?: spec.inputPricePerM) > 0.0 ||
+                (kp?.outputPerM ?: spec.outputPricePerM) > 0.0
+            )
     when {
         isKnownFree -> add(ModelPrivacyBadge(Strings.privacyBadgeFreeTier, Strings.privacyBadgeFreeTierDetail, PrivacyBadgeTone.CAUTION))
         isKnownPaid -> add(ModelPrivacyBadge(Strings.privacyBadgePaidApi, Strings.privacyBadgePaidApiDetail, PrivacyBadgeTone.NEUTRAL))
@@ -374,7 +376,7 @@ fun SepiaSearchableModelPicker(
     val p = LocalParchmentPalette.current
     var searchQuery by remember { mutableStateOf("") }
     var selectedProviderFilter by remember { mutableStateOf("") } // "" = All providers
-    var selectedVendorFilter by remember { mutableStateOf("") }   // "" = All vendors
+    var selectedVendorFilter by remember { mutableStateOf("") } // "" = All vendors
 
     val allOptions = remember(profiles) {
         profiles.flatMap { prof ->
@@ -415,12 +417,13 @@ fun SepiaSearchableModelPicker(
         val matching = allOptions.filter { opt ->
             val provOk = selectedProviderFilter.isEmpty() || opt.profileId == selectedProviderFilter
             val vendOk = selectedVendorFilter.isEmpty() || opt.vendorGroup.equals(selectedVendorFilter, ignoreCase = true)
-            val searchOk = tokens.isEmpty() || tokens.all { tok ->
-                opt.modelId.lowercase().contains(tok) ||
-                    opt.profileName.lowercase().contains(tok) ||
-                    opt.vendorGroup.lowercase().contains(tok) ||
-                    (opt.privacyBadge?.label?.lowercase()?.contains(tok) == true)
-            }
+            val searchOk = tokens.isEmpty() ||
+                tokens.all { tok ->
+                    opt.modelId.lowercase().contains(tok) ||
+                        opt.profileName.lowercase().contains(tok) ||
+                        opt.vendorGroup.lowercase().contains(tok) ||
+                        (opt.privacyBadge?.label?.lowercase()?.contains(tok) == true)
+                }
             provOk && vendOk && searchOk
         }
         if (tokens.isEmpty()) {

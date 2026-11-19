@@ -1,5 +1,6 @@
 package io.parchment.ai.ui
 
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
@@ -10,7 +11,6 @@ import androidx.compose.ui.semantics.SemanticsNode
 import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.semantics.getOrNull
 import androidx.compose.ui.unit.Density
-import androidx.compose.runtime.CompositionLocalProvider
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.swing.Swing
@@ -45,10 +45,9 @@ class ComposerControlsTest {
         settle(scene, 3_000_000_000L)
     }
 
-    private fun scene(content: @androidx.compose.runtime.Composable () -> Unit) =
-        ImageComposeScene(900, 700, Density(1f), coroutineContext = Dispatchers.Swing.immediate) {
-            CompositionLocalProvider(LocalParchmentPalette provides buildPaletteFromConfig(io.parchment.ai.model.ThemeConfig())) { content() }
-        }
+    private fun scene(content: @androidx.compose.runtime.Composable () -> Unit) = ImageComposeScene(900, 700, Density(1f), coroutineContext = Dispatchers.Swing.immediate) {
+        CompositionLocalProvider(LocalParchmentPalette provides buildPaletteFromConfig(io.parchment.ai.model.ThemeConfig())) { content() }
+    }
 
     @Test fun theThinkingSliderSendsExactStopsAndShowsCustomValues() = runBlocking<Unit>(Dispatchers.Swing) {
         var value by mutableStateOf("none")
@@ -112,8 +111,10 @@ class ComposerControlsTest {
             var frameNs = 2_200_000_000L
             fun setCustom(raw: String) {
                 val field = nodes(scene).single { it.config.contains(SemanticsActions.SetText) }
-                assertTrue(requireNotNull(field.config.getOrNull(SemanticsActions.SetText)?.action)
-                    .invoke(androidx.compose.ui.text.AnnotatedString(raw)))
+                assertTrue(
+                    requireNotNull(field.config.getOrNull(SemanticsActions.SetText)?.action)
+                        .invoke(androidx.compose.ui.text.AnnotatedString(raw))
+                )
                 frameNs += 200_000_000L
                 settle(scene, frameNs)
             }

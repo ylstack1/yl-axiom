@@ -21,15 +21,38 @@ import kotlin.test.assertTrue
 
 class SnapshotFileStorageTest {
     private val json = Json { encodeDefaults = true }
-    private fun settings(name: String) = json.encodeToString(AppStateSnapshot.serializer(), AppStateSnapshot(
-        profiles = listOf(ProviderProfile(id = "profile", name = name, protocol = ProviderProtocol.OPENAI_RESPONSES,
-            apiKey = "test-only-key")), activeProfileId = "profile", activeSessionId = "chat"
-    ))
-    private fun chat(id: String, text: String) = json.encodeToString(ChatSession.serializer(), ChatSession(
-        id = id, title = id, createdAt = 1, updatedAt = 2, profileId = "profile",
-        messages = listOf(MessageNode(id = "message", role = MessageRole.ASSISTANT,
-            variants = listOf(MessageVariant(id = "variant", content = text))))
-    ))
+    private fun settings(name: String) = json.encodeToString(
+        AppStateSnapshot.serializer(),
+        AppStateSnapshot(
+            profiles = listOf(
+                ProviderProfile(
+                    id = "profile",
+                    name = name,
+                    protocol = ProviderProtocol.OPENAI_RESPONSES,
+                    apiKey = "test-only-key"
+                )
+            ),
+            activeProfileId = "profile",
+            activeSessionId = "chat"
+        )
+    )
+    private fun chat(id: String, text: String) = json.encodeToString(
+        ChatSession.serializer(),
+        ChatSession(
+            id = id,
+            title = id,
+            createdAt = 1,
+            updatedAt = 2,
+            profileId = "profile",
+            messages = listOf(
+                MessageNode(
+                    id = "message",
+                    role = MessageRole.ASSISTANT,
+                    variants = listOf(MessageVariant(id = "variant", content = text))
+                )
+            )
+        )
+    )
 
     @Test
     fun corruptSettingsPrimaryRecoversWithoutDestroyingValidBackup() = withStorage { root, storage ->
@@ -220,7 +243,11 @@ class SnapshotFileStorageTest {
     @Test
     fun indexedStubsRoundTripTheirTransientStubFields() {
         val full = ChatSession(
-            id = "c", title = "Trip", createdAt = 1, updatedAt = 2, profileId = "p",
+            id = "c",
+            title = "Trip",
+            createdAt = 1,
+            updatedAt = 2,
+            profileId = "p",
             messages = List(4) { MessageNode(id = "m$it", role = MessageRole.USER, variants = listOf(MessageVariant(id = "v$it", content = "text $it"))) }
         )
         val stub = io.parchment.ai.ui.dehydrateChatSessionToCompactStub(full)
@@ -237,11 +264,9 @@ class SnapshotFileStorageTest {
         assertFalse(decoded.matches(ChatFileStamp(10, 21)))
     }
 
-    private fun liveTurn(text: String, nodeId: String = "message") =
-        """{"nodeId":"$nodeId","variant":{"id":"variant","content":${JsonPrimitive(text)}}}"""
+    private fun liveTurn(text: String, nodeId: String = "message") = """{"nodeId":"$nodeId","variant":{"id":"variant","content":${JsonPrimitive(text)}}}"""
 
-    private fun contentOf(raw: String?) =
-        compactStateJson.decodeFromString(ChatSession.serializer(), checkNotNull(raw)).messages.single().activeVariant.content
+    private fun contentOf(raw: String?) = compactStateJson.decodeFromString(ChatSession.serializer(), checkNotNull(raw)).messages.single().activeVariant.content
 
     @Test
     fun aLiveReplyIsFoldedIntoItsChatOnLoadAndThenRemoved() = withStorage { root, storage ->

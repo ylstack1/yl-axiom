@@ -21,9 +21,16 @@ class CheckpointCostProbeTest {
     private fun chat(id: String, messages: Int, bytes: Int): ChatSession {
         val sentence = "Long chats keep every word on disk, so each checkpoint pays for all of them. "
         val body = sentence.repeat(bytes / messages / sentence.length + 1)
-        return ChatSession(id, "Checkpoint probe", 1L, 1L, "p", messages = (0 until messages).map { i ->
-            MessageNode("$id-m$i", if (i % 2 == 0) MessageRole.USER else MessageRole.ASSISTANT, listOf(MessageVariant("$id-v$i", content = body)))
-        })
+        return ChatSession(
+            id,
+            "Checkpoint probe",
+            1L,
+            1L,
+            "p",
+            messages = (0 until messages).map { i ->
+                MessageNode("$id-m$i", if (i % 2 == 0) MessageRole.USER else MessageRole.ASSISTANT, listOf(MessageVariant("$id-v$i", content = body)))
+            }
+        )
     }
 
     private fun streamingAt(session: ChatSession, step: Int): ChatSession {

@@ -27,6 +27,7 @@ private const val SUBAGENT_INSTRUCTIONS = "You are a focused helper working on o
 private val SUBAGENT_FILE_TOOLS = setOf("fs_read", "fs_list", "fs_glob", "fs_search", "skill_load", "calc_eval")
 private val SUBAGENT_WEB_TOOLS = setOf("web_search", "web_fetch")
 private val SUBAGENT_FILE_AND_WEB_TOOLS = SUBAGENT_FILE_TOOLS + SUBAGENT_WEB_TOOLS
+
 /** Run on the provider's side, so they are not in the local tool list. */
 private val PROVIDER_SIDE_TOOLS = listOf("code_execution", "image_generation", "video_generation")
 private val SUBAGENT_DENIED_FILE_ONLY: Map<String, Boolean> by lazy {

@@ -4,8 +4,8 @@
 
 ## How it was checked
 
-- [ ] `python scripts/verify.py affected` passes
-- [ ] Tested on: <!-- Windows, Android, or desktop tests only -->
+- [ ] `cargo xtask affected` passes
+- [ ] Tested on: <!-- Windows GPUI, Android, or tests only -->
 
 ## Not checked
 

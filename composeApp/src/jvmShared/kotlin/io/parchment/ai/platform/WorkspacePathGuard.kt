@@ -11,10 +11,17 @@ internal object WorkspacePathGuard {
     /** Generated or tool-owned directories that listing and search skip. */
     fun isIgnoredDirectory(name: String): Boolean {
         val low = name.lowercase()
-        return low == ".git" || low == "build" || low == ".gradle" ||
-            low == "node_modules" || low == ".idea" || low == ".kotlin" ||
-            low == "__pycache__" || low == ".venv" || low == "venv" ||
-            low == ".cxx" || low == ".externalnativebuild"
+        return low == ".git" ||
+            low == "build" ||
+            low == ".gradle" ||
+            low == "node_modules" ||
+            low == ".idea" ||
+            low == ".kotlin" ||
+            low == "__pycache__" ||
+            low == ".venv" ||
+            low == "venv" ||
+            low == ".cxx" ||
+            low == ".externalnativebuild"
     }
 
     fun root(workspaceRoot: String): Path {

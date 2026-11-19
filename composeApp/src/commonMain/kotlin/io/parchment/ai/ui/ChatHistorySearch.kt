@@ -15,8 +15,7 @@ import kotlinx.coroutines.withContext
 import kotlinx.serialization.builtins.serializer
 import kotlin.coroutines.coroutineContext
 
-internal fun chatMessagesContain(session: ChatSession, query: String): Boolean =
-    session.messages.any { it.activeVariant.content.contains(query, ignoreCase = true) }
+internal fun chatMessagesContain(session: ChatSession, query: String): Boolean = session.messages.any { it.activeVariant.content.contains(query, ignoreCase = true) }
 
 /** The text check skips decoding the many stored chats that cannot match. */
 internal fun storedChatJsonContains(rawJson: String, chatId: String, query: String): Boolean {
@@ -44,9 +43,15 @@ internal fun rememberHistorySearch(storedChatIds: List<String>, rawQuery: String
         if (!state.inProgress) return@LaunchedEffect
         delay(250) // Typing replaces this effect, so only a settled query reads the disk.
         withContext(Dispatchers.Default) {
-            for (id in storedChatIds) {
-                coroutineContext.ensureActive()
-                if (storedChatContains(id, query)) state = state.copy(matchingIds = state.matchingIds + id)
+            val ftsHits = PlatformStorage.searchStoredChatIds(query)
+            if (ftsHits != null) {
+                val allowed = storedChatIds.toSet()
+                state = state.copy(matchingIds = ftsHits.filterTo(LinkedHashSet()) { it in allowed })
+            } else {
+                for (id in storedChatIds) {
+                    coroutineContext.ensureActive()
+                    if (storedChatContains(id, query)) state = state.copy(matchingIds = state.matchingIds + id)
+                }
             }
         }
         state = state.copy(inProgress = false)

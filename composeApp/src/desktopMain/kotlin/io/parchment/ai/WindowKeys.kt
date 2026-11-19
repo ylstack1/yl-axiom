@@ -19,8 +19,10 @@ import io.parchment.ai.ui.AppShortcutDispatcher
 internal fun handleUnconsumedWindowKey(event: KeyEvent, shortcuts: AppShortcutDispatcher): Boolean {
     val isPasteShortcut = event.type == KeyEventType.KeyDown &&
         !event.isAltPressed &&
-        (((event.isCtrlPressed || event.isMetaPressed) && event.key == Key.V) ||
-            (event.isShiftPressed && event.key == Key.Insert))
+        (
+            ((event.isCtrlPressed || event.isMetaPressed) && event.key == Key.V) ||
+                (event.isShiftPressed && event.key == Key.Insert)
+            )
     if (isPasteShortcut) {
         return PlatformPickers.pasteClipboardMediaAsync { pastedFiles ->
             PlatformPickers.filesDroppedCallback?.invoke(pastedFiles)

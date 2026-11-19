@@ -1,9 +1,5 @@
 package io.parchment.ai.ui
 
-import androidx.compose.ui.layout.layout
-import io.parchment.ai.strings.Strings
-import androidx.compose.foundation.layout.PaddingValues
-import androidx.compose.ui.draw.alpha
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
@@ -19,6 +15,7 @@ import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
@@ -31,8 +28,8 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.LazyListState
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicText
@@ -51,6 +48,7 @@ import androidx.compose.runtime.snapshotFlow
 import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.key.Key
@@ -62,16 +60,20 @@ import androidx.compose.ui.input.key.isShiftPressed
 import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
-import androidx.compose.ui.layout.onPlaced
-import androidx.compose.ui.layout.positionInParent
 import androidx.compose.ui.input.pointer.PointerEventType
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.layout.layout
+import androidx.compose.ui.layout.onPlaced
+import androidx.compose.ui.layout.positionInParent
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import io.parchment.ai.harness.WorkspaceHarness
+import io.parchment.ai.model.AgentPermissionOverrides
+import io.parchment.ai.model.AgentPermissionResolver
 import io.parchment.ai.model.AppStateSnapshot
 import io.parchment.ai.model.AssistantAgent
 import io.parchment.ai.model.ChatSession
@@ -84,19 +86,17 @@ import io.parchment.ai.model.ProviderProfile
 import io.parchment.ai.model.ProviderProtocol
 import io.parchment.ai.model.QueuedPromptItem
 import io.parchment.ai.model.SendShortcutMode
-import io.parchment.ai.harness.WorkspaceHarness
-import io.parchment.ai.network.resolveModelModalityProfile
-import io.parchment.ai.model.AgentPermissionResolver
-import io.parchment.ai.model.AgentPermissionOverrides
 import io.parchment.ai.model.ViewMode
 import io.parchment.ai.model.WorkspaceMode
 import io.parchment.ai.network.AiProviderEngine
 import io.parchment.ai.network.RetryWait
+import io.parchment.ai.network.resolveModelModalityProfile
 import io.parchment.ai.platform.PlatformPickers
 import io.parchment.ai.platform.PlatformRuntime
 import io.parchment.ai.platform.PlatformVoice
 import io.parchment.ai.platform.PlatformWorkspace
 import io.parchment.ai.protocol.O200kTokenizer
+import io.parchment.ai.strings.Strings
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.IO
 import kotlinx.coroutines.delay
@@ -316,49 +316,49 @@ internal fun ManuscriptViewport(
 
     LaunchedEffect(isStreaming, activeSession.id) {
         snapshotFlow { lastMsgLenState.value }.collectLatest { lastMsgContentLen ->
-        val preferences = currentPreferences
-        val activeSession = currentSession
-        if (!preferences.autoFollowBottom || activeSession.messages.isEmpty()) {
-            if (!isStreaming) {
-                lastAutoFollowMs[0] = 0L
-                wasStreamingFollow = false
-            }
-            return@collectLatest
-        }
-        val canFollowNow = !listState.isScrollInProgress &&
-            !isListDragged &&
-            !isPointerInteracting &&
-            !userDisengagedAutoFollow
-        if (!isStreaming) {
-            val streamJustFinished = wasStreamingFollow
-            wasStreamingFollow = false
-            lastAutoFollowMs[0] = 0L
-            if (streamJustFinished && canFollowNow && listState.canScrollForward) {
-                withFrameNanos { }
-                if (!isListDragged && !isPointerInteracting && !userDisengagedAutoFollow) {
-                    jumpToBottomEdge()
+            val preferences = currentPreferences
+            val activeSession = currentSession
+            if (!preferences.autoFollowBottom || activeSession.messages.isEmpty()) {
+                if (!isStreaming) {
+                    lastAutoFollowMs[0] = 0L
+                    wasStreamingFollow = false
                 }
+                return@collectLatest
             }
-            return@collectLatest
-        }
-        wasStreamingFollow = true
-        if (!canFollowNow) return@collectLatest
-        val now = PlatformRuntime.currentTimeMillis()
-        val elapsed = now - lastAutoFollowMs[0]
-        if (lastAutoFollowMs[0] != 0L && elapsed in 0L until 48L) {
-            kotlinx.coroutines.delay(48L - elapsed)
-        }
-        if (preferences.autoFollowBottom &&
-            activeSession.messages.isNotEmpty() &&
-            !listState.isScrollInProgress &&
-            !isListDragged &&
-            !isPointerInteracting &&
-            !userDisengagedAutoFollow &&
-            listState.canScrollForward
-        ) {
-            lastAutoFollowMs[0] = PlatformRuntime.currentTimeMillis()
-            jumpToBottomEdge()
-        }
+            val canFollowNow = !listState.isScrollInProgress &&
+                !isListDragged &&
+                !isPointerInteracting &&
+                !userDisengagedAutoFollow
+            if (!isStreaming) {
+                val streamJustFinished = wasStreamingFollow
+                wasStreamingFollow = false
+                lastAutoFollowMs[0] = 0L
+                if (streamJustFinished && canFollowNow && listState.canScrollForward) {
+                    withFrameNanos { }
+                    if (!isListDragged && !isPointerInteracting && !userDisengagedAutoFollow) {
+                        jumpToBottomEdge()
+                    }
+                }
+                return@collectLatest
+            }
+            wasStreamingFollow = true
+            if (!canFollowNow) return@collectLatest
+            val now = PlatformRuntime.currentTimeMillis()
+            val elapsed = now - lastAutoFollowMs[0]
+            if (lastAutoFollowMs[0] != 0L && elapsed in 0L until 48L) {
+                kotlinx.coroutines.delay(48L - elapsed)
+            }
+            if (preferences.autoFollowBottom &&
+                activeSession.messages.isNotEmpty() &&
+                !listState.isScrollInProgress &&
+                !isListDragged &&
+                !isPointerInteracting &&
+                !userDisengagedAutoFollow &&
+                listState.canScrollForward
+            ) {
+                lastAutoFollowMs[0] = PlatformRuntime.currentTimeMillis()
+                jumpToBottomEdge()
+            }
         }
     }
 
@@ -373,9 +373,11 @@ internal fun ManuscriptViewport(
     val ownedUtilityRecords = remember(activeSession.id, activeSession.utilityUsageRecords) {
         activeSession.utilityUsageRecords.filter { it.ownerSessionId.isBlank() || it.ownerSessionId == activeSession.id }
     }
-    val sessionSpend = remember(activeSession.messages.takeUnless { isStreaming }, activeSession.id, activeSession.modelOverride,
+    val sessionSpend = remember(
+        activeSession.messages.takeUnless { isStreaming }, activeSession.id, activeSession.modelOverride,
         activeSession.messages.size, activeSession.messages.sumOf { it.variants.size }, throttledBreakdownTrigger,
-        isStreaming, activeProfile, ownedUtilityRecords) {
+        isStreaming, activeProfile, ownedUtilityRecords
+    ) {
         sessionSpendSummary(activeSession, activeProfile)
     }
     val sessionTotalCostUsd = sessionSpend.estimateUsd
@@ -946,247 +948,247 @@ internal fun ManuscriptViewport(
                         horizontalArrangement = Arrangement.spacedBy(Space.s6),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                    // Expandable Interactive Tree & Swipe Minimap Modal with In-Chat Turn Filter
-                    AnimatedVisibility(
-                        visible = showMinimapTreeModal,
-                        enter = motionExpandEnter(),
-                        exit = motionShrinkExit()
-                    ) {
-                        var mapFilterQuery by remember { mutableStateOf("") }
-                        var mapPromptsOnly by remember { mutableStateOf(false) }
-                        val filteredMapItems = remember(activeSession.messages, mapFilterQuery, mapPromptsOnly) {
-                            filterMessageMapTurns(activeSession.messages, mapFilterQuery, mapPromptsOnly)
-                        }
-                        // Arrow keys in the filter field move this highlight; Enter jumps to it.
-                        var selectedMapRow by remember(filteredMapItems) { mutableStateOf(0) }
-                        fun jumpToMapRow(row: Int) {
-                            val (idx, _) = filteredMapItems.getOrNull(row) ?: return
-                            minimapInteractionTick++
-                            scope.launch { listState.scrollToItemWithMotion(idx + 1, reduceMotion) }
-                        }
-                        Column(
-                            modifier = Modifier
-                                .width(if (win.isCompact) 255.dp else 290.dp)
-                                .heightIn(max = 410.dp)
-                                .clip(RoundedCornerShape(Radius.r12))
-                                .background(p.cardBg)
-                                .border(1.dp, p.accent, RoundedCornerShape(Radius.r12))
-                                .padding(Space.s10),
-                            verticalArrangement = Arrangement.spacedBy(Space.s6)
+                        // Expandable Interactive Tree & Swipe Minimap Modal with In-Chat Turn Filter
+                        AnimatedVisibility(
+                            visible = showMinimapTreeModal,
+                            enter = motionExpandEnter(),
+                            exit = motionShrinkExit()
                         ) {
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.SpaceBetween,
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                Row(
-                                    verticalAlignment = Alignment.CenterVertically,
-                                    horizontalArrangement = Arrangement.spacedBy(Space.s6)
-                                ) {
-                                    KissVectorIcon(icon = KissIcon.MAP_TREE, tint = p.accent, size = IconSize.md)
-                                    BasicText(
-                                        text = Strings.messageMap(filteredMapItems.size, activeSession.messages.size),
-                                        style = p.uiLabelStyle.copy(color = p.accent, fontWeight = FontWeight.Bold)
-                                    )
-                                }
-                                SepiaButton(
-                                    text = "×",
-                                    contentDescription = Strings.closeConversationMap,
-                                    compact = true,
-                                    style = SepiaButtonStyle.GHOST,
-                                    onClick = { showMinimapTreeModal = false }
-                                )
+                            var mapFilterQuery by remember { mutableStateOf("") }
+                            var mapPromptsOnly by remember { mutableStateOf(false) }
+                            val filteredMapItems = remember(activeSession.messages, mapFilterQuery, mapPromptsOnly) {
+                                filterMessageMapTurns(activeSession.messages, mapFilterQuery, mapPromptsOnly)
                             }
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.spacedBy(Space.s6),
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                SepiaTextField(
-                                    value = mapFilterQuery,
-                                    onValueChange = { mapFilterQuery = it },
-                                    placeholder = Strings.filterTurns,
-                                    singleLine = true,
-                                    minHeight = 30.dp,
-                                    onEnterKeySend = { _, _ -> jumpToMapRow(selectedMapRow); true },
-                                    onKeyNavigation = { event ->
-                                        val count = filteredMapItems.size
-                                        when {
-                                            event.type != KeyEventType.KeyDown || count == 0 -> false
-                                            event.key == Key.DirectionDown -> { selectedMapRow = (selectedMapRow + 1) % count; true }
-                                            event.key == Key.DirectionUp -> { selectedMapRow = (selectedMapRow - 1 + count) % count; true }
-                                            else -> false
-                                        }
-                                    },
-                                    modifier = Modifier.weight(1f)
-                                )
-                                SepiaButton(
-                                    text = Strings.promptsFilter,
-                                    contentDescription = Strings.showOnlyYourPrompts,
-                                    compact = true,
-                                    style = if (mapPromptsOnly) SepiaButtonStyle.PRIMARY else SepiaButtonStyle.GHOST,
-                                    onClick = { mapPromptsOnly = !mapPromptsOnly }
-                                )
+                            // Arrow keys in the filter field move this highlight; Enter jumps to it.
+                            var selectedMapRow by remember(filteredMapItems) { mutableStateOf(0) }
+                            fun jumpToMapRow(row: Int) {
+                                val (idx, _) = filteredMapItems.getOrNull(row) ?: return
+                                minimapInteractionTick++
+                                scope.launch { listState.scrollToItemWithMotion(idx + 1, reduceMotion) }
                             }
-                            SepiaDivider()
                             Column(
-                                modifier = Modifier.verticalScroll(rememberScrollState()),
+                                modifier = Modifier
+                                    .width(if (win.isCompact) 255.dp else 290.dp)
+                                    .heightIn(max = 410.dp)
+                                    .clip(RoundedCornerShape(Radius.r12))
+                                    .background(p.cardBg)
+                                    .border(1.dp, p.accent, RoundedCornerShape(Radius.r12))
+                                    .padding(Space.s10),
                                 verticalArrangement = Arrangement.spacedBy(Space.s6)
                             ) {
-                                filteredMapItems.forEachIndexed { row, (idx, mNode) ->
-                                    val isAsst = mNode.role == MessageRole.ASSISTANT
-                                    val roleBadge = if (isAsst) "AI" else Strings.you
-                                    val isSelectedRow = row == selectedMapRow
-                                    Column(
-                                        modifier = Modifier
-                                            .fillMaxWidth()
-                                            .clip(RoundedCornerShape(Radius.r8))
-                                            .background(if (isAsst) p.sheetBg.copy(alpha = 0.65f) else p.elevatedBg.copy(alpha = 0.45f))
-                                            .then(
-                                                if (isSelectedRow) Modifier.border(1.dp, p.accent, RoundedCornerShape(Radius.r8)) else Modifier
-                                            )
-                                            .kissClickable(pressScale = 0.98f, selected = isSelectedRow) {
-                                                selectedMapRow = row
-                                                minimapInteractionTick++
-                                                scope.launch {
-                                                    listState.scrollToItemWithMotion(idx + 1, reduceMotion)
-                                                }
-                                            }
-                                            .padding(7.dp),
-                                        verticalArrangement = Arrangement.spacedBy(Space.s4)
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Row(
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.spacedBy(Space.s6)
                                     ) {
-                                        Row(
-                                            modifier = Modifier.fillMaxWidth(),
-                                            horizontalArrangement = Arrangement.SpaceBetween,
-                                            verticalAlignment = Alignment.CenterVertically
-                                        ) {
-                                            BasicText(
-                                                text = "#${idx + 1} $roleBadge",
-                                                style = p.uiLabelStyle.copy(
-                                                    color = if (isAsst) p.accent else p.primaryInk,
-                                                    fontWeight = FontWeight.Bold,
-                                                    fontSize = 11.sp
+                                        KissVectorIcon(icon = KissIcon.MAP_TREE, tint = p.accent, size = IconSize.md)
+                                        BasicText(
+                                            text = Strings.messageMap(filteredMapItems.size, activeSession.messages.size),
+                                            style = p.uiLabelStyle.copy(color = p.accent, fontWeight = FontWeight.Bold)
+                                        )
+                                    }
+                                    SepiaButton(
+                                        text = "×",
+                                        contentDescription = Strings.closeConversationMap,
+                                        compact = true,
+                                        style = SepiaButtonStyle.GHOST,
+                                        onClick = { showMinimapTreeModal = false }
+                                    )
+                                }
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.spacedBy(Space.s6),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    SepiaTextField(
+                                        value = mapFilterQuery,
+                                        onValueChange = { mapFilterQuery = it },
+                                        placeholder = Strings.filterTurns,
+                                        singleLine = true,
+                                        minHeight = 30.dp,
+                                        onEnterKeySend = { _, _ -> jumpToMapRow(selectedMapRow); true },
+                                        onKeyNavigation = { event ->
+                                            val count = filteredMapItems.size
+                                            when {
+                                                event.type != KeyEventType.KeyDown || count == 0 -> false
+                                                event.key == Key.DirectionDown -> { selectedMapRow = (selectedMapRow + 1) % count; true }
+                                                event.key == Key.DirectionUp -> { selectedMapRow = (selectedMapRow - 1 + count) % count; true }
+                                                else -> false
+                                            }
+                                        },
+                                        modifier = Modifier.weight(1f)
+                                    )
+                                    SepiaButton(
+                                        text = Strings.promptsFilter,
+                                        contentDescription = Strings.showOnlyYourPrompts,
+                                        compact = true,
+                                        style = if (mapPromptsOnly) SepiaButtonStyle.PRIMARY else SepiaButtonStyle.GHOST,
+                                        onClick = { mapPromptsOnly = !mapPromptsOnly }
+                                    )
+                                }
+                                SepiaDivider()
+                                Column(
+                                    modifier = Modifier.verticalScroll(rememberScrollState()),
+                                    verticalArrangement = Arrangement.spacedBy(Space.s6)
+                                ) {
+                                    filteredMapItems.forEachIndexed { row, (idx, mNode) ->
+                                        val isAsst = mNode.role == MessageRole.ASSISTANT
+                                        val roleBadge = if (isAsst) "AI" else Strings.you
+                                        val isSelectedRow = row == selectedMapRow
+                                        Column(
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .clip(RoundedCornerShape(Radius.r8))
+                                                .background(if (isAsst) p.sheetBg.copy(alpha = 0.65f) else p.elevatedBg.copy(alpha = 0.45f))
+                                                .then(
+                                                    if (isSelectedRow) Modifier.border(1.dp, p.accent, RoundedCornerShape(Radius.r8)) else Modifier
                                                 )
-                                            )
-                                            if (mNode.variants.size > 1) {
-                                                Row(horizontalArrangement = Arrangement.spacedBy(3.dp)) {
-                                                    mNode.variants.forEachIndexed { vIdx, _ ->
-                                                        val vSel = vIdx == mNode.activeVariantIndex
-                                                        Box(
-                                                            modifier = Modifier
-                                                                .clip(RoundedCornerShape(Radius.r4))
-                                                                .background(if (vSel) p.accent else p.cardBg)
-                                                                .kissClickable {
-                                                                    minimapInteractionTick++
-                                                                    onUpdateSession { sess ->
-                                                                        sess.copy(
-                                                                            messages = sess.messages.mapIndexed { i, n ->
-                                                                                if (i == idx) n.copy(activeVariantIndex = vIdx) else n
-                                                                            }
-                                                                        )
+                                                .kissClickable(pressScale = 0.98f, selected = isSelectedRow) {
+                                                    selectedMapRow = row
+                                                    minimapInteractionTick++
+                                                    scope.launch {
+                                                        listState.scrollToItemWithMotion(idx + 1, reduceMotion)
+                                                    }
+                                                }
+                                                .padding(7.dp),
+                                            verticalArrangement = Arrangement.spacedBy(Space.s4)
+                                        ) {
+                                            Row(
+                                                modifier = Modifier.fillMaxWidth(),
+                                                horizontalArrangement = Arrangement.SpaceBetween,
+                                                verticalAlignment = Alignment.CenterVertically
+                                            ) {
+                                                BasicText(
+                                                    text = "#${idx + 1} $roleBadge",
+                                                    style = p.uiLabelStyle.copy(
+                                                        color = if (isAsst) p.accent else p.primaryInk,
+                                                        fontWeight = FontWeight.Bold,
+                                                        fontSize = 11.sp
+                                                    )
+                                                )
+                                                if (mNode.variants.size > 1) {
+                                                    Row(horizontalArrangement = Arrangement.spacedBy(3.dp)) {
+                                                        mNode.variants.forEachIndexed { vIdx, _ ->
+                                                            val vSel = vIdx == mNode.activeVariantIndex
+                                                            Box(
+                                                                modifier = Modifier
+                                                                    .clip(RoundedCornerShape(Radius.r4))
+                                                                    .background(if (vSel) p.accent else p.cardBg)
+                                                                    .kissClickable {
+                                                                        minimapInteractionTick++
+                                                                        onUpdateSession { sess ->
+                                                                            sess.copy(
+                                                                                messages = sess.messages.mapIndexed { i, n ->
+                                                                                    if (i == idx) n.copy(activeVariantIndex = vIdx) else n
+                                                                                }
+                                                                            )
+                                                                        }
+                                                                        scope.launch { listState.scrollToItemWithMotion(idx + 1, reduceMotion) }
                                                                     }
-                                                                    scope.launch { listState.scrollToItemWithMotion(idx + 1, reduceMotion) }
-                                                                }
-                                                                .padding(horizontal = 5.dp, vertical = 1.dp)
-                                                        ) {
-                                                            BasicText(
-                                                                text = "v${vIdx + 1}",
-                                                                style = p.uiLabelStyle.copy(
-                                                                    fontSize = 11.sp,
-                                                                    color = if (vSel) onFillInk(p.accent) else p.narrationInk,
-                                                                    fontWeight = FontWeight.Bold
+                                                                    .padding(horizontal = 5.dp, vertical = 1.dp)
+                                                            ) {
+                                                                BasicText(
+                                                                    text = "v${vIdx + 1}",
+                                                                    style = p.uiLabelStyle.copy(
+                                                                        fontSize = 11.sp,
+                                                                        color = if (vSel) onFillInk(p.accent) else p.narrationInk,
+                                                                        fontWeight = FontWeight.Bold
+                                                                    )
                                                                 )
-                                                            )
+                                                            }
                                                         }
                                                     }
                                                 }
                                             }
+                                            BasicText(
+                                                text = stripMarkdownToPlainText(mNode.activeVariant.content).ifBlank { Strings.mediaEmpty },
+                                                maxLines = 1,
+                                                overflow = TextOverflow.Ellipsis,
+                                                style = p.uiLabelStyle.copy(fontSize = 11.sp, color = p.narrationInk)
+                                            )
                                         }
-                                        BasicText(
-                                            text = stripMarkdownToPlainText(mNode.activeVariant.content).ifBlank { Strings.mediaEmpty },
-                                            maxLines = 1,
-                                            overflow = TextOverflow.Ellipsis,
-                                            style = p.uiLabelStyle.copy(fontSize = 11.sp, color = p.narrationInk)
-                                        )
                                     }
                                 }
                             }
                         }
-                    }
 
-                    // Compact Vertical Minimap Rail (`⤒`, `↑`, `🗺`, `↓`, `⤓`)
-                    Column(
-                        modifier = Modifier
-                            .clip(RoundedCornerShape(Radius.pill))
-                            .background(p.cardBg.copy(alpha = 0.94f))
-                            .border(LineWidth.hairline, p.border, RoundedCornerShape(Radius.pill))
-                            .padding(vertical = Space.s4, horizontal = 3.dp),
-                        verticalArrangement = Arrangement.spacedBy(Space.s2),
-                        horizontalAlignment = Alignment.CenterHorizontally
-                    ) {
-                        // Extreme Jump Top
-                        SepiaButton(
-                            text = "⤒",
-                            contentDescription = Strings.jumpToFirstMessage,
-                            compact = true,
-                            style = SepiaButtonStyle.GHOST,
-                            onClick = {
-                                minimapInteractionTick++
-                                scope.launch { listState.scrollToItemWithMotion(0, reduceMotion) }
-                            }
-                        )
-                        // Jump Previous Message
-                        SepiaButton(
-                            text = "↑",
-                            contentDescription = Strings.previousMessage,
-                            compact = true,
-                            style = SepiaButtonStyle.GHOST,
-                            onClick = {
-                                minimapInteractionTick++
-                                scope.launch {
-                                    val cur = (listState.firstVisibleItemIndex - 1).coerceAtLeast(0)
-                                    listState.scrollToItemWithMotion(cur, reduceMotion)
+                        // Compact Vertical Minimap Rail (`⤒`, `↑`, `🗺`, `↓`, `⤓`)
+                        Column(
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(Radius.pill))
+                                .background(p.cardBg.copy(alpha = 0.94f))
+                                .border(LineWidth.hairline, p.border, RoundedCornerShape(Radius.pill))
+                                .padding(vertical = Space.s4, horizontal = 3.dp),
+                            verticalArrangement = Arrangement.spacedBy(Space.s2),
+                            horizontalAlignment = Alignment.CenterHorizontally
+                        ) {
+                            // Extreme Jump Top
+                            SepiaButton(
+                                text = "⤒",
+                                contentDescription = Strings.jumpToFirstMessage,
+                                compact = true,
+                                style = SepiaButtonStyle.GHOST,
+                                onClick = {
+                                    minimapInteractionTick++
+                                    scope.launch { listState.scrollToItemWithMotion(0, reduceMotion) }
                                 }
-                            }
-                        )
-                        // Toggle Tree & Swipe Map
-                        SepiaButton(
-                            text = "🗺",
-                            contentDescription = Strings.conversationMap,
-                            compact = true,
-                            style = if (showMinimapTreeModal) SepiaButtonStyle.PRIMARY else SepiaButtonStyle.GHOST,
-                            onClick = {
-                                minimapInteractionTick++
-                                showMinimapTreeModal = !showMinimapTreeModal
-                            }
-                        )
-                        // Jump Next Message
-                        SepiaButton(
-                            text = "↓",
-                            contentDescription = Strings.nextMessage,
-                            compact = true,
-                            style = SepiaButtonStyle.GHOST,
-                            onClick = {
-                                minimapInteractionTick++
-                                scope.launch {
-                                    val next = (listState.firstVisibleItemIndex + 1).coerceAtMost(activeSession.messages.size)
-                                    listState.scrollToItemWithMotion(next, reduceMotion)
+                            )
+                            // Jump Previous Message
+                            SepiaButton(
+                                text = "↑",
+                                contentDescription = Strings.previousMessage,
+                                compact = true,
+                                style = SepiaButtonStyle.GHOST,
+                                onClick = {
+                                    minimapInteractionTick++
+                                    scope.launch {
+                                        val cur = (listState.firstVisibleItemIndex - 1).coerceAtLeast(0)
+                                        listState.scrollToItemWithMotion(cur, reduceMotion)
+                                    }
                                 }
-                            }
-                        )
-                        // Extreme Jump Bottom
-                        SepiaButton(
-                            text = "⤓",
-                            contentDescription = Strings.jumpToLatestMessage,
-                            compact = true,
-                            style = SepiaButtonStyle.GHOST,
-                            onClick = {
-                                minimapInteractionTick++
-                                resumeAutoFollowAndJumpToBottom()
-                            }
-                        )
+                            )
+                            // Toggle Tree & Swipe Map
+                            SepiaButton(
+                                text = "🗺",
+                                contentDescription = Strings.conversationMap,
+                                compact = true,
+                                style = if (showMinimapTreeModal) SepiaButtonStyle.PRIMARY else SepiaButtonStyle.GHOST,
+                                onClick = {
+                                    minimapInteractionTick++
+                                    showMinimapTreeModal = !showMinimapTreeModal
+                                }
+                            )
+                            // Jump Next Message
+                            SepiaButton(
+                                text = "↓",
+                                contentDescription = Strings.nextMessage,
+                                compact = true,
+                                style = SepiaButtonStyle.GHOST,
+                                onClick = {
+                                    minimapInteractionTick++
+                                    scope.launch {
+                                        val next = (listState.firstVisibleItemIndex + 1).coerceAtMost(activeSession.messages.size)
+                                        listState.scrollToItemWithMotion(next, reduceMotion)
+                                    }
+                                }
+                            )
+                            // Extreme Jump Bottom
+                            SepiaButton(
+                                text = "⤓",
+                                contentDescription = Strings.jumpToLatestMessage,
+                                compact = true,
+                                style = SepiaButtonStyle.GHOST,
+                                onClick = {
+                                    minimapInteractionTick++
+                                    resumeAutoFollowAndJumpToBottom()
+                                }
+                            )
+                        }
                     }
-                }
                 }
             }
         }
@@ -1384,8 +1386,11 @@ internal fun ManuscriptViewport(
                 val allHarnessTools = remember { WorkspaceHarness.allTools() }
                 val activeHarnessToolNames = remember(composerToolPolicy, isGoalModeEnabled) {
                     WorkspaceHarness.activeToolsForMode(
-                        effectiveComposerWsMode, effectiveComposerWsPath, composerToolPolicy.allowShell,
-                        goalModeActive = isGoalModeEnabled, enableWebTools = composerToolPolicy.webAccess,
+                        effectiveComposerWsMode,
+                        effectiveComposerWsPath,
+                        composerToolPolicy.allowShell,
+                        goalModeActive = isGoalModeEnabled,
+                        enableWebTools = composerToolPolicy.webAccess,
                         policy = composerToolPolicy
                     ).map { it.name }.toSet()
                 }
@@ -1409,7 +1414,8 @@ internal fun ManuscriptViewport(
                             verticalArrangement = Arrangement.spacedBy(Space.s8)
                         ) {
                             AgentPermissionEditor(
-                                defaults = composerPermissionDefaults, overrides = composerPermissionOverrides,
+                                defaults = composerPermissionDefaults,
+                                overrides = composerPermissionOverrides,
                                 onChange = { value -> onUpdateSession { it.copy(permissionOverrides = value) } },
                                 onReset = { onUpdateSession { it.copy(permissionOverrides = AgentPermissionOverrides()) } }
                             )
@@ -1463,7 +1469,8 @@ internal fun ManuscriptViewport(
                                 exit = motionShrinkExit()
                             ) {
                                 AgentToolRegistry(
-                                    policy = composerToolPolicy, overrides = composerPermissionOverrides,
+                                    policy = composerToolPolicy,
+                                    overrides = composerPermissionOverrides,
                                     onChange = { value -> onUpdateSession { it.copy(permissionOverrides = value) } },
                                     goalModeActive = isGoalModeEnabled
                                 )
@@ -2369,7 +2376,6 @@ internal fun ManuscriptViewport(
         }
     }
 }
-
 
 /** True when the provider needs a key and has none. A server on this computer (Ollama, LM Studio) needs no key. */
 internal fun needsApiKey(profile: ProviderProfile): Boolean {

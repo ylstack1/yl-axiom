@@ -42,24 +42,41 @@ actual object PlatformStorage {
 
     actual fun getChatsStorageDirectoryPath(): String = chatsDir().absolutePath
 
-    private fun chatSessionFolder(sessionId: String): File =
-        snapshotStorage.chatDirectory(sessionId)
+    private fun chatSessionFolder(sessionId: String): File = snapshotStorage.chatDirectory(sessionId)
 
-    actual fun loadAppStateJson(): String? = snapshotStorage.loadSettings()
-    actual fun saveAppStateJson(json: String) = snapshotStorage.saveSettings(json)
-    actual fun loadChatSessionJsonById(sessionId: String): String? = snapshotStorage.loadChat(sessionId)
+    actual fun loadAppStateJson(): String? = ParchmentNativeCore.loadSettingsJson(AndroidPlatformHost.resolveStorageDir())
+        ?: snapshotStorage.loadSettings()
+
+    actual fun saveAppStateJson(json: String) {
+        snapshotStorage.saveSettings(json)
+        ParchmentNativeCore.saveSettingsJson(AndroidPlatformHost.resolveStorageDir(), json)
+    }
+
+    actual fun loadChatSessionJsonById(sessionId: String): String? = ParchmentNativeCore.loadChatJson(AndroidPlatformHost.resolveStorageDir(), sessionId)
+        ?: snapshotStorage.loadChat(sessionId)
+
     actual fun loadAllChatSessionJsons(): List<String> = snapshotStorage.loadAllChats()
     actual fun chatSessionJsons(skipFolders: Set<String>): Sequence<String> = snapshotStorage.chats(skipFolders)
     actual fun chatFileStamps(): Map<String, ChatFileStamp> = snapshotStorage.chatFileStamps()
     actual fun chatFolderName(sessionId: String): String = snapshotStorage.chatFolderName(sessionId)
     actual fun loadChatIndexJson(): String? = snapshotStorage.loadChatIndex()
     actual fun saveChatIndexJson(json: String) = snapshotStorage.saveChatIndex(json)
-    actual fun saveChatSessionJson(sessionId: String, json: String) = snapshotStorage.saveChat(sessionId, json)
-    actual fun saveChatLiveTurnJson(sessionId: String, json: String) = snapshotStorage.saveLiveTurn(sessionId, json)
-    actual fun deleteChatSessionFile(sessionId: String) = snapshotStorage.deleteChat(sessionId)
 
-    actual fun wipeAllLocalData(): Boolean =
-        AppStorageInventory.wipeDirectory(AndroidPlatformHost.resolveStorageDir(), preserveRoot = true)
+    actual fun saveChatSessionJson(sessionId: String, json: String) {
+        snapshotStorage.saveChat(sessionId, json)
+        ParchmentNativeCore.saveChatJson(AndroidPlatformHost.resolveStorageDir(), json)
+    }
+
+    actual fun saveChatLiveTurnJson(sessionId: String, json: String) = snapshotStorage.saveLiveTurn(sessionId, json)
+
+    actual fun deleteChatSessionFile(sessionId: String) {
+        snapshotStorage.deleteChat(sessionId)
+        ParchmentNativeCore.deleteChat(AndroidPlatformHost.resolveStorageDir(), sessionId)
+    }
+
+    actual fun searchStoredChatIds(query: String, limit: Int): Set<String>? = ParchmentNativeCore.searchChatIds(AndroidPlatformHost.resolveStorageDir(), query, limit)
+
+    actual fun wipeAllLocalData(): Boolean = AppStorageInventory.wipeDirectory(AndroidPlatformHost.resolveStorageDir(), preserveRoot = true)
 
     actual fun pruneStaleTempFiles(maxAgeMs: Long): Int {
         val root = AndroidPlatformHost.resolveStorageDir()
@@ -74,31 +91,23 @@ actual object PlatformStorage {
         )
     }
 
-    actual fun listAppStorageFiles(): List<StoredAppFileItem> =
-        AppStorageInventory.listFiles(AndroidPlatformHost.resolveStorageDir(), otaTempExtensions = setOf(".tmp", ".apk"))
+    actual fun listAppStorageFiles(): List<StoredAppFileItem> = AppStorageInventory.listFiles(AndroidPlatformHost.resolveStorageDir(), otaTempExtensions = setOf(".tmp", ".apk"))
 
-    actual fun deleteAppStorageFile(fullPath: String): Boolean =
-        AppStorageInventory.deleteFile(fullPath, AndroidPlatformHost.resolveStorageDir()) { imageCache.remove(it) }
+    actual fun deleteAppStorageFile(fullPath: String): Boolean = AppStorageInventory.deleteFile(fullPath, AndroidPlatformHost.resolveStorageDir()) { imageCache.remove(it) }
 
-    actual fun writeSessionTodoMarkdown(sessionId: String, markdown: String, storageRootOverride: String): Result<String> =
-        AppAgentStorage.writeSessionTodo(AndroidPlatformHost::resolveStorageDir, sessionId, markdown, storageRootOverride)
+    actual fun writeSessionTodoMarkdown(sessionId: String, markdown: String, storageRootOverride: String): Result<String> = AppAgentStorage.writeSessionTodo(AndroidPlatformHost::resolveStorageDir, sessionId, markdown, storageRootOverride)
 
-    actual fun hasGlobalAgentMemory(storageRootOverride: String): Boolean =
-        AppAgentStorage.hasGlobalMemory(AndroidPlatformHost::resolveStorageDir, storageRootOverride)
+    actual fun hasGlobalAgentMemory(storageRootOverride: String): Boolean = AppAgentStorage.hasGlobalMemory(AndroidPlatformHost::resolveStorageDir, storageRootOverride)
 
-    actual fun readGlobalAgentMemory(maxLines: Int, storageRootOverride: String): Result<String> =
-        AppAgentStorage.readGlobalMemory(AndroidPlatformHost::resolveStorageDir, maxLines, storageRootOverride)
+    actual fun readGlobalAgentMemory(maxLines: Int, storageRootOverride: String): Result<String> = AppAgentStorage.readGlobalMemory(AndroidPlatformHost::resolveStorageDir, maxLines, storageRootOverride)
 
-    actual fun writeGlobalAgentMemory(content: String, storageRootOverride: String): Result<String> =
-        AppAgentStorage.writeGlobalMemory(AndroidPlatformHost::resolveStorageDir, content, storageRootOverride)
+    actual fun writeGlobalAgentMemory(content: String, storageRootOverride: String): Result<String> = AppAgentStorage.writeGlobalMemory(AndroidPlatformHost::resolveStorageDir, content, storageRootOverride)
 
     internal fun resolveLocalMediaFile(filePath: String): File? = mediaStore.resolve(filePath)
 
-    actual fun saveGeneratedMediaFile(fileName: String, bytes: ByteArray, sessionId: String): String =
-        mediaStore.save(fileName, bytes, sessionId)
+    actual fun saveGeneratedMediaFile(fileName: String, bytes: ByteArray, sessionId: String): String = mediaStore.save(fileName, bytes, sessionId)
 
-    actual fun relocateLegacyMediaToChatFolder(filePath: String, sessionId: String): String =
-        mediaStore.relocateToChatFolder(filePath, sessionId)
+    actual fun relocateLegacyMediaToChatFolder(filePath: String, sessionId: String): String = mediaStore.relocateToChatFolder(filePath, sessionId)
 
     actual fun localFileSizeBytes(filePath: String): Long = mediaStore.sizeOf(filePath)
 
@@ -112,8 +121,7 @@ actual object PlatformStorage {
         io.parchment.ai.network.ModelsDevClient.trimMemoryCache()
     }
 
-    actual fun loadImageBitmapFromFile(filePath: String): ImageBitmap? =
-        imageCache.getOrLoad(filePath, ::resolveLocalMediaFile, ::decodeSampledBitmap)
+    actual fun loadImageBitmapFromFile(filePath: String): ImageBitmap? = imageCache.getOrLoad(filePath, ::resolveLocalMediaFile, ::decodeSampledBitmap)
 
     private const val MAX_ENCODED_IMAGE_BYTES = 128L * 1024L * 1024L
 

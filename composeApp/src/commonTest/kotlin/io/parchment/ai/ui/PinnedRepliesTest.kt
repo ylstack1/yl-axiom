@@ -13,16 +13,15 @@ import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
 class PinnedRepliesTest {
-    private fun node(id: String, text: String, pinned: Boolean = false, role: MessageRole = MessageRole.ASSISTANT) =
-        MessageNode(id = id, role = role, variants = listOf(MessageVariant(id = "v-$id", content = text)), pinned = pinned)
+    private fun node(id: String, text: String, pinned: Boolean = false, role: MessageRole = MessageRole.ASSISTANT) = MessageNode(id = id, role = role, variants = listOf(MessageVariant(id = "v-$id", content = text)), pinned = pinned)
 
-    private fun chat(id: String, updatedAt: Long, vararg messages: MessageNode) =
-        ChatSession(id = id, title = "Chat $id", createdAt = 1L, updatedAt = updatedAt, profileId = "profile", messages = messages.toList())
+    private fun chat(id: String, updatedAt: Long, vararg messages: MessageNode) = ChatSession(id = id, title = "Chat $id", createdAt = 1L, updatedAt = updatedAt, profileId = "profile", messages = messages.toList())
 
     @Test
     fun aStoredChatStillListsItsPinsWithoutBeingLoaded() {
         val full = chat(
-            "a", 5L,
+            "a",
+            5L,
             node("q1", "question", role = MessageRole.USER),
             node("r1", "**Pinned** answer with `code` " + "and more ".repeat(60), pinned = true),
             node("q2", "another question", role = MessageRole.USER),

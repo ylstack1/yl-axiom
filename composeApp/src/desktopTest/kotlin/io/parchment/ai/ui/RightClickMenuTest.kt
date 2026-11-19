@@ -38,8 +38,7 @@ class RightClickMenuTest {
         return scene.semanticsOwners.flatMap { flatten(it.rootSemanticsNode) }
     }
 
-    private fun menuShows(scene: ImageComposeScene, label: String) =
-        nodes(scene).any { node -> node.config.getOrNull(SemanticsProperties.Text).orEmpty().any { it.text == label } }
+    private fun menuShows(scene: ImageComposeScene, label: String) = nodes(scene).any { node -> node.config.getOrNull(SemanticsProperties.Text).orEmpty().any { it.text == label } }
 
     @Test fun rightClickingAChatOffersItsActions() = runBlocking<Unit>(Dispatchers.Swing) {
         val base = createDefaultAppState().copy(autoCheckOtaOnStartup = false)
@@ -59,10 +58,20 @@ class RightClickMenuTest {
             }
             val at = row.boundsInRoot.center
             scene.sendPointerEvent(PointerEventType.Move, at, type = PointerType.Mouse)
-            scene.sendPointerEvent(PointerEventType.Press, at, type = PointerType.Mouse,
-                buttons = PointerButtons(isSecondaryPressed = true), button = PointerButton.Secondary)
-            scene.sendPointerEvent(PointerEventType.Release, at, type = PointerType.Mouse,
-                buttons = PointerButtons(), button = PointerButton.Secondary)
+            scene.sendPointerEvent(
+                PointerEventType.Press,
+                at,
+                type = PointerType.Mouse,
+                buttons = PointerButtons(isSecondaryPressed = true),
+                button = PointerButton.Secondary
+            )
+            scene.sendPointerEvent(
+                PointerEventType.Release,
+                at,
+                type = PointerType.Mouse,
+                buttons = PointerButtons(),
+                button = PointerButton.Secondary
+            )
             settle(scene)
             assertTrue(menuShows(scene, Strings.deleteChat), "right-click must open the chat's menu")
             assertTrue(menuShows(scene, Strings.pinChat))

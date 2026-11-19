@@ -27,8 +27,7 @@ class OtaUpdateEngineHttpTest {
 
     @AfterTest fun cleanUp() { root.deleteRecursively() }
 
-    private fun release(url: String, size: Long = payload.size.toLong(), sha: String = checksum) =
-        OtaReleaseInfo("v9.0.0", "9.0.0", "Update", "", "", "Parchment-Setup.exe", url, size, true, sha)
+    private fun release(url: String, size: Long = payload.size.toLong(), sha: String = checksum) = OtaReleaseInfo("v9.0.0", "9.0.0", "Update", "", "", "Parchment-Setup.exe", url, size, true, sha)
 
     private fun <T> serving(respond: (HttpExchange) -> Unit, block: (String) -> T): T {
         val server = HttpServer.create(InetSocketAddress("127.0.0.1", 0), 0)

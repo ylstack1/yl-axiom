@@ -49,8 +49,14 @@ class StreamRecoveryHttpTest {
     private fun sse(vararg events: String) = events.joinToString("") { "data: $it\n\n" }
 
     private fun profile(server: Server, dialect: String) = ProviderProfile(
-        "fixture", "Fixture", ProviderProtocol.CUSTOM, customDialect = dialect, baseUrl = server.baseUrl,
-        defaultModel = "fixture-model", thinkingEffort = "none", customModelSpecs = mapOf("fixture-model" to ModelPricingSpec("fixture-model"))
+        "fixture",
+        "Fixture",
+        ProviderProtocol.CUSTOM,
+        customDialect = dialect,
+        baseUrl = server.baseUrl,
+        defaultModel = "fixture-model",
+        thinkingEffort = "none",
+        customModelSpecs = mapOf("fixture-model" to ModelPricingSpec("fixture-model"))
     )
 
     private fun updates(profile: ProviderProfile) = AiProviderEngine.streamGeneration(
@@ -96,35 +102,58 @@ class StreamRecoveryHttpTest {
     )
 
     @Test fun cutStreamsResumeOnEveryCustomWire() {
-        for ((dialect, body) in cutStreams) Server(listOf(Reply(body))).use { server ->
-            assertResumes(outcome(profile(server, dialect)))
+        for ((dialect, body) in cutStreams) {
+            Server(listOf(Reply(body))).use { server ->
+                assertResumes(outcome(profile(server, dialect)))
+            }
         }
     }
 
     @Test fun finishedStreamsCompleteOnEveryCustomWire() {
-        for ((dialect, body) in finishedStreams) Server(listOf(Reply(body))).use { server ->
-            assertEquals("partial", assertIs<StreamUpdate.Completed>(outcome(profile(server, dialect)), dialect).fullContent)
+        for ((dialect, body) in finishedStreams) {
+            Server(listOf(Reply(body))).use { server ->
+                assertEquals("partial", assertIs<StreamUpdate.Completed>(outcome(profile(server, dialect)), dialect).fullContent)
+            }
         }
     }
 
     private fun geminiProfile(server: Server) = ProviderProfile(
-        "gemini", "Gemini", ProviderProtocol.GEMINI_INTERACTIONS, baseUrl = server.baseUrl,
-        defaultModel = "fixture-model", thinkingEffort = "none", customModelSpecs = mapOf("fixture-model" to ModelPricingSpec("fixture-model"))
+        "gemini",
+        "Gemini",
+        ProviderProtocol.GEMINI_INTERACTIONS,
+        baseUrl = server.baseUrl,
+        defaultModel = "fixture-model",
+        thinkingEffort = "none",
+        customModelSpecs = mapOf("fixture-model" to ModelPricingSpec("fixture-model"))
     )
 
-    private fun steppedTurn(content: String = "Step one. Step two. Final answer.", phases: Boolean = false) = MessageNode("reply", MessageRole.ASSISTANT, listOf(MessageVariant(
-        "reply-v", content = content, toolCalls = listOf(
-            ToolCallRecord("c1", "fs_read", "{}", resultText = "result-a", precedingText = "Step one. ", messagePhases = phases),
-            ToolCallRecord("c2", "fs_read", "{}", resultText = "result-b", precedingText = "Step two. ", messagePhases = phases)
-        ))))
+    private fun steppedTurn(content: String = "Step one. Step two. Final answer.", phases: Boolean = false) = MessageNode(
+        "reply",
+        MessageRole.ASSISTANT,
+        listOf(
+            MessageVariant(
+                "reply-v",
+                content = content,
+                toolCalls = listOf(
+                    ToolCallRecord("c1", "fs_read", "{}", resultText = "result-a", precedingText = "Step one. ", messagePhases = phases),
+                    ToolCallRecord("c2", "fs_read", "{}", resultText = "result-b", precedingText = "Step two. ", messagePhases = phases)
+                )
+            )
+        )
+    )
 
     private fun requestAfter(turn: MessageNode, profile: ProviderProfile, server: Server): String {
         runBlocking {
             withTimeout(20_000) {
-                AiProviderEngine.streamGeneration(profile = profile, session = ChatSession("chat", "Fixture", 1L, 1L, profile.id), historyNodes = listOf(
-                    MessageNode("first", MessageRole.USER, listOf(MessageVariant("first-v", content = "Start"))), turn,
-                    MessageNode("next", MessageRole.USER, listOf(MessageVariant("next-v", content = "Carry on")))
-                )).first { it is StreamUpdate.Completed }
+                AiProviderEngine.streamGeneration(
+                    profile = profile,
+                    session = ChatSession("chat", "Fixture", 1L, 1L, profile.id),
+                    historyNodes = listOf(
+                        MessageNode("first", MessageRole.USER, listOf(MessageVariant("first-v", content = "Start"))),
+                        turn,
+                        MessageNode("next", MessageRole.USER, listOf(MessageVariant("next-v", content = "Carry on")))
+                    )
+                ).first { it is StreamUpdate.Completed }
             }
         }
         return server.requests.last()
@@ -136,8 +165,10 @@ class StreamRecoveryHttpTest {
     }
 
     @Test fun textBetweenToolsReplaysInOrderOnEveryWire() {
-        for ((dialect, body) in finishedStreams) Server(listOf(Reply(body))).use { server ->
-            assertInOrder(requestAfter(steppedTurn(), profile(server, dialect), server), dialect)
+        for ((dialect, body) in finishedStreams) {
+            Server(listOf(Reply(body))).use { server ->
+                assertInOrder(requestAfter(steppedTurn(), profile(server, dialect), server), dialect)
+            }
         }
         val missing = Reply("""{"error":{"message":"missing"}}""", 404)
         val done = """{"candidates":[{"content":{"parts":[{"text":"partial"}]},"finishReason":"STOP"}]}"""
@@ -210,8 +241,14 @@ class StreamRecoveryHttpTest {
     @Test fun anAcceptedVideoJobIsNeverSubmittedTwice() {
         Server(listOf(Reply("""{"id":"task-1","status":"queued"}"""), Reply("down", 500))).use { server ->
             val video = ProviderProfile(
-                "video", "Video", ProviderProtocol.OPENAI_RESPONSES, baseUrl = server.baseUrl, endpointPathOverride = "/v1/videos/generations",
-                defaultModel = "fixture-model", thinkingEffort = "none", customModelSpecs = mapOf("fixture-model" to ModelPricingSpec("fixture-model"))
+                "video",
+                "Video",
+                ProviderProtocol.OPENAI_RESPONSES,
+                baseUrl = server.baseUrl,
+                endpointPathOverride = "/v1/videos/generations",
+                defaultModel = "fixture-model",
+                thinkingEffort = "none",
+                customModelSpecs = mapOf("fixture-model" to ModelPricingSpec("fixture-model"))
             )
             val updates = runBlocking { withTimeout(40_000) { runCatching { updates(video).toList() } } }
             assertEquals(1, server.requests.count { it.isNotEmpty() }, "The job must be created once")
@@ -225,11 +262,10 @@ class StreamRecoveryHttpTest {
     }
 
     @Test fun storageIsItsOwnChoiceAndChainingImpliesIt() {
-        fun requestFor(change: (ProviderProfile) -> ProviderProfile, dialect: String) =
-            Server(listOf(Reply(finishedStreams.getValue(dialect)))).use { server ->
-                assertIs<StreamUpdate.Completed>(outcome(change(profile(server, dialect))))
-                Json.parseToJsonElement(server.requests.single()).jsonObject
-            }
+        fun requestFor(change: (ProviderProfile) -> ProviderProfile, dialect: String) = Server(listOf(Reply(finishedStreams.getValue(dialect)))).use { server ->
+            assertIs<StreamUpdate.Completed>(outcome(change(profile(server, dialect))))
+            Json.parseToJsonElement(server.requests.single()).jsonObject
+        }
         fun storeOn(dialect: String, change: (ProviderProfile) -> ProviderProfile) = requestFor(change, dialect)["store"]?.jsonPrimitive?.boolean
 
         assertEquals(false, storeOn(CUSTOM_DIALECT_OPENAI_RESPONSES) { it })
@@ -292,8 +328,14 @@ class StreamRecoveryHttpTest {
     }
 
     private fun videoProfile(server: Server) = ProviderProfile(
-        "video", "Video", ProviderProtocol.OPENAI_RESPONSES, baseUrl = server.baseUrl, endpointPathOverride = "/v1/videos/generations",
-        defaultModel = "fixture-model", thinkingEffort = "none", customModelSpecs = mapOf("fixture-model" to ModelPricingSpec("fixture-model"))
+        "video",
+        "Video",
+        ProviderProtocol.OPENAI_RESPONSES,
+        baseUrl = server.baseUrl,
+        endpointPathOverride = "/v1/videos/generations",
+        defaultModel = "fixture-model",
+        thinkingEffort = "none",
+        customModelSpecs = mapOf("fixture-model" to ModelPricingSpec("fixture-model"))
     )
 
     private fun runVideo(server: Server, resumeTask: String) = runBlocking {
@@ -301,7 +343,8 @@ class StreamRecoveryHttpTest {
         withTimeout(30_000) {
             runCatching {
                 AiProviderEngine.streamGeneration(
-                    profile = video, session = ChatSession("chat", "Fixture", 1L, 1L, video.id),
+                    profile = video,
+                    session = ChatSession("chat", "Fixture", 1L, 1L, video.id),
                     historyNodes = listOf(MessageNode("user", MessageRole.USER, listOf(MessageVariant("variant", content = "A short clip")))),
                     resumeMediaTask = resumeTask,
                     pollDelayMsOverride = 10L
@@ -334,9 +377,11 @@ class StreamRecoveryHttpTest {
         val fixture = profile(server, CUSTOM_DIALECT_OPENAI_CHAT).copy(customModelSpecs = mapOf("fixture-model" to priced))
         withTimeout(20_000) {
             AiProviderEngine.streamGeneration(
-                profile = fixture, session = ChatSession("chat", "Fixture", 1L, 1L, fixture.id),
+                profile = fixture,
+                session = ChatSession("chat", "Fixture", 1L, 1L, fixture.id),
                 historyNodes = listOf(MessageNode("user", MessageRole.USER, listOf(MessageVariant("variant", content = "Hello")))),
-                spendLimitUsd = limit, spendBeforeRunUsd = before
+                spendLimitUsd = limit,
+                spendBeforeRunUsd = before
             ).toList()
         }
     }
@@ -357,9 +402,12 @@ class StreamRecoveryHttpTest {
             val updates = runBlocking {
                 withTimeout(20_000) {
                     AiProviderEngine.streamGeneration(
-                        profile = fixture, session = ChatSession("chat:helper-2", "Helper", 1L, 1L, fixture.id),
+                        profile = fixture,
+                        session = ChatSession("chat:helper-2", "Helper", 1L, 1L, fixture.id),
                         historyNodes = listOf(MessageNode("task", MessageRole.USER, listOf(MessageVariant("task-v", content = "Find it")))),
-                        spendLimitUsd = 1.0, spendBeforeRunUsd = 0.0, externalRunSpendUsd = { 1.0 }
+                        spendLimitUsd = 1.0,
+                        spendBeforeRunUsd = 0.0,
+                        externalRunSpendUsd = { 1.0 }
                     ).toList()
                 }
             }
@@ -537,7 +585,8 @@ class StreamRecoveryHttpTest {
         val okChat = Reply(finishedStreams.getValue(CUSTOM_DIALECT_OPENAI_CHAT))
         Server(listOf(badReasoning, okChat)).use { server ->
             val turn = MessageNode(
-                "reply", MessageRole.ASSISTANT,
+                "reply",
+                MessageRole.ASSISTANT,
                 listOf(
                     MessageVariant(
                         "reply-v",
@@ -655,7 +704,8 @@ class StreamRecoveryHttpTest {
     @Test fun aSpendCapStopsWithoutRetrying() {
         val capped = Reply(
             """{"type":"error","error":{"type":"rate_limit_error","message":"Spend limit reached.","details":{"error_code":"enforced_spend_limit_reached"}}}""",
-            429, "application/json"
+            429,
+            "application/json"
         )
         Server(listOf(capped)).use { server ->
             assertIs<StreamUpdate.Error>(runUntilTerminalOrRetry(profile(server, CUSTOM_DIALECT_ANTHROPIC)))
@@ -734,7 +784,8 @@ class StreamRecoveryHttpTest {
         val history = listOf(
             MessageNode("u1", MessageRole.USER, listOf(MessageVariant("uv1", content = "Start"))),
             MessageNode(
-                "a1", MessageRole.ASSISTANT,
+                "a1",
+                MessageRole.ASSISTANT,
                 listOf(
                     MessageVariant(
                         "av1",
@@ -748,7 +799,8 @@ class StreamRecoveryHttpTest {
             ),
             MessageNode("u2", MessageRole.USER, listOf(MessageVariant("uv2", content = "Switch to Gemini"))),
             MessageNode(
-                "a2", MessageRole.ASSISTANT,
+                "a2",
+                MessageRole.ASSISTANT,
                 listOf(
                     MessageVariant(
                         "av2",

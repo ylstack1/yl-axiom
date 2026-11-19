@@ -12,8 +12,12 @@ import kotlin.test.*
 
 class AgentRunCoordinatorTest {
     private fun identity(run: String, session: String = "chat") = AgentRunIdentity(run, session, "node", "variant", "profile", "model", "openai_responses")
-    private fun runtime(id: AgentRunIdentity, job: Job? = null) = SessionStreamRuntime(id.sessionId, job = job,
-        identity = id, phase = AgentRunPhase.RUNNING)
+    private fun runtime(id: AgentRunIdentity, job: Job? = null) = SessionStreamRuntime(
+        id.sessionId,
+        job = job,
+        identity = id,
+        phase = AgentRunPhase.RUNNING
+    )
 
     @Test fun oldEventsAndCompletionCannotEraseTheNewOwnerOrAnotherChat() = runBlocking {
         val coordinator = AgentRunCoordinator(this)
@@ -45,8 +49,15 @@ class AgentRunCoordinatorTest {
         val coordinator = AgentRunCoordinator(this)
         val id = identity("run")
         val job = Job()
-        val producer = RunProviderContext(ProviderProfile("profile", "Original", ProviderProtocol.OPENAI_RESPONSES,
-            apiKey = "original-secret", baseUrl = "https://original.example"))
+        val producer = RunProviderContext(
+            ProviderProfile(
+                "profile",
+                "Original",
+                ProviderProtocol.OPENAI_RESPONSES,
+                apiKey = "original-secret",
+                baseUrl = "https://original.example"
+            )
+        )
         val changed = RunProviderContext(producer.profile.copy(apiKey = "new-secret", baseUrl = "https://new.example"))
         try {
             coordinator.attach(id, runtime(id, job).copy(providerContext = producer))
@@ -177,12 +188,17 @@ class AgentRunCoordinatorTest {
     }
 
     @Test fun historyRefreshPreservesSelectionAndSyntheticInstructionsWithoutRestoringDeletions() {
-        val old = MessageNode("old", MessageRole.ASSISTANT,
-            variants = listOf(MessageVariant("selected", "partial"), MessageVariant("other", "other branch")))
+        val old = MessageNode(
+            "old",
+            MessageRole.ASSISTANT,
+            variants = listOf(MessageVariant("selected", "partial"), MessageVariant("other", "other branch"))
+        )
         val deleted = MessageNode("deleted", MessageRole.USER, variants = listOf(MessageVariant("deleted-v", "deleted instruction")))
         val direction = MessageNode("synthetic", MessageRole.USER, variants = listOf(MessageVariant("direction", "uncapped scene direction")))
-        val latest = old.copy(activeVariantIndex = 1,
-            variants = listOf(MessageVariant("selected", "final saved answer"), MessageVariant("other", "other branch")))
+        val latest = old.copy(
+            activeVariantIndex = 1,
+            variants = listOf(MessageVariant("selected", "final saved answer"), MessageVariant("other", "other branch"))
+        )
         val current = ChatSession("chat", "Chat", 1L, 1L, "profile", messages = listOf(latest))
         val refreshed = refreshGenerationHistory(listOf(old, deleted, direction), setOf("old", "deleted"), current)
         assertEquals(listOf("old", "synthetic"), refreshed.map { it.id })

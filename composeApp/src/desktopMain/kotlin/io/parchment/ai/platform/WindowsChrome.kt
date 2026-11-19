@@ -12,8 +12,7 @@ internal object WindowsChrome {
     private const val TEXT_COLOR = 36
     private const val ROUND_CORNERS = 2
 
-    private fun colorRef(argb: Int): Int =
-        ((argb and 0xFF) shl 16) or (argb and 0xFF00) or ((argb shr 16) and 0xFF)
+    private fun colorRef(argb: Int): Int = ((argb and 0xFF) shl 16) or (argb and 0xFF00) or ((argb shr 16) and 0xFF)
 
     /** Returns each call's result code, 0 meaning success. Older Windows builds decline the color attributes. */
     fun applyCaption(handle: Long, captionArgb: Int, inkArgb: Int, borderArgb: Int, dark: Boolean): Map<String, Int> {

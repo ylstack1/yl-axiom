@@ -1,7 +1,6 @@
 package io.parchment.ai.ui
 
 import androidx.compose.foundation.background
-import io.parchment.ai.strings.Strings
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsHoveredAsState
 import androidx.compose.foundation.layout.Arrangement
@@ -27,6 +26,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import io.parchment.ai.model.ChatSession
+import io.parchment.ai.strings.Strings
 
 /** Long enough for two lines in the sidebar; chat stubs keep this much of each pinned reply. */
 internal const val PIN_PREVIEW_CHARS = 280
@@ -41,23 +41,21 @@ internal data class PinnedReply(
 )
 
 /** Pins in message order within each chat, newest chat first. Stubs list their pins without being loaded. */
-internal fun pinnedReplies(sessions: List<ChatSession>, onlySessionId: String? = null): List<PinnedReply> =
-    sessions
-        .asSequence()
-        .filter { onlySessionId == null || it.id == onlySessionId }
-        .sortedByDescending { it.updatedAt }
-        .flatMap { session ->
-            session.messages.asSequence().filter { it.pinned }.map { node ->
-                val preview = stripMarkdownToPlainText(node.activeVariant.content.take(PIN_PREVIEW_CHARS))
-                    .replace(WHITESPACE, " ")
-                    .trim()
-                PinnedReply(session.id, session.title, node.id, preview.ifBlank { Strings.replyWithoutText })
-            }
+internal fun pinnedReplies(sessions: List<ChatSession>, onlySessionId: String? = null): List<PinnedReply> = sessions
+    .asSequence()
+    .filter { onlySessionId == null || it.id == onlySessionId }
+    .sortedByDescending { it.updatedAt }
+    .flatMap { session ->
+        session.messages.asSequence().filter { it.pinned }.map { node ->
+            val preview = stripMarkdownToPlainText(node.activeVariant.content.take(PIN_PREVIEW_CHARS))
+                .replace(WHITESPACE, " ")
+                .trim()
+            PinnedReply(session.id, session.title, node.id, preview.ifBlank { Strings.replyWithoutText })
         }
-        .toList()
+    }
+    .toList()
 
-internal fun ChatSession.togglePinned(nodeId: String): ChatSession =
-    copy(messages = messages.map { if (it.id == nodeId) it.copy(pinned = !it.pinned) else it })
+internal fun ChatSession.togglePinned(nodeId: String): ChatSession = copy(messages = messages.map { if (it.id == nodeId) it.copy(pinned = !it.pinned) else it })
 
 /** The sidebar's Pinned tab: this chat's pins or every chat's, filtered by the sidebar search. */
 @Composable

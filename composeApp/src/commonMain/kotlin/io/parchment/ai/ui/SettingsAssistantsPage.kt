@@ -1,7 +1,6 @@
 package io.parchment.ai.ui
 
 import androidx.compose.animation.AnimatedVisibility
-import io.parchment.ai.strings.Strings
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
@@ -36,12 +35,13 @@ import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import io.parchment.ai.model.AgentPermissionPolicy
+import io.parchment.ai.model.AgentPermissionResolver
 import io.parchment.ai.model.AppStateSnapshot
 import io.parchment.ai.model.AssistantAgent
-import io.parchment.ai.model.AgentPermissionResolver
-import io.parchment.ai.model.AgentPermissionPolicy
 import io.parchment.ai.model.asOverrides
 import io.parchment.ai.platform.PlatformRuntime
+import io.parchment.ai.strings.Strings
 
 // ============================================================================================
 // Settings page 3: Assistants (the list and the editor).
@@ -247,11 +247,13 @@ internal fun AssistantsSubpage(
                     }
                     val defaults = AgentPermissionResolver.defaults(editingAssistant)
                     AgentPermissionEditor(
-                        defaults = AgentPermissionPolicy(), overrides = defaults.asOverrides(),
+                        defaults = AgentPermissionPolicy(),
+                        overrides = defaults.asOverrides(),
                         onChange = { value -> updateCurrent { it.copy(permissionDefaults = value.applyTo(AgentPermissionPolicy())) } }
                     )
                     AgentToolRegistry(
-                        policy = defaults, overrides = defaults.asOverrides(),
+                        policy = defaults,
+                        overrides = defaults.asOverrides(),
                         onChange = { value -> updateCurrent { it.copy(permissionDefaults = value.applyTo(AgentPermissionPolicy())) } }
                     )
                 }

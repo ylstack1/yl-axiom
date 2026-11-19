@@ -27,18 +27,27 @@ class ModelTextMediaGuardTest {
         override fun close() = server.stop(0)
     }
 
-    private fun stream(text: String) =
-        "data: {\"choices\":[{\"delta\":{\"content\":\"$text\"},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n"
+    private fun stream(text: String) = "data: {\"choices\":[{\"delta\":{\"content\":\"$text\"},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n"
 
     @Test fun modelTextReachesTheProvidersOwnServerButNotOtherPrivateAddresses() {
         Host { "" }.use { intranet ->
             Host { own -> stream("![a](http://127.0.0.1:$own/own.png) ![b](http://127.0.0.1:${intranet.port}/secret.png)") }.use { provider ->
-                val profile = ProviderProfile("fixture", "Fixture", ProviderProtocol.CUSTOM, customDialect = CUSTOM_DIALECT_OPENAI_CHAT,
-                    baseUrl = "http://127.0.0.1:${provider.port}", defaultModel = "fixture-model", thinkingEffort = "none")
+                val profile = ProviderProfile(
+                    "fixture",
+                    "Fixture",
+                    ProviderProtocol.CUSTOM,
+                    customDialect = CUSTOM_DIALECT_OPENAI_CHAT,
+                    baseUrl = "http://127.0.0.1:${provider.port}",
+                    defaultModel = "fixture-model",
+                    thinkingEffort = "none"
+                )
                 runBlocking {
                     withTimeout(20_000) {
-                        AiProviderEngine.streamGeneration(profile = profile, session = ChatSession("chat", "Fixture", 1L, 1L, profile.id),
-                            historyNodes = listOf(MessageNode("user", MessageRole.USER, listOf(MessageVariant("v", content = "Hello"))))).toList()
+                        AiProviderEngine.streamGeneration(
+                            profile = profile,
+                            session = ChatSession("chat", "Fixture", 1L, 1L, profile.id),
+                            historyNodes = listOf(MessageNode("user", MessageRole.USER, listOf(MessageVariant("v", content = "Hello"))))
+                        ).toList()
                     }
                 }
                 assertTrue("/own.png" in provider.paths, "A local image server must keep working: ${provider.paths}")

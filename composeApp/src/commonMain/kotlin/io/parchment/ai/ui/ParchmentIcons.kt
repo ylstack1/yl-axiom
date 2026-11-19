@@ -148,9 +148,8 @@ data class ParsedLabelWithIcons(
 )
 
 /** Reader fallback for an icon-only label; callers should pass a more specific action name. */
-fun ParsedLabelWithIcons.iconOnlyName(): String? =
-    if (cleanText.isNotEmpty()) null
-    else (leadingIcon ?: trailingIcon)?.name?.lowercase()?.replace('_', ' ')?.replaceFirstChar { it.titlecase() }
+fun ParsedLabelWithIcons.iconOnlyName(): String? = if (cleanText.isNotEmpty()) null
+else (leadingIcon ?: trailingIcon)?.name?.lowercase()?.replace('_', ' ')?.replaceFirstChar { it.titlecase() }
 
 private val PREFIX_ICON_MAPPINGS = listOf(
     "☰ " to KissIcon.MENU,
@@ -427,7 +426,7 @@ fun KissVectorIcon(
             val dimPx = scaledSize.toPx().coerceAtLeast(1f)
             val unit = dimPx / 24f
             val strokePx = if (strokeWidthDp != Dp.Unspecified) strokeWidthDp.toPx()
-                else (unit * 1.85f).coerceIn(1.15.dp.toPx(), 2.dp.toPx())
+            else (unit * 1.85f).coerceIn(1.15.dp.toPx(), 2.dp.toPx())
             Stroke(strokePx / unit, cap = StrokeCap.Round, join = StrokeJoin.Round)
         }
     }
@@ -451,13 +450,11 @@ private val LOBE_SVG_LOCK = Any()
 private val DYNAMIC_LOBE_SVG_CACHE = mutableStateMapOf<String, List<String>>()
 private val DYNAMIC_LOBE_SVG_ORDER = ArrayDeque<String>()
 private val MISSING_LOBE_SVG_SLUGS = object : LinkedHashMap<String, Unit>(64, 0.75f, true) {
-    override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, Unit>?): Boolean =
-        size > MAX_MISSING_LOBE_SVG_SLUGS
+    override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, Unit>?): Boolean = size > MAX_MISSING_LOBE_SVG_SLUGS
 }
 private val LOADING_LOBE_SVG_SLUGS = hashSetOf<String>()
 private val PARSED_LAB_SVG_PATH_CACHE = object : LinkedHashMap<String, List<Path>>(64, 0.75f, true) {
-    override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, List<Path>>?): Boolean =
-        size > MAX_PARSED_LAB_SVG_PATHS
+    override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, List<Path>>?): Boolean = size > MAX_PARSED_LAB_SVG_PATHS
 }
 
 internal val BUILTIN_LAB_SVG_PATHS: Map<String, List<String>> = mapOf(
@@ -534,21 +531,41 @@ private fun matchKnownLabSlug(raw: String): String? {
     val s = raw.trim().lowercase()
     if (s.isEmpty()) return null
     return when {
-        s.contains("gemini") || s.contains("gemma") || s.contains("learnlm") ||
-            s.contains("deep-research") || s.contains("nano-banana") || s.contains("palm") -> "gemini"
+        s.contains("gemini") ||
+            s.contains("gemma") ||
+            s.contains("learnlm") ||
+            s.contains("deep-research") ||
+            s.contains("nano-banana") ||
+            s.contains("palm") -> "gemini"
         s.contains("claude") -> "claude"
         s.contains("anthropic") -> "anthropic"
-        s.contains("doubao") || s.contains("seedream") || s.contains("seedance") ||
-            s.contains("seed-1") || s.contains("seed-2") || s.contains("seed-audio") ||
-            s.contains("bytedance-seed") || s.contains("dreamina") || s.contains("dola-seed") ||
+        s.contains("doubao") ||
+            s.contains("seedream") ||
+            s.contains("seedance") ||
+            s.contains("seed-1") ||
+            s.contains("seed-2") ||
+            s.contains("seed-audio") ||
+            s.contains("bytedance-seed") ||
+            s.contains("dreamina") ||
+            s.contains("dola-seed") ||
             s.contains("ui-tars") -> "doubao"
-        s.contains("bytedance") || s.contains("volcengine") || s.contains("byteplus") ||
-            s == "ark" || s.contains("bytedance_ark") -> "bytedance"
+        s.contains("bytedance") ||
+            s.contains("volcengine") ||
+            s.contains("byteplus") ||
+            s == "ark" ||
+            s.contains("bytedance_ark") -> "bytedance"
         s.contains("deepseek") -> "deepseek"
         s.contains("grok") || s.contains("xai") || s.contains("x.ai") || s.contains("x-ai") || s.contains("aurora") -> "grok"
-        s.contains("qwen") || s.contains("qwq") || s.contains("tongyi") || s.contains("alibaba") ||
-            s.contains("dashscope") || s.contains("wan-") || s.contains("wan2") || s.contains("wan3") ||
-            s.contains("wanx") || s.contains("happyhorse") -> "qwen"
+        s.contains("qwen") ||
+            s.contains("qwq") ||
+            s.contains("tongyi") ||
+            s.contains("alibaba") ||
+            s.contains("dashscope") ||
+            s.contains("wan-") ||
+            s.contains("wan2") ||
+            s.contains("wan3") ||
+            s.contains("wanx") ||
+            s.contains("happyhorse") -> "qwen"
         s.contains("mistral") || s.contains("mixtral") || s.contains("codestral") || s.contains("pixtral") || s.contains("ministral") -> "mistral"
         s.contains("llama") || s.contains("meta") -> "meta"
         s.contains("glm") || s.contains("zhipu") || s.contains("chatglm") || s.contains("cogview") || s.contains("cogvideo") || s.contains("zai") -> "zhipu"
@@ -556,8 +573,13 @@ private fun matchKnownLabSlug(raw: String): String? {
         s.contains("minimax") || s.contains("abab") || s.contains("hailuo") -> "minimax"
         s.contains("perplexity") || s.contains("sonar") -> "perplexity"
         s.contains("cohere") || s.contains("command-r") || s.contains("aya") -> "cohere"
-        s.contains("google") || s.contains("imagen") || s.contains("veo-") || s.contains("/veo") ||
-            s.startsWith("veo") || s.contains("veo2") || s.contains("veo3") -> "google"
+        s.contains("google") ||
+            s.contains("imagen") ||
+            s.contains("veo-") ||
+            s.contains("/veo") ||
+            s.startsWith("veo") ||
+            s.contains("veo2") ||
+            s.contains("veo3") -> "google"
         s.contains("flux") || s.contains("black-forest-labs") -> "flux"
         s.contains("kling") || s.contains("kwaivgi") || s.contains("kuaishou") -> "kling"
         s.contains("runway") || s.contains("gen-3") || s.contains("gen-4") || s.contains("aleph-") -> "runway"
@@ -567,9 +589,15 @@ private fun matchKnownLabSlug(raw: String): String? {
         s.contains("midjourney") -> "midjourney"
         s.contains("stable-diffusion") || s.contains("sdxl") || s.contains("sd3") || s.contains("stability") -> "stability"
         s.contains("elevenlabs") -> "elevenlabs"
-        s.contains("gpt") || s.contains("openai") || s.contains("chatgpt") || s.contains("codex") ||
-            s.contains("dall-e") || s.contains("sora") || s.contains("whisper") ||
-            s.startsWith("tts-") || s.contains("/tts-") ||
+        s.contains("gpt") ||
+            s.contains("openai") ||
+            s.contains("chatgpt") ||
+            s.contains("codex") ||
+            s.contains("dall-e") ||
+            s.contains("sora") ||
+            s.contains("whisper") ||
+            s.startsWith("tts-") ||
+            s.contains("/tts-") ||
             OPENAI_REASONING_SLUG_REGEX.containsMatchIn(s) -> "openai"
         s.contains("openrouter") -> "openrouter"
         else -> null
@@ -707,9 +735,10 @@ fun ModelLabSvgIcon(
     val rawPaths = BUILTIN_LAB_SVG_PATHS[slug] ?: DYNAMIC_LOBE_SVG_CACHE[slug]
 
     LaunchedEffect(slug) {
-        val shouldFetch = rawPaths == null && synchronized(LOBE_SVG_LOCK) {
-            slug !in MISSING_LOBE_SVG_SLUGS && LOADING_LOBE_SVG_SLUGS.add(slug)
-        }
+        val shouldFetch = rawPaths == null &&
+            synchronized(LOBE_SVG_LOCK) {
+                slug !in MISSING_LOBE_SVG_SLUGS && LOADING_LOBE_SVG_SLUGS.add(slug)
+            }
         if (shouldFetch) {
             try {
                 runCatching {

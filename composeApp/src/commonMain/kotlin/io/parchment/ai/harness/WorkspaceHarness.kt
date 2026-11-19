@@ -86,38 +86,28 @@ object WorkspaceHarness {
         expandedMcpTools: Set<String> = emptySet()
     ): String = WorkspaceToolCatalog.deferredMcpToolsCatalogPrompt(policy, expandedMcpTools)
 
-    internal fun allowedMcpTools(policy: AgentPermissionPolicy?): List<ToolDefinition> =
-        WorkspaceToolCatalog.allowedMcpTools(policy)
+    internal fun allowedMcpTools(policy: AgentPermissionPolicy?): List<ToolDefinition> = WorkspaceToolCatalog.allowedMcpTools(policy)
 
-    internal fun registerExternalToolsProvider(provider: () -> List<ToolDefinition>) =
-        WorkspaceToolCatalog.registerExternalToolsProvider(provider)
+    internal fun registerExternalToolsProvider(provider: () -> List<ToolDefinition>) = WorkspaceToolCatalog.registerExternalToolsProvider(provider)
 
     fun allTools(): List<ToolDefinition> = WorkspaceToolCatalog.allTools()
 
-    fun invalidateWorkspaceCache(workspaceRoot: String = "") =
-        WorkspaceContextCache.invalidate(workspaceRoot)
+    fun invalidateWorkspaceCache(workspaceRoot: String = "") = WorkspaceContextCache.invalidate(workspaceRoot)
 
     /** Reads the `name` and `description` of a SKILL.md, including folded YAML descriptions. */
-    internal fun parseSkillHeader(text: String): Pair<String, String>? =
-        WorkspaceContextCache.parseSkillHeader(text)
+    internal fun parseSkillHeader(text: String): Pair<String, String>? = WorkspaceContextCache.parseSkillHeader(text)
 
-    fun discoverSkills(workspaceRoot: String): List<WorkspaceSkill> =
-        WorkspaceContextCache.discoverSkills(workspaceRoot)
+    fun discoverSkills(workspaceRoot: String): List<WorkspaceSkill> = WorkspaceContextCache.discoverSkills(workspaceRoot)
 
-    fun discoverWorkspaceCommands(workspaceRoot: String): List<WorkspaceSlashCommand> =
-        WorkspaceContextCache.discoverCommands(workspaceRoot)
+    fun discoverWorkspaceCommands(workspaceRoot: String): List<WorkspaceSlashCommand> = WorkspaceContextCache.discoverCommands(workspaceRoot)
 
-    fun expandWorkspaceCommand(workspaceRoot: String, rawInput: String): String? =
-        WorkspaceContextCache.expandCommand(workspaceRoot, rawInput)
+    fun expandWorkspaceCommand(workspaceRoot: String, rawInput: String): String? = WorkspaceContextCache.expandCommand(workspaceRoot, rawInput)
 
-    fun buildSkillMarkdown(titleHint: String, content: String): Pair<String, String> =
-        WorkspaceContextCache.buildSkillMarkdown(titleHint, content)
+    fun buildSkillMarkdown(titleHint: String, content: String): Pair<String, String> = WorkspaceContextCache.buildSkillMarkdown(titleHint, content)
 
-    fun listDiscoveredContextFileNames(workspaceRoot: String): List<String> =
-        WorkspaceContextCache.listDiscoveredContextFileNames(workspaceRoot)
+    fun listDiscoveredContextFileNames(workspaceRoot: String): List<String> = WorkspaceContextCache.listDiscoveredContextFileNames(workspaceRoot)
 
-    fun isParallelSafeReadOnlyTool(toolName: String): Boolean =
-        WorkspaceToolCatalog.isParallelSafeReadOnlyTool(toolName)
+    fun isParallelSafeReadOnlyTool(toolName: String): Boolean = WorkspaceToolCatalog.isParallelSafeReadOnlyTool(toolName)
 
     fun activeToolsForMode(
         mode: WorkspaceMode,
@@ -129,7 +119,14 @@ object WorkspaceHarness {
         policy: AgentPermissionPolicy? = null,
         expandedMcpTools: Set<String>? = null
     ): List<ToolDefinition> = WorkspaceToolCatalog.activeToolsForMode(
-        mode, workspacePath, allowShell, goalModeActive, enableWebTools, includeLocalWebSearchTool, policy, expandedMcpTools
+        mode,
+        workspacePath,
+        allowShell,
+        goalModeActive,
+        enableWebTools,
+        includeLocalWebSearchTool,
+        policy,
+        expandedMcpTools
     )
 
     /**
@@ -137,12 +134,10 @@ object WorkspaceHarness {
      * Cached in memory with a 10s TTL (and invalidated immediately on workspace writes) so UI frame rendering
      * and `o200k_base` context breakdown never block on synchronous disk I/O.
      */
-    fun discoverWorkspaceContextFiles(workspaceRoot: String): String =
-        WorkspaceContextCache.discoverContextFiles(workspaceRoot)
+    fun discoverWorkspaceContextFiles(workspaceRoot: String): String = WorkspaceContextCache.discoverContextFiles(workspaceRoot)
 
     /** Auto-discovers Parchment's global `memory/AGENT.md` when created in application storage. */
-    fun discoverGlobalAgentMemory(appStorageRoot: String = ""): String =
-        WorkspaceContextCache.discoverGlobalMemory(appStorageRoot)
+    fun discoverGlobalAgentMemory(appStorageRoot: String = ""): String = WorkspaceContextCache.discoverGlobalMemory(appStorageRoot)
 
     /**
      * Formats active workspace & utility tools for Google Gemini Interactions API (`/v1beta/interactions`)
@@ -158,7 +153,14 @@ object WorkspaceHarness {
         policy: AgentPermissionPolicy? = null,
         expandedMcpTools: Set<String>? = emptySet()
     ): JsonArray = WorkspaceToolCatalog.buildFlatFunctionTools(
-        mode, workspacePath, allowShell, goalModeActive, enableWebTools, includeLocalWebSearchTool, policy, expandedMcpTools
+        mode,
+        workspacePath,
+        allowShell,
+        goalModeActive,
+        enableWebTools,
+        includeLocalWebSearchTool,
+        policy,
+        expandedMcpTools
     )
 
     fun buildGeminiInteractionsTools(
@@ -171,7 +173,14 @@ object WorkspaceHarness {
         policy: AgentPermissionPolicy? = null,
         expandedMcpTools: Set<String>? = emptySet()
     ): JsonArray = WorkspaceToolCatalog.buildFlatFunctionTools(
-        mode, workspacePath, allowShell, goalModeActive, enableWebTools, includeLocalWebSearchTool, policy, expandedMcpTools
+        mode,
+        workspacePath,
+        allowShell,
+        goalModeActive,
+        enableWebTools,
+        includeLocalWebSearchTool,
+        policy,
+        expandedMcpTools
     )
 
     fun buildOpenAiResponsesTools(
@@ -184,7 +193,14 @@ object WorkspaceHarness {
         policy: AgentPermissionPolicy? = null,
         expandedMcpTools: Set<String>? = emptySet()
     ): JsonArray = WorkspaceToolCatalog.buildFlatFunctionTools(
-        mode, workspacePath, allowShell, goalModeActive, enableWebTools, includeLocalWebSearchTool, policy, expandedMcpTools
+        mode,
+        workspacePath,
+        allowShell,
+        goalModeActive,
+        enableWebTools,
+        includeLocalWebSearchTool,
+        policy,
+        expandedMcpTools
     )
 
     /**
@@ -200,7 +216,14 @@ object WorkspaceHarness {
         policy: AgentPermissionPolicy? = null,
         expandedMcpTools: Set<String>? = emptySet()
     ): JsonArray = WorkspaceToolCatalog.buildOpenAiChatCompletionsTools(
-        mode, workspacePath, allowShell, goalModeActive, enableWebTools, includeLocalWebSearchTool, policy, expandedMcpTools
+        mode,
+        workspacePath,
+        allowShell,
+        goalModeActive,
+        enableWebTools,
+        includeLocalWebSearchTool,
+        policy,
+        expandedMcpTools
     )
 
     /**
@@ -216,12 +239,18 @@ object WorkspaceHarness {
         policy: AgentPermissionPolicy? = null,
         expandedMcpTools: Set<String>? = emptySet()
     ): JsonArray = WorkspaceToolCatalog.buildAnthropicTools(
-        mode, workspacePath, allowShell, goalModeActive, enableWebTools, includeLocalWebSearchTool, policy, expandedMcpTools
+        mode,
+        workspacePath,
+        allowShell,
+        goalModeActive,
+        enableWebTools,
+        includeLocalWebSearchTool,
+        policy,
+        expandedMcpTools
     )
 
-    private fun parseArgs(argumentsJson: String): JsonObject =
-        runCatching { json.parseToJsonElement(argumentsJson.ifBlank { "{}" }).jsonObject }
-            .getOrElse { JsonObject(emptyMap()) }
+    private fun parseArgs(argumentsJson: String): JsonObject = runCatching { json.parseToJsonElement(argumentsJson.ifBlank { "{}" }).jsonObject }
+        .getOrElse { JsonObject(emptyMap()) }
 
     private inline fun requireWriteMode(
         mode: WorkspaceMode,
@@ -311,11 +340,16 @@ object WorkspaceHarness {
         fileRevisions: WorkspaceFileRevisionTracker? = null
     ): ToolCallRecord {
         val toolStartMs = PlatformRuntime.monotonicTimeMillis()
-        val scope = accessScope ?: ToolAccessScope(AgentPermissionPolicy(
-            workspacePath = workspaceRoot, workspaceMode = mode,
-            shellAccess = if (allowShell) ShellAccess.FULL_ACCESS else ShellAccess.DISABLED,
-            webAccess = enableWebTools, approvalMode = ToolApprovalMode.NEVER
-        ), goalModeActive)
+        val scope = accessScope ?: ToolAccessScope(
+            AgentPermissionPolicy(
+                workspacePath = workspaceRoot,
+                workspaceMode = mode,
+                shellAccess = if (allowShell) ShellAccess.FULL_ACCESS else ShellAccess.DISABLED,
+                webAccess = enableWebTools,
+                approvalMode = ToolApprovalMode.NEVER
+            ),
+            goalModeActive
+        )
         val denial = when {
             isCancelled() -> "The owning run was cancelled before tool execution."
             scope.policy.workspacePath != workspaceRoot || scope.policy.workspaceMode != mode || scope.policy.allowShell != allowShell -> "Tool dispatch does not match the current permission scope."
@@ -335,8 +369,7 @@ object WorkspaceHarness {
         }
 
         val args = parseArgs(argumentsJson)
-        fun strArg(key: String, default: String = ""): String =
-            args[key]?.jsonPrimitive?.contentOrNull ?: default
+        fun strArg(key: String, default: String = ""): String = args[key]?.jsonPrimitive?.contentOrNull ?: default
 
         val result: Result<String> = when (toolName) {
             "todo_write" -> runCatching {
@@ -578,8 +611,7 @@ object WorkspaceHarness {
      * - Keeps only the head and tail of long `shell_exec`, `fs_search`, `fs_list` and `fs_glob` output, so one
      *   noisy command can't flood the context. Line ranges asked for with `fs_read` are never cut.
      */
-    fun compressToolOutputWithSizeValve(toolName: String, rawOutput: String): String =
-        ToolOutputAndGoalSupport.compressWithSizeValve(toolName, rawOutput)
+    fun compressToolOutputWithSizeValve(toolName: String, rawOutput: String): String = ToolOutputAndGoalSupport.compressWithSizeValve(toolName, rawOutput)
 
     /**
      * Runs a keyless web search across these engines in turn:
@@ -587,21 +619,18 @@ object WorkspaceHarness {
      * 2. Wikipedia OpenSearch / Query API (`https://en.wikipedia.org/w/api.php?...`)
      * 3. HackerNews Algolia Search API (`https://hn.algolia.com/api/v1/search?query=...`)
      */
-    fun executeFreeWebSearch(query: String, maxResults: Int = 6, isCancelled: (() -> Boolean)? = null): Result<String> =
-        WorkspaceWebSearch.search(query, maxResults, isCancelled)
+    fun executeFreeWebSearch(query: String, maxResults: Int = 6, isCancelled: (() -> Boolean)? = null): Result<String> = WorkspaceWebSearch.search(query, maxResults, isCancelled)
 
     /**
      * Pure-Kotlin deterministic recursive-descent mathematical evaluator for `calc_eval`.
      * Supports +, -, *, /, %, ^, parentheses, pi, e, sqrt, cbrt, abs, round, floor, ceil, sin, cos, tan, asin, acos, atan, ln, log, log10, log2, exp.
      */
-    fun evaluateMathExpression(expression: String): String =
-        MathAndDiceEvaluator.evaluateMath(expression)
+    fun evaluateMathExpression(expression: String): String = MathAndDiceEvaluator.evaluateMath(expression)
 
     /**
      * Parses `todo_write` or `goal_complete` tool calls into an updated `GoalTrackerState`.
      */
-    fun applyGoalToolUpdate(current: GoalTrackerState?, tc: ToolCallRecord): GoalTrackerState? =
-        ToolOutputAndGoalSupport.applyGoalToolUpdate(current, tc)
+    fun applyGoalToolUpdate(current: GoalTrackerState?, tc: ToolCallRecord): GoalTrackerState? = ToolOutputAndGoalSupport.applyGoalToolUpdate(current, tc)
 
     /**
      * 3-Layer Rolling Context Compactor.

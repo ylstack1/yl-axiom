@@ -33,7 +33,10 @@ class SseHotPathProbeTest {
     )
 
     private suspend fun read(payload: ByteArray, onEvent: (String, String) -> Unit) = AiProviderEngine.readSseOrJsonFallback(
-        channel = ByteReadChannel(payload), streamFinished = { true }, onSseEvent = { type, data -> onEvent(type, data) }, onPlainJsonFallback = {}
+        channel = ByteReadChannel(payload),
+        streamFinished = { true },
+        onSseEvent = { type, data -> onEvent(type, data) },
+        onPlainJsonFallback = {}
     )
 
     @Test fun streamEventCosts() = runBlocking<Unit> {
@@ -92,8 +95,13 @@ class SseHotPathProbeTest {
         read(stream.toByteArray()) { type, data -> seen += type to data }
         assertEquals(
             listOf(
-                "" to "{\"a\":1}", "" to "{\"b\":2}", "custom" to "{\"c\":3}", "spaced" to "line one\nline two",
-                "" to "{\"d\":4}", "" to "{\"e\":5}", "" to "[DONE]"
+                "" to "{\"a\":1}",
+                "" to "{\"b\":2}",
+                "custom" to "{\"c\":3}",
+                "spaced" to "line one\nline two",
+                "" to "{\"d\":4}",
+                "" to "{\"e\":5}",
+                "" to "[DONE]"
             ),
             seen
         )

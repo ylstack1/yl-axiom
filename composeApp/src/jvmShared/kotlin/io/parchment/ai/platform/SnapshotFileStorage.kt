@@ -128,13 +128,16 @@ internal class SnapshotFileStorage(
         if (file.isFile) AtomicFileStorage.readText(file) else null
     }.getOrNull()
 
-    private fun isInitialSettings(state: AppStateSnapshot): Boolean =
-        state.profiles.none { it.apiKey.isNotBlank() || it.defaultModel.isNotBlank() } &&
-            state.assistants.none { it.id != "asst-default" || it.systemPrompt.isNotBlank() } &&
-            state.sessions.none { it.messages.isNotEmpty() } &&
-            state.savedCards.isEmpty() && state.systemPromptPresets.isEmpty() && state.globalWorldBook.isEmpty() &&
-            state.preferences == PreferencesConfig() && state.defaultModels == DefaultModelConfig() &&
-            state.theme == ThemeConfig() && state.activeSessionId in setOf("", "sess-initial")
+    private fun isInitialSettings(state: AppStateSnapshot): Boolean = state.profiles.none { it.apiKey.isNotBlank() || it.defaultModel.isNotBlank() } &&
+        state.assistants.none { it.id != "asst-default" || it.systemPrompt.isNotBlank() } &&
+        state.sessions.none { it.messages.isNotEmpty() } &&
+        state.savedCards.isEmpty() &&
+        state.systemPromptPresets.isEmpty() &&
+        state.globalWorldBook.isEmpty() &&
+        state.preferences == PreferencesConfig() &&
+        state.defaultModels == DefaultModelConfig() &&
+        state.theme == ThemeConfig() &&
+        state.activeSessionId in setOf("", "sess-initial")
 
     private fun settingsCandidates(): List<File> {
         val root = directory()
@@ -179,10 +182,12 @@ internal class SnapshotFileStorage(
         val existingRaw = read(target)
         if (target.isFile && existingRaw == null) throw IOException("Unable to read the existing settings snapshot.")
         val existing = existingRaw?.let(::decodeSettings)
-        if (isInitialSettings(incoming) && settingsCandidates().any { candidate ->
+        if (isInitialSettings(incoming) &&
+            settingsCandidates().any { candidate ->
                 val content = read(candidate)
                 content != null && content.isNotBlank() && (decodeSettings(content)?.let { !isInitialSettings(it) } ?: true)
-            }) {
+            }
+        ) {
             throw IOException("Existing settings need recovery; refusing to replace them with initial defaults.")
         }
         if (existingRaw != null && existing == null) {
@@ -190,7 +195,9 @@ internal class SnapshotFileStorage(
             if (!corrupt.exists()) AtomicFileStorage.copy(target, corrupt)
         }
         AtomicFileStorage.writeText(
-            target, raw, previousBackup = File(backups, "parchment-settings.prev.json").takeIf { existing != null }
+            target,
+            raw,
+            previousBackup = File(backups, "parchment-settings.prev.json").takeIf { existing != null }
         )
         if (!isInitialSettings(incoming)) AtomicFileStorage.copy(target, File(backups, "parchment-settings.user-backup.json"))
         // Legacy embedded state stays available until every chat has been migrated by the shared writer.
@@ -272,8 +279,13 @@ internal class SnapshotFileStorage(
                         }
                     }
                 }
-                val candidates = listOf(primary, File(folder, "chat.json.tmp"), File(folder, "chat.prev.json"),
-                    legacy, File(chats, "$id.json.tmp"))
+                val candidates = listOf(
+                    primary,
+                    File(folder, "chat.json.tmp"),
+                    File(folder, "chat.prev.json"),
+                    legacy,
+                    File(chats, "$id.json.tmp")
+                )
                 val actualId = candidates.firstNotNullOfOrNull { candidate ->
                     read(candidate)?.let { raw -> runCatching { json.decodeFromString<ChatIdentity>(raw).id }.getOrNull() }
                         ?.takeIf { it.isNotBlank() && it.trim().replace(unsafeSessionCharacters, "_") == id }
@@ -394,12 +406,18 @@ internal class SnapshotFileStorage(
             val nodeObject = node as? JsonObject
             val variants = nodeObject?.get("variants") as? JsonArray
             if (nodeObject?.get("id")?.jsonPrimitive?.contentOrNull != nodeId || variants == null) return@map node
-            JsonObject(nodeObject + ("variants" to JsonArray(variants.map { existing ->
-                if ((existing as? JsonObject)?.get("id")?.jsonPrimitive?.contentOrNull == variantId) {
-                    replaced = true
-                    variant
-                } else existing
-            })))
+            JsonObject(
+                nodeObject + (
+                    "variants" to JsonArray(
+                        variants.map { existing ->
+                            if ((existing as? JsonObject)?.get("id")?.jsonPrimitive?.contentOrNull == variantId) {
+                                replaced = true
+                                variant
+                            } else existing
+                        }
+                    )
+                    )
+            )
         }
         if (!replaced) return null
         return json.encodeToString(JsonObject.serializer(), JsonObject(chat + ("messages" to JsonArray(messages))))

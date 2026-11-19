@@ -12,10 +12,16 @@ internal object HtmlTextConverter {
     private val HTML_BR_HR_REGEX = Regex("(?is)<(br|hr)\\s*/?>")
     private val HTML_BLOCK_CLOSE_REGEX = Regex("(?is)</(p|div|section|article|tr|blockquote|pre|ul|ol|table)>")
     private val HTML_ANY_TAG_REGEX = Regex("(?is)<[^>]+>")
-    private val TRIPLE_NEWLINE_REGEX = Regex("\n{3,}")
+    private val HEX_DIGITS = "0123456789ABCDEF"
 
-    internal fun isHttpWebUrl(url: String): Boolean =
-        url.startsWith("http://", ignoreCase = true) || url.startsWith("https://", ignoreCase = true)
+    private fun hexNibble(ch: Char): Int = when (ch) {
+        in '0'..'9' -> ch - '0'
+        in 'a'..'f' -> ch - 'a' + 10
+        in 'A'..'F' -> ch - 'A' + 10
+        else -> -1
+    }
+
+    internal fun isHttpWebUrl(url: String): Boolean = url.startsWith("http://", ignoreCase = true) || url.startsWith("https://", ignoreCase = true)
 
     internal fun encodeWikiTitle(title: String): String {
         val bytes = title.trim().replace(' ', '_').encodeToByteArray()
@@ -23,48 +29,68 @@ internal object HtmlTextConverter {
         for (raw in bytes) {
             val u = raw.toInt() and 0xFF
             val ch = u.toChar()
-            val safe = ch in 'A'..'Z' || ch in 'a'..'z' || ch in '0'..'9' ||
-                ch == '-' || ch == '_' || ch == '.' || ch == '~' ||
-                ch == ':' || ch == '/' || ch == '(' || ch == ')' || ch == '\''
+            val safe = ch in 'A'..'Z' ||
+                ch in 'a'..'z' ||
+                ch in '0'..'9' ||
+                ch == '-' ||
+                ch == '_' ||
+                ch == '.' ||
+                ch == '~' ||
+                ch == ':' ||
+                ch == '/' ||
+                ch == '(' ||
+                ch == ')' ||
+                ch == '\''
             if (safe) {
                 out.append(ch)
             } else {
                 out.append('%')
-                out.append(u.toString(16).uppercase().padStart(2, '0'))
+                out.append(HEX_DIGITS[u ushr 4])
+                out.append(HEX_DIGITS[u and 0x0F])
             }
         }
         return out.toString()
     }
 
     internal fun urlDecodeComponent(encoded: String): String {
-        val clean = encoded.replace('+', ' ')
-        var out = ByteArray(clean.length.coerceAtLeast(16))
+        val len = encoded.length
+        var out = ByteArray(len.coerceAtLeast(16))
         var outIdx = 0
-        fun appendBytes(bytes: ByteArray) {
-            if (outIdx + bytes.size > out.size) {
-                out = out.copyOf(maxOf(out.size * 2, outIdx + bytes.size))
+        fun ensure(extra: Int) {
+            if (outIdx + extra > out.size) {
+                out = out.copyOf(maxOf(out.size * 2, outIdx + extra))
             }
-            bytes.copyInto(out, outIdx)
-            outIdx += bytes.size
         }
         var i = 0
-        while (i < clean.length) {
-            val ch = clean[i]
-            if (ch == '%' && i + 2 < clean.length) {
-                val hex = clean.substring(i + 1, i + 3).toIntOrNull(16)
-                if (hex != null) {
-                    if (outIdx >= out.size) out = out.copyOf(out.size * 2)
-                    out[outIdx++] = hex.toByte()
-                    i += 3
-                    continue
-                }
-            }
-            if (ch.isHighSurrogate() && i + 1 < clean.length && clean[i + 1].isLowSurrogate()) {
-                appendBytes(clean.substring(i, i + 2).encodeToByteArray())
-                i += 2
-            } else {
-                appendBytes(ch.toString().encodeToByteArray())
+        while (i < len) {
+            val ch = encoded[i]
+            if (ch == '+') {
+                ensure(1)
+                out[outIdx++] = ' '.code.toByte()
                 i++
+            } else if (ch == '%' && i + 2 < len) {
+                val hi = hexNibble(encoded[i + 1])
+                val lo = hexNibble(encoded[i + 2])
+                if (hi >= 0 && lo >= 0) {
+                    ensure(1)
+                    out[outIdx++] = ((hi shl 4) or lo).toByte()
+                    i += 3
+                } else {
+                    ensure(1)
+                    out[outIdx++] = '%'.code.toByte()
+                    i++
+                }
+            } else if (ch.code < 0x80) {
+                ensure(1)
+                out[outIdx++] = ch.code.toByte()
+                i++
+            } else {
+                val span = if (ch.isHighSurrogate() && i + 1 < len && encoded[i + 1].isLowSurrogate()) 2 else 1
+                val utf8 = encoded.substring(i, i + span).encodeToByteArray()
+                ensure(utf8.size)
+                utf8.copyInto(out, outIdx)
+                outIdx += utf8.size
+                i += span
             }
         }
         return out.decodeToString(0, outIdx)
@@ -95,7 +121,7 @@ internal object HtmlTextConverter {
             (trimmed.contains("<body", ignoreCase = true) && trimmed.contains("</body>", ignoreCase = true))
         if (!looksLikeHtml) return trimmed
 
-        return trimmed
+        val stripped = trimmed
             .replace(HTML_STRIP_BLOCK_TAGS_REGEX, "")
             .replace(HTML_COMMENT_REGEX, "")
             .replace(HTML_H1_REGEX, "\n# $1\n")
@@ -112,17 +138,54 @@ internal object HtmlTextConverter {
             .replace(HTML_BR_HR_REGEX, "\n")
             .replace(HTML_BLOCK_CLOSE_REGEX, "\n")
             .replace(HTML_ANY_TAG_REGEX, "")
-            .replace("&nbsp;", " ")
-            .replace("&amp;", "&")
-            .replace("&lt;", "<")
-            .replace("&gt;", ">")
-            .replace("&quot;", "\"")
-            .replace("&#39;", "'")
-            .replace("&#x27;", "'")
-            .lines()
-            .map { it.trim() }
-            .joinToString("\n")
-            .replace(TRIPLE_NEWLINE_REGEX, "\n\n")
-            .trim()
+        return decodeEntitiesAndNormalizeLines(stripped)
+    }
+
+    private fun decodeEntitiesAndNormalizeLines(src: String): String {
+        val len = src.length
+        val decoded = StringBuilder(len)
+        var i = 0
+        while (i < len) {
+            if (src[i] == '&') {
+                when {
+                    src.startsWith("&nbsp;", i) -> { decoded.append(' '); i += 6; continue }
+                    src.startsWith("&amp;", i) -> { decoded.append('&'); i += 5; continue }
+                    src.startsWith("&lt;", i) -> { decoded.append('<'); i += 4; continue }
+                    src.startsWith("&gt;", i) -> { decoded.append('>'); i += 4; continue }
+                    src.startsWith("&quot;", i) -> { decoded.append('"'); i += 6; continue }
+                    src.startsWith("&#39;", i) -> { decoded.append('\''); i += 5; continue }
+                    src.startsWith("&#x27;", i) -> { decoded.append('\''); i += 6; continue }
+                }
+            }
+            decoded.append(src[i++])
+        }
+        val out = StringBuilder(decoded.length)
+        var lineStart = 0
+        var blankRun = 0
+        val dLen = decoded.length
+        while (lineStart <= dLen) {
+            var lineEnd = lineStart
+            while (lineEnd < dLen && decoded[lineEnd] != '\n' && decoded[lineEnd] != '\r') lineEnd++
+            var a = lineStart
+            var b = lineEnd
+            while (a < b && decoded[a].isWhitespace()) a++
+            while (b > a && decoded[b - 1].isWhitespace()) b--
+            if (a == b) {
+                if (out.isNotEmpty()) blankRun++
+            } else {
+                if (out.isNotEmpty()) {
+                    out.append('\n')
+                    if (blankRun > 0) out.append('\n')
+                }
+                blankRun = 0
+                out.append(decoded, a, b)
+            }
+            lineStart = if (lineEnd < dLen && decoded[lineEnd] == '\r' && lineEnd + 1 < dLen && decoded[lineEnd + 1] == '\n') {
+                lineEnd + 2
+            } else {
+                lineEnd + 1
+            }
+        }
+        return out.toString()
     }
 }

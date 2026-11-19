@@ -5,6 +5,7 @@ import java.io.File
 actual object PlatformVoice {
     @Volatile
     private var activeTtsProcess: Process? = null
+
     @Volatile
     private var activeSttProcess: Process? = null
 
@@ -30,8 +31,10 @@ actual object PlatformVoice {
                         "powershell.exe",
                         "-NoProfile",
                         "-NonInteractive",
-                        "-WindowStyle", "Hidden",
-                        "-Command", ps
+                        "-WindowStyle",
+                        "Hidden",
+                        "-Command",
+                        ps
                     ).start()
                     activeTtsProcess = proc
                     runCatching { proc.outputStream.close() }
@@ -74,8 +77,10 @@ actual object PlatformVoice {
                     "powershell.exe",
                     "-NoProfile",
                     "-NonInteractive",
-                    "-WindowStyle", "Hidden",
-                    "-Command", ps
+                    "-WindowStyle",
+                    "Hidden",
+                    "-Command",
+                    ps
                 ).start()
                 activeSttProcess = proc
                 runCatching { proc.outputStream.close() }

@@ -44,15 +44,25 @@ class WorkspaceAndMediaBehaviorTest {
 
     @Test fun multiEditAppliesEveryStepOrNone() {
         file("code.txt").writeText("alpha\nbeta\n")
-        val applied = PlatformWorkspace.workspaceMultiEdit(workspace, "code.txt", listOf(
-            Triple("alpha", "one", false), Triple("beta", "two", false)
-        )).getOrThrow()
+        val applied = PlatformWorkspace.workspaceMultiEdit(
+            workspace,
+            "code.txt",
+            listOf(
+                Triple("alpha", "one", false),
+                Triple("beta", "two", false)
+            )
+        ).getOrThrow()
         assertTrue(applied.startsWith("Applied 2 edit(s) atomically"), applied)
         assertEquals("one\ntwo\n", file("code.txt").readText())
 
-        val failure = PlatformWorkspace.workspaceMultiEdit(workspace, "code.txt", listOf(
-            Triple("one", "first", false), Triple("no such text", "x", false)
-        )).exceptionOrNull()
+        val failure = PlatformWorkspace.workspaceMultiEdit(
+            workspace,
+            "code.txt",
+            listOf(
+                Triple("one", "first", false),
+                Triple("no such text", "x", false)
+            )
+        ).exceptionOrNull()
         assertTrue(failure?.message.orEmpty().startsWith("Edit #2 failed (rolled back all edits)"), failure?.message)
         assertEquals("one\ntwo\n", file("code.txt").readText(), "A failed step must leave the file unchanged")
     }

@@ -41,6 +41,7 @@ object McpRegistry {
     private val RESTART_WAITS_MS = longArrayOf(1_000L, 4_000L, 15_000L)
     private const val MAX_STARTS_PER_WINDOW = 3
     private const val START_WINDOW_MS = 10 * 60_000L
+
     /** How long a call waits for a restart in progress before saying the server is unavailable. */
     private const val RESTART_CALL_WAIT_MS = 25_000L
 
@@ -49,6 +50,7 @@ object McpRegistry {
 
     private val lock = Mutex()
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+
     // Guarded by lock: the servers the last sync asked for, and when each was started recently.
     private var synced: Map<String, McpServerConfig> = emptyMap()
     private val startTimes = HashMap<String, ArrayDeque<Long>>()
@@ -132,14 +134,18 @@ object McpRegistry {
             val taken = others.map { it.definition.name }.toMutableSet()
             val added = tools.map { tool ->
                 val name = (previousNames[tool.name]?.takeIf { it !in taken } ?: qualifiedName(config, tool.name, taken)).also { taken += it }
-                RemoteTool(WorkspaceHarness.ToolDefinition(
-                    name = name,
-                    // A server's own words are untrusted, so the model is told where they came from.
-                    description = "[From MCP server \"${config.name.ifBlank { config.id }}\"] ${tool.description}".take(1024),
-                    parametersSchema = tool.inputSchema,
-                    requiresWritePermission = false,
-                    requiresWorkspaceFolder = false
-                ), config.id, tool.name)
+                RemoteTool(
+                    WorkspaceHarness.ToolDefinition(
+                        name = name,
+                        // A server's own words are untrusted, so the model is told where they came from.
+                        description = "[From MCP server \"${config.name.ifBlank { config.id }}\"] ${tool.description}".take(1024),
+                        parametersSchema = tool.inputSchema,
+                        requiresWritePermission = false,
+                        requiresWorkspaceFolder = false
+                    ),
+                    config.id,
+                    tool.name
+                )
             }
             connections = connections + (config.id to Connection(config, checkNotNull(client)))
             toolsState.value = (others + added).sortedBy { it.definition.name }

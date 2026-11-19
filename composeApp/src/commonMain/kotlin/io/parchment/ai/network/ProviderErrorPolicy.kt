@@ -26,11 +26,12 @@ internal class ProviderHttpException(
     val retryAfterMs: Long? = null
 ) : IllegalStateException(if (label.isBlank()) "HTTP $status: $body" else "$label HTTP $status: $body")
 
-internal fun providerHttpError(label: String, response: HttpResponse, body: String): ProviderHttpException =
-    ProviderHttpException(
-        label, response.status.value, body,
-        parseRetryAfterMs({ name -> response.headers[name] }, body, PlatformRuntime.currentTimeMillis())
-    )
+internal fun providerHttpError(label: String, response: HttpResponse, body: String): ProviderHttpException = ProviderHttpException(
+    label,
+    response.status.value,
+    body,
+    parseRetryAfterMs({ name -> response.headers[name] }, body, PlatformRuntime.currentTimeMillis())
+)
 
 private const val MAX_HINT_SCAN_CHARS = 64 * 1024
 private val RETRY_DELAY_SECONDS = Regex("""(\d+(?:\.\d+)?)s""")
@@ -80,8 +81,7 @@ private fun isGeminiDailyQuota(body: String): Boolean = geminiErrorDetails(body)
 private val HTTP_STATUS_IN_MESSAGE = Regex("""\bhttp ([45]\d\d)\b""")
 
 /** The typed HTTP failure behind [err], looking through the step-retry wrapper. */
-private fun Throwable.providerHttp(): ProviderHttpException? =
-    ((this as? StepRetriesExhaustedException)?.cause ?: this) as? ProviderHttpException
+private fun Throwable.providerHttp(): ProviderHttpException? = ((this as? StepRetriesExhaustedException)?.cause ?: this) as? ProviderHttpException
 
 /** The failure's HTTP status: typed when the engine threw it, read from an older "HTTP 502: ..." message otherwise. */
 private fun httpStatusOf(err: Throwable): Int? = err.providerHttp()?.status
@@ -216,11 +216,19 @@ internal fun AiProviderEngine.isTransientOrProxyTimeoutError(err: Throwable): Bo
     if (msg.contains("request_too_large") || msg.contains("payload too large") || msg.contains("entity too large")) return false
     return when (val status = httpStatusOf(err)) {
         // A 400 is a client mistake unless its text says rate limit, overload or timeout.
-        400 -> !(msg.contains("invalid_request") || msg.contains("invalid_argument") || msg.contains("bad_request")) && (
-            msg.contains("rate limit") || msg.contains("rate_limit") || msg.contains("ratelimit") ||
-                msg.contains("too many requests") || msg.contains("resource_exhausted") || msg.contains("overload") ||
-                msg.contains("timeout") || msg.contains("busy") || msg.contains("capacity") || msg.contains("try again")
-            )
+        400 -> !(msg.contains("invalid_request") || msg.contains("invalid_argument") || msg.contains("bad_request")) &&
+            (
+                msg.contains("rate limit") ||
+                    msg.contains("rate_limit") ||
+                    msg.contains("ratelimit") ||
+                    msg.contains("too many requests") ||
+                    msg.contains("resource_exhausted") ||
+                    msg.contains("overload") ||
+                    msg.contains("timeout") ||
+                    msg.contains("busy") ||
+                    msg.contains("capacity") ||
+                    msg.contains("try again")
+                )
         null -> true // Network, socket, EOF and cut-stream failures.
         else -> status !in NON_RETRYABLE_STATUSES
     }

@@ -43,9 +43,16 @@ class WorkflowEndToEndTest {
             }
             start()
         }
-        val profile = ProviderProfile("fixture", "Fixture", ProviderProtocol.CUSTOM, customDialect = CUSTOM_DIALECT_OPENAI_RESPONSES,
-            baseUrl = "http://127.0.0.1:${server.address.port}", defaultModel = "fixture-model", thinkingEffort = "none",
-            customModelSpecs = mapOf("fixture-model" to ModelPricingSpec("fixture-model")))
+        val profile = ProviderProfile(
+            "fixture",
+            "Fixture",
+            ProviderProtocol.CUSTOM,
+            customDialect = CUSTOM_DIALECT_OPENAI_RESPONSES,
+            baseUrl = "http://127.0.0.1:${server.address.port}",
+            defaultModel = "fixture-model",
+            thinkingEffort = "none",
+            customModelSpecs = mapOf("fixture-model" to ModelPricingSpec("fixture-model"))
+        )
         override fun close() = server.stop(0)
     }
 
@@ -81,10 +88,15 @@ class WorkflowEndToEndTest {
 
     @Test fun dailyChatSendsTheChosenVersionAndLeavesOutExcludedMessages() {
         Provider(listOf(listOf(reply("Noted.")))).use { provider ->
-            val regenerated = MessageNode("a1", MessageRole.ASSISTANT, listOf(
-                MessageVariant("old", content = "Discarded first attempt"),
-                MessageVariant("new", content = "Chosen second attempt")
-            ), activeVariantIndex = 1)
+            val regenerated = MessageNode(
+                "a1",
+                MessageRole.ASSISTANT,
+                listOf(
+                    MessageVariant("old", content = "Discarded first attempt"),
+                    MessageVariant("new", content = "Chosen second attempt")
+                ),
+                activeVariantIndex = 1
+            )
             val excluded = user("hidden", "Private aside").copy(includedInContext = false)
             val session = ChatSession("chat", "Daily", 1L, 1L, provider.profile.id, modelOverride = "chosen-model")
             assertIs<StreamUpdate.Completed>(run(provider, session, listOf(user("u1", "Hello"), regenerated, excluded, user("u2", "Next"))).last())
@@ -112,8 +124,16 @@ class WorkflowEndToEndTest {
             )
             Provider(script).use { provider ->
                 val policy = AgentPermissionPolicy(workspacePath = root.toString(), workspaceMode = WorkspaceMode.READ_WRITE, approvalMode = ToolApprovalMode.NEVER)
-                val session = ChatSession("chat", "Agent", 1L, 1L, provider.profile.id, workspacePath = policy.workspacePath,
-                    workspaceMode = policy.workspaceMode, permissionOverrides = policy.asOverrides())
+                val session = ChatSession(
+                    "chat",
+                    "Agent",
+                    1L,
+                    1L,
+                    provider.profile.id,
+                    workspacePath = policy.workspacePath,
+                    workspaceMode = policy.workspaceMode,
+                    permissionOverrides = policy.asOverrides()
+                )
                 val broker = ToolApprovalBroker("run", "chat", { ToolAccessScope(policy, goalModeActive = true) })
                 val updates = runBlocking {
                     withContext(AgentToolRunContext(broker)) {

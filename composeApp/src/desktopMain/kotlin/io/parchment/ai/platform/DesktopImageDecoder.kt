@@ -55,6 +55,5 @@ internal object DesktopImageDecoder {
         }
     }
 
-    private fun Bitmap.asComposeImageBitmapOrCopy(): ImageBitmap =
-        Image.makeFromBitmap(this).use { it.toComposeImageBitmap() }
+    private fun Bitmap.asComposeImageBitmapOrCopy(): ImageBitmap = Image.makeFromBitmap(this).use { it.toComposeImageBitmap() }
 }

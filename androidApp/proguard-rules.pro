@@ -9,6 +9,9 @@
 -dontwarn org.openjsse.**
 -dontwarn com.sun.jna.**
 
+# Keep Rust direct-JNI bridge entry points intact under R8 Full Mode.
+-keep class io.parchment.ai.platform.ParchmentNativeCore { *; }
+
 # Keep source file names and line numbers so crash reports stay readable.
 -keepattributes SourceFile,LineNumberTable
 -renamesourcefileattribute SourceFile

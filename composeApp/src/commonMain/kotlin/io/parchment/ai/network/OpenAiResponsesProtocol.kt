@@ -1,7 +1,5 @@
 package io.parchment.ai.network
 
-import io.parchment.ai.strings.Strings
-
 import io.ktor.client.request.get
 import io.ktor.client.request.header
 import io.ktor.client.request.preparePost
@@ -14,7 +12,6 @@ import io.ktor.http.isSuccess
 import io.ktor.serialization.kotlinx.json.json
 import io.parchment.ai.harness.ToolAccessScope
 import io.parchment.ai.harness.WorkspaceHarness
-import io.parchment.ai.model.turnTextLayout
 import io.parchment.ai.model.AgentPermissionResolver
 import io.parchment.ai.model.CUSTOM_DIALECT_OPENAI_RESPONSES
 import io.parchment.ai.model.ChatSession
@@ -27,9 +24,11 @@ import io.parchment.ai.model.ProviderProtocol
 import io.parchment.ai.model.ToolApprovalMode
 import io.parchment.ai.model.ToolCallRecord
 import io.parchment.ai.model.keepsProviderState
+import io.parchment.ai.model.turnTextLayout
 import io.parchment.ai.network.AiProviderEngine.RawWebCitation
 import io.parchment.ai.network.AiProviderEngine.ResolvedBinaryAttachment
 import io.parchment.ai.network.AiProviderEngine.StepRetriesExhaustedException
+import io.parchment.ai.strings.Strings
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
@@ -180,8 +179,11 @@ internal suspend fun AiProviderEngine.executeOpenAiResponsesLoop(
 
                 val effort = profile.thinkingEffort.trim()
                 val lowerEffort = effort.lowercase()
-                val isReasoningEnabled = !omitReasoningOnRetry && effort.isNotEmpty() &&
-                    lowerEffort != "none" && lowerEffort != "off" && lowerEffort != "default"
+                val isReasoningEnabled = !omitReasoningOnRetry &&
+                    effort.isNotEmpty() &&
+                    lowerEffort != "none" &&
+                    lowerEffort != "off" &&
+                    lowerEffort != "default"
                 val effectiveEffort = if (isReasoningEnabled) (reasoningEffortOverride ?: lowerEffort) else ""
                 if (isReasoningEnabled) {
                     putJsonObject("reasoning") {
@@ -203,11 +205,13 @@ internal suspend fun AiProviderEngine.executeOpenAiResponsesLoop(
                         add(buildJsonObject { put("type", wsType) })
                     }
                     if (modelOutputsImages && !omitImageGenToolOnRetry) {
-                        add(buildJsonObject {
-                            put("type", "image_generation")
-                            val size = resolveOpenAiImageSize(profile.mediaAspectRatio, profile.mediaResolution)
-                            if (size != "auto") put("size", size)
-                        })
+                        add(
+                            buildJsonObject {
+                                put("type", "image_generation")
+                                val size = resolveOpenAiImageSize(profile.mediaAspectRatio, profile.mediaResolution)
+                                if (size != "auto") put("size", size)
+                            }
+                        )
                     }
                     val expandedMcpTools = currentExpandedMcpTools()
                     val wsTools = WorkspaceHarness.buildOpenAiResponsesTools(
@@ -230,20 +234,24 @@ internal suspend fun AiProviderEngine.executeOpenAiResponsesLoop(
                 if (pendingToolResults.isNotEmpty() && useChainedId) {
                     putJsonArray("input") {
                         for (tr in pendingToolResults) {
-                            add(buildJsonObject {
-                                put("type", "function_call_output")
-                                put("call_id", tr.id)
-                                put("output", tr.resultText)
-                            })
+                            add(
+                                buildJsonObject {
+                                    put("type", "function_call_output")
+                                    put("call_id", tr.id)
+                                    put("output", tr.resultText)
+                                }
+                            )
                         }
                         pendingToolResults.filter { it.hasScreenshot }.forEach { add(responsesScreenshotMessage(it)) }
                     }
                 } else if (pendingStopHookPrompt.isNotBlank() && useChainedId) {
                     putJsonArray("input") {
-                        add(buildJsonObject {
-                            put("role", "user")
-                            put("content", pendingStopHookPrompt)
-                        })
+                        add(
+                            buildJsonObject {
+                                put("role", "user")
+                                put("content", pendingStopHookPrompt)
+                            }
+                        )
                     }
                 } else {
                     putJsonArray("input") {
@@ -279,7 +287,6 @@ internal suspend fun AiProviderEngine.executeOpenAiResponsesLoop(
                         throw providerHttpError("OpenAI Responses", response, err)
                     }
 
-
                     val fnBuildersByItemId = mutableMapOf<String, Pair<String, Pair<String, StringBuilder>>>()
 
                     var streamFinished = false
@@ -297,8 +304,12 @@ internal suspend fun AiProviderEngine.executeOpenAiResponsesLoop(
                                     val respSub = evObj["response"] as? JsonObject
                                     val id = (respSub?.get("id") as? JsonPrimitive)?.contentOrNull ?: ""
                                     if (id.isNotBlank()) currentRoundResponseId = id
-                                    onUsage(usageRequestId, id, UsageDialect.OPENAI_RESPONSES,
-                                        parseProviderUsage(UsageDialect.OPENAI_RESPONSES, respSub?.get("usage") as? JsonObject))
+                                    onUsage(
+                                        usageRequestId,
+                                        id,
+                                        UsageDialect.OPENAI_RESPONSES,
+                                        parseProviderUsage(UsageDialect.OPENAI_RESPONSES, respSub?.get("usage") as? JsonObject)
+                                    )
                                 }
                                 "response.output_text.delta" -> {
                                     val delta = (evObj["delta"] as? JsonPrimitive)?.contentOrNull ?: ""
@@ -354,8 +365,12 @@ internal suspend fun AiProviderEngine.executeOpenAiResponsesLoop(
                                 "response.output_item.done" -> {
                                     val item = evObj["item"] as? JsonObject
                                     noteMessagePhase(item)
-                                    onUsage(usageRequestId, "", UsageDialect.OPENAI_RESPONSES,
-                                        parseProviderUsage(UsageDialect.OPENAI_RESPONSES, null, response = evObj))
+                                    onUsage(
+                                        usageRequestId,
+                                        "",
+                                        UsageDialect.OPENAI_RESPONSES,
+                                        parseProviderUsage(UsageDialect.OPENAI_RESPONSES, null, response = evObj)
+                                    )
                                     val itemType = item?.get("type")?.jsonPrimitive?.contentOrNull
                                     if (itemType == "function_call") {
                                         val itemId = item["id"]?.jsonPrimitive?.contentOrNull ?: ""
@@ -419,8 +434,12 @@ internal suspend fun AiProviderEngine.executeOpenAiResponsesLoop(
                                         extractCitationsFromOpenAiResponsesItem(item, onCitation)
                                     }
                                     val usage = respSub?.get("usage") as? JsonObject
-                                    onUsage(usageRequestId, id.ifBlank { currentRoundResponseId.ifBlank { currentPrevResponseId } }, UsageDialect.OPENAI_RESPONSES,
-                                        parseProviderUsage(UsageDialect.OPENAI_RESPONSES, usage, isFinal = true, response = respSub))
+                                    onUsage(
+                                        usageRequestId,
+                                        id.ifBlank { currentRoundResponseId.ifBlank { currentPrevResponseId } },
+                                        UsageDialect.OPENAI_RESPONSES,
+                                        parseProviderUsage(UsageDialect.OPENAI_RESPONSES, usage, isFinal = true, response = respSub)
+                                    )
                                 }
                                 "error" -> {
                                     val msg = ((evObj["error"] as? JsonObject)?.get("message") as? JsonPrimitive)?.contentOrNull ?: dataLine
@@ -445,8 +464,12 @@ internal suspend fun AiProviderEngine.executeOpenAiResponsesLoop(
                             }
                             val id = (root["id"] as? JsonPrimitive)?.contentOrNull ?: ""
                             if (id.isNotBlank()) currentRoundResponseId = id
-                            onUsage(usageRequestId, id, UsageDialect.OPENAI_RESPONSES,
-                                parseProviderUsage(UsageDialect.OPENAI_RESPONSES, root["usage"] as? JsonObject, isFinal = true, response = root))
+                            onUsage(
+                                usageRequestId,
+                                id,
+                                UsageDialect.OPENAI_RESPONSES,
+                                parseProviderUsage(UsageDialect.OPENAI_RESPONSES, root["usage"] as? JsonObject, isFinal = true, response = root)
+                            )
                             val outputArr = root["output"] as? JsonArray
                             outputArr?.forEach { itemEl ->
                                 val item = itemEl as? JsonObject ?: return@forEach
@@ -521,14 +544,17 @@ internal suspend fun AiProviderEngine.executeOpenAiResponsesLoop(
                         onStatus(Strings.endpointRejectedReasoningEncryptedContentInclude)
                         continue
                     }
-                    if (!useLegacyWebSearchPreviewOnRetry && profile.enableWebSearch &&
+                    if (!useLegacyWebSearchPreviewOnRetry &&
+                        profile.enableWebSearch &&
                         (errMsg.contains("web_search") && !errMsg.contains("web_search_preview"))
                     ) {
                         useLegacyWebSearchPreviewOnRetry = true
                         onStatus(Strings.endpointUsesLegacyWebSearchPreview)
                         continue
                     }
-                    if (useLegacyWebSearchPreviewOnRetry && !omitOpenAiNativeWebSearchOnRetry && profile.enableWebSearch &&
+                    if (useLegacyWebSearchPreviewOnRetry &&
+                        !omitOpenAiNativeWebSearchOnRetry &&
+                        profile.enableWebSearch &&
                         errMsg.contains("web_search")
                     ) {
                         omitOpenAiNativeWebSearchOnRetry = true
@@ -541,17 +567,25 @@ internal suspend fun AiProviderEngine.executeOpenAiResponsesLoop(
                         continue
                     }
                     val lowerEffortRetry = profile.thinkingEffort.trim().lowercase()
-                    val reasoningWasSent = !omitReasoningOnRetry && lowerEffortRetry.isNotEmpty() &&
+                    val reasoningWasSent = !omitReasoningOnRetry &&
+                        lowerEffortRetry.isNotEmpty() &&
                         lowerEffortRetry !in setOf("none", "off", "default")
-                    if (!omitReasoningSummaryOnRetry && reasoningWasSent &&
+                    if (!omitReasoningSummaryOnRetry &&
+                        reasoningWasSent &&
                         (errMsg.contains("summary") || errMsg.contains("verified") || errMsg.contains("organization"))
                     ) {
                         omitReasoningSummaryOnRetry = true
                         onStatus(Strings.endpointRejectedReasoningSummaryRetryingWithout)
                         continue
                     }
-                    if (reasoningWasSent && (errMsg.contains("reasoning") || errMsg.contains("effort") || errMsg.contains("summary") ||
-                            errMsg.contains("unsupported_value") || errMsg.contains("invalid_value"))
+                    if (reasoningWasSent &&
+                        (
+                            errMsg.contains("reasoning") ||
+                                errMsg.contains("effort") ||
+                                errMsg.contains("summary") ||
+                                errMsg.contains("unsupported_value") ||
+                                errMsg.contains("invalid_value")
+                            )
                     ) {
                         val currentEffort = reasoningEffortOverride ?: lowerEffortRetry
                         val stepped = stepDownReasoningEffort(currentEffort, errMsg)
@@ -569,16 +603,23 @@ internal suspend fun AiProviderEngine.executeOpenAiResponsesLoop(
                         onStatus(Strings.endpointRejectedSamplingParametersRetryingWith)
                         continue
                     }
-                    if (!foldHistoricalToolsOnRetry && hasHistoricalToolsOrSigs &&
-                        (errMsg.contains("invalid_request") || errMsg.contains("reasoning") || errMsg.contains("encrypted_content") ||
-                            errMsg.contains("function_call") || errMsg.contains("call_id"))
+                    if (!foldHistoricalToolsOnRetry &&
+                        hasHistoricalToolsOrSigs &&
+                        (
+                            errMsg.contains("invalid_request") ||
+                                errMsg.contains("reasoning") ||
+                                errMsg.contains("encrypted_content") ||
+                                errMsg.contains("function_call") ||
+                                errMsg.contains("call_id")
+                            )
                     ) {
                         foldHistoricalToolsOnRetry = true
                         onStatus(Strings.endpointRejectedHistoricalToolReasoningItems)
                         continue
                     }
                 }
-                if (useChainedId && !stepEmittedOutput &&
+                if (useChainedId &&
+                    !stepEmittedOutput &&
                     (errMsg.contains("http 404") || errMsg.contains("previous_response_id") || errMsg.contains("no tool call found"))
                 ) {
                     currentPrevResponseId = ""
@@ -621,23 +662,29 @@ internal suspend fun AiProviderEngine.executeOpenAiResponsesLoop(
                 pendingToolResults = emptyList()
                 pendingStopHookPrompt = stopHookPrompt
                 if (roundTextBuilder.isNotEmpty()) {
-                    extraResponsesLoopItems.add(buildJsonObject {
-                        put("type", "message")
-                        put("role", "assistant")
-                        put("status", "completed")
-                        if (roundPhase.isNotEmpty()) put("phase", roundPhase)
-                        putJsonArray("content") {
-                            add(buildJsonObject {
-                                put("type", "output_text")
-                                put("text", roundTextBuilder.toString())
-                            })
+                    extraResponsesLoopItems.add(
+                        buildJsonObject {
+                            put("type", "message")
+                            put("role", "assistant")
+                            put("status", "completed")
+                            if (roundPhase.isNotEmpty()) put("phase", roundPhase)
+                            putJsonArray("content") {
+                                add(
+                                    buildJsonObject {
+                                        put("type", "output_text")
+                                        put("text", roundTextBuilder.toString())
+                                    }
+                                )
+                            }
                         }
-                    })
+                    )
                 }
-                extraResponsesLoopItems.add(buildJsonObject {
-                    put("role", "user")
-                    put("content", stopHookPrompt)
-                })
+                extraResponsesLoopItems.add(
+                    buildJsonObject {
+                        put("role", "user")
+                        put("content", stopHookPrompt)
+                    }
+                )
                 onStatus(Strings.goalWorkCheckContinuingIncompleteChecklist)
                 continue
             }
@@ -646,43 +693,53 @@ internal suspend fun AiProviderEngine.executeOpenAiResponsesLoop(
         pendingStopHookPrompt = ""
 
         if (isValidOpenAiEncryptedReasoning(roundEncryptedReasoning)) {
-            extraResponsesLoopItems.add(buildJsonObject {
-                put("type", "reasoning")
-                putJsonArray("summary") {
-                    if (roundReasoningBuilder.isNotEmpty()) {
-                        add(buildJsonObject {
-                            put("type", "summary_text")
-                            put("text", roundReasoningBuilder.toString())
-                        })
+            extraResponsesLoopItems.add(
+                buildJsonObject {
+                    put("type", "reasoning")
+                    putJsonArray("summary") {
+                        if (roundReasoningBuilder.isNotEmpty()) {
+                            add(
+                                buildJsonObject {
+                                    put("type", "summary_text")
+                                    put("text", roundReasoningBuilder.toString())
+                                }
+                            )
+                        }
                     }
+                    put("encrypted_content", roundEncryptedReasoning)
                 }
-                put("encrypted_content", roundEncryptedReasoning)
-            })
+            )
         }
 
         if (roundTextBuilder.isNotEmpty()) {
-            extraResponsesLoopItems.add(buildJsonObject {
-                put("type", "message")
-                put("role", "assistant")
-                put("status", "completed")
-                if (roundPhase.isNotEmpty()) put("phase", roundPhase)
-                putJsonArray("content") {
-                    add(buildJsonObject {
-                        put("type", "output_text")
-                        put("text", roundTextBuilder.toString())
-                    })
+            extraResponsesLoopItems.add(
+                buildJsonObject {
+                    put("type", "message")
+                    put("role", "assistant")
+                    put("status", "completed")
+                    if (roundPhase.isNotEmpty()) put("phase", roundPhase)
+                    putJsonArray("content") {
+                        add(
+                            buildJsonObject {
+                                put("type", "output_text")
+                                put("text", roundTextBuilder.toString())
+                            }
+                        )
+                    }
                 }
-            })
+            )
         }
 
         for ((callId, fnPair) in turnToolCalls) {
-            extraResponsesLoopItems.add(buildJsonObject {
-                put("type", "function_call")
-                put("call_id", callId)
-                put("name", fnPair.first)
-                put("arguments", fnPair.second)
-                put("status", "completed")
-            })
+            extraResponsesLoopItems.add(
+                buildJsonObject {
+                    put("type", "function_call")
+                    put("call_id", callId)
+                    put("name", fnPair.first)
+                    put("arguments", fnPair.second)
+                    put("status", "completed")
+                }
+            )
         }
         val results = executeWorkspaceToolBatchWithLiveProgress(
             workspaceRoot = session.workspacePath,
@@ -703,11 +760,13 @@ internal suspend fun AiProviderEngine.executeOpenAiResponsesLoop(
             onGoalProgress = onGoalProgress
         )
         for (rec in results) {
-            extraResponsesLoopItems.add(buildJsonObject {
-                put("type", "function_call_output")
-                put("call_id", rec.id)
-                put("output", rec.resultText)
-            })
+            extraResponsesLoopItems.add(
+                buildJsonObject {
+                    put("type", "function_call_output")
+                    put("call_id", rec.id)
+                    put("output", rec.resultText)
+                }
+            )
         }
         if (results.any { it.hasScreenshot }) extraResponsesLoopItems.dropOlderScreenshotEntries()
         results.filter { it.hasScreenshot }.forEach { extraResponsesLoopItems.add(responsesScreenshotMessage(it)) }
@@ -740,7 +799,8 @@ internal fun AiProviderEngine.buildOpenAiResponsesInputArray(
     val lastAssistantIdx = nodes.indexOfLast { it.role == MessageRole.ASSISTANT }
     fun appendUserItem(text: String, attachments: List<ResolvedBinaryAttachment>) {
         val last = items.lastOrNull()
-        if (attachments.isEmpty() && last != null &&
+        if (attachments.isEmpty() &&
+            last != null &&
             last["role"]?.jsonPrimitive?.contentOrNull == "user" &&
             last["content"] is JsonPrimitive
         ) {
@@ -753,38 +813,48 @@ internal fun AiProviderEngine.buildOpenAiResponsesInputArray(
             return
         }
 
-        items.add(buildJsonObject {
-            put("role", "user")
-            if (attachments.isEmpty()) {
-                put("content", text)
-            } else {
-                putJsonArray("content") {
-                    if (text.isNotBlank()) {
-                        add(buildJsonObject {
-                            put("type", "input_text")
-                            put("text", text)
-                        })
-                    }
-                    for (att in attachments) {
-                        when {
-                            att.isDocument -> add(buildJsonObject {
-                                put("type", "input_file")
-                                put("filename", att.fileName.ifBlank { "document.pdf" })
-                                put("file_data", "data:${att.mimeType};base64,${att.base64Data}")
-                            })
-                            att.mimeType.lowercase().startsWith("image/") -> add(buildJsonObject {
-                                put("type", "input_image")
-                                put("image_url", "data:${att.mimeType};base64,${att.base64Data}")
-                            })
-                            else -> add(buildJsonObject {
-                                put("type", "input_text")
-                                put("text", att.unsupportedAttachmentNote())
-                            })
+        items.add(
+            buildJsonObject {
+                put("role", "user")
+                if (attachments.isEmpty()) {
+                    put("content", text)
+                } else {
+                    putJsonArray("content") {
+                        if (text.isNotBlank()) {
+                            add(
+                                buildJsonObject {
+                                    put("type", "input_text")
+                                    put("text", text)
+                                }
+                            )
+                        }
+                        for (att in attachments) {
+                            when {
+                                att.isDocument -> add(
+                                    buildJsonObject {
+                                        put("type", "input_file")
+                                        put("filename", att.fileName.ifBlank { "document.pdf" })
+                                        put("file_data", "data:${att.mimeType};base64,${att.base64Data}")
+                                    }
+                                )
+                                att.mimeType.lowercase().startsWith("image/") -> add(
+                                    buildJsonObject {
+                                        put("type", "input_image")
+                                        put("image_url", "data:${att.mimeType};base64,${att.base64Data}")
+                                    }
+                                )
+                                else -> add(
+                                    buildJsonObject {
+                                        put("type", "input_text")
+                                        put("text", att.unsupportedAttachmentNote())
+                                    }
+                                )
+                            }
                         }
                     }
                 }
             }
-        })
+        )
     }
 
     for ((idx, pair) in withAuthorsNote.withIndex()) {
@@ -804,17 +874,21 @@ internal fun AiProviderEngine.buildOpenAiResponsesInputArray(
 
             if (foldHistoricalToolsToText && toolCalls.isNotEmpty()) {
                 val foldedText = buildFoldedToolHistoryText(toolCalls, thinkSummary, cleanText)
-                items.add(buildJsonObject {
-                    put("type", "message")
-                    put("role", "assistant")
-                    put("status", "completed")
-                    putJsonArray("content") {
-                        add(buildJsonObject {
-                            put("type", "output_text")
-                            put("text", foldedText)
-                        })
+                items.add(
+                    buildJsonObject {
+                        put("type", "message")
+                        put("role", "assistant")
+                        put("status", "completed")
+                        putJsonArray("content") {
+                            add(
+                                buildJsonObject {
+                                    put("type", "output_text")
+                                    put("text", foldedText)
+                                }
+                            )
+                        }
                     }
-                })
+                )
             } else {
                 if (toolCalls.isNotEmpty()) {
                     val batches = groupToolCallsIntoStepBatches(
@@ -837,44 +911,54 @@ internal fun AiProviderEngine.buildOpenAiResponsesInputArray(
                                 savedWireDialect = nodeVar?.effectiveWireDialect().orEmpty()
                             )
                         ) {
-                            items.add(buildJsonObject {
-                                put("type", "reasoning")
-                                putJsonArray("summary") {
-                                    if (stepSummary.isNotBlank()) {
-                                        add(buildJsonObject {
-                                            put("type", "summary_text")
-                                            put("text", stepSummary)
-                                        })
+                            items.add(
+                                buildJsonObject {
+                                    put("type", "reasoning")
+                                    putJsonArray("summary") {
+                                        if (stepSummary.isNotBlank()) {
+                                            add(
+                                                buildJsonObject {
+                                                    put("type", "summary_text")
+                                                    put("text", stepSummary)
+                                                }
+                                            )
+                                        }
                                     }
+                                    put("encrypted_content", stepEnc)
                                 }
-                                put("encrypted_content", stepEnc)
-                            })
+                            )
                             emittedAny = true
                         }
                         if (batch.precedingText.isNotBlank()) {
-                            items.add(buildJsonObject {
-                                put("type", "message")
-                                put("role", "assistant")
-                                put("status", "completed")
-                                if (toolCalls.any { it.messagePhases }) put("phase", "commentary")
-                                putJsonArray("content") {
-                                    add(buildJsonObject {
-                                        put("type", "output_text")
-                                        put("text", batch.precedingText)
-                                    })
+                            items.add(
+                                buildJsonObject {
+                                    put("type", "message")
+                                    put("role", "assistant")
+                                    put("status", "completed")
+                                    if (toolCalls.any { it.messagePhases }) put("phase", "commentary")
+                                    putJsonArray("content") {
+                                        add(
+                                            buildJsonObject {
+                                                put("type", "output_text")
+                                                put("text", batch.precedingText)
+                                            }
+                                        )
+                                    }
                                 }
-                            })
+                            )
                             emittedAny = true
                         }
                         val callIds = replayIds.assign(batch.calls)
                         for ((tc, callId) in batch.calls.zip(callIds)) {
-                            items.add(buildJsonObject {
-                                put("type", "function_call")
-                                put("call_id", callId)
-                                put("name", tc.name)
-                                put("arguments", tc.argumentsJson.ifBlank { "{}" })
-                                put("status", "completed")
-                            })
+                            items.add(
+                                buildJsonObject {
+                                    put("type", "function_call")
+                                    put("call_id", callId)
+                                    put("name", tc.name)
+                                    put("arguments", tc.argumentsJson.ifBlank { "{}" })
+                                    put("status", "completed")
+                                }
+                            )
                         }
                         for ((tc, callId) in batch.calls.zip(callIds)) {
                             val wireOut = compactHistoricalToolResultForWire(
@@ -884,11 +968,13 @@ internal fun AiProviderEngine.buildOpenAiResponsesInputArray(
                                 callIndexInTurn = globalCallIdx++,
                                 totalCallsInTurn = totalCalls
                             )
-                            items.add(buildJsonObject {
-                                put("type", "function_call_output")
-                                put("call_id", callId)
-                                put("output", wireOut)
-                            })
+                            items.add(
+                                buildJsonObject {
+                                    put("type", "function_call_output")
+                                    put("call_id", callId)
+                                    put("output", wireOut)
+                                }
+                            )
                         }
                         emittedAny = true
                     }
@@ -901,18 +987,22 @@ internal fun AiProviderEngine.buildOpenAiResponsesInputArray(
                     else -> ""
                 }
                 if (outputText.isNotBlank()) {
-                    items.add(buildJsonObject {
-                        put("type", "message")
-                        put("role", "assistant")
-                        put("status", "completed")
-                        if (toolCalls.any { it.messagePhases }) put("phase", "final_answer")
-                        putJsonArray("content") {
-                            add(buildJsonObject {
-                                put("type", "output_text")
-                                put("text", outputText)
-                            })
+                    items.add(
+                        buildJsonObject {
+                            put("type", "message")
+                            put("role", "assistant")
+                            put("status", "completed")
+                            if (toolCalls.any { it.messagePhases }) put("phase", "final_answer")
+                            putJsonArray("content") {
+                                add(
+                                    buildJsonObject {
+                                        put("type", "output_text")
+                                        put("text", outputText)
+                                    }
+                                )
+                            }
                         }
-                    })
+                    )
                 }
             }
         } else {

@@ -7,8 +7,7 @@ import io.parchment.ai.network.stripInlineErrorNotices
 import kotlin.test.*
 
 class InterruptedRunsTest {
-    private fun running(name: String, result: String = "Running $name…") =
-        ToolCallRecord(id = "t", name = name, argumentsJson = "{}", resultText = result, isRunning = true)
+    private fun running(name: String, result: String = "Running $name…") = ToolCallRecord(id = "t", name = name, argumentsJson = "{}", resultText = result, isRunning = true)
 
     @Test fun anUnfinishedChangeIsReportedAsUnknownAndAReadAsRepeatable() {
         val change = running("fs_write").withInterruptedOutcome()

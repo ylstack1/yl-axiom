@@ -5,8 +5,8 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.setValue
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.graphics.luminance
@@ -38,14 +38,12 @@ import kotlinx.coroutines.flow.debounce
 import kotlinx.coroutines.withContext
 import org.jetbrains.skia.FontMgr
 import org.jetbrains.skia.Image
-import org.jetbrains.skia.impl.Library as SkiaLibrary
-import java.awt.Color as AwtColor
 import java.awt.Component
+import java.awt.Container
 import java.awt.Dimension
 import java.awt.GraphicsEnvironment
-import java.awt.Rectangle
-import java.awt.Container
 import java.awt.MouseInfo
+import java.awt.Rectangle
 import java.awt.datatransfer.DataFlavor
 import java.awt.dnd.DnDConstants
 import java.awt.dnd.DropTarget
@@ -60,6 +58,8 @@ import java.awt.event.WindowEvent
 import java.io.File
 import java.util.Properties
 import kotlin.system.exitProcess
+import java.awt.Color as AwtColor
+import org.jetbrains.skia.impl.Library as SkiaLibrary
 internal data class SavedWindowGeometry(
     val isMaximized: Boolean,
     val widthDp: Int,
@@ -68,8 +68,7 @@ internal data class SavedWindowGeometry(
     val yDp: Int
 )
 
-private fun windowBoundsFile(): File =
-    File(PlatformStorage.getAppStorageDirectoryPath(), "window-bounds.properties")
+private fun windowBoundsFile(): File = File(PlatformStorage.getAppStorageDirectoryPath(), "window-bounds.properties")
 
 internal fun loadSavedWindowGeometry(): SavedWindowGeometry {
     return runCatching {
@@ -202,65 +201,66 @@ fun main(args: Array<String>) {
         PlatformRuntime.windowStatusCallback = { newTitle -> runStatus = newTitle }
         val windowTitle = windowCaption(runStatus, captionTitle)
 
-    val initialGeom = remember { startupGeometry }
+        val initialGeom = remember { startupGeometry }
 
-    val windowState = rememberWindowState(
-        placement = if (initialGeom.isMaximized) WindowPlacement.Maximized else WindowPlacement.Floating,
-        size = DpSize(initialGeom.widthDp.dp, initialGeom.heightDp.dp),
-        // (-1, -1) is the "never placed" marker; other negative positions are real left/upper monitors.
-        position = if (!initialGeom.isMaximized && !(initialGeom.xDp == -1 && initialGeom.yDp == -1) &&
-            savedPositionIsVisible(initialGeom.xDp, initialGeom.yDp, initialGeom.widthDp, connectedScreenBounds())
-        ) {
-            WindowPosition(initialGeom.xDp.dp, initialGeom.yDp.dp)
-        } else {
-            WindowPosition.Aligned(Alignment.Center)
-        }
-    )
-
-    // Keep track of the last floating (non-maximized) size & position so restoring from Maximized works cleanly
-    var lastFloatingWidth by remember { mutableStateOf(initialGeom.widthDp) }
-    var lastFloatingHeight by remember { mutableStateOf(initialGeom.heightDp) }
-    var lastFloatingX by remember { mutableStateOf(initialGeom.xDp) }
-    var lastFloatingY by remember { mutableStateOf(initialGeom.yDp) }
-
-    LaunchedEffect(windowState) {
-        snapshotFlow {
-            Triple(
-                windowState.placement,
-                windowState.size,
-                windowState.position
-            )
-        }
-            .debounce(250L)
-            .collectLatest { (placement, size, pos) ->
-                val isMax = placement == WindowPlacement.Maximized || placement == WindowPlacement.Fullscreen
-                if (!isMax) {
-                    val w = size.width.value.toInt()
-                    val h = size.height.value.toInt()
-                    if (w >= 400 && h >= 300) {
-                        lastFloatingWidth = w
-                        lastFloatingHeight = h
-                    }
-                    if (pos.isSpecified) {
-                        lastFloatingX = pos.x.value.toInt()
-                        lastFloatingY = pos.y.value.toInt()
-                    }
-                }
-                val geometry = SavedWindowGeometry(
-                    isMaximized = isMax,
-                    widthDp = lastFloatingWidth,
-                    heightDp = lastFloatingHeight,
-                    xDp = lastFloatingX,
-                    yDp = lastFloatingY
-                )
-                // A resize drag emits many sizes; the debounced write still must not touch the disk on the EDT.
-                withContext(Dispatchers.IO) { saveWindowGeometry(geometry) }
+        val windowState = rememberWindowState(
+            placement = if (initialGeom.isMaximized) WindowPlacement.Maximized else WindowPlacement.Floating,
+            size = DpSize(initialGeom.widthDp.dp, initialGeom.heightDp.dp),
+            // (-1, -1) is the "never placed" marker; other negative positions are real left/upper monitors.
+            position = if (!initialGeom.isMaximized &&
+                !(initialGeom.xDp == -1 && initialGeom.yDp == -1) &&
+                savedPositionIsVisible(initialGeom.xDp, initialGeom.yDp, initialGeom.widthDp, connectedScreenBounds())
+            ) {
+                WindowPosition(initialGeom.xDp.dp, initialGeom.yDp.dp)
+            } else {
+                WindowPosition.Aligned(Alignment.Center)
             }
-    }
+        )
 
-    val shortcuts = remember { AppShortcutDispatcher() }
+        // Keep track of the last floating (non-maximized) size & position so restoring from Maximized works cleanly
+        var lastFloatingWidth by remember { mutableStateOf(initialGeom.widthDp) }
+        var lastFloatingHeight by remember { mutableStateOf(initialGeom.heightDp) }
+        var lastFloatingX by remember { mutableStateOf(initialGeom.xDp) }
+        var lastFloatingY by remember { mutableStateOf(initialGeom.yDp) }
 
-    val appIconPainter = remember { predecodedAppIconPainter }
+        LaunchedEffect(windowState) {
+            snapshotFlow {
+                Triple(
+                    windowState.placement,
+                    windowState.size,
+                    windowState.position
+                )
+            }
+                .debounce(250L)
+                .collectLatest { (placement, size, pos) ->
+                    val isMax = placement == WindowPlacement.Maximized || placement == WindowPlacement.Fullscreen
+                    if (!isMax) {
+                        val w = size.width.value.toInt()
+                        val h = size.height.value.toInt()
+                        if (w >= 400 && h >= 300) {
+                            lastFloatingWidth = w
+                            lastFloatingHeight = h
+                        }
+                        if (pos.isSpecified) {
+                            lastFloatingX = pos.x.value.toInt()
+                            lastFloatingY = pos.y.value.toInt()
+                        }
+                    }
+                    val geometry = SavedWindowGeometry(
+                        isMaximized = isMax,
+                        widthDp = lastFloatingWidth,
+                        heightDp = lastFloatingHeight,
+                        xDp = lastFloatingX,
+                        yDp = lastFloatingY
+                    )
+                    // A resize drag emits many sizes; the debounced write still must not touch the disk on the EDT.
+                    withContext(Dispatchers.IO) { saveWindowGeometry(geometry) }
+                }
+        }
+
+        val shortcuts = remember { AppShortcutDispatcher() }
+
+        val appIconPainter = remember { predecodedAppIconPainter }
 
         val closeAndSave: () -> Unit = {
             val isMax = windowState.placement == WindowPlacement.Maximized || windowState.placement == WindowPlacement.Fullscreen
@@ -285,10 +285,8 @@ fun main(args: Array<String>) {
             onKeyEvent = { keyEvent -> handleUnconsumedWindowKey(keyEvent, shortcuts) }
         ) {
             LaunchedEffect(window) {
-                fun isSupportedDrop(dtde: DropTargetDragEvent): Boolean {
-                    return dtde.isDataFlavorSupported(DataFlavor.javaFileListFlavor) ||
-                        dtde.isDataFlavorSupported(DataFlavor.imageFlavor)
-                }
+                fun isSupportedDrop(dtde: DropTargetDragEvent): Boolean = dtde.isDataFlavorSupported(DataFlavor.javaFileListFlavor) ||
+                    dtde.isDataFlavorSupported(DataFlavor.imageFlavor)
 
                 val makeDropTarget: () -> DropTarget = {
                     DropTarget(
@@ -378,7 +376,11 @@ fun main(args: Array<String>) {
                         window.background = awtCanvas
                         window.contentPane?.background = awtCanvas
                         WindowsChrome.applyCaption(
-                            window.windowHandle, p.canvasBg.toArgb(), p.primaryInk.toArgb(), p.border.toArgb(), p.canvasBg.luminance() < 0.5f
+                            window.windowHandle,
+                            p.canvasBg.toArgb(),
+                            p.primaryInk.toArgb(),
+                            p.border.toArgb(),
+                            p.canvasBg.luminance() < 0.5f
                         )
                     }
                 }

@@ -148,6 +148,7 @@ private class GeminiInteractionsSession(
             CUSTOM_DIALECT_GEMINI
         )
     } else ""
+
     // ID minted during the active round; only promoted after a round settles so retries never poll a prior turn.
     private var currentRoundInteractionId = ""
     private var currentContinuationToken = ""
@@ -342,15 +343,17 @@ private class GeminiInteractionsSession(
             if ((modelOutputsImages || forceImageResponseFormatOnRetry) && !omitResponseFormatOnRetry) {
                 putJsonArray("response_format") {
                     add(buildJsonObject { put("type", "text") })
-                    add(buildJsonObject {
-                        put("type", "image")
-                        if (profile.mediaAspectRatio.isNotBlank()) {
-                            put("aspect_ratio", profile.mediaAspectRatio)
+                    add(
+                        buildJsonObject {
+                            put("type", "image")
+                            if (profile.mediaAspectRatio.isNotBlank()) {
+                                put("aspect_ratio", profile.mediaAspectRatio)
+                            }
+                            if (profile.mediaResolution in listOf("512", "1K", "2K", "4K")) {
+                                put("image_size", profile.mediaResolution)
+                            }
                         }
-                        if (profile.mediaResolution in listOf("512", "1K", "2K", "4K")) {
-                            put("image_size", profile.mediaResolution)
-                        }
-                    })
+                    )
                 }
             }
 
@@ -466,9 +469,15 @@ private class GeminiInteractionsSession(
         if (!round.receivedAnyStreamContent && errMsg.contains("http 400") && tryHealHttp400(errMsg, useChainedId)) {
             return AttemptRecoveryAction.RETRY_ATTEMPT
         }
-        if (useChainedId && !round.receivedAnyStreamContent &&
-            (errMsg.contains("http 404") || errMsg.contains("previous_interaction_id") ||
-                errMsg.contains("continuation_token") || errMsg.contains("function response turn") || errMsg.contains("function_result"))
+        if (useChainedId &&
+            !round.receivedAnyStreamContent &&
+            (
+                errMsg.contains("http 404") ||
+                    errMsg.contains("previous_interaction_id") ||
+                    errMsg.contains("continuation_token") ||
+                    errMsg.contains("function response turn") ||
+                    errMsg.contains("function_result")
+                )
         ) {
             currentPrevInteractionId = ""
             currentContinuationToken = ""
@@ -518,7 +527,9 @@ private class GeminiInteractionsSession(
             onStatus(Strings.statefulInteractionChainRejectedRetryingStep, "")
             return true
         }
-        if (!omitBackgroundOnRetry && profile.keepsProviderState && profile.useBackgroundLongDecode &&
+        if (!omitBackgroundOnRetry &&
+            profile.keepsProviderState &&
+            profile.useBackgroundLongDecode &&
             errMsg.contains("background")
         ) {
             omitBackgroundOnRetry = true
@@ -530,7 +541,8 @@ private class GeminiInteractionsSession(
             onStatus(Strings.endpointRejectedSamplingParametersRetryingWith, "")
             return true
         }
-        if (!upgradeMinimalToLowOnRetry && profile.thinkingEffort.equals("minimal", ignoreCase = true) &&
+        if (!upgradeMinimalToLowOnRetry &&
+            profile.thinkingEffort.equals("minimal", ignoreCase = true) &&
             (errMsg.contains("minimal") || errMsg.contains("thinking_level") || errMsg.contains("thinking"))
         ) {
             upgradeMinimalToLowOnRetry = true
@@ -538,7 +550,8 @@ private class GeminiInteractionsSession(
             return true
         }
         val lowerEffort = profile.thinkingEffort.trim().lowercase()
-        if (!downgradeXhighToHighOnRetry && (lowerEffort == "xhigh" || lowerEffort == "max") &&
+        if (!downgradeXhighToHighOnRetry &&
+            (lowerEffort == "xhigh" || lowerEffort == "max") &&
             (errMsg.contains("xhigh") || errMsg.contains("thinking_level") || errMsg.contains("thinking"))
         ) {
             downgradeXhighToHighOnRetry = true
@@ -550,7 +563,8 @@ private class GeminiInteractionsSession(
             onStatus(Strings.endpointRejectedThinkingLevelRetryingWith, "")
             return true
         }
-        if (!forceImageResponseFormatOnRetry && !omitResponseFormatOnRetry &&
+        if (!forceImageResponseFormatOnRetry &&
+            !omitResponseFormatOnRetry &&
             (errMsg.contains("only supports image") || (errMsg.contains("response_format") && errMsg.contains("image")))
         ) {
             forceImageResponseFormatOnRetry = true
@@ -563,16 +577,28 @@ private class GeminiInteractionsSession(
             onStatus(Strings.endpointRejectedResponseFormatRetryingWithout, "")
             return true
         }
-        if (!omitBuiltInToolsOnRetry && (errMsg.contains("google_search") || errMsg.contains("url_context") ||
-                errMsg.contains("built-in") || errMsg.contains("multiple tools"))
+        if (!omitBuiltInToolsOnRetry &&
+            (
+                errMsg.contains("google_search") ||
+                    errMsg.contains("url_context") ||
+                    errMsg.contains("built-in") ||
+                    errMsg.contains("multiple tools")
+                )
         ) {
             omitBuiltInToolsOnRetry = true
             onStatus(Strings.endpointRejectedMixedBuiltInFunction, "")
             return true
         }
-        if (!foldHistoricalToolsOnRetry && hasHistoricalToolsOrSigs &&
-            (errMsg.contains("couldn't process") || errMsg.contains("invalid_request") || errMsg.contains("thought") ||
-                errMsg.contains("signature") || errMsg.contains("function_call") || errMsg.contains("tool type"))
+        if (!foldHistoricalToolsOnRetry &&
+            hasHistoricalToolsOrSigs &&
+            (
+                errMsg.contains("couldn't process") ||
+                    errMsg.contains("invalid_request") ||
+                    errMsg.contains("thought") ||
+                    errMsg.contains("signature") ||
+                    errMsg.contains("function_call") ||
+                    errMsg.contains("tool type")
+                )
         ) {
             foldHistoricalToolsOnRetry = true
             onStatus(Strings.endpointRejectedHistoricalToolSignatureContext, "")

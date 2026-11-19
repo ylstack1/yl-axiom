@@ -2,23 +2,23 @@ package io.parchment.ai.ui
 
 import androidx.compose.runtime.MonotonicFrameClock
 import androidx.compose.runtime.mutableStateOf
-import kotlinx.coroutines.CancellationException
-import kotlinx.coroutines.currentCoroutineContext
-import kotlinx.coroutines.ensureActive
-import kotlinx.coroutines.withTimeoutOrNull
 import io.parchment.ai.model.AppStateSnapshot
-import io.parchment.ai.model.PromptAttachment
-import io.parchment.ai.model.QueuedPromptItem
-import io.parchment.ai.model.ProviderProfile
 import io.parchment.ai.model.ChatSession
 import io.parchment.ai.model.MessageNode
+import io.parchment.ai.model.PromptAttachment
+import io.parchment.ai.model.ProviderProfile
+import io.parchment.ai.model.QueuedPromptItem
+import io.parchment.ai.runtime.RunLeaseRegistry
+import io.parchment.ai.runtime.appRunLeases
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Job
-import kotlinx.coroutines.launch
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.MutableStateFlow
-import io.parchment.ai.runtime.RunLeaseRegistry
-import io.parchment.ai.runtime.appRunLeases
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeoutOrNull
 
 data class AgentRunIdentity(
     val runId: String,
@@ -68,7 +68,7 @@ internal class AgentRunCoordinator(
                 val current = streams.value[runtime.sessionId]
                 if (current?.job === job) {
                     val phase = if (current.phase == AgentRunPhase.STOPPED) AgentRunPhase.STOPPED
-                        else if (cause == null) AgentRunPhase.COMPLETED else AgentRunPhase.INTERRUPTED
+                    else if (cause == null) AgentRunPhase.COMPLETED else AgentRunPhase.INTERRUPTED
                     current.identity?.let { finish(it, phase) } ?: run { streams.value = streams.value - runtime.sessionId }
                 }
             }
@@ -80,8 +80,10 @@ internal class AgentRunCoordinator(
         val previous = streams.value[identity.sessionId]
         if (previous?.identity == identity) require(previous.job === runtime.job) { "A run identity cannot be reused for another worker." }
         if (cancelPrevious && previous?.job !== runtime.job) previous?.job?.cancel()
-        val bound = runtime.copy(identity = identity,
-            providerContext = previous?.takeIf { it.identity == identity }?.providerContext ?: runtime.providerContext)
+        val bound = runtime.copy(
+            identity = identity,
+            providerContext = previous?.takeIf { it.identity == identity }?.providerContext ?: runtime.providerContext
+        )
         streams.value = streams.value + (identity.sessionId to bound)
         track(bound)
     }
@@ -115,8 +117,10 @@ internal class AgentRunCoordinator(
             }
         }
         streams.value = streams.value + (identity.sessionId to current.copy(phase = AgentRunPhase.STOPPED))
-        lastPhases.value = (lastPhases.value.filterKeys { it != identity.sessionId } +
-            (identity.sessionId to AgentRunPhase.STOPPED)).entries.toList().takeLast(12).associate { it.key to it.value }
+        lastPhases.value = (
+            lastPhases.value.filterKeys { it != identity.sessionId } +
+                (identity.sessionId to AgentRunPhase.STOPPED)
+            ).entries.toList().takeLast(12).associate { it.key to it.value }
         current.job?.cancel()
         return true
     }
@@ -172,14 +176,19 @@ internal fun refreshGenerationHistory(requested: List<MessageNode>, persistedIds
 /** A failed run's fixable cause, and the chat it belongs to (some fixes act on that chat). */
 internal data class RunErrorNotice(val sessionId: String, val kind: io.parchment.ai.network.RunErrorKind)
 
-internal class ParchmentProcessState(initial: AppStateSnapshot, needsHydration: Boolean = false,
-    completionScope: CoroutineScope = appProcessScope, leases: RunLeaseRegistry = RunLeaseRegistry()) {
+internal class ParchmentProcessState(
+    initial: AppStateSnapshot,
+    needsHydration: Boolean = false,
+    completionScope: CoroutineScope = appProcessScope,
+    leases: RunLeaseRegistry = RunLeaseRegistry()
+) {
     val snapshot = mutableStateOf(initial)
     val needsBackgroundHydration = mutableStateOf(needsHydration)
     val runs = AgentRunCoordinator(completionScope, leases)
     val queuedPrompts = mutableStateOf<Map<String, List<QueuedPromptItem>>>(emptyMap())
     val pendingAttachments = mutableStateOf<Map<String, List<PromptAttachment>>>(emptyMap())
     val notice = mutableStateOf("")
+
     /** A run failure the person can fix, offered on the notice while it shows that failure. */
     val runError = mutableStateOf<RunErrorNotice?>(null)
     val frameClock = mutableStateOf<MonotonicFrameClock?>(null)

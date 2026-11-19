@@ -1,7 +1,6 @@
 package io.parchment.ai.ui
 
 import androidx.compose.foundation.background
-import io.parchment.ai.strings.Strings
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -30,8 +29,6 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.withContext
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -49,8 +46,11 @@ import io.parchment.ai.platform.PlatformPickers
 import io.parchment.ai.platform.PlatformRuntime
 import io.parchment.ai.platform.PlatformStorage
 import io.parchment.ai.protocol.CardAndPromptCodec
+import io.parchment.ai.strings.Strings
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.IO
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 // ============================================================================================
 // Settings page 7: Storage and updates (settings and assistants are stored apart from each chat's file).
@@ -151,19 +151,17 @@ internal fun BackupAndOtaSubpage(
         return false
     }
 
-    fun formatBytesCompact(bytes: Long): String {
-        return when {
-            bytes >= 1024L * 1024L -> "${((bytes / (1024.0 * 1024.0)) * 10).toInt() / 10.0} MB"
-            bytes >= 1024L -> "${((bytes / 1024.0) * 10).toInt() / 10.0} KB"
-            else -> "$bytes B"
-        }
+    fun formatBytesCompact(bytes: Long): String = when {
+        bytes >= 1024L * 1024L -> "${((bytes / (1024.0 * 1024.0)) * 10).toInt() / 10.0} MB"
+        bytes >= 1024L -> "${((bytes / 1024.0) * 10).toInt() / 10.0} KB"
+        else -> "$bytes B"
     }
 
-        val totalBytes = remember(allStoredFiles) { allStoredFiles.sumOf { it.sizeBytes } }
-        val orphanAndTempFiles = remember(allStoredFiles, referencedMediaPaths) {
-            allStoredFiles.filter { isOrphanOrTempFile(it) }
-        }
-        val orphanBytes = remember(orphanAndTempFiles) { orphanAndTempFiles.sumOf { it.sizeBytes } }
+    val totalBytes = remember(allStoredFiles) { allStoredFiles.sumOf { it.sizeBytes } }
+    val orphanAndTempFiles = remember(allStoredFiles, referencedMediaPaths) {
+        allStoredFiles.filter { isOrphanOrTempFile(it) }
+    }
+    val orphanBytes = remember(orphanAndTempFiles) { orphanAndTempFiles.sumOf { it.sizeBytes } }
 
     val filteredStorageFiles = remember(allStoredFiles, storageCategoryFilter, storageSearchQuery, sessionsByFileStem) {
         val q = storageSearchQuery.trim().lowercase()

@@ -24,40 +24,33 @@ import io.parchment.ai.model.PreferencesConfig
 import io.parchment.ai.model.ThemeConfig
 import io.parchment.ai.model.TokenMetrics
 import io.parchment.ai.model.ViewMode
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.swing.Swing
 import kotlin.math.abs
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertNotNull
 import kotlin.test.assertTrue
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.delay
-import kotlinx.coroutines.runBlocking
-import kotlinx.coroutines.swing.Swing
 
 @OptIn(ExperimentalComposeUiApi::class)
 class TurnUsageUiTest {
 
-    private fun flatten(node: SemanticsNode): List<SemanticsNode> =
-        listOf(node) + node.children.flatMap(::flatten)
+    private fun flatten(node: SemanticsNode): List<SemanticsNode> = listOf(node) + node.children.flatMap(::flatten)
 
-    private fun nodes(scene: ImageComposeScene): List<SemanticsNode> =
-        scene.semanticsOwners.flatMap { flatten(it.rootSemanticsNode) }
+    private fun nodes(scene: ImageComposeScene): List<SemanticsNode> = scene.semanticsOwners.flatMap { flatten(it.rootSemanticsNode) }
 
-    private fun unmergedNodes(scene: ImageComposeScene): List<SemanticsNode> =
-        scene.semanticsOwners.flatMap { flatten(it.unmergedRootSemanticsNode) }
+    private fun unmergedNodes(scene: ImageComposeScene): List<SemanticsNode> = scene.semanticsOwners.flatMap { flatten(it.unmergedRootSemanticsNode) }
 
-    private fun popupNodes(scene: ImageComposeScene): List<SemanticsNode> =
-        scene.semanticsOwners.drop(1).flatMap { flatten(it.rootSemanticsNode) }
+    private fun popupNodes(scene: ImageComposeScene): List<SemanticsNode> = scene.semanticsOwners.drop(1).flatMap { flatten(it.rootSemanticsNode) }
 
-    private fun text(node: SemanticsNode): String =
-        node.config.getOrNull(SemanticsProperties.Text).orEmpty().joinToString(" ") { it.text }
+    private fun text(node: SemanticsNode): String = node.config.getOrNull(SemanticsProperties.Text).orEmpty().joinToString(" ") { it.text }
 
-    private fun contentDescription(node: SemanticsNode): String =
-        node.config.getOrNull(SemanticsProperties.ContentDescription).orEmpty().joinToString(" ")
+    private fun contentDescription(node: SemanticsNode): String = node.config.getOrNull(SemanticsProperties.ContentDescription).orEmpty().joinToString(" ")
 
-    private fun stateDescription(node: SemanticsNode): String =
-        node.config.getOrNull(SemanticsProperties.StateDescription).orEmpty()
+    private fun stateDescription(node: SemanticsNode): String = node.config.getOrNull(SemanticsProperties.StateDescription).orEmpty()
 
     private fun click(node: SemanticsNode) {
         val action = requireNotNull(node.config.getOrNull(SemanticsActions.OnClick)?.action)

@@ -1,9 +1,7 @@
 package io.parchment.ai.ui
 
-import io.parchment.ai.strings.Strings
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.Crossfade
-import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
@@ -29,17 +27,17 @@ import androidx.compose.foundation.text.BasicText
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.DisposableEffect
-import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.MonotonicFrameClock
+import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.snapshotFlow
-import androidx.compose.runtime.snapshots.Snapshot
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
+import androidx.compose.runtime.snapshots.Snapshot
 import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -57,28 +55,29 @@ import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import io.parchment.ai.ParchmentBuildConfig
+import io.parchment.ai.model.AgentPermissionResolver
 import io.parchment.ai.model.AppStateSnapshot
 import io.parchment.ai.model.AssistantAgent
 import io.parchment.ai.model.ChatSession
 import io.parchment.ai.model.MessageRole
 import io.parchment.ai.model.PromptAttachment
 import io.parchment.ai.model.ProviderProfile
-import io.parchment.ai.network.fetchAvailableModels
-import io.parchment.ai.model.AgentPermissionResolver
 import io.parchment.ai.model.withImportedPermissions
 import io.parchment.ai.network.AiProviderEngine
 import io.parchment.ai.network.ModelsDevClient
-import io.parchment.ai.ParchmentBuildConfig
 import io.parchment.ai.network.OtaUpdateEngine
 import io.parchment.ai.network.OtaUpdateState
 import io.parchment.ai.network.RunErrorKind
+import io.parchment.ai.network.fetchAvailableModels
 import io.parchment.ai.platform.PlatformPickers
 import io.parchment.ai.platform.PlatformRuntime
 import io.parchment.ai.platform.PlatformStorage
 import io.parchment.ai.platform.PlatformVoice
 import io.parchment.ai.platform.PlatformWorkspace
-import io.parchment.ai.protocol.O200kTokenizer
 import io.parchment.ai.protocol.CardAndPromptCodec
+import io.parchment.ai.protocol.O200kTokenizer
+import io.parchment.ai.strings.Strings
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.IO
 import kotlinx.coroutines.delay
@@ -86,7 +85,6 @@ import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlin.io.encoding.ExperimentalEncodingApi
-
 
 private const val STARTUP_UPDATE_CHECK_DELAY_MS = 8_000L
 
@@ -375,7 +373,13 @@ fun ParchmentApp(
 
         summaryHost = remember(activeProfile) {
             StorySummaryHost(
-                processState, activeProfile, { activeSession }, ::completeSessionForAction, ::continueAssistantNodeAt, ::updateSessionStreamState, ::updateSessionById
+                processState,
+                activeProfile,
+                { activeSession },
+                ::completeSessionForAction,
+                ::continueAssistantNodeAt,
+                ::updateSessionStreamState,
+                ::updateSessionById
             ) { id, purpose, profile, model, prompt, limit -> generateTrackedUtility(id, purpose, profile, model, prompt, limit) }
         }
 
@@ -430,25 +434,31 @@ fun ParchmentApp(
                     if (!isCompactScreen && !isSettingsOpen) {
                         add(PaletteCommand(Strings.closeThisTab, hint(AppShortcutAction.CLOSE_TAB)) { closeChatTab(appState.activeSessionId) })
                         if (openTabIds.size > 1) {
-                            add(PaletteCommand(Strings.nextTab, hint(AppShortcutAction.NEXT_TAB)) {
-                                val here = openTabIds.indexOf(appState.activeSessionId).coerceAtLeast(0)
-                                switchToTab(openTabIds[(here + 1) % openTabIds.size])
-                            })
-                            add(PaletteCommand(Strings.previousTab, hint(AppShortcutAction.PREV_TAB)) {
-                                val here = openTabIds.indexOf(appState.activeSessionId).coerceAtLeast(0)
-                                switchToTab(openTabIds[(here - 1 + openTabIds.size) % openTabIds.size])
-                            })
+                            add(
+                                PaletteCommand(Strings.nextTab, hint(AppShortcutAction.NEXT_TAB)) {
+                                    val here = openTabIds.indexOf(appState.activeSessionId).coerceAtLeast(0)
+                                    switchToTab(openTabIds[(here + 1) % openTabIds.size])
+                                }
+                            )
+                            add(
+                                PaletteCommand(Strings.previousTab, hint(AppShortcutAction.PREV_TAB)) {
+                                    val here = openTabIds.indexOf(appState.activeSessionId).coerceAtLeast(0)
+                                    switchToTab(openTabIds[(here - 1 + openTabIds.size) % openTabIds.size])
+                                }
+                            )
                         }
                     }
                     SettingsCategory.entries.forEach { category ->
                         add(PaletteCommand(Strings.settings4(category.label)) { openSettings(category) })
                     }
                     appState.sessions.sortedByDescending { it.updatedAt }.forEach { chat ->
-                        add(PaletteCommand(Strings.chat2(chat.title)) {
-                            switchToTab(chat.id)
-                            isSettingsOpen = false
-                            if (isCompactScreen) showSidebar = false
-                        })
+                        add(
+                            PaletteCommand(Strings.chat2(chat.title)) {
+                                switchToTab(chat.id)
+                                isSettingsOpen = false
+                                if (isCompactScreen) showSidebar = false
+                            }
+                        )
                     }
                 }
 
@@ -643,7 +653,8 @@ fun ParchmentApp(
                             platformWindowChrome(if (isSettingsOpen) Strings.settings else activeSession.title)
                         }
 
-                        val hasModalOverlay = showCommandPalette || showPromptJump ||
+                        val hasModalOverlay = showCommandPalette ||
+                            showPromptJump ||
                             showMobileTabSwitcher ||
                             pendingDeleteConfirmation != null ||
                             pendingRegenerateConfirm != null ||
@@ -657,259 +668,259 @@ fun ParchmentApp(
                                 .fillMaxWidth()
                                 .then(if (hasModalOverlay) Modifier.clearAndSetSemantics {} else Modifier)
                         ) {
-                        // 1. Top bar, hidden while Settings is open so there is only one way back to the chat.
-                        if (!isSettingsOpen) {
-                            val bgStreamingCount = activeStreamsBySession.keys.count { it != activeSession.id }
-                            val tailVariant = activeSession.messages.lastOrNull()?.activeVariant
-                            val prefixVaultHash = remember(
-                                activeSession.messages.takeUnless { tailVariant?.isStreaming == true },
-                                activeSession.id,
-                                activeSession.messages.size
-                            ) {
-                                var hash = activeSession.id.hashCode().toLong() * 31L + activeSession.messages.size
-                                val prefixEnd = (activeSession.messages.size - 1).coerceAtLeast(0)
-                                for (idx in 0 until prefixEnd) {
-                                    val v = activeSession.messages[idx].activeVariant
-                                    hash = hash * 31L + v.toolCalls.size * 17L + v.mediaItems.size * 31L +
-                                        v.webSources.size * 13L + v.attachments.size * 7L + v.content.length
-                                }
-                                hash
-                            }
-                            val vaultCountKey = remember(
-                                prefixVaultHash,
-                                pendingAttachments.size,
-                                tailVariant?.toolCalls?.size,
-                                tailVariant?.mediaItems?.size,
-                                tailVariant?.webSources?.size,
-                                tailVariant?.attachments?.size,
-                                tailVariant?.isStreaming,
-                                tailVariant?.let { if (it.isStreaming) it.content.length / 2048 else it.content.length }
-                            ) {
-                                var hash = prefixVaultHash * 31L + pendingAttachments.size
-                                if (tailVariant != null) {
-                                    val lenBucket = if (tailVariant.isStreaming) tailVariant.content.length / 2048 else tailVariant.content.length
-                                    hash = hash * 31L + tailVariant.toolCalls.size * 17L + tailVariant.mediaItems.size * 31L +
-                                        tailVariant.webSources.size * 13L + tailVariant.attachments.size * 7L + lenBucket +
-                                        if (tailVariant.isStreaming) 1L else 0L
-                                }
-                                hash
-                            }
-                            val chatVaultCount = remember(vaultCountKey, activeSession.id, pendingAttachments) {
-                                countSessionVaultItemsFast(activeSession, pendingAttachments)
-                            }
-                            TopEditorialBar(
-                                appState = appState,
-                                activeSession = activeSession,
-                                activeAssistant = activeAssistant,
-                                activeProfile = activeProfile,
-                                isCompactScreen = isCompactScreen,
-                                showSidebar = showSidebar,
-                                showSessionInspector = showSessionInspector,
-                                showRightFilesSidebar = showRightFilesSidebar,
-                                chatArtifactsCount = chatVaultCount,
-                                showQuickModelPopover = showQuickModelPopover,
-                                openTabCount = openTabIds.size,
-                                backgroundStreamingCount = bgStreamingCount,
-                                onOpenMobileTabSwitcher = { showMobileTabSwitcher = true },
-                                onNewChatTab = { createNewTopicForAssistant(activeAssistant, openInNewTab = true) },
-                                onToggleSidebar = {
-                                    showSidebar = !showSidebar
-                                    if (!isCompactScreen) persist(appState.copy(preferences = appState.preferences.copy(sidebarOpen = showSidebar)))
-                                },
-                                onToggleSessionInspector = { showSessionInspector = !showSessionInspector },
-                                onToggleRightFilesSidebar = { showRightFilesSidebar = !showRightFilesSidebar },
-                                onToggleQuickModelPopover = { showQuickModelPopover = !showQuickModelPopover },
-                                onDismissQuickModelPopover = { showQuickModelPopover = false },
-                                onSelectModelQuick = { profId, modId ->
-                                    updateProfileById(profId) { it.copy(defaultModel = modId) }
-                                    updateActiveSession(immediate = true) { it.copy(profileId = profId, modelOverride = modId) }
-                                    persist(appState.copy(activeProfileId = profId), immediateFlush = true)
-                                    showQuickModelPopover = false
-                                },
-                                onRenameTopicInline = { newTitle ->
-                                    updateActiveSession(immediate = true) {
-                                        it.copy(title = newTitle.ifBlank { Strings.untitled }, isTitleManuallySet = true)
+                            // 1. Top bar, hidden while Settings is open so there is only one way back to the chat.
+                            if (!isSettingsOpen) {
+                                val bgStreamingCount = activeStreamsBySession.keys.count { it != activeSession.id }
+                                val tailVariant = activeSession.messages.lastOrNull()?.activeVariant
+                                val prefixVaultHash = remember(
+                                    activeSession.messages.takeUnless { tailVariant?.isStreaming == true },
+                                    activeSession.id,
+                                    activeSession.messages.size
+                                ) {
+                                    var hash = activeSession.id.hashCode().toLong() * 31L + activeSession.messages.size
+                                    val prefixEnd = (activeSession.messages.size - 1).coerceAtLeast(0)
+                                    for (idx in 0 until prefixEnd) {
+                                        val v = activeSession.messages[idx].activeVariant
+                                        hash = hash * 31L + v.toolCalls.size * 17L + v.mediaItems.size * 31L +
+                                            v.webSources.size * 13L + v.attachments.size * 7L + v.content.length
                                     }
-                                },
-                                onRegenerateTitleAi = { generateTopicTitle(activeSession.id, forceRegenerate = true) },
-                                onOpenSettings = { cat ->
-                                    if (cat != null) {
-                                        activeSettingsCategory = cat
-                                        startMobileSettingsAtRoot = false
-                                    } else {
-                                        startMobileSettingsAtRoot = true
-                                    }
-                                    isSettingsOpen = true
-                                    if (isCompactScreen) showSidebar = false
+                                    hash
                                 }
-                            )
-
-                            SepiaDivider()
-
-                            // Desktop Browser-Style Multi-Tasking Tab Bar
-                            if (!isCompactScreen && openTabIds.size > 1) {
-                                DesktopBrowserTabBar(
+                                val vaultCountKey = remember(
+                                    prefixVaultHash,
+                                    pendingAttachments.size,
+                                    tailVariant?.toolCalls?.size,
+                                    tailVariant?.mediaItems?.size,
+                                    tailVariant?.webSources?.size,
+                                    tailVariant?.attachments?.size,
+                                    tailVariant?.isStreaming,
+                                    tailVariant?.let { if (it.isStreaming) it.content.length / 2048 else it.content.length }
+                                ) {
+                                    var hash = prefixVaultHash * 31L + pendingAttachments.size
+                                    if (tailVariant != null) {
+                                        val lenBucket = if (tailVariant.isStreaming) tailVariant.content.length / 2048 else tailVariant.content.length
+                                        hash = hash * 31L + tailVariant.toolCalls.size * 17L + tailVariant.mediaItems.size * 31L +
+                                            tailVariant.webSources.size * 13L + tailVariant.attachments.size * 7L + lenBucket +
+                                            if (tailVariant.isStreaming) 1L else 0L
+                                    }
+                                    hash
+                                }
+                                val chatVaultCount = remember(vaultCountKey, activeSession.id, pendingAttachments) {
+                                    countSessionVaultItemsFast(activeSession, pendingAttachments)
+                                }
+                                TopEditorialBar(
                                     appState = appState,
-                                    openTabIds = openTabIds,
-                                    activeSessionId = activeSession.id,
-                                    activeStreamsBySession = activeStreamsBySession,
-                                    onSelectTab = ::switchToTab,
-                                    onCloseTab = ::closeChatTab,
-                                    onNewTab = { createNewTopicForAssistant(activeAssistant, openInNewTab = true) },
-                                    onOpenTabOverview = { showMobileTabSwitcher = true }
-                                )
-                                SepiaDivider()
-                            }
-                        }
-
-                        // Top In-App OTA Banner (Available, Downloading Progress Bar, Installing, & Error)
-                        when (val currentOta = otaState) {
-                            is OtaUpdateState.Available -> {
-                                if (!dismissOtaBanner) {
-                                    @OptIn(ExperimentalLayoutApi::class)
-                                    FlowRow(
-                                        modifier = Modifier
-                                            .fillMaxWidth()
-                                            .background(p.cardBg)
-                                            .padding(horizontal = Space.s16, vertical = 7.dp),
-                                        horizontalArrangement = Arrangement.SpaceBetween,
-                                        verticalArrangement = Arrangement.spacedBy(Space.s6)
-                                    ) {
-                                        val sizeMb = (currentOta.release.assetSizeBytes / (1024.0 * 1024.0) * 10).toInt() / 10.0
-                                        Row(
-                                            verticalAlignment = Alignment.CenterVertically,
-                                            horizontalArrangement = Arrangement.spacedBy(Space.s6),
-                                            modifier = Modifier.padding(top = Space.s4, end = Space.s8)
-                                        ) {
-                                            KissVectorIcon(icon = KissIcon.SPARKLES, tint = p.accent, size = 14.dp)
-                                            BasicText(
-                                                text = Strings.versionIsReadyMb(currentOta.release.tagName.removePrefix("v"), sizeMb),
-                                                style = p.uiBodyStyle.copy(fontWeight = FontWeight.Medium)
-                                            )
+                                    activeSession = activeSession,
+                                    activeAssistant = activeAssistant,
+                                    activeProfile = activeProfile,
+                                    isCompactScreen = isCompactScreen,
+                                    showSidebar = showSidebar,
+                                    showSessionInspector = showSessionInspector,
+                                    showRightFilesSidebar = showRightFilesSidebar,
+                                    chatArtifactsCount = chatVaultCount,
+                                    showQuickModelPopover = showQuickModelPopover,
+                                    openTabCount = openTabIds.size,
+                                    backgroundStreamingCount = bgStreamingCount,
+                                    onOpenMobileTabSwitcher = { showMobileTabSwitcher = true },
+                                    onNewChatTab = { createNewTopicForAssistant(activeAssistant, openInNewTab = true) },
+                                    onToggleSidebar = {
+                                        showSidebar = !showSidebar
+                                        if (!isCompactScreen) persist(appState.copy(preferences = appState.preferences.copy(sidebarOpen = showSidebar)))
+                                    },
+                                    onToggleSessionInspector = { showSessionInspector = !showSessionInspector },
+                                    onToggleRightFilesSidebar = { showRightFilesSidebar = !showRightFilesSidebar },
+                                    onToggleQuickModelPopover = { showQuickModelPopover = !showQuickModelPopover },
+                                    onDismissQuickModelPopover = { showQuickModelPopover = false },
+                                    onSelectModelQuick = { profId, modId ->
+                                        updateProfileById(profId) { it.copy(defaultModel = modId) }
+                                        updateActiveSession(immediate = true) { it.copy(profileId = profId, modelOverride = modId) }
+                                        persist(appState.copy(activeProfileId = profId), immediateFlush = true)
+                                        showQuickModelPopover = false
+                                    },
+                                    onRenameTopicInline = { newTitle ->
+                                        updateActiveSession(immediate = true) {
+                                            it.copy(title = newTitle.ifBlank { Strings.untitled }, isTitleManuallySet = true)
                                         }
-                                        Row(horizontalArrangement = Arrangement.spacedBy(Space.s6)) {
-                                            SepiaButton(
-                                                text = Strings.update,
-                                                compact = true,
-                                                style = SepiaButtonStyle.PRIMARY,
-                                                onClick = { triggerOtaDownloadAndInstall(currentOta.release) }
-                                            )
-                                            SepiaButton(
-                                                text = "×",
-                                                contentDescription = Strings.dismissUpdateNotice,
-                                                compact = true,
-                                                style = SepiaButtonStyle.GHOST,
-                                                onClick = { dismissOtaBanner = true }
-                                            )
+                                    },
+                                    onRegenerateTitleAi = { generateTopicTitle(activeSession.id, forceRegenerate = true) },
+                                    onOpenSettings = { cat ->
+                                        if (cat != null) {
+                                            activeSettingsCategory = cat
+                                            startMobileSettingsAtRoot = false
+                                        } else {
+                                            startMobileSettingsAtRoot = true
                                         }
+                                        isSettingsOpen = true
+                                        if (isCompactScreen) showSidebar = false
                                     }
+                                )
+
+                                SepiaDivider()
+
+                                // Desktop Browser-Style Multi-Tasking Tab Bar
+                                if (!isCompactScreen && openTabIds.size > 1) {
+                                    DesktopBrowserTabBar(
+                                        appState = appState,
+                                        openTabIds = openTabIds,
+                                        activeSessionId = activeSession.id,
+                                        activeStreamsBySession = activeStreamsBySession,
+                                        onSelectTab = ::switchToTab,
+                                        onCloseTab = ::closeChatTab,
+                                        onNewTab = { createNewTopicForAssistant(activeAssistant, openInNewTab = true) },
+                                        onOpenTabOverview = { showMobileTabSwitcher = true }
+                                    )
                                     SepiaDivider()
                                 }
                             }
-                            is OtaUpdateState.Downloading -> {
-                                Column(
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .background(p.cardBg)
-                                        .padding(horizontal = Space.s16, vertical = Space.s8),
-                                    verticalArrangement = Arrangement.spacedBy(Space.s6)
-                                ) {
-                                    val dlMb = (currentOta.downloadedBytes / (1024.0 * 1024.0) * 10).toInt() / 10.0
-                                    val totMb = (currentOta.totalBytes / (1024.0 * 1024.0) * 10).toInt() / 10.0
-                                    Row(
-                                        modifier = Modifier.fillMaxWidth(),
-                                        horizontalArrangement = Arrangement.SpaceBetween,
-                                        verticalAlignment = Alignment.CenterVertically
+
+                            // Top In-App OTA Banner (Available, Downloading Progress Bar, Installing, & Error)
+                            when (val currentOta = otaState) {
+                                is OtaUpdateState.Available -> {
+                                    if (!dismissOtaBanner) {
+                                        @OptIn(ExperimentalLayoutApi::class)
+                                        FlowRow(
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .background(p.cardBg)
+                                                .padding(horizontal = Space.s16, vertical = 7.dp),
+                                            horizontalArrangement = Arrangement.SpaceBetween,
+                                            verticalArrangement = Arrangement.spacedBy(Space.s6)
+                                        ) {
+                                            val sizeMb = (currentOta.release.assetSizeBytes / (1024.0 * 1024.0) * 10).toInt() / 10.0
+                                            Row(
+                                                verticalAlignment = Alignment.CenterVertically,
+                                                horizontalArrangement = Arrangement.spacedBy(Space.s6),
+                                                modifier = Modifier.padding(top = Space.s4, end = Space.s8)
+                                            ) {
+                                                KissVectorIcon(icon = KissIcon.SPARKLES, tint = p.accent, size = 14.dp)
+                                                BasicText(
+                                                    text = Strings.versionIsReadyMb(currentOta.release.tagName.removePrefix("v"), sizeMb),
+                                                    style = p.uiBodyStyle.copy(fontWeight = FontWeight.Medium)
+                                                )
+                                            }
+                                            Row(horizontalArrangement = Arrangement.spacedBy(Space.s6)) {
+                                                SepiaButton(
+                                                    text = Strings.update,
+                                                    compact = true,
+                                                    style = SepiaButtonStyle.PRIMARY,
+                                                    onClick = { triggerOtaDownloadAndInstall(currentOta.release) }
+                                                )
+                                                SepiaButton(
+                                                    text = "×",
+                                                    contentDescription = Strings.dismissUpdateNotice,
+                                                    compact = true,
+                                                    style = SepiaButtonStyle.GHOST,
+                                                    onClick = { dismissOtaBanner = true }
+                                                )
+                                            }
+                                        }
+                                        SepiaDivider()
+                                    }
+                                }
+                                is OtaUpdateState.Downloading -> {
+                                    Column(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .background(p.cardBg)
+                                            .padding(horizontal = Space.s16, vertical = Space.s8),
+                                        verticalArrangement = Arrangement.spacedBy(Space.s6)
+                                    ) {
+                                        val dlMb = (currentOta.downloadedBytes / (1024.0 * 1024.0) * 10).toInt() / 10.0
+                                        val totMb = (currentOta.totalBytes / (1024.0 * 1024.0) * 10).toInt() / 10.0
+                                        Row(
+                                            modifier = Modifier.fillMaxWidth(),
+                                            horizontalArrangement = Arrangement.SpaceBetween,
+                                            verticalAlignment = Alignment.CenterVertically
+                                        ) {
+                                            Row(
+                                                verticalAlignment = Alignment.CenterVertically,
+                                                horizontalArrangement = Arrangement.spacedBy(Space.s6)
+                                            ) {
+                                                KissVectorIcon(icon = KissIcon.DOWNLOAD, tint = p.accent, size = 14.dp)
+                                                BasicText(
+                                                    text = Strings.downloadingMb(currentOta.release.tagName, dlMb, totMb),
+                                                    style = p.uiBodyStyle.copy(color = p.accent, fontWeight = FontWeight.SemiBold)
+                                                )
+                                            }
+                                            BasicText(
+                                                text = "${currentOta.progressPercent}%",
+                                                style = p.uiLabelStyle.copy(
+                                                    color = p.accent,
+                                                    fontWeight = FontWeight.Bold,
+                                                    fontSize = 12.sp,
+                                                    fontFeatureSettings = "tnum"
+                                                )
+                                            )
+                                        }
+                                        SepiaProgressBar(fraction = currentOta.progressPercent / 100f)
+                                    }
+                                    SepiaDivider()
+                                }
+                                is OtaUpdateState.Installing -> {
+                                    Column(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .background(p.cardBg)
+                                            .padding(horizontal = Space.s16, vertical = Space.s8),
+                                        verticalArrangement = Arrangement.spacedBy(Space.s6)
                                     ) {
                                         Row(
                                             verticalAlignment = Alignment.CenterVertically,
-                                            horizontalArrangement = Arrangement.spacedBy(Space.s6)
+                                            horizontalArrangement = Arrangement.spacedBy(Space.s8)
                                         ) {
-                                            KissVectorIcon(icon = KissIcon.DOWNLOAD, tint = p.accent, size = 14.dp)
+                                            KissStreamingPulseDot(color = p.accent)
                                             BasicText(
-                                                text = Strings.downloadingMb(currentOta.release.tagName, dlMb, totMb),
+                                                text = currentOta.message,
                                                 style = p.uiBodyStyle.copy(color = p.accent, fontWeight = FontWeight.SemiBold)
                                             )
                                         }
-                                        BasicText(
-                                            text = "${currentOta.progressPercent}%",
-                                            style = p.uiLabelStyle.copy(
-                                                color = p.accent,
-                                                fontWeight = FontWeight.Bold,
-                                                fontSize = 12.sp,
-                                                fontFeatureSettings = "tnum"
-                                            )
+                                        Box(
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .height(4.dp)
+                                                .clip(RoundedCornerShape(Radius.pill))
+                                                .background(p.accent)
                                         )
-                                    }
-                                    SepiaProgressBar(fraction = currentOta.progressPercent / 100f)
-                                }
-                                SepiaDivider()
-                            }
-                            is OtaUpdateState.Installing -> {
-                                Column(
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .background(p.cardBg)
-                                        .padding(horizontal = Space.s16, vertical = Space.s8),
-                                    verticalArrangement = Arrangement.spacedBy(Space.s6)
-                                ) {
-                                    Row(
-                                        verticalAlignment = Alignment.CenterVertically,
-                                        horizontalArrangement = Arrangement.spacedBy(Space.s8)
-                                    ) {
-                                        KissStreamingPulseDot(color = p.accent)
-                                        BasicText(
-                                            text = currentOta.message,
-                                            style = p.uiBodyStyle.copy(color = p.accent, fontWeight = FontWeight.SemiBold)
-                                        )
-                                    }
-                                    Box(
-                                        modifier = Modifier
-                                            .fillMaxWidth()
-                                            .height(4.dp)
-                                            .clip(RoundedCornerShape(Radius.pill))
-                                            .background(p.accent)
-                                    )
-                                }
-                                SepiaDivider()
-                            }
-                            is OtaUpdateState.Error -> {
-                                if (!dismissOtaBanner) {
-                                    @OptIn(ExperimentalLayoutApi::class)
-                                    FlowRow(
-                                        modifier = Modifier
-                                            .fillMaxWidth()
-                                            .background(p.cardBg)
-                                            .padding(horizontal = Space.s16, vertical = 7.dp),
-                                        horizontalArrangement = Arrangement.SpaceBetween,
-                                        verticalArrangement = Arrangement.spacedBy(Space.s6)
-                                    ) {
-                                        BasicText(
-                                            text = Strings.updateFailed(currentOta.message),
-                                            style = p.uiBodyStyle.copy(color = p.danger, fontWeight = FontWeight.Medium),
-                                            modifier = Modifier.weight(1f, fill = false).padding(top = Space.s4, end = Space.s8)
-                                        )
-                                        Row(horizontalArrangement = Arrangement.spacedBy(Space.s6)) {
-                                            SepiaButton(
-                                                text = Strings.retry,
-                                                compact = true,
-                                                style = SepiaButtonStyle.OUTLINE,
-                                                onClick = ::triggerOtaCheckManual
-                                            )
-                                            SepiaButton(
-                                                text = "×",
-                                                contentDescription = Strings.dismissUpdateNotice,
-                                                compact = true,
-                                                style = SepiaButtonStyle.GHOST,
-                                                onClick = { dismissOtaBanner = true }
-                                            )
-                                        }
                                     }
                                     SepiaDivider()
                                 }
+                                is OtaUpdateState.Error -> {
+                                    if (!dismissOtaBanner) {
+                                        @OptIn(ExperimentalLayoutApi::class)
+                                        FlowRow(
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .background(p.cardBg)
+                                                .padding(horizontal = Space.s16, vertical = 7.dp),
+                                            horizontalArrangement = Arrangement.SpaceBetween,
+                                            verticalArrangement = Arrangement.spacedBy(Space.s6)
+                                        ) {
+                                            BasicText(
+                                                text = Strings.updateFailed(currentOta.message),
+                                                style = p.uiBodyStyle.copy(color = p.danger, fontWeight = FontWeight.Medium),
+                                                modifier = Modifier.weight(1f, fill = false).padding(top = Space.s4, end = Space.s8)
+                                            )
+                                            Row(horizontalArrangement = Arrangement.spacedBy(Space.s6)) {
+                                                SepiaButton(
+                                                    text = Strings.retry,
+                                                    compact = true,
+                                                    style = SepiaButtonStyle.OUTLINE,
+                                                    onClick = ::triggerOtaCheckManual
+                                                )
+                                                SepiaButton(
+                                                    text = "×",
+                                                    contentDescription = Strings.dismissUpdateNotice,
+                                                    compact = true,
+                                                    style = SepiaButtonStyle.GHOST,
+                                                    onClick = { dismissOtaBanner = true }
+                                                )
+                                            }
+                                        }
+                                        SepiaDivider()
+                                    }
+                                }
+                                else -> {}
                             }
-                            else -> {}
-                        }
                         } // Closes top chrome wrapper hidden from screen readers when a modal is open.
 
                         LaunchedEffect(bannerNotification, isVoiceListening) {
@@ -946,101 +957,101 @@ fun ParchmentApp(
                         ) {
                             @Composable { mod ->
                                 ParchmentSidebar(
-                                appState = sidebarAppState,
-                                activeAssistant = activeAssistant,
-                                activeSession = sidebarActiveSession,
-                                selectedTab = sidebarTab,
-                                isCompactScreen = isCompactScreen,
-                                onSelectTab = stableCallback { sidebarTab = it },
-                                modifier = mod,
-                                onSelectAssistant = stableCallback { asst ->
-                                    val assistantSessions = appState.sessions.filter { it.assistantId == asst.id }
-                                    if (appState.preferences.newChatWhenSwitchingAssistants || assistantSessions.isEmpty()) {
-                                        createNewTopicForAssistant(asst)
-                                    } else {
-                                        val openTabForAsst = assistantSessions.firstOrNull { it.id in openTabIds }
-                                        val nextSess = openTabForAsst ?: assistantSessions.maxByOrNull { it.updatedAt } ?: assistantSessions.first()
-                                        val updatedTabs = if (nextSess.id in openTabIds) openTabIds else (openTabIds + nextSess.id)
+                                    appState = sidebarAppState,
+                                    activeAssistant = activeAssistant,
+                                    activeSession = sidebarActiveSession,
+                                    selectedTab = sidebarTab,
+                                    isCompactScreen = isCompactScreen,
+                                    onSelectTab = stableCallback { sidebarTab = it },
+                                    modifier = mod,
+                                    onSelectAssistant = stableCallback { asst ->
+                                        val assistantSessions = appState.sessions.filter { it.assistantId == asst.id }
+                                        if (appState.preferences.newChatWhenSwitchingAssistants || assistantSessions.isEmpty()) {
+                                            createNewTopicForAssistant(asst)
+                                        } else {
+                                            val openTabForAsst = assistantSessions.firstOrNull { it.id in openTabIds }
+                                            val nextSess = openTabForAsst ?: assistantSessions.maxByOrNull { it.updatedAt } ?: assistantSessions.first()
+                                            val updatedTabs = if (nextSess.id in openTabIds) openTabIds else (openTabIds + nextSess.id)
+                                            persist(
+                                                appState.copy(
+                                                    activeAssistantId = asst.id,
+                                                    activeSessionId = nextSess.id,
+                                                    openTabSessionIds = updatedTabs
+                                                ),
+                                                immediateFlush = true
+                                            )
+                                        }
+                                        if (appState.preferences.autoSwitchToTopics) {
+                                            sidebarTab = SidebarTab.TOPICS
+                                        }
+                                    },
+                                    onEditAssistantInSettings = stableCallback { asstId ->
+                                        persist(appState.copy(activeAssistantId = asstId), immediateFlush = true)
+                                        activeSettingsCategory = SettingsCategory.ASSISTANTS
+                                        startMobileSettingsAtRoot = false
+                                        isSettingsOpen = true
+                                        if (isCompactScreen) showSidebar = false
+                                    },
+                                    onCreateNewAssistant = stableAction {
+                                        val now = PlatformRuntime.currentTimeMillis()
+                                        val newAsst = AssistantAgent(id = "asst-$now", name = "New Assistant", iconEmoji = "🤖")
                                         persist(
                                             appState.copy(
-                                                activeAssistantId = asst.id,
-                                                activeSessionId = nextSess.id,
-                                                openTabSessionIds = updatedTabs
+                                                assistants = appState.assistants + newAsst,
+                                                activeAssistantId = newAsst.id
                                             ),
                                             immediateFlush = true
                                         )
+                                        activeSettingsCategory = SettingsCategory.ASSISTANTS
+                                        startMobileSettingsAtRoot = false
+                                        isSettingsOpen = true
+                                        if (isCompactScreen) showSidebar = false
+                                    },
+                                    onSelectSession = stableCallback { sessId ->
+                                        switchToTab(sessId)
+                                        if (isCompactScreen) showSidebar = false
+                                    },
+                                    onOpenPinnedReply = stableCallback { pin ->
+                                        pendingPinJump = pin
+                                        switchToTab(pin.sessionId)
+                                        isSettingsOpen = false
+                                        if (isCompactScreen) showSidebar = false
+                                    },
+                                    onUnpinReply = stableCallback { pin -> togglePinnedReply(pin.sessionId, pin.nodeId) },
+                                    onNewTopic = stableAction(::openNewChat),
+                                    onTogglePinSession = stableCallback { sessId ->
+                                        updateSessionById(sessId, immediate = true) { it.copy(isPinned = !it.isPinned) }
+                                    },
+                                    onRegenerateSessionTitle = stableCallback { sessId ->
+                                        generateTopicTitle(sessId, forceRegenerate = true)
+                                    },
+                                    onDeleteSession = stableCallback { targetId ->
+                                        if (appState.preferences.confirmBeforeDeletingChat) {
+                                            val title = appState.sessions.find { it.id == targetId }?.title ?: "Chat"
+                                            pendingDeleteConfirmation = DeleteConfirmRequest.SingleSession(targetId, title)
+                                        } else {
+                                            executeDeleteSingleSession(targetId)
+                                        }
+                                    },
+                                    onDeleteAllTopicsForAssistant = stableAction {
+                                        val matchingCount = appState.sessions.count {
+                                            it.assistantId == activeAssistant.id || appState.assistants.none { a -> a.id == it.assistantId }
+                                        }
+                                        if (appState.preferences.confirmBeforeDeletingChat) {
+                                            pendingDeleteConfirmation = DeleteConfirmRequest.ClearAllSessions(
+                                                assistantName = activeAssistant.name,
+                                                count = matchingCount
+                                            )
+                                        } else {
+                                            executeClearAllTopicsForAssistant()
+                                        }
+                                    },
+                                    onOpenSettings = stableAction {
+                                        startMobileSettingsAtRoot = true
+                                        isSettingsOpen = true
+                                        if (isCompactScreen) showSidebar = false
                                     }
-                                    if (appState.preferences.autoSwitchToTopics) {
-                                        sidebarTab = SidebarTab.TOPICS
-                                    }
-                                },
-                                onEditAssistantInSettings = stableCallback { asstId ->
-                                    persist(appState.copy(activeAssistantId = asstId), immediateFlush = true)
-                                    activeSettingsCategory = SettingsCategory.ASSISTANTS
-                                    startMobileSettingsAtRoot = false
-                                    isSettingsOpen = true
-                                    if (isCompactScreen) showSidebar = false
-                                },
-                                onCreateNewAssistant = stableAction {
-                                    val now = PlatformRuntime.currentTimeMillis()
-                                    val newAsst = AssistantAgent(id = "asst-$now", name = "New Assistant", iconEmoji = "🤖")
-                                    persist(
-                                        appState.copy(
-                                            assistants = appState.assistants + newAsst,
-                                            activeAssistantId = newAsst.id
-                                        ),
-                                        immediateFlush = true
-                                    )
-                                    activeSettingsCategory = SettingsCategory.ASSISTANTS
-                                    startMobileSettingsAtRoot = false
-                                    isSettingsOpen = true
-                                    if (isCompactScreen) showSidebar = false
-                                },
-                                onSelectSession = stableCallback { sessId ->
-                                    switchToTab(sessId)
-                                    if (isCompactScreen) showSidebar = false
-                                },
-                                onOpenPinnedReply = stableCallback { pin ->
-                                    pendingPinJump = pin
-                                    switchToTab(pin.sessionId)
-                                    isSettingsOpen = false
-                                    if (isCompactScreen) showSidebar = false
-                                },
-                                onUnpinReply = stableCallback { pin -> togglePinnedReply(pin.sessionId, pin.nodeId) },
-                                onNewTopic = stableAction(::openNewChat),
-                                onTogglePinSession = stableCallback { sessId ->
-                                    updateSessionById(sessId, immediate = true) { it.copy(isPinned = !it.isPinned) }
-                                },
-                                onRegenerateSessionTitle = stableCallback { sessId ->
-                                    generateTopicTitle(sessId, forceRegenerate = true)
-                                },
-                                onDeleteSession = stableCallback { targetId ->
-                                    if (appState.preferences.confirmBeforeDeletingChat) {
-                                        val title = appState.sessions.find { it.id == targetId }?.title ?: "Chat"
-                                        pendingDeleteConfirmation = DeleteConfirmRequest.SingleSession(targetId, title)
-                                    } else {
-                                        executeDeleteSingleSession(targetId)
-                                    }
-                                },
-                                onDeleteAllTopicsForAssistant = stableAction {
-                                    val matchingCount = appState.sessions.count {
-                                        it.assistantId == activeAssistant.id || appState.assistants.none { a -> a.id == it.assistantId }
-                                    }
-                                    if (appState.preferences.confirmBeforeDeletingChat) {
-                                        pendingDeleteConfirmation = DeleteConfirmRequest.ClearAllSessions(
-                                            assistantName = activeAssistant.name,
-                                            count = matchingCount
-                                        )
-                                    } else {
-                                        executeClearAllTopicsForAssistant()
-                                    }
-                                },
-                                onOpenSettings = stableAction {
-                                    startMobileSettingsAtRoot = true
-                                    isSettingsOpen = true
-                                    if (isCompactScreen) showSidebar = false
-                                }
-                            )
+                                )
                             }
                         }
 
@@ -1074,453 +1085,453 @@ fun ParchmentApp(
                                     animationSpec = motionTween(Motion.MEDIUM),
                                     modifier = Modifier.weight(1f).fillMaxHeight()
                                 ) { settingsMode ->
-                                Column(Modifier.fillMaxSize()) {
-                                    ToolApprovalPanel(currentTabStream?.toolApprovalBroker, activeSession.title)
-                                    UserQuestionPanel(currentTabStream?.toolApprovalBroker, activeSession.title)
-                                    Box(Modifier.weight(1f).fillMaxWidth()) {
-                                if (settingsMode) {
-                                    ParchmentSettingsScreen(
-                                        appState = appState,
-                                        activeProfile = activeProfile,
-                                        activeSession = activeSession,
-                                        initialCategory = activeSettingsCategory,
-                                        startAtMobileRoot = startMobileSettingsAtRoot,
-                                        otaState = otaState,
-                                        onSelectProfile = { id -> persist(appState.copy(activeProfileId = id), immediateFlush = true) },
-                                        onUpdateProfile = ::updateActiveProfile,
-                                        onUpdateProfileById = ::updateProfileById,
-                                        onAddProfile = { protocol ->
-                                            val now = PlatformRuntime.currentTimeMillis()
-                                            val newProf = ProviderProfile(
-                                                id = "prof-$now",
-                                                name = Strings.provider(protocol.displayName.substringBefore(" ")),
-                                                protocol = protocol
-                                            )
-                                            persist(
-                                                appState.copy(
-                                                    profiles = appState.profiles + newProf,
-                                                    activeProfileId = newProf.id
-                                                ),
-                                                immediateFlush = true
-                                            )
-                                        },
-                                        onDeleteProfile = { targetProfId ->
-                                            val remaining = appState.profiles.filterNot { it.id == targetProfId }
-                                            if (remaining.isNotEmpty()) {
-                                                val nextProfId = if (appState.activeProfileId == targetProfId) remaining.first().id else appState.activeProfileId
-                                                persist(appState.copy(profiles = remaining, activeProfileId = nextProfId), immediateFlush = true)
-                                                bannerNotification = Strings.deletedProviderProfile
-                                            } else {
-                                                bannerNotification = Strings.atLeastOneProviderProfileIs
-                                            }
-                                        },
-                                        onUpdateAssistants = { updatedList, activeId ->
-                                            val safeList = updatedList.ifEmpty {
-                                                listOf(AssistantAgent(id = "asst-default", name = "Default Assistant", iconEmoji = "💬"))
-                                            }
-                                            val safeActive = safeList.find { it.id == activeId }?.id ?: safeList.first().id
-                                            persist(appState.copy(assistants = safeList, activeAssistantId = safeActive), immediateFlush = true)
-                                        },
-                                        onUpdateDefaultModels = { dm ->
-                                            persist(appState.copy(defaultModels = dm), immediateFlush = true)
-                                        },
-                                        onUpdatePreferences = { prefs ->
-                                            persist(appState.copy(preferences = prefs), immediateFlush = true)
-                                        },
-                                        onUpdateTheme = { newTheme ->
-                                            persist(appState.copy(theme = newTheme), immediateFlush = true)
-                                        },
-                                        onUpdateSession = { transform -> updateActiveSession(immediate = true, transform = transform) },
-                                        onUpdateGlobalWorldBook = { wb ->
-                                            persist(appState.copy(globalWorldBook = wb), immediateFlush = true)
-                                        },
-                                        onSaveCardToLibrary = { card ->
-                                            val updatedCards = listOf(card) + appState.savedCards.filterNot { it.name == card.name }
-                                            persist(appState.copy(savedCards = updatedCards), immediateFlush = true)
-                                        },
-                                        onSavePresetToLibrary = { preset ->
-                                            val updatedPresets = listOf(preset) + appState.systemPromptPresets.filterNot { it.id == preset.id }
-                                            persist(appState.copy(systemPromptPresets = updatedPresets), immediateFlush = true)
-                                        },
-                                        onDeletePresetFromLibrary = { presetId ->
-                                            persist(appState.copy(systemPromptPresets = appState.systemPromptPresets.filterNot { it.id == presetId }), immediateFlush = true)
-                                        },
-                                        onUpdateOtaSettings = { repo, autoCheck ->
-                                            persist(appState.copy(otaGithubRepo = repo, autoCheckOtaOnStartup = autoCheck), immediateFlush = true)
-                                        },
-                                        onCheckOtaNow = ::triggerOtaCheckManual,
-                                        onInstallOtaRelease = ::triggerOtaDownloadAndInstall,
-                                        onRestoreFullBackup = { importedSnapshot ->
-                                            val restored = importedSnapshot.withImportedPermissions(appState.otaGithubRepo)
-                                            activeStreamsBySession.values.forEach { it.job?.cancel() }
-                                            activeStreamsBySession = emptyMap()
-                                            queuedPromptsBySession = emptyMap()
-                                            pendingAttachmentsBySession = emptyMap()
-                                            val existingSessions = appState.sessions
-                                            appProcessScope.launch {
-                                                val (finalSnap, removedIds) = withContext(Dispatchers.Default) {
-                                                    // Importing a settings-only file keeps the chats already on disk.
-                                                    val mergedSessions = if (restored.sessions.isEmpty()) {
-                                                        existingSessions
-                                                    } else {
-                                                        val byId = LinkedHashMap<String, ChatSession>()
-                                                        for (s in existingSessions) byId[s.id] = s
-                                                        for (s in restored.sessions) byId[s.id] = s
-                                                        byId.values.toList()
-                                                    }
-                                                    val snap = sanitizeLoadedSnapshot(restored.copy(sessions = mergedSessions))
-                                                    val removed = existingSessions.map { it.id }.toSet() - snap.sessions.map { it.id }.toSet()
-                                                    snap to removed
-                                                }
-                                                withContext(Dispatchers.IO) {
-                                                    appDiskWriter.replaceState(finalSnap, removedIds)
-                                                    appDiskWriter.flush()
-                                                }
-                                                appState = finalSnap
-                                                bannerNotification = Strings.importedSettingsAssistantsPreserved(plural(finalSnap.sessions.size, "chat"))
-                                            }
-                                        },
-                                        onImportChatSessions = { importedList ->
-                                            val defaultProfId = appState.activeProfileId.ifBlank { appState.profiles.first().id }
-                                            val defaultAsstId = appState.activeAssistantId.ifBlank { appState.assistants.first().id }
-                                            val validProfIds = appState.profiles.map { it.id }.toSet()
-                                            val validAsstIds = appState.assistants.map { it.id }.toSet()
-                                            appProcessScope.launch {
-                                                val (importedChats, addedOrUpdated, firstImportedId) = withContext(Dispatchers.IO) {
-                                                    val baseTs = PlatformRuntime.currentTimeMillis()
-                                                    var count = 0
-                                                    var firstId = ""
-                                                    val list = ArrayList<ChatSession>(importedList.size)
-                                                    for (incomingChat in importedList) {
-                                                        val rawChat = incomingChat.withImportedPermissions()
-                                                        val safeId = rawChat.id.ifBlank { "sess-imp-$baseTs-$count" }
-                                                        val validProfId = rawChat.profileId.takeIf { it in validProfIds } ?: defaultProfId
-                                                        val validAsstId = rawChat.assistantId.takeIf { it in validAsstIds } ?: defaultAsstId
-                                                        val normalized = rawChat.copy(
-                                                            id = safeId,
-                                                            profileId = validProfId,
-                                                            assistantId = validAsstId,
-                                                            messages = rawChat.messages.map { n ->
-                                                                n.copy(variants = n.variants.map { v -> if (v.isStreaming) v.copy(isStreaming = false) else v })
+                                    Column(Modifier.fillMaxSize()) {
+                                        ToolApprovalPanel(currentTabStream?.toolApprovalBroker, activeSession.title)
+                                        UserQuestionPanel(currentTabStream?.toolApprovalBroker, activeSession.title)
+                                        Box(Modifier.weight(1f).fillMaxWidth()) {
+                                            if (settingsMode) {
+                                                ParchmentSettingsScreen(
+                                                    appState = appState,
+                                                    activeProfile = activeProfile,
+                                                    activeSession = activeSession,
+                                                    initialCategory = activeSettingsCategory,
+                                                    startAtMobileRoot = startMobileSettingsAtRoot,
+                                                    otaState = otaState,
+                                                    onSelectProfile = { id -> persist(appState.copy(activeProfileId = id), immediateFlush = true) },
+                                                    onUpdateProfile = ::updateActiveProfile,
+                                                    onUpdateProfileById = ::updateProfileById,
+                                                    onAddProfile = { protocol ->
+                                                        val now = PlatformRuntime.currentTimeMillis()
+                                                        val newProf = ProviderProfile(
+                                                            id = "prof-$now",
+                                                            name = Strings.provider(protocol.displayName.substringBefore(" ")),
+                                                            protocol = protocol
+                                                        )
+                                                        persist(
+                                                            appState.copy(
+                                                                profiles = appState.profiles + newProf,
+                                                                activeProfileId = newProf.id
+                                                            ),
+                                                            immediateFlush = true
+                                                        )
+                                                    },
+                                                    onDeleteProfile = { targetProfId ->
+                                                        val remaining = appState.profiles.filterNot { it.id == targetProfId }
+                                                        if (remaining.isNotEmpty()) {
+                                                            val nextProfId = if (appState.activeProfileId == targetProfId) remaining.first().id else appState.activeProfileId
+                                                            persist(appState.copy(profiles = remaining, activeProfileId = nextProfId), immediateFlush = true)
+                                                            bannerNotification = Strings.deletedProviderProfile
+                                                        } else {
+                                                            bannerNotification = Strings.atLeastOneProviderProfileIs
+                                                        }
+                                                    },
+                                                    onUpdateAssistants = { updatedList, activeId ->
+                                                        val safeList = updatedList.ifEmpty {
+                                                            listOf(AssistantAgent(id = "asst-default", name = "Default Assistant", iconEmoji = "💬"))
+                                                        }
+                                                        val safeActive = safeList.find { it.id == activeId }?.id ?: safeList.first().id
+                                                        persist(appState.copy(assistants = safeList, activeAssistantId = safeActive), immediateFlush = true)
+                                                    },
+                                                    onUpdateDefaultModels = { dm ->
+                                                        persist(appState.copy(defaultModels = dm), immediateFlush = true)
+                                                    },
+                                                    onUpdatePreferences = { prefs ->
+                                                        persist(appState.copy(preferences = prefs), immediateFlush = true)
+                                                    },
+                                                    onUpdateTheme = { newTheme ->
+                                                        persist(appState.copy(theme = newTheme), immediateFlush = true)
+                                                    },
+                                                    onUpdateSession = { transform -> updateActiveSession(immediate = true, transform = transform) },
+                                                    onUpdateGlobalWorldBook = { wb ->
+                                                        persist(appState.copy(globalWorldBook = wb), immediateFlush = true)
+                                                    },
+                                                    onSaveCardToLibrary = { card ->
+                                                        val updatedCards = listOf(card) + appState.savedCards.filterNot { it.name == card.name }
+                                                        persist(appState.copy(savedCards = updatedCards), immediateFlush = true)
+                                                    },
+                                                    onSavePresetToLibrary = { preset ->
+                                                        val updatedPresets = listOf(preset) + appState.systemPromptPresets.filterNot { it.id == preset.id }
+                                                        persist(appState.copy(systemPromptPresets = updatedPresets), immediateFlush = true)
+                                                    },
+                                                    onDeletePresetFromLibrary = { presetId ->
+                                                        persist(appState.copy(systemPromptPresets = appState.systemPromptPresets.filterNot { it.id == presetId }), immediateFlush = true)
+                                                    },
+                                                    onUpdateOtaSettings = { repo, autoCheck ->
+                                                        persist(appState.copy(otaGithubRepo = repo, autoCheckOtaOnStartup = autoCheck), immediateFlush = true)
+                                                    },
+                                                    onCheckOtaNow = ::triggerOtaCheckManual,
+                                                    onInstallOtaRelease = ::triggerOtaDownloadAndInstall,
+                                                    onRestoreFullBackup = { importedSnapshot ->
+                                                        val restored = importedSnapshot.withImportedPermissions(appState.otaGithubRepo)
+                                                        activeStreamsBySession.values.forEach { it.job?.cancel() }
+                                                        activeStreamsBySession = emptyMap()
+                                                        queuedPromptsBySession = emptyMap()
+                                                        pendingAttachmentsBySession = emptyMap()
+                                                        val existingSessions = appState.sessions
+                                                        appProcessScope.launch {
+                                                            val (finalSnap, removedIds) = withContext(Dispatchers.Default) {
+                                                                // Importing a settings-only file keeps the chats already on disk.
+                                                                val mergedSessions = if (restored.sessions.isEmpty()) {
+                                                                    existingSessions
+                                                                } else {
+                                                                    val byId = LinkedHashMap<String, ChatSession>()
+                                                                    for (s in existingSessions) byId[s.id] = s
+                                                                    for (s in restored.sessions) byId[s.id] = s
+                                                                    byId.values.toList()
+                                                                }
+                                                                val snap = sanitizeLoadedSnapshot(restored.copy(sessions = mergedSessions))
+                                                                val removed = existingSessions.map { it.id }.toSet() - snap.sessions.map { it.id }.toSet()
+                                                                snap to removed
                                                             }
-                                                        )
-                                                        saveSingleChatSessionToDisk(normalized)
-                                                        list.add(normalized)
-                                                        if (firstId.isEmpty()) firstId = safeId
-                                                        count++
-                                                    }
-                                                    Triple(list, count, firstId)
-                                                }
-                                                val byId = LinkedHashMap<String, ChatSession>(appState.sessions.size + importedChats.size)
-                                                for (existing in appState.sessions) byId[existing.id] = existing
-                                                for (normalized in importedChats) byId[normalized.id] = normalized
-                                                val sorted = byId.values.sortedWith(
-                                                    compareByDescending<ChatSession> { it.isPinned }.thenByDescending { it.updatedAt }
+                                                            withContext(Dispatchers.IO) {
+                                                                appDiskWriter.replaceState(finalSnap, removedIds)
+                                                                appDiskWriter.flush()
+                                                            }
+                                                            appState = finalSnap
+                                                            bannerNotification = Strings.importedSettingsAssistantsPreserved(plural(finalSnap.sessions.size, "chat"))
+                                                        }
+                                                    },
+                                                    onImportChatSessions = { importedList ->
+                                                        val defaultProfId = appState.activeProfileId.ifBlank { appState.profiles.first().id }
+                                                        val defaultAsstId = appState.activeAssistantId.ifBlank { appState.assistants.first().id }
+                                                        val validProfIds = appState.profiles.map { it.id }.toSet()
+                                                        val validAsstIds = appState.assistants.map { it.id }.toSet()
+                                                        appProcessScope.launch {
+                                                            val (importedChats, addedOrUpdated, firstImportedId) = withContext(Dispatchers.IO) {
+                                                                val baseTs = PlatformRuntime.currentTimeMillis()
+                                                                var count = 0
+                                                                var firstId = ""
+                                                                val list = ArrayList<ChatSession>(importedList.size)
+                                                                for (incomingChat in importedList) {
+                                                                    val rawChat = incomingChat.withImportedPermissions()
+                                                                    val safeId = rawChat.id.ifBlank { "sess-imp-$baseTs-$count" }
+                                                                    val validProfId = rawChat.profileId.takeIf { it in validProfIds } ?: defaultProfId
+                                                                    val validAsstId = rawChat.assistantId.takeIf { it in validAsstIds } ?: defaultAsstId
+                                                                    val normalized = rawChat.copy(
+                                                                        id = safeId,
+                                                                        profileId = validProfId,
+                                                                        assistantId = validAsstId,
+                                                                        messages = rawChat.messages.map { n ->
+                                                                            n.copy(variants = n.variants.map { v -> if (v.isStreaming) v.copy(isStreaming = false) else v })
+                                                                        }
+                                                                    )
+                                                                    saveSingleChatSessionToDisk(normalized)
+                                                                    list.add(normalized)
+                                                                    if (firstId.isEmpty()) firstId = safeId
+                                                                    count++
+                                                                }
+                                                                Triple(list, count, firstId)
+                                                            }
+                                                            val byId = LinkedHashMap<String, ChatSession>(appState.sessions.size + importedChats.size)
+                                                            for (existing in appState.sessions) byId[existing.id] = existing
+                                                            for (normalized in importedChats) byId[normalized.id] = normalized
+                                                            val sorted = byId.values.sortedWith(
+                                                                compareByDescending<ChatSession> { it.isPinned }.thenByDescending { it.updatedAt }
+                                                            )
+                                                            val nextActive = if (firstImportedId.isNotEmpty()) firstImportedId else appState.activeSessionId
+                                                            val nextTabs = (openTabIds + firstImportedId).filter { it.isNotBlank() }.distinct()
+                                                            persist(
+                                                                appState.copy(
+                                                                    sessions = sorted,
+                                                                    activeSessionId = nextActive,
+                                                                    openTabSessionIds = nextTabs
+                                                                ),
+                                                                immediateFlush = true
+                                                            )
+                                                            bannerNotification = Strings.importedInto(plural(addedOrUpdated, "chat"), PlatformStorage.getChatsStorageDirectoryPath())
+                                                        }
+                                                    },
+                                                    onWipeAllData = {
+                                                        activeStreamsBySession.values.forEach { it.job?.cancel() }
+                                                        activeStreamsBySession = emptyMap()
+                                                        queuedPromptsBySession = emptyMap()
+                                                        pendingAttachmentsBySession = emptyMap()
+                                                        PlatformVoice.stopSpeakingAloud()
+                                                        PlatformVoice.stopVoiceInput()
+                                                        appProcessScope.launch {
+                                                            withContext(Dispatchers.IO) { PlatformStorage.wipeAllLocalData() }
+                                                            appState = createDefaultAppState()
+                                                            bannerNotification = Strings.allLocalDataWipedCleanly
+                                                        }
+                                                    },
+                                                    onDeleteChatSessionById = ::executeDeleteSingleSession,
+                                                    onInspectAttachment = ::openAttachmentInViewer,
+                                                    onShortcutCaptureInterceptorChange = { shortcutCaptureInterceptor = it },
+                                                    onNotify = { bannerNotification = it },
+                                                    onClose = { isSettingsOpen = false }
                                                 )
-                                                val nextActive = if (firstImportedId.isNotEmpty()) firstImportedId else appState.activeSessionId
-                                                val nextTabs = (openTabIds + firstImportedId).filter { it.isNotBlank() }.distinct()
-                                                persist(
-                                                    appState.copy(
-                                                        sessions = sorted,
-                                                        activeSessionId = nextActive,
-                                                        openTabSessionIds = nextTabs
-                                                    ),
-                                                    immediateFlush = true
-                                                )
-                                                bannerNotification = Strings.importedInto(plural(addedOrUpdated, "chat"), PlatformStorage.getChatsStorageDirectoryPath())
-                                            }
-                                        },
-                                        onWipeAllData = {
-                                            activeStreamsBySession.values.forEach { it.job?.cancel() }
-                                            activeStreamsBySession = emptyMap()
-                                            queuedPromptsBySession = emptyMap()
-                                            pendingAttachmentsBySession = emptyMap()
-                                            PlatformVoice.stopSpeakingAloud()
-                                            PlatformVoice.stopVoiceInput()
-                                            appProcessScope.launch {
-                                                withContext(Dispatchers.IO) { PlatformStorage.wipeAllLocalData() }
-                                                appState = createDefaultAppState()
-                                                bannerNotification = Strings.allLocalDataWipedCleanly
-                                            }
-                                        },
-                                        onDeleteChatSessionById = ::executeDeleteSingleSession,
-                                        onInspectAttachment = ::openAttachmentInViewer,
-                                        onShortcutCaptureInterceptorChange = { shortcutCaptureInterceptor = it },
-                                        onNotify = { bannerNotification = it },
-                                        onClose = { isSettingsOpen = false }
-                                    )
-                                } else {
-                                    ManuscriptViewport(
-                                        appState = appState,
-                                        activeSession = activeSession,
-                                        activeAssistant = activeAssistant,
-                                        activeProfile = activeProfile,
-                                        preferences = appState.preferences,
-                                        showSessionInspector = showSessionInspector,
-                                        onToggleSessionInspector = stableAction { showSessionInspector = !showSessionInspector },
-                                        isStreaming = isStreaming,
-                                        isCurrentlyThinkingPhase = isCurrentlyThinkingPhase,
-                                        streamingTargetNodeId = streamingTargetNodeId,
-                                        streamingStatus = streamingStatus,
-                                        retryWait = currentTabStream?.retryWait,
-                                        onRetryNow = { currentTabStream?.retryControl?.retryNow() },
-                                        streamingInteractionId = streamingInteractionId,
-                                        queuedPrompts = queuedPrompts,
-                                        onRemoveQueuedPrompt = stableCallback { qId ->
-                                            val curList = queuedPromptsBySession[activeSession.id].orEmpty()
-                                            queuedPromptsBySession = queuedPromptsBySession + (activeSession.id to curList.filterNot { it.id == qId })
-                                        },
-                                        onSteerQueuedPromptNow = stableCallback { item ->
-                                            steerQueuedPromptNow(activeSession.id, item)
-                                        },
-                                        readUserPromptInput = { userPromptInputState.value },
-                                        onUserPromptChange = stableCallback { text -> userPromptInput = text },
-                                        readAssistantPrefillInput = { assistantPrefillInputState.value },
-                                        onAssistantPrefillChange = stableCallback { pf -> assistantPrefillInput = pf },
-                                        showPrefillBox = showPrefillBox,
-                                        onTogglePrefillBox = stableAction { showPrefillBox = !showPrefillBox },
-                                        showComposerToolsDrawer = showComposerToolsDrawer,
-                                        onComposerToolsDrawerChange = stableCallback { showComposerToolsDrawer = it },
-                                        isGoalModeEnabled = isGoalModeEnabled,
-                                        onToggleGoalMode = stableAction { isGoalModeEnabled = !isGoalModeEnabled },
-                                        isLiveVoiceMode = isLiveVoiceMode,
-                                        isVoiceListening = isVoiceListening,
-                                        onToggleLiveVoiceMode = stableAction {
-                                            isLiveVoiceMode = !isLiveVoiceMode
-                                            if (!isLiveVoiceMode) {
-                                                PlatformVoice.stopSpeakingAloud()
-                                            }
-                                        },
-                                        onTriggerVoiceInput = ::triggerVoiceInput,
-                                        pendingAttachments = pendingAttachments,
-                                        onAddAttachment = stableAction {
-                                            uiScope.launch {
-                                                val picked = PlatformPickers.pickFilesForImport(emptyList())
-                                                if (picked.isNotEmpty()) {
-                                                    attachPickedFiles(picked)
-                                                }
-                                            }
-                                        },
-                                        onAttachWorkspaceFile = stableCallback { relPath ->
-                                            val targetSessionId = activeSession.id
-                                            val wsRoot = AgentPermissionResolver.resolve(activeSession, activeAssistant, activeProfile).workspacePath
-                                            if (wsRoot.isNotBlank()) {
-                                                uiScope.launch {
-                                                    val cleanLines = withContext(Dispatchers.IO) {
-                                                        PlatformWorkspace.workspaceRead(wsRoot, relPath, 1, 1500)
-                                                            .getOrNull()
-                                                            ?.let(::stripWorkspaceReadLineNumbers)
-                                                    } ?: return@launch
-                                                    val curList = pendingAttachmentsBySession[targetSessionId].orEmpty()
-                                                    if (curList.none { it.fileName == relPath }) {
-                                                        val att = PromptAttachment(
-                                                            id = "att-ws-${PlatformRuntime.currentTimeMillis()}",
-                                                            fileName = relPath,
-                                                            mimeType = "text/plain",
-                                                            textContent = cleanLines
-                                                        )
+                                            } else {
+                                                ManuscriptViewport(
+                                                    appState = appState,
+                                                    activeSession = activeSession,
+                                                    activeAssistant = activeAssistant,
+                                                    activeProfile = activeProfile,
+                                                    preferences = appState.preferences,
+                                                    showSessionInspector = showSessionInspector,
+                                                    onToggleSessionInspector = stableAction { showSessionInspector = !showSessionInspector },
+                                                    isStreaming = isStreaming,
+                                                    isCurrentlyThinkingPhase = isCurrentlyThinkingPhase,
+                                                    streamingTargetNodeId = streamingTargetNodeId,
+                                                    streamingStatus = streamingStatus,
+                                                    retryWait = currentTabStream?.retryWait,
+                                                    onRetryNow = { currentTabStream?.retryControl?.retryNow() },
+                                                    streamingInteractionId = streamingInteractionId,
+                                                    queuedPrompts = queuedPrompts,
+                                                    onRemoveQueuedPrompt = stableCallback { qId ->
+                                                        val curList = queuedPromptsBySession[activeSession.id].orEmpty()
+                                                        queuedPromptsBySession = queuedPromptsBySession + (activeSession.id to curList.filterNot { it.id == qId })
+                                                    },
+                                                    onSteerQueuedPromptNow = stableCallback { item ->
+                                                        steerQueuedPromptNow(activeSession.id, item)
+                                                    },
+                                                    readUserPromptInput = { userPromptInputState.value },
+                                                    onUserPromptChange = stableCallback { text -> userPromptInput = text },
+                                                    readAssistantPrefillInput = { assistantPrefillInputState.value },
+                                                    onAssistantPrefillChange = stableCallback { pf -> assistantPrefillInput = pf },
+                                                    showPrefillBox = showPrefillBox,
+                                                    onTogglePrefillBox = stableAction { showPrefillBox = !showPrefillBox },
+                                                    showComposerToolsDrawer = showComposerToolsDrawer,
+                                                    onComposerToolsDrawerChange = stableCallback { showComposerToolsDrawer = it },
+                                                    isGoalModeEnabled = isGoalModeEnabled,
+                                                    onToggleGoalMode = stableAction { isGoalModeEnabled = !isGoalModeEnabled },
+                                                    isLiveVoiceMode = isLiveVoiceMode,
+                                                    isVoiceListening = isVoiceListening,
+                                                    onToggleLiveVoiceMode = stableAction {
+                                                        isLiveVoiceMode = !isLiveVoiceMode
+                                                        if (!isLiveVoiceMode) {
+                                                            PlatformVoice.stopSpeakingAloud()
+                                                        }
+                                                    },
+                                                    onTriggerVoiceInput = ::triggerVoiceInput,
+                                                    pendingAttachments = pendingAttachments,
+                                                    onAddAttachment = stableAction {
+                                                        uiScope.launch {
+                                                            val picked = PlatformPickers.pickFilesForImport(emptyList())
+                                                            if (picked.isNotEmpty()) {
+                                                                attachPickedFiles(picked)
+                                                            }
+                                                        }
+                                                    },
+                                                    onAttachWorkspaceFile = stableCallback { relPath ->
+                                                        val targetSessionId = activeSession.id
+                                                        val wsRoot = AgentPermissionResolver.resolve(activeSession, activeAssistant, activeProfile).workspacePath
+                                                        if (wsRoot.isNotBlank()) {
+                                                            uiScope.launch {
+                                                                val cleanLines = withContext(Dispatchers.IO) {
+                                                                    PlatformWorkspace.workspaceRead(wsRoot, relPath, 1, 1500)
+                                                                        .getOrNull()
+                                                                        ?.let(::stripWorkspaceReadLineNumbers)
+                                                                } ?: return@launch
+                                                                val curList = pendingAttachmentsBySession[targetSessionId].orEmpty()
+                                                                if (curList.none { it.fileName == relPath }) {
+                                                                    val att = PromptAttachment(
+                                                                        id = "att-ws-${PlatformRuntime.currentTimeMillis()}",
+                                                                        fileName = relPath,
+                                                                        mimeType = "text/plain",
+                                                                        textContent = cleanLines
+                                                                    )
+                                                                    pendingAttachmentsBySession = pendingAttachmentsBySession +
+                                                                        (targetSessionId to (curList + att))
+                                                                }
+                                                            }
+                                                        }
+                                                    },
+                                                    onReattachExistingAttachment = stableCallback { existingAtt ->
+                                                        val curList = pendingAttachmentsBySession[activeSession.id].orEmpty()
+                                                        if (curList.none { it.fileName == existingAtt.fileName }) {
+                                                            pendingAttachmentsBySession = pendingAttachmentsBySession +
+                                                                (activeSession.id to (curList + existingAtt.copy(id = "att-re-${PlatformRuntime.currentTimeMillis()}")))
+                                                        }
+                                                    },
+                                                    onPasteClipboardMedia = run {
+                                                        val holder = remember { Array(1) { { false } } }
+                                                        holder[0] = {
+                                                            PlatformPickers.pasteClipboardMediaAsync { pasted ->
+                                                                attachPickedFiles(pasted)
+                                                                if (pasted.none { it.oversized }) {
+                                                                    bannerNotification = Strings.attached(plural(pasted.size, "clipboard item"), pasted.joinToString { it.fileName })
+                                                                }
+                                                            }
+                                                        }
+                                                        remember { { holder[0]() } }
+                                                    },
+                                                    onRequestClearCurrentChat = stableAction {
+                                                        if (appState.preferences.confirmBeforeDeletingChat) {
+                                                            pendingDeleteConfirmation = DeleteConfirmRequest.ClearCurrentMessages(activeSession.title)
+                                                        } else {
+                                                            clearCurrentChatMessages(activeSession.id)
+                                                        }
+                                                    },
+                                                    onRemoveAttachment = stableCallback { attId ->
+                                                        val curAtts = pendingAttachmentsBySession[activeSession.id].orEmpty()
                                                         pendingAttachmentsBySession = pendingAttachmentsBySession +
-                                                            (targetSessionId to (curList + att))
-                                                    }
-                                                }
+                                                            (activeSession.id to curAtts.filterNot { it.id == attId })
+                                                    },
+                                                    onInspectAttachment = ::openAttachmentInViewer,
+                                                    onInspectGeneratedImage = stableCallback { media ->
+                                                        activeViewerItem = ActiveMediaViewerItem.ImageViewer(
+                                                            title = media.revisedPrompt.take(48).ifBlank { "Generated Image" },
+                                                            mimeType = media.mimeType.ifBlank { "image/png" },
+                                                            localFilePath = media.localFilePath,
+                                                            remoteUrl = media.remoteUrl
+                                                        )
+                                                    },
+                                                    onExportChatMarkdown = stableAction {
+                                                        uiScope.launch {
+                                                            val md = formatSessionMarkdownExport(activeSession, activeAssistant)
+                                                            val safeTitle = activeSession.title.replace(Regex("[^a-zA-Z0-9-_]"), "_").ifBlank { "chat" }
+                                                            val saved = PlatformPickers.saveFileForExport("$safeTitle.md", md.encodeToByteArray())
+                                                            if (saved != null) bannerNotification = Strings.exportedMarkdownTo(saved)
+                                                        }
+                                                    },
+                                                    onExportChatJson = stableAction {
+                                                        uiScope.launch {
+                                                            val hasLocalMedia = activeSession.messages.any { n ->
+                                                                n.variants.any { v ->
+                                                                    v.mediaItems.any { it.localFilePath.isNotBlank() } ||
+                                                                        v.attachments.any { it.localFilePath.isNotBlank() }
+                                                                }
+                                                            }
+                                                            if (hasLocalMedia) {
+                                                                val zipName = buildExportZipFileNameForChat(activeSession)
+                                                                val saved = runCatching { exportChatSessionsBundle(zipName, listOf(activeSession)) }.getOrElse { error ->
+                                                                    bannerNotification = Strings.chatExportFailed(error.message)
+                                                                    return@launch
+                                                                }
+                                                                if (saved != null) bannerNotification = Strings.exportedTheChatWithItsMedia(saved)
+                                                            } else {
+                                                                val fileName = buildExportFileNameForChat(activeSession)
+                                                                val bytes = CardAndPromptCodec.prettyJson.encodeToString(ChatSession.serializer(), activeSession).encodeToByteArray()
+                                                                val saved = PlatformPickers.saveFileForExport(fileName, bytes)
+                                                                if (saved != null) bannerNotification = Strings.exportedTheChatTo(saved)
+                                                            }
+                                                        }
+                                                    },
+                                                    onOpenProviderSettings = stableAction {
+                                                        activeSettingsCategory = SettingsCategory.PROVIDERS
+                                                        startMobileSettingsAtRoot = false
+                                                        isSettingsOpen = true
+                                                    },
+                                                    onSend = ::sendUserTurn,
+                                                    onSendGuidedDirection = ::sendGuidedDirection,
+                                                    onSteerNow = ::triggerSteerNow,
+                                                    onQueuePrompt = ::enqueueFollowUpPrompt,
+                                                    onImpersonateDraft = ::triggerImpersonateDraft,
+                                                    onAutoSummarizeStory = stableAction { triggerAutoSummarizeStory(autoMuteOlderTurns = false) },
+                                                    onCompactContext = stableAction { triggerAutoSummarizeStory(autoMuteOlderTurns = true) },
+                                                    onSwitchWorkspaceMode = stableCallback { mode -> switchWorkspaceMode(mode) },
+                                                    onSaveReplyAsSkill = ::saveReplyAsWorkspaceSkill,
+                                                    onRewindToNode = stableCallback { nodeIndex ->
+                                                        val sessId = activeSession.id
+                                                        stopSessionStream(sessId)
+                                                        val total = activeSession.messages.size
+                                                        if (total > 0) {
+                                                            if (nodeIndex < total - 1) {
+                                                                val keepCount = (nodeIndex + 1).coerceIn(1, total)
+                                                                val dropped = total - keepCount
+                                                                updateActiveSession(immediate = true) { sess ->
+                                                                    sess.copy(messages = sess.messages.take(keepCount))
+                                                                }
+                                                                bannerNotification = Strings.rewoundChatToTurnRemoved(nodeIndex + 1, plural(dropped, "later turn"))
+                                                            } else {
+                                                                // Rewind on the last message removes that turn (or turn pair), so it always does something.
+                                                                val dropCount = if (total >= 2 && activeSession.messages.last().role == MessageRole.ASSISTANT) 2 else 1
+                                                                updateActiveSession(immediate = true) { sess ->
+                                                                    sess.copy(messages = sess.messages.dropLast(dropCount))
+                                                                }
+                                                                bannerNotification = Strings.rewoundLast(plural(dropCount, "turn"))
+                                                            }
+                                                        }
+                                                    },
+                                                    onForkSessionFromNode = stableCallback { nodeIndex ->
+                                                        val now = PlatformRuntime.currentTimeMillis()
+                                                        val keepVersions = appState.preferences.keepMessageVersionsWhenForking
+                                                        val sourceSession = activeSession.withSpendProvenance()
+                                                        val slicedMessages = sourceSession.messages
+                                                            .subList(0, (nodeIndex + 1).coerceAtMost(activeSession.messages.size))
+                                                            .map { n ->
+                                                                if (keepVersions) n else n.copy(variants = listOf(n.activeVariant), activeVariantIndex = 0)
+                                                            }
+                                                        val forkedSession = sourceSession.copy(
+                                                            id = "sess-fork-$now",
+                                                            title = Strings.branch2(activeSession.title, nodeIndex + 1),
+                                                            isTitleManuallySet = true,
+                                                            createdAt = now,
+                                                            updatedAt = now,
+                                                            messages = slicedMessages
+                                                        )
+                                                        persist(
+                                                            appState.copy(
+                                                                sessions = listOf(forkedSession) + appState.sessions,
+                                                                activeSessionId = forkedSession.id,
+                                                                openTabSessionIds = (openTabIds + forkedSession.id).distinct()
+                                                            ),
+                                                            immediateFlush = true
+                                                        )
+                                                        bannerNotification = Strings.startedANewBranchAtMessage(nodeIndex + 1)
+                                                    },
+                                                    onStopStream = stableAction {
+                                                        stopSessionStream(activeSession.id)
+                                                    },
+                                                    onUpdateSession = stableCallback { transform -> updateActiveSession(immediate = true, transform = transform) },
+                                                    onUpdateProfile = ::updateActiveProfile,
+                                                    onRegenerateNode = stableCallback { nodeIndex ->
+                                                        if (appState.preferences.confirmBeforeRegenerating) {
+                                                            pendingRegenerateConfirm = RegenerateConfirmRequest(activeSession.id, nodeIndex)
+                                                        } else {
+                                                            executeRegenerateFromNode(nodeIndex, activeSession.id)
+                                                        }
+                                                    },
+                                                    onTranslateNode = stableCallback { nodeIndex ->
+                                                        triggerTranslateNode(nodeIndex)
+                                                    },
+                                                    onContinueAssistantNode = stableCallback { idx -> continueAssistantNodeAt(idx, activeSession.id) },
+                                                    jumpToNodeId = pendingPinJump?.takeIf { it.sessionId == activeSession.id }?.nodeId.orEmpty(),
+                                                    onJumpHandled = stableAction { pendingPinJump = null },
+                                                    onTogglePinnedReply = stableCallback { nodeId -> togglePinnedReply(activeSession.id, nodeId) }
+                                                )
                                             }
-                                        },
-                                        onReattachExistingAttachment = stableCallback { existingAtt ->
-                                            val curList = pendingAttachmentsBySession[activeSession.id].orEmpty()
-                                            if (curList.none { it.fileName == existingAtt.fileName }) {
-                                                pendingAttachmentsBySession = pendingAttachmentsBySession +
-                                                    (activeSession.id to (curList + existingAtt.copy(id = "att-re-${PlatformRuntime.currentTimeMillis()}")))
-                                            }
-                                        },
-                                        onPasteClipboardMedia = run {
-                                            val holder = remember { Array(1) { { false } } }
-                                            holder[0] = {
-                                                PlatformPickers.pasteClipboardMediaAsync { pasted ->
-                                                    attachPickedFiles(pasted)
-                                                    if (pasted.none { it.oversized }) {
-                                                        bannerNotification = Strings.attached(plural(pasted.size, "clipboard item"), pasted.joinToString { it.fileName })
-                                                    }
-                                                }
-                                            }
-                                            remember { { holder[0]() } }
-                                        },
-                                        onRequestClearCurrentChat = stableAction {
-                                            if (appState.preferences.confirmBeforeDeletingChat) {
-                                                pendingDeleteConfirmation = DeleteConfirmRequest.ClearCurrentMessages(activeSession.title)
-                                            } else {
-                                                clearCurrentChatMessages(activeSession.id)
-                                            }
-                                        },
-                                        onRemoveAttachment = stableCallback { attId ->
-                                            val curAtts = pendingAttachmentsBySession[activeSession.id].orEmpty()
-                                            pendingAttachmentsBySession = pendingAttachmentsBySession +
-                                                (activeSession.id to curAtts.filterNot { it.id == attId })
-                                        },
-                                        onInspectAttachment = ::openAttachmentInViewer,
-                                        onInspectGeneratedImage = stableCallback { media ->
-                                            activeViewerItem = ActiveMediaViewerItem.ImageViewer(
-                                                title = media.revisedPrompt.take(48).ifBlank { "Generated Image" },
-                                                mimeType = media.mimeType.ifBlank { "image/png" },
-                                                localFilePath = media.localFilePath,
-                                                remoteUrl = media.remoteUrl
-                                            )
-                                        },
-                                        onExportChatMarkdown = stableAction {
-                                            uiScope.launch {
-                                                val md = formatSessionMarkdownExport(activeSession, activeAssistant)
-                                                val safeTitle = activeSession.title.replace(Regex("[^a-zA-Z0-9-_]"), "_").ifBlank { "chat" }
-                                                val saved = PlatformPickers.saveFileForExport("$safeTitle.md", md.encodeToByteArray())
-                                                if (saved != null) bannerNotification = Strings.exportedMarkdownTo(saved)
-                                            }
-                                        },
-                                        onExportChatJson = stableAction {
-                                            uiScope.launch {
-                                                val hasLocalMedia = activeSession.messages.any { n ->
-                                                    n.variants.any { v ->
-                                                        v.mediaItems.any { it.localFilePath.isNotBlank() } ||
-                                                            v.attachments.any { it.localFilePath.isNotBlank() }
-                                                    }
-                                                }
-                                                if (hasLocalMedia) {
-                                                    val zipName = buildExportZipFileNameForChat(activeSession)
-                                                    val saved = runCatching { exportChatSessionsBundle(zipName, listOf(activeSession)) }.getOrElse { error ->
-                                                        bannerNotification = Strings.chatExportFailed(error.message)
-                                                        return@launch
-                                                    }
-                                                    if (saved != null) bannerNotification = Strings.exportedTheChatWithItsMedia(saved)
-                                                } else {
-                                                    val fileName = buildExportFileNameForChat(activeSession)
-                                                    val bytes = CardAndPromptCodec.prettyJson.encodeToString(ChatSession.serializer(), activeSession).encodeToByteArray()
-                                                    val saved = PlatformPickers.saveFileForExport(fileName, bytes)
-                                                    if (saved != null) bannerNotification = Strings.exportedTheChatTo(saved)
-                                                }
-                                            }
-                                        },
-                                        onOpenProviderSettings = stableAction {
-                                            activeSettingsCategory = SettingsCategory.PROVIDERS
-                                            startMobileSettingsAtRoot = false
-                                            isSettingsOpen = true
-                                        },
-                                        onSend = ::sendUserTurn,
-                                        onSendGuidedDirection = ::sendGuidedDirection,
-                                        onSteerNow = ::triggerSteerNow,
-                                        onQueuePrompt = ::enqueueFollowUpPrompt,
-                                        onImpersonateDraft = ::triggerImpersonateDraft,
-                                        onAutoSummarizeStory = stableAction { triggerAutoSummarizeStory(autoMuteOlderTurns = false) },
-                                        onCompactContext = stableAction { triggerAutoSummarizeStory(autoMuteOlderTurns = true) },
-                                        onSwitchWorkspaceMode = stableCallback { mode -> switchWorkspaceMode(mode) },
-                                        onSaveReplyAsSkill = ::saveReplyAsWorkspaceSkill,
-                                        onRewindToNode = stableCallback { nodeIndex ->
-                                            val sessId = activeSession.id
-                                            stopSessionStream(sessId)
-                                            val total = activeSession.messages.size
-                                            if (total > 0) {
-                                                if (nodeIndex < total - 1) {
-                                                    val keepCount = (nodeIndex + 1).coerceIn(1, total)
-                                                    val dropped = total - keepCount
-                                                    updateActiveSession(immediate = true) { sess ->
-                                                        sess.copy(messages = sess.messages.take(keepCount))
-                                                    }
-                                                    bannerNotification = Strings.rewoundChatToTurnRemoved(nodeIndex + 1, plural(dropped, "later turn"))
-                                                } else {
-                                                    // Rewind on the last message removes that turn (or turn pair), so it always does something.
-                                                    val dropCount = if (total >= 2 && activeSession.messages.last().role == MessageRole.ASSISTANT) 2 else 1
-                                                    updateActiveSession(immediate = true) { sess ->
-                                                        sess.copy(messages = sess.messages.dropLast(dropCount))
-                                                    }
-                                                    bannerNotification = Strings.rewoundLast(plural(dropCount, "turn"))
-                                                }
-                                            }
-                                        },
-                                        onForkSessionFromNode = stableCallback { nodeIndex ->
-                                            val now = PlatformRuntime.currentTimeMillis()
-                                            val keepVersions = appState.preferences.keepMessageVersionsWhenForking
-                                            val sourceSession = activeSession.withSpendProvenance()
-                                            val slicedMessages = sourceSession.messages
-                                                .subList(0, (nodeIndex + 1).coerceAtMost(activeSession.messages.size))
-                                                .map { n ->
-                                                    if (keepVersions) n else n.copy(variants = listOf(n.activeVariant), activeVariantIndex = 0)
-                                                }
-                                            val forkedSession = sourceSession.copy(
-                                                id = "sess-fork-$now",
-                                                title = Strings.branch2(activeSession.title, nodeIndex + 1),
-                                                isTitleManuallySet = true,
-                                                createdAt = now,
-                                                updatedAt = now,
-                                                messages = slicedMessages
-                                            )
-                                            persist(
-                                                appState.copy(
-                                                    sessions = listOf(forkedSession) + appState.sessions,
-                                                    activeSessionId = forkedSession.id,
-                                                    openTabSessionIds = (openTabIds + forkedSession.id).distinct()
-                                                ),
-                                                immediateFlush = true
-                                            )
-                                            bannerNotification = Strings.startedANewBranchAtMessage(nodeIndex + 1)
-                                        },
-                                        onStopStream = stableAction {
-                                            stopSessionStream(activeSession.id)
-                                        },
-                                        onUpdateSession = stableCallback { transform -> updateActiveSession(immediate = true, transform = transform) },
-                                        onUpdateProfile = ::updateActiveProfile,
-                                        onRegenerateNode = stableCallback { nodeIndex ->
-                                            if (appState.preferences.confirmBeforeRegenerating) {
-                                                pendingRegenerateConfirm = RegenerateConfirmRequest(activeSession.id, nodeIndex)
-                                            } else {
-                                                executeRegenerateFromNode(nodeIndex, activeSession.id)
-                                            }
-                                        },
-                                        onTranslateNode = stableCallback { nodeIndex ->
-                                            triggerTranslateNode(nodeIndex)
-                                        },
-                                        onContinueAssistantNode = stableCallback { idx -> continueAssistantNodeAt(idx, activeSession.id) },
-                                        jumpToNodeId = pendingPinJump?.takeIf { it.sessionId == activeSession.id }?.nodeId.orEmpty(),
-                                        onJumpHandled = stableAction { pendingPinJump = null },
-                                        onTogglePinnedReply = stableCallback { nodeId -> togglePinnedReply(activeSession.id, nodeId) }
-                                    )
+                                        }
                                     }
                                 }
-                                }
-                            }
 
-                            AnimatedVisibility(
-                                visible = !isCompactScreen && showRightFilesSidebar && !isSettingsOpen,
-                                enter = motionSideExpandEnter(),
-                                exit = motionSideShrinkExit()
-                            ) {
-                                Row(modifier = Modifier.fillMaxHeight()) {
-                                    Box(
-                                        modifier = Modifier
-                                            .width(LineWidth.hairline)
-                                            .fillMaxHeight()
-                                            .background(p.border.copy(alpha = 0.7f))
-                                    )
-                                    ParchmentRightFilesSidebar(
-                                        activeSession = activeSession,
-                                        pendingAttachments = pendingAttachments,
-                                        onInspectAttachment = ::openAttachmentInViewer,
-                                        onInspectGeneratedImage = { media ->
-                                            activeViewerItem = ActiveMediaViewerItem.ImageViewer(
-                                                title = media.revisedPrompt.take(48).ifBlank { "Generated Image" },
-                                                mimeType = media.mimeType.ifBlank { "image/png" },
-                                                localFilePath = media.localFilePath,
-                                                remoteUrl = media.remoteUrl
-                                            )
-                                        },
-                                        onReattachAttachment = { existingAtt ->
-                                            val curList = pendingAttachmentsBySession[activeSession.id].orEmpty()
-                                            if (curList.none { it.fileName == existingAtt.fileName }) {
-                                                pendingAttachmentsBySession = pendingAttachmentsBySession +
-                                                    (activeSession.id to (curList + existingAtt.copy(id = "att-re-${PlatformRuntime.currentTimeMillis()}")))
-                                                bannerNotification = Strings.reAttachedToPrompt(existingAtt.fileName)
-                                            }
-                                        },
-                                        onClose = { showRightFilesSidebar = false },
-                                        modifier = Modifier.width(300.dp).fillMaxHeight()
-                                    )
+                                AnimatedVisibility(
+                                    visible = !isCompactScreen && showRightFilesSidebar && !isSettingsOpen,
+                                    enter = motionSideExpandEnter(),
+                                    exit = motionSideShrinkExit()
+                                ) {
+                                    Row(modifier = Modifier.fillMaxHeight()) {
+                                        Box(
+                                            modifier = Modifier
+                                                .width(LineWidth.hairline)
+                                                .fillMaxHeight()
+                                                .background(p.border.copy(alpha = 0.7f))
+                                        )
+                                        ParchmentRightFilesSidebar(
+                                            activeSession = activeSession,
+                                            pendingAttachments = pendingAttachments,
+                                            onInspectAttachment = ::openAttachmentInViewer,
+                                            onInspectGeneratedImage = { media ->
+                                                activeViewerItem = ActiveMediaViewerItem.ImageViewer(
+                                                    title = media.revisedPrompt.take(48).ifBlank { "Generated Image" },
+                                                    mimeType = media.mimeType.ifBlank { "image/png" },
+                                                    localFilePath = media.localFilePath,
+                                                    remoteUrl = media.remoteUrl
+                                                )
+                                            },
+                                            onReattachAttachment = { existingAtt ->
+                                                val curList = pendingAttachmentsBySession[activeSession.id].orEmpty()
+                                                if (curList.none { it.fileName == existingAtt.fileName }) {
+                                                    pendingAttachmentsBySession = pendingAttachmentsBySession +
+                                                        (activeSession.id to (curList + existingAtt.copy(id = "att-re-${PlatformRuntime.currentTimeMillis()}")))
+                                                    bannerNotification = Strings.reAttachedToPrompt(existingAtt.fileName)
+                                                }
+                                            },
+                                            onClose = { showRightFilesSidebar = false },
+                                            modifier = Modifier.width(300.dp).fillMaxHeight()
+                                        )
+                                    }
                                 }
-                            }
                             } // Closes Row(modifier = Modifier.fillMaxSize()) so Crossfade(Modifier.weight(1f)) gets 100% width!
 
                             // Mobile 86%-Width Slide-Over Sidebar Drawer + Dimmed Tap-to-Dismiss Backdrop Scrim

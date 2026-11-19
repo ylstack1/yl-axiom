@@ -69,23 +69,28 @@ object AgentPermissionResolver {
         )
 
     /** Old provider shell flags never constitute explicit consent to unrestricted shell access. */
-    fun legacyOverrides(session: ChatSession, profile: ProviderProfile?): AgentPermissionOverrides =
-        AgentPermissionOverrides(
-            workspacePath = session.workspacePath.takeIf {
-                it.isNotBlank() || session.workspaceMode != WorkspaceMode.OFF
-            },
-            workspaceMode = session.workspaceMode.takeIf {
-                session.workspacePath.isNotBlank() || it != WorkspaceMode.OFF
-            },
-            webAccess = true.takeIf { profile?.enableWebSearch == true || profile?.enableUrlContext == true }
-        )
+    fun legacyOverrides(session: ChatSession, profile: ProviderProfile?): AgentPermissionOverrides = AgentPermissionOverrides(
+        workspacePath = session.workspacePath.takeIf {
+            it.isNotBlank() || session.workspaceMode != WorkspaceMode.OFF
+        },
+        workspaceMode = session.workspaceMode.takeIf {
+            session.workspacePath.isNotBlank() || it != WorkspaceMode.OFF
+        },
+        webAccess = true.takeIf { profile?.enableWebSearch == true || profile?.enableUrlContext == true }
+    )
 
-    fun resolve(session: ChatSession, assistant: AssistantAgent? = null, profile: ProviderProfile? = null): AgentPermissionPolicy =
-        (session.permissionOverrides ?: legacyOverrides(session, profile)).applyTo(defaults(assistant))
+    fun resolve(session: ChatSession, assistant: AssistantAgent? = null, profile: ProviderProfile? = null): AgentPermissionPolicy = (session.permissionOverrides ?: legacyOverrides(session, profile)).applyTo(defaults(assistant))
 }
 
 fun AgentPermissionPolicy.asOverrides(): AgentPermissionOverrides = AgentPermissionOverrides(
-    approvalMode, workspacePath, workspaceMode, toolsEnabled, toolOverrides, shellAccess, webAccess, computerAccess
+    approvalMode,
+    workspacePath,
+    workspaceMode,
+    toolsEnabled,
+    toolOverrides,
+    shellAccess,
+    webAccess,
+    computerAccess
 )
 
 fun AppStateSnapshot.withImportedPermissions(
@@ -105,24 +110,35 @@ fun AppStateSnapshot.withImportedPermissions(
 /** Compatibility for existing folder controls, including an explicit Off or unmount action. */
 fun ChatSession.withLegacyWorkspaceChangeFrom(previous: ChatSession): ChatSession {
     if (permissionOverrides != previous.permissionOverrides ||
-        (workspacePath == previous.workspacePath && workspaceMode == previous.workspaceMode)) return this
-    return copy(permissionOverrides = (permissionOverrides ?: AgentPermissionResolver.legacyOverrides(previous, null)).copy(
-        workspacePath = workspacePath,
-        workspaceMode = workspaceMode
-    ))
+        (workspacePath == previous.workspacePath && workspaceMode == previous.workspaceMode)
+    ) return this
+    return copy(
+        permissionOverrides = (permissionOverrides ?: AgentPermissionResolver.legacyOverrides(previous, null)).copy(
+            workspacePath = workspacePath,
+            workspaceMode = workspaceMode
+        )
+    )
 }
 
 /** Imports carry content and configuration, never local execution authority or machine paths. */
 fun ChatSession.withImportedPermissions(): ChatSession = withPortableImportedMedia().copy(
-    workspacePath = "", workspaceMode = WorkspaceMode.OFF,
+    workspacePath = "",
+    workspaceMode = WorkspaceMode.OFF,
     permissionOverrides = AgentPermissionOverrides(
         approvalMode = ToolApprovalMode.ASK_EVERY_TOOL,
-        workspacePath = "", workspaceMode = WorkspaceMode.OFF,
-        toolsEnabled = false, toolOverrides = emptyMap(), shellAccess = ShellAccess.DISABLED, webAccess = false, computerAccess = false
+        workspacePath = "",
+        workspaceMode = WorkspaceMode.OFF,
+        toolsEnabled = false,
+        toolOverrides = emptyMap(),
+        shellAccess = ShellAccess.DISABLED,
+        webAccess = false,
+        computerAccess = false
     )
 )
 
 fun AssistantAgent.withImportedPermissions(): AssistantAgent = copy(
-    workspacePath = "", workspaceMode = WorkspaceMode.OFF, enableWebSearch = false,
+    workspacePath = "",
+    workspaceMode = WorkspaceMode.OFF,
+    enableWebSearch = false,
     permissionDefaults = AgentPermissionPolicy(approvalMode = ToolApprovalMode.ASK_EVERY_TOOL, toolsEnabled = false)
 )

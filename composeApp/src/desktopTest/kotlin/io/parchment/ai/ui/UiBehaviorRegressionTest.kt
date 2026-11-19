@@ -55,13 +55,17 @@ import io.parchment.ai.model.ThemeConfig
 import io.parchment.ai.model.TurnTextLayout
 import io.parchment.ai.protocol.ContextWindowBreakdown
 import io.parchment.ai.strings.Strings
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.swing.Swing
 import java.io.ByteArrayInputStream
 import java.net.InetSocketAddress
-import javax.imageio.ImageIO
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicInteger
+import javax.imageio.ImageIO
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
@@ -69,10 +73,6 @@ import kotlin.test.assertNotEquals
 import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.delay
-import kotlinx.coroutines.runBlocking
-import kotlinx.coroutines.swing.Swing
 
 @OptIn(ExperimentalComposeUiApi::class, InternalComposeUiApi::class)
 class UiBehaviorRegressionTest {
@@ -81,11 +81,9 @@ class UiBehaviorRegressionTest {
         return scene.semanticsOwners.flatMap { flatten(it.rootSemanticsNode) }
     }
 
-    private fun text(node: SemanticsNode): String =
-        node.config.getOrNull(SemanticsProperties.Text).orEmpty().joinToString(" ") { it.text }
+    private fun text(node: SemanticsNode): String = node.config.getOrNull(SemanticsProperties.Text).orEmpty().joinToString(" ") { it.text }
 
-    private fun description(node: SemanticsNode): String =
-        node.config.getOrNull(SemanticsProperties.ContentDescription).orEmpty().joinToString(" ")
+    private fun description(node: SemanticsNode): String = node.config.getOrNull(SemanticsProperties.ContentDescription).orEmpty().joinToString(" ")
 
     private fun click(node: SemanticsNode) {
         val action = requireNotNull(node.config.getOrNull(SemanticsActions.OnClick)?.action) {
@@ -1001,7 +999,7 @@ class UiBehaviorRegressionTest {
         ThemeConfig.PRESETS.forEach { preset ->
             val p = buildPaletteFromConfig(preset)
             val surfaces = listOf(p.canvasBg, p.sheetBg, p.cardBg, p.elevatedBg)
-            listOf(Alpha.disabledInk, Alpha.placeholder).forEach { alpha ->
+            listOf(Alpha.DISABLED_INK, Alpha.PLACEHOLDER).forEach { alpha ->
                 val ink = p.mutedInk.copy(alpha = alpha)
                 surfaces.forEach { bg ->
                     val ratio = contrastRatio(compositeOver(ink, bg), bg)
@@ -1426,8 +1424,7 @@ class UiBehaviorRegressionTest {
             }
         ) { scene ->
             fun flattenUnmerged(n: SemanticsNode): List<SemanticsNode> = listOf(n) + n.children.flatMap(::flattenUnmerged)
-            fun nodeWith(marker: String): SemanticsNode =
-                scene.semanticsOwners.flatMap { flattenUnmerged(it.unmergedRootSemanticsNode) }.first { text(it).contains(marker) }
+            fun nodeWith(marker: String): SemanticsNode = scene.semanticsOwners.flatMap { flattenUnmerged(it.unmergedRootSemanticsNode) }.first { text(it).contains(marker) }
 
             val codeBefore = nodeWith("CODE_MARKER")
             val diffBefore = nodeWith("DIFF_MARKER")

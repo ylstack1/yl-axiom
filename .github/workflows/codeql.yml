@@ -1,6 +1,6 @@
 name: CodeQL
 
-# Static security analysis of the Kotlin code, the Python scripts and the workflows themselves.
+# Static security analysis of Kotlin, Rust, and GitHub Actions workflows.
 # This is the repository's only CodeQL configuration: GitHub's "default setup" must stay off
 # (Settings > Code security > CodeQL analysis), because its automatic build uses JDK 17 and
 # cannot build this project, and while it is on GitHub rejects this workflow's results.
@@ -52,12 +52,15 @@ jobs:
           fetch-depth: 1
           fetch-tags: false
 
+      - name: Set up Rust Toolchain
+        uses: dtolnay/rust-toolchain@39008827e6b4319a349e9a42dfc90579dd25f1ca # stable
+
       - name: Detect Affected CodeQL Languages
         id: select
         env:
           GH_TOKEN: ${{ github.token }}
           BASE_SHA: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event.before }}
-        run: python3 .github/scripts/ci_changes.py codeql
+        run: cargo xtask ci plan codeql
 
   analyze:
     name: Analyze (${{ matrix.language }})
@@ -79,6 +82,10 @@ jobs:
           persist-credentials: false
           fetch-depth: 1
           fetch-tags: false
+
+      - name: Set up Rust Toolchain
+        if: matrix.build-mode == 'manual'
+        uses: dtolnay/rust-toolchain@39008827e6b4319a349e9a42dfc90579dd25f1ca # stable
 
       - name: Set up JDK 25 (Temurin)
         if: matrix.build-mode == 'manual'
@@ -117,7 +124,7 @@ jobs:
         if: matrix.build-mode == 'manual'
         run: |
           chmod +x ./gradlew
-          python3 .github/scripts/run_gradle.py -- :composeApp:compileKotlinDesktop :composeApp:compileAndroidMain \
+          cargo xtask ci run-gradle -- :composeApp:compileKotlinDesktop :composeApp:compileAndroidMain \
             -Dorg.gradle.jvmargs="-Xmx5g -XX:+UseParallelGC -XX:MaxMetaspaceSize=1g -Dfile.encoding=UTF-8" \
             -Pkotlin.parallel.tasks.in.project=true \
             --no-daemon --no-build-cache --no-configuration-cache --max-workers=4 \

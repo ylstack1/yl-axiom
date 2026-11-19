@@ -11,6 +11,7 @@ compose-multiplatform = "1.12.2"
 # Dev-only: hotRunDesktop reloads UI code in a running desktop app (needs a JetBrains Runtime).
 composeHotReload = "1.2.0"
 kotlin = "2.4.21"
+ktlint-gradle = "14.2.0"
 kotlinx-collections-immutable = "0.5.2"
 kotlinx-coroutines = "1.11.0"
 kotlinx-serialization = "1.13.0"
@@ -41,3 +42,4 @@ composeCompiler = { id = "org.jetbrains.kotlin.plugin.compose", version.ref = "k
 kotlinMultiplatform = { id = "org.jetbrains.kotlin.multiplatform", version.ref = "kotlin" }
 kotlinSerialization = { id = "org.jetbrains.kotlin.plugin.serialization", version.ref = "kotlin" }
 composeHotReload = { id = "org.jetbrains.compose.hot-reload", version.ref = "composeHotReload" }
+ktlint = { id = "org.jlleitschuh.gradle.ktlint", version.ref = "ktlint-gradle" }

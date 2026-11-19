@@ -12,6 +12,7 @@ interface ComputerControl {
 
 interface McpProcess {
     fun writeLine(line: String)
+
     /** Blocks for the next line; null means the process has ended. */
     fun readLine(): String?
     fun close()
@@ -33,14 +34,17 @@ expect object PlatformWorkspace {
     fun workspaceGlob(workspaceRoot: String, pattern: String, maxResults: Int = 200): Result<String>
     fun workspaceRead(workspaceRoot: String, relativePath: String, startLine: Int = 1, maxLines: Int = 250): Result<String>
     fun workspaceWrite(workspaceRoot: String, relativePath: String, content: String): Result<String>
+
     /** Appends [content] to a file without reading it back, so arbitrarily large files are never truncated. */
     fun workspaceAppend(workspaceRoot: String, relativePath: String, content: String): Result<String>
     fun workspaceEdit(workspaceRoot: String, relativePath: String, oldText: String, newText: String, replaceAll: Boolean = false): Result<String>
     fun workspaceMultiEdit(workspaceRoot: String, relativePath: String, edits: List<Triple<String, String, Boolean>>): Result<String>
     fun workspaceMove(workspaceRoot: String, sourceRelativePath: String, destRelativePath: String): Result<String>
     fun workspaceDelete(workspaceRoot: String, relativePath: String): Result<String>
+
     /** Content/revision fingerprint for stale-read checks (`null` when the file does not exist yet). */
     fun workspaceFileStamp(workspaceRoot: String, relativePath: String): Result<String?>
+
     /** Returns true if [path] is an existing local directory. */
     fun workspaceDirectoryExists(path: String): Boolean
     fun workspaceSearch(
@@ -58,16 +62,21 @@ expect object PlatformWorkspace {
         isCancelled: (() -> Boolean)? = null
     ): Result<String>
     fun fetchUrlText(url: String, maxChars: Int = 24000, isCancelled: (() -> Boolean)? = null): Result<String>
+
     /** Downloads from public internet addresses only, checking every redirect. */
     fun fetchPublicBytes(url: String, maxBytes: Int, isCancelled: (() -> Boolean)? = null): Result<ByteArray>
+
     /** Reads a local skill folder with strict size, depth, filename, and symlink guards. */
     fun readLocalSkillFolder(folderPath: String): Result<LocalSkillBundle>
+
     /** Unpacks a local `.zip` skill bundle with strict zip-bomb, depth, and path-traversal guards. */
     fun readLocalSkillZip(fileName: String, zipBytes: ByteArray): Result<LocalSkillBundle>
+
     /** Zero-dep `.docx` text extraction from `word/document.xml` via ZipInputStream. */
     fun extractDocxText(bytes: ByteArray): Result<String>
     val computerControl: ComputerControl
     val supportsLocalMcpServers: Boolean
+
     /** Starts a local MCP server, or returns null on platforms that cannot run one. */
     fun startMcpProcess(command: String): McpProcess?
 }

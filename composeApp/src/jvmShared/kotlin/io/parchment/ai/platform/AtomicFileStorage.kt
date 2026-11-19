@@ -4,13 +4,13 @@ import java.io.File
 import java.io.FileInputStream
 import java.io.FileOutputStream
 import java.io.OutputStream
+import java.nio.file.AccessDeniedException
 import java.nio.file.AtomicMoveNotSupportedException
+import java.nio.file.FileVisitResult
 import java.nio.file.Files
 import java.nio.file.Path
-import java.nio.file.AccessDeniedException
-import java.nio.file.StandardCopyOption
-import java.nio.file.FileVisitResult
 import java.nio.file.SimpleFileVisitor
+import java.nio.file.StandardCopyOption
 import java.nio.file.attribute.BasicFileAttributes
 import java.util.concurrent.locks.LockSupport
 
@@ -44,8 +44,7 @@ internal object AtomicFileStorage {
         commit(staged.toPath(), target.toPath())
     }
 
-    fun writeBytes(target: File, bytes: ByteArray, commit: (Path, Path) -> Unit = ::commitExport) =
-        writeStream(target, commit) { it.write(bytes) }
+    fun writeBytes(target: File, bytes: ByteArray, commit: (Path, Path) -> Unit = ::commitExport) = writeStream(target, commit) { it.write(bytes) }
 
     /**
      * Replaces a user-chosen export only after the new file is complete; a failure leaves the old one.
@@ -115,17 +114,20 @@ internal object AtomicFileStorage {
     /** Deletes owned storage without following directory links into another tree. */
     fun deleteTree(root: Path) {
         if (!Files.exists(root, java.nio.file.LinkOption.NOFOLLOW_LINKS)) return
-        Files.walkFileTree(root, object : SimpleFileVisitor<Path>() {
-            override fun visitFile(file: Path, attrs: BasicFileAttributes): FileVisitResult {
-                Files.delete(file)
-                return FileVisitResult.CONTINUE
-            }
+        Files.walkFileTree(
+            root,
+            object : SimpleFileVisitor<Path>() {
+                override fun visitFile(file: Path, attrs: BasicFileAttributes): FileVisitResult {
+                    Files.delete(file)
+                    return FileVisitResult.CONTINUE
+                }
 
-            override fun postVisitDirectory(dir: Path, error: java.io.IOException?): FileVisitResult {
-                if (error != null) throw error
-                Files.delete(dir)
-                return FileVisitResult.CONTINUE
+                override fun postVisitDirectory(dir: Path, error: java.io.IOException?): FileVisitResult {
+                    if (error != null) throw error
+                    Files.delete(dir)
+                    return FileVisitResult.CONTINUE
+                }
             }
-        })
+        )
     }
 }

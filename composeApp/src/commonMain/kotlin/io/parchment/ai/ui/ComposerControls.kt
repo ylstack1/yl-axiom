@@ -1,7 +1,6 @@
 package io.parchment.ai.ui
 
 import androidx.compose.foundation.Canvas
-import io.parchment.ai.strings.Strings
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.focusable
@@ -16,6 +15,7 @@ import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
@@ -26,16 +26,19 @@ import androidx.compose.foundation.text.BasicText
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyEventType
@@ -59,22 +62,23 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Popup
 import androidx.compose.ui.window.PopupPositionProvider
 import androidx.compose.ui.window.PopupProperties
-import kotlin.math.roundToInt
-import androidx.compose.foundation.layout.Spacer
-import androidx.compose.runtime.key
-import androidx.compose.ui.draw.alpha
-import androidx.compose.ui.graphics.Color
 import io.parchment.ai.model.PreferencesConfig
 import io.parchment.ai.model.PromptAttachment
 import io.parchment.ai.model.ProviderProfile
 import io.parchment.ai.network.ModelModalityProfile
+import io.parchment.ai.strings.Strings
+import kotlin.math.roundToInt
 
 /** A named stop on a slider and the exact value it sends to the provider. */
 internal data class SliderStop(val label: String, val value: String)
 
 internal val THINKING_STOPS = listOf(
-    SliderStop(Strings.off, "none"), SliderStop(Strings.low, "low"), SliderStop(Strings.medium, "medium"),
-    SliderStop(Strings.high, "high"), SliderStop(Strings.extra, "xhigh"), SliderStop(Strings.max, "max")
+    SliderStop(Strings.off, "none"),
+    SliderStop(Strings.low, "low"),
+    SliderStop(Strings.medium, "medium"),
+    SliderStop(Strings.high, "high"),
+    SliderStop(Strings.extra, "xhigh"),
+    SliderStop(Strings.max, "max")
 )
 internal val IMAGE_ASPECTS = listOf("1:1", "16:9", "9:16", "4:3", "3:4", "3:2", "2:3", "21:9")
 internal val VIDEO_ASPECTS = listOf("16:9", "9:16", "1:1", "4:3", "3:4", "21:9")

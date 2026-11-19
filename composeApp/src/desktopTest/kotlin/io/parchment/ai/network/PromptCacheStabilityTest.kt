@@ -33,30 +33,36 @@ class PromptCacheStabilityTest {
             CUSTOM_DIALECT_OPENAI_RESPONSES -> buildJsonObject {
                 put("id", "r$round"); put("status", "completed")
                 putJsonArray("output") {
-                    add(if (tool) buildJsonObject {
-                        put("type", "function_call"); put("call_id", "call-$round"); put("name", "fs_read")
-                        put("arguments", toolArguments(round).toString())
-                    } else buildJsonObject {
-                        put("type", "message"); put("role", "assistant")
-                        putJsonArray("content") { add(buildJsonObject { put("type", "output_text"); put("text", "Done.") }) }
-                    })
+                    add(
+                        if (tool) buildJsonObject {
+                            put("type", "function_call"); put("call_id", "call-$round"); put("name", "fs_read")
+                            put("arguments", toolArguments(round).toString())
+                        } else buildJsonObject {
+                            put("type", "message"); put("role", "assistant")
+                            putJsonArray("content") { add(buildJsonObject { put("type", "output_text"); put("text", "Done.") }) }
+                        }
+                    )
                 }
             }
             CUSTOM_DIALECT_ANTHROPIC -> buildJsonObject {
                 put("id", "m$round"); put("type", "message"); put("role", "assistant")
                 put("stop_reason", if (tool) "tool_use" else "end_turn")
                 putJsonArray("content") {
-                    add(if (tool) buildJsonObject {
-                        put("type", "tool_use"); put("id", "call-$round"); put("name", "fs_read"); put("input", toolArguments(round))
-                    } else buildJsonObject { put("type", "text"); put("text", "Done.") })
+                    add(
+                        if (tool) buildJsonObject {
+                            put("type", "tool_use"); put("id", "call-$round"); put("name", "fs_read"); put("input", toolArguments(round))
+                        } else buildJsonObject { put("type", "text"); put("text", "Done.") }
+                    )
                 }
             }
             CUSTOM_DIALECT_GEMINI -> buildJsonObject {
                 put("id", "i$round"); put("status", "completed")
                 putJsonArray("outputs") {
-                    add(if (tool) buildJsonObject {
-                        put("type", "function_call"); put("id", "call-$round"); put("name", "fs_read"); put("arguments", toolArguments(round))
-                    } else buildJsonObject { put("type", "text"); put("text", "Done.") })
+                    add(
+                        if (tool) buildJsonObject {
+                            put("type", "function_call"); put("id", "call-$round"); put("name", "fs_read"); put("arguments", toolArguments(round))
+                        } else buildJsonObject { put("type", "text"); put("text", "Done.") }
+                    )
                 }
             }
             else -> error("No fixture for $dialect")
@@ -81,16 +87,35 @@ class PromptCacheStabilityTest {
             }
             try {
                 val policy = AgentPermissionPolicy(workspacePath = root.toString(), workspaceMode = WorkspaceMode.READ_ONLY, approvalMode = ToolApprovalMode.NEVER)
-                val profile = ProviderProfile("fixture", "Fixture", ProviderProtocol.CUSTOM, customDialect = dialect,
-                    baseUrl = "http://127.0.0.1:${server.address.port}", defaultModel = "fixture-model", thinkingEffort = "none",
-                    customModelSpecs = mapOf("fixture-model" to ModelPricingSpec("fixture-model")))
-                val session = ChatSession("chat", "Fixture", 1L, 1L, profile.id, workspacePath = policy.workspacePath,
-                    workspaceMode = policy.workspaceMode, permissionOverrides = policy.asOverrides())
+                val profile = ProviderProfile(
+                    "fixture",
+                    "Fixture",
+                    ProviderProtocol.CUSTOM,
+                    customDialect = dialect,
+                    baseUrl = "http://127.0.0.1:${server.address.port}",
+                    defaultModel = "fixture-model",
+                    thinkingEffort = "none",
+                    customModelSpecs = mapOf("fixture-model" to ModelPricingSpec("fixture-model"))
+                )
+                val session = ChatSession(
+                    "chat",
+                    "Fixture",
+                    1L,
+                    1L,
+                    profile.id,
+                    workspacePath = policy.workspacePath,
+                    workspaceMode = policy.workspaceMode,
+                    permissionOverrides = policy.asOverrides()
+                )
                 runBlocking {
                     withTimeout(40_000) {
-                        AiProviderEngine.streamGeneration(profile = profile, session = session, historyNodes = listOf(
-                            MessageNode("user", MessageRole.USER, listOf(MessageVariant("v", content = "Read the file repeatedly.")))
-                        )).toList()
+                        AiProviderEngine.streamGeneration(
+                            profile = profile,
+                            session = session,
+                            historyNodes = listOf(
+                                MessageNode("user", MessageRole.USER, listOf(MessageVariant("v", content = "Read the file repeatedly.")))
+                            )
+                        ).toList()
                     }
                 }
             } finally { server.stop(0) }
@@ -107,9 +132,12 @@ class PromptCacheStabilityTest {
             val average = shares.average()
             val (earlier, later) = requests.zipWithNext().minBy { (a, b) -> a.commonPrefixWith(b).length.toDouble() / a.length }
             val split = earlier.commonPrefixWith(later).length
-            assertTrue(average >= 0.85, "$dialect: most of each request must repeat the one before: $average. " +
-                "First difference at $split of ${earlier.length}: before «${earlier.substring(maxOf(0, split - 120), minOf(earlier.length, split + 80))}» " +
-                "after «${later.substring(maxOf(0, split - 120), minOf(later.length, split + 80))}»")
+            assertTrue(
+                average >= 0.85,
+                "$dialect: most of each request must repeat the one before: $average. " +
+                    "First difference at $split of ${earlier.length}: before «${earlier.substring(maxOf(0, split - 120), minOf(earlier.length, split + 80))}» " +
+                    "after «${later.substring(maxOf(0, split - 120), minOf(later.length, split + 80))}»"
+            )
             assertTrue(shares.count { it < 0.5 } <= 4, "$dialect: expected <= 4 cache-breaking compaction steps, got ${shares.count { it < 0.5 }}")
             "$dialect steps=$steps average_shared_prefix=${"%.3f".format(average)} steps_under_half=${shares.count { it < 0.5 }} " +
                 "total_request_chars=${requests.sumOf { it.length }} average_request_chars=${requests.sumOf { it.length } / requests.size} " +

@@ -18,7 +18,9 @@ class ComputerUseTest {
     private class FakeControl(override val isAvailable: Boolean = true) : ComputerControl {
         val actions = Collections.synchronizedList(mutableListOf<ComputerAction>())
         var captures = 0
+
         @Volatile var actAtNano = 0L
+
         @Volatile var captureAtNano = 0L
         override fun screenshot(): Result<ComputerScreenshot> {
             captureAtNano = System.nanoTime()
@@ -36,6 +38,7 @@ class ComputerUseTest {
     private val fake = FakeControl()
 
     @BeforeTest fun useFake() { ComputerUse.control = fake }
+
     @AfterTest fun restore() { ComputerUse.control = realControl }
 
     private val allowed = AgentPermissionPolicy(approvalMode = ToolApprovalMode.NEVER, computerAccess = true)
@@ -149,10 +152,12 @@ class ComputerUseTest {
         entries.dropOlderScreenshotEntries()
         assertEquals(listOf(text), entries)
 
-        val anthropic = mutableListOf(buildJsonObject {
-            put("role", "user")
-            put("content", JsonArray(listOf(buildJsonObject { put("type", "tool_result"); put("tool_use_id", "c"); put("content", anthropicToolResultContent(shot)) })))
-        })
+        val anthropic = mutableListOf(
+            buildJsonObject {
+                put("role", "user")
+                put("content", JsonArray(listOf(buildJsonObject { put("type", "tool_result"); put("tool_use_id", "c"); put("content", anthropicToolResultContent(shot)) })))
+            }
+        )
         anthropic.dropOlderAnthropicScreenshots()
         assertFalse("BYTES" in anthropic.single().toString())
         assertTrue("Done." in anthropic.single().toString(), "The text result stays")
@@ -195,8 +200,10 @@ class ComputerUseTest {
                 val body = buildJsonObject {
                     put("id", "r"); put("status", "completed"); put("model", "fixture-model")
                     putJsonArray("output") {
-                        add(if (first) buildJsonObject { put("type", "function_call"); put("call_id", "c1"); put("name", ComputerUse.TOOL_NAME); put("arguments", toolArguments) }
-                        else buildJsonObject { put("type", "message"); put("role", "assistant"); putJsonArray("content") { addJsonObject { put("type", "output_text"); put("text", "Done.") } } })
+                        add(
+                            if (first) buildJsonObject { put("type", "function_call"); put("call_id", "c1"); put("name", ComputerUse.TOOL_NAME); put("arguments", toolArguments) }
+                            else buildJsonObject { put("type", "message"); put("role", "assistant"); putJsonArray("content") { addJsonObject { put("type", "output_text"); put("text", "Done.") } } }
+                        )
                     }
                 }.toString().toByteArray()
                 exchange.responseHeaders.set("Content-Type", "application/json")
@@ -205,13 +212,22 @@ class ComputerUseTest {
             }
             start()
         }
-        val profile = ProviderProfile("fixture", "Fixture", ProviderProtocol.CUSTOM, customDialect = CUSTOM_DIALECT_OPENAI_RESPONSES,
-            baseUrl = "http://127.0.0.1:${server.address.port}", defaultModel = "fixture-model", thinkingEffort = "none",
-            customModelSpecs = mapOf("fixture-model" to ModelPricingSpec("fixture-model")))
+        val profile = ProviderProfile(
+            "fixture",
+            "Fixture",
+            ProviderProtocol.CUSTOM,
+            customDialect = CUSTOM_DIALECT_OPENAI_RESPONSES,
+            baseUrl = "http://127.0.0.1:${server.address.port}",
+            defaultModel = "fixture-model",
+            thinkingEffort = "none",
+            customModelSpecs = mapOf("fixture-model" to ModelPricingSpec("fixture-model"))
+        )
         override fun close() = server.stop(0)
-        fun run(policy: AgentPermissionPolicy) = AiProviderEngine.streamGeneration(profile = profile,
+        fun run(policy: AgentPermissionPolicy) = AiProviderEngine.streamGeneration(
+            profile = profile,
             session = ChatSession("chat", "Fixture", 1L, 1L, profile.id, permissionOverrides = policy.asOverrides()),
-            historyNodes = listOf(MessageNode("u", MessageRole.USER, listOf(MessageVariant("v", content = "Go")))))
+            historyNodes = listOf(MessageNode("u", MessageRole.USER, listOf(MessageVariant("v", content = "Go"))))
+        )
     }
 
     @Test fun anApprovedActionRunsAndTheModelSeesTheScreen() = runBlocking<Unit> {

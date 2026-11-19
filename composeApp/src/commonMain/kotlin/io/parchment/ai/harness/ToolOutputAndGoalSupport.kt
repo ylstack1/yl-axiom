@@ -127,9 +127,10 @@ internal object ToolOutputAndGoalSupport {
                 val goal = args["goal"]?.jsonPrimitive?.contentOrNull?.takeIf { it.isNotBlank() }
                     ?: current?.goalObjective.orEmpty()
                 val parsed = parseTodoItems(args)
-                val allDone = parsed.isNotEmpty() && parsed.all {
-                    it.status == "completed" || it.status == "cancelled"
-                }
+                val allDone = parsed.isNotEmpty() &&
+                    parsed.all {
+                        it.status == "completed" || it.status == "cancelled"
+                    }
                 GoalTrackerState(
                     goalObjective = goal,
                     todos = parsed,

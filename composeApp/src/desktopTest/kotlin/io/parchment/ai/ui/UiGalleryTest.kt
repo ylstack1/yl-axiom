@@ -11,10 +11,9 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.runtime.snapshots.Snapshot
 import androidx.compose.ui.Alignment
-import androidx.compose.ui.Modifier
-import androidx.compose.ui.unit.dp
 import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.ImageComposeScene
+import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.input.pointer.PointerEventType
 import androidx.compose.ui.input.pointer.PointerType
@@ -23,6 +22,7 @@ import androidx.compose.ui.semantics.SemanticsNode
 import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.semantics.getOrNull
 import androidx.compose.ui.unit.Density
+import androidx.compose.ui.unit.dp
 import io.parchment.ai.model.*
 import io.parchment.ai.network.RetryControl
 import io.parchment.ai.network.RetryWait
@@ -52,6 +52,7 @@ class UiGalleryTest {
     private data class Viewport(val name: String, val widthDp: Int, val heightDp: Int, val density: Float, val fontScale: Float = 1f)
     private val phone = Viewport("phone", 390, 844, 2f)
     private val desktop = Viewport("desktop", 1360, 860, 1f)
+
     // 200% text, the largest size Android and Windows accessibility settings offer.
     private val phoneLargeText = phone.copy(name = "phone-text200", fontScale = 2f)
     private val desktopLargeText = desktop.copy(name = "desktop-text200", fontScale = 2f)
@@ -60,22 +61,26 @@ class UiGalleryTest {
 
     private fun sampleMessages(protocol: ProviderProtocol) = listOf(
         message("u1", MessageRole.USER, MessageVariant("vu1", "Why does the export fail on chats with long titles? Please check the writer and fix it.")),
-        message("a1", MessageRole.ASSISTANT, MessageVariant(
-            id = "va1",
-            content = "The export built each file name directly from the chat title, so a long title went past the 255 character limit and the write failed.\n\n" +
-                "I changed it to shorten the name and add a short hash, so two similar titles stay distinct:\n\n" +
-                "```kotlin\nfun exportName(title: String, id: String): String =\n    title.take(80).trim() + \"-\" + id.takeLast(6) + \".json\"\n```\n\n" +
-                "- Titles over 80 characters are shortened\n- Existing exports keep their names\n\nThe export test now covers a 400 character title.",
-            thinkingSummary = "The failure only happens on long titles, so the path length is the likely cause. I should read the writer first.",
-            thinkingDurationMs = 4200L,
-            toolCalls = listOf(
-                ToolCallRecord("t1", "fs_read", """{"path":"src/ChatArchiveWriter.kt"}""", "fun write(title: String) { ... }", durationMs = 120L, startsToolStep = true),
-                ToolCallRecord("t2", "fs_edit", """{"path":"src/ChatArchiveWriter.kt"}""", "Edited 1 file", durationMs = 80L, startsToolStep = true)
-            ),
-            providerProtocol = protocol,
-            modelUsed = "gemini-3-pro",
-            createdAt = PlatformRuntime.currentTimeMillis() - 300_000L
-        )),
+        message(
+            "a1",
+            MessageRole.ASSISTANT,
+            MessageVariant(
+                id = "va1",
+                content = "The export built each file name directly from the chat title, so a long title went past the 255 character limit and the write failed.\n\n" +
+                    "I changed it to shorten the name and add a short hash, so two similar titles stay distinct:\n\n" +
+                    "```kotlin\nfun exportName(title: String, id: String): String =\n    title.take(80).trim() + \"-\" + id.takeLast(6) + \".json\"\n```\n\n" +
+                    "- Titles over 80 characters are shortened\n- Existing exports keep their names\n\nThe export test now covers a 400 character title.",
+                thinkingSummary = "The failure only happens on long titles, so the path length is the likely cause. I should read the writer first.",
+                thinkingDurationMs = 4200L,
+                toolCalls = listOf(
+                    ToolCallRecord("t1", "fs_read", """{"path":"src/ChatArchiveWriter.kt"}""", "fun write(title: String) { ... }", durationMs = 120L, startsToolStep = true),
+                    ToolCallRecord("t2", "fs_edit", """{"path":"src/ChatArchiveWriter.kt"}""", "Edited 1 file", durationMs = 80L, startsToolStep = true)
+                ),
+                providerProtocol = protocol,
+                modelUsed = "gemini-3-pro",
+                createdAt = PlatformRuntime.currentTimeMillis() - 300_000L
+            )
+        ),
         message("u2", MessageRole.USER, MessageVariant("vu2", "Great. Does that also cover the Android export?"))
     )
 
@@ -84,21 +89,33 @@ class UiGalleryTest {
         val profile = base.profiles.first()
         val assistant = base.assistants.first()
         fun chat(id: String, title: String, updated: Long, messages: List<MessageNode>) = ChatSession(
-            id = id, title = title, createdAt = updated, updatedAt = updated, profileId = profile.id,
-            assistantId = assistant.id, messages = messages
+            id = id,
+            title = title,
+            createdAt = updated,
+            updatedAt = updated,
+            profileId = profile.id,
+            assistantId = assistant.id,
+            messages = messages
         )
         val now = PlatformRuntime.currentTimeMillis()
         val chats = listOf(
-            chat("gallery-1", "Fix chat export on long titles", now,
-                (0 until conversationCopies).flatMap { n -> sampleMessages(profile.protocol).map { it.copy(id = "${it.id}-$n") } }),
+            chat(
+                "gallery-1",
+                "Fix chat export on long titles",
+                now,
+                (0 until conversationCopies).flatMap { n -> sampleMessages(profile.protocol).map { it.copy(id = "${it.id}-$n") } }
+            ),
             chat("gallery-2", "Trip notes for Kyoto", now - 3_600_000L, sampleMessages(profile.protocol).take(1)),
             chat("gallery-3", "The lighthouse keeper, chapter four", now - 90_000_000L, sampleMessages(profile.protocol).take(1)),
             chat("gallery-4", "Compare two storage designs", now - 400_000_000L, sampleMessages(profile.protocol).take(1))
         )
         chats.forEach { PlatformStorage.saveChatSessionJson(it.id, compactStateJson.encodeToString(it)) }
         val state = base.copy(
-            sessions = emptyList(), activeSessionId = "gallery-1", openTabSessionIds = listOf("gallery-1", "gallery-2"),
-            profiles = base.profiles.map { it.copy(apiKey = "sample", defaultModel = "gemini-3-pro") }, theme = theme,
+            sessions = emptyList(),
+            activeSessionId = "gallery-1",
+            openTabSessionIds = listOf("gallery-1", "gallery-2"),
+            profiles = base.profiles.map { it.copy(apiKey = "sample", defaultModel = "gemini-3-pro") },
+            theme = theme,
             autoCheckOtaOnStartup = false
         )
         PlatformStorage.saveAppStateJson(compactStateJson.encodeToString(state))
@@ -143,8 +160,12 @@ class UiGalleryTest {
         val wait = RetryWait(2, 10, 12, "Chat Completions HTTP 503: The server is overloaded. Please try again later.")
         process.runs.attach(
             AgentRunIdentity("gallery-retry", chatId, "", "", "", "", ""),
-            SessionStreamRuntime(chatId, statusText = Strings.tryingAgainIn(12, 2, 10) + "\n" + wait.reason,
-                retryWait = wait, retryControl = RetryControl()),
+            SessionStreamRuntime(
+                chatId,
+                statusText = Strings.tryingAgainIn(12, 2, 10) + "\n" + wait.reason,
+                retryWait = wait,
+                retryControl = RetryControl()
+            ),
             cancelPrevious = false
         )
     }
@@ -164,8 +185,10 @@ class UiGalleryTest {
     ) {
         seed(theme)
         val scene = ImageComposeScene(
-            (viewport.widthDp * viewport.density).toInt(), (viewport.heightDp * viewport.density).toInt(),
-            density = Density(viewport.density, viewport.fontScale), coroutineContext = Dispatchers.Swing
+            (viewport.widthDp * viewport.density).toInt(),
+            (viewport.heightDp * viewport.density).toInt(),
+            density = Density(viewport.density, viewport.fontScale),
+            coroutineContext = Dispatchers.Swing
         )
         val process = parchmentProcessState
         try {
@@ -214,8 +237,7 @@ class UiGalleryTest {
     }
 
     /** Rendering every screen to PNG is most of the test run's CPU, so it runs only when asked for. */
-    private fun assumeGalleryRequested() =
-        org.junit.Assume.assumeTrue("Render with: python scripts/verify.py test UiGalleryTest", System.getProperty("parchment.gallery") == "true")
+    private fun assumeGalleryRequested() = org.junit.Assume.assumeTrue("Render with: cargo xtask test UiGalleryTest", System.getProperty("parchment.gallery") == "true")
 
     @Test fun renderIconSheet() {
         assumeGalleryRequested()

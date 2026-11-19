@@ -8,9 +8,16 @@ import kotlinx.serialization.json.jsonObject
 import kotlin.test.*
 
 class PricingAvailabilityTest {
-    private fun usage(input: Long = 10, output: Long = 20) = ProviderTokenUsage(inputTokens = input, outputTokens = output,
-        cachedInputTokens = 0, cacheCreationInputTokens = 0, shortCacheCreationInputTokens = 0, longCacheCreationInputTokens = 0,
-        reasoningTokens = 0, isFinal = true)
+    private fun usage(input: Long = 10, output: Long = 20) = ProviderTokenUsage(
+        inputTokens = input,
+        outputTokens = output,
+        cachedInputTokens = 0,
+        cacheCreationInputTokens = 0,
+        shortCacheCreationInputTokens = 0,
+        longCacheCreationInputTokens = 0,
+        reasoningTokens = 0,
+        isFinal = true
+    )
     private fun profile() = ProviderProfile("profile", "Profile", ProviderProtocol.OPENAI_RESPONSES, defaultModel = "model")
 
     @Test fun explicitFreeRatesRemainDifferentFromMissingPrices() {
@@ -30,8 +37,11 @@ class PricingAvailabilityTest {
     }
 
     @Test fun modelOverridesAndCapturedPricesDoNotChangeWithLaterSettings() {
-        val original = profile().copy(inputPricePerM = 100.0, outputPricePerM = 100.0,
-            customModelSpecs = mapOf("model" to ModelPricingSpec("model", knownPricing = TokenPricing(inputPerM = 1.0, outputPerM = 2.0))))
+        val original = profile().copy(
+            inputPricePerM = 100.0,
+            outputPricePerM = 100.0,
+            customModelSpecs = mapOf("model" to ModelPricingSpec("model", knownPricing = TokenPricing(inputPerM = 1.0, outputPerM = 2.0)))
+        )
         val ledger = ProviderUsageLedger(original, "model")
         val request = ledger.begin(UsageDialect.OPENAI_RESPONSES)
         ledger.update(request.requestId, "response", UsageDialect.OPENAI_RESPONSES, usage())
@@ -73,8 +83,15 @@ class PricingAvailabilityTest {
         assertEquals(0.0, spec.knownPricing?.cacheReadPerM)
         assertNull(spec.knownPricing?.cacheWritePerM)
         assertEquals(100_000L, spec.contextPricingTiers.single().inputTokensAbove)
-        val record = ApiUsageRecord("request", wireDialect = "openai_responses", profileId = "profile", model = spec.modelId,
-            pricing = spec.knownPricing!!, contextPricingTiers = spec.contextPricingTiers, usage = usage(input = 100_000))
+        val record = ApiUsageRecord(
+            "request",
+            wireDialect = "openai_responses",
+            profileId = "profile",
+            model = spec.modelId,
+            pricing = spec.knownPricing!!,
+            contextPricingTiers = spec.contextPricingTiers,
+            usage = usage(input = 100_000)
+        )
         assertEquals(1.0, recordPricing(record).inputPerM)
         assertEquals(3.0, recordPricing(record.copy(usage = usage(input = 100_001))).inputPerM)
         assertEquals(0.0, ModelsDevClient.lookupSpecInCatalog(catalog, "vendor/free")?.knownPricing?.inputPerM)
@@ -83,8 +100,12 @@ class PricingAvailabilityTest {
 
     @Test fun laterRegistryMergeCannotOverwriteAnExplicitFreePrice() {
         val existing = ModelPricingSpec("model", knownPricing = TokenPricing(inputPerM = 0.0, outputPerM = 0.0))
-        val incoming = ModelPricingSpec("model", inputPricePerM = 2.0, outputPricePerM = 3.0,
-            knownPricing = TokenPricing(inputPerM = 2.0, outputPerM = 3.0))
+        val incoming = ModelPricingSpec(
+            "model",
+            inputPricePerM = 2.0,
+            outputPricePerM = 3.0,
+            knownPricing = TokenPricing(inputPerM = 2.0, outputPerM = 3.0)
+        )
         val merged = ModelsDevClient.mergeModelSpecs(existing, incoming)
         assertEquals(0.0, merged.knownPricing?.inputPerM)
         assertEquals(0.0, merged.inputPricePerM)
@@ -104,9 +125,14 @@ class PricingAvailabilityTest {
     }
 
     @Test fun anExplicitLongWriteRateUsesTheReportedLifetimeCounts() {
-        val record = ApiUsageRecord("write", wireDialect = "openai_responses", profileId = "profile", model = "model",
+        val record = ApiUsageRecord(
+            "write",
+            wireDialect = "openai_responses",
+            profileId = "profile",
+            model = "model",
             pricing = TokenPricing(inputPerM = 0.0, outputPerM = 0.0, cacheWritePerM = 3.0, longCacheWritePerM = 10.0),
-            usage = usage(input = 2, output = 0).copy(cacheCreationInputTokens = 2, shortCacheCreationInputTokens = 1, longCacheCreationInputTokens = 1))
+            usage = usage(input = 2, output = 0).copy(cacheCreationInputTokens = 2, shortCacheCreationInputTokens = 1, longCacheCreationInputTokens = 1)
+        )
         assertEquals(0.000013, aggregateApiUsageRecords(listOf(record)).estimatedCostUsd, 1e-12)
     }
 

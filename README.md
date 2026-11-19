@@ -2,7 +2,7 @@
 
 A native AI chat and agent app for Windows and Android. Bring your own provider and key; Parchment talks to it directly, keeps your chats on your device, and asks before any tool touches your files, the web or your screen.
 
-Built with Kotlin Multiplatform and Compose Foundation: no Electron, no WebView, no Material.
+Built with a native Rust core (SQLite WAL + FTS5), a native Windows GPUI desktop shell, and Jetpack Compose Foundation on Android: no Electron, no WebView, no Material.
 
 [![Latest Release](installer/release-badge.svg)](https://github.com/baros4294/parchment/releases/latest) [![Build](https://github.com/baros4294/parchment/actions/workflows/build-installers.yml/badge.svg?branch=main)](https://github.com/baros4294/parchment/actions/workflows/build-installers.yml) [![CodeQL](https://github.com/baros4294/parchment/actions/workflows/codeql.yml/badge.svg?branch=main)](https://github.com/baros4294/parchment/actions/workflows/codeql.yml)
 
@@ -45,7 +45,7 @@ Built with Kotlin Multiplatform and Compose Foundation: no Electron, no WebView,
 **Everyday reliability**
 - Atomic saves with backups, so a crash never leaves a half-written chat.
 - Long runs keep going while the app is in the background, within what the system allows.
-- Built for low-end hardware: a 4 MB Android app, a quick desktop start, and a lighter mode on devices with under 4 GB of memory.
+- Built for low-end hardware: a 22.6 MB standalone Windows `.exe` (`~260 ms` start), a 6.3 MB Android APK (including native Rust SQLite WAL + FTS5 core), and a lighter mode on devices with under 4 GB of memory.
 - In-app updates check size and SHA-256 before installing.
 
 ## Privacy
@@ -60,7 +60,7 @@ There are no accounts, analytics or telemetry. Your chats, settings and keys sta
 
 ## Build from source
 
-[CONTRIBUTING.md](CONTRIBUTING.md) covers the tools you need and every build and test command. Android releases are signed with a private key that is not in the repository; see [release signing](docs/RELEASE_SIGNING.md).
+Run `cargo xtask status` (or `cargo xtask affected`) to verify both the Rust desktop and Kotlin Android targets; install local pre-commit checks once with `cargo xtask install-hooks`. [CONTRIBUTING.md](CONTRIBUTING.md) covers toolchain setup and every command. Android releases require a private signing key outside the repository; see [release signing](docs/RELEASE_SIGNING.md).
 
 ## Documentation
 
@@ -94,7 +94,7 @@ There are no accounts, analytics or telemetry. Your chats, settings and keys sta
 - [LobeHub Icons](https://github.com/lobehub/lobe-icons): AI lab logos.
 
 **Built with**
-- [Kotlin Multiplatform](https://kotlinlang.org/docs/multiplatform.html), [Compose Multiplatform](https://www.jetbrains.com/compose-multiplatform/), [Ktor](https://ktor.io/) and [kotlinx.coroutines](https://github.com/Kotlin/kotlinx.coroutines) / [kotlinx.serialization](https://github.com/Kotlin/kotlinx.serialization).
+- [Rust](https://www.rust-lang.org/), [GPUI](https://www.gpui.rs/), [SQLite](https://www.sqlite.org/) (WAL + FTS5), [Kotlin Multiplatform](https://kotlinlang.org/docs/multiplatform.html), [Compose Multiplatform](https://www.jetbrains.com/compose-multiplatform/), [Ktor](https://ktor.io/) and [kotlinx.coroutines](https://github.com/Kotlin/kotlinx.coroutines) / [kotlinx.serialization](https://github.com/Kotlin/kotlinx.serialization).
 
 ## License
 

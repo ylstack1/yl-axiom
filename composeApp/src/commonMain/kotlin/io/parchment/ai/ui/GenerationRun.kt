@@ -1,34 +1,32 @@
 package io.parchment.ai.ui
 
-import io.parchment.ai.harness.wasCutOff
-import io.parchment.ai.strings.Strings
-import io.parchment.ai.harness.withInterruptedOutcome
 import androidx.compose.foundation.layout.size
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.key
 import androidx.compose.runtime.setValue
-import androidx.compose.ui.input.key.key
+import io.parchment.ai.harness.AgentToolRunContext
+import io.parchment.ai.harness.ToolAccessScope
+import io.parchment.ai.harness.ToolApprovalBroker
+import io.parchment.ai.harness.WorkspaceHarness
+import io.parchment.ai.harness.wasCutOff
+import io.parchment.ai.harness.withInterruptedOutcome
+import io.parchment.ai.model.AgentPermissionResolver
 import io.parchment.ai.model.GoalTrackerState
 import io.parchment.ai.model.MessageNode
 import io.parchment.ai.model.MessageVariant
 import io.parchment.ai.model.ProviderProtocol
-import io.parchment.ai.harness.WorkspaceHarness
-import io.parchment.ai.harness.AgentToolRunContext
-import io.parchment.ai.network.appendSignatureChunkSafe
-import io.parchment.ai.network.stripInlineErrorNotices
-import io.parchment.ai.runtime.appRunLeases
-import io.parchment.ai.harness.ToolApprovalBroker
-import io.parchment.ai.harness.ToolAccessScope
-import io.parchment.ai.model.AgentPermissionResolver
 import io.parchment.ai.model.asOverrides
 import io.parchment.ai.model.unclaimedStepText
 import io.parchment.ai.network.AiProviderEngine
 import io.parchment.ai.network.RetryControl
 import io.parchment.ai.network.StreamUpdate
+import io.parchment.ai.network.appendSignatureChunkSafe
+import io.parchment.ai.network.stripInlineErrorNotices
 import io.parchment.ai.platform.PlatformRuntime
 import io.parchment.ai.platform.PlatformStorage
 import io.parchment.ai.platform.PlatformVoice
 import io.parchment.ai.protocol.O200kTokenizer
+import io.parchment.ai.runtime.appRunLeases
+import io.parchment.ai.strings.Strings
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.channels.Channel
@@ -118,8 +116,12 @@ internal fun GenerationHost.beginGeneration(
     val initialWebSources = existingTargetVariant?.webSources.orEmpty()
     val initialDurationMs = existingTargetVariant?.thinkingDurationMs ?: 0L
     val identity = AgentRunIdentity(
-        PlatformRuntime.createRunId(), sessionId, targetAssistantNodeId, targetVariantId,
-        effectiveProfileForApi.id, modelName,
+        PlatformRuntime.createRunId(),
+        sessionId,
+        targetAssistantNodeId,
+        targetVariantId,
+        effectiveProfileForApi.id,
+        modelName,
         if (effectiveProfileForApi.protocol == ProviderProtocol.CUSTOM) effectiveProfileForApi.customDialect
         else io.parchment.ai.model.mapProtocolToDialect(effectiveProfileForApi.protocol.name)
     )
@@ -145,17 +147,25 @@ internal fun GenerationHost.beginGeneration(
     }
     // In the run's context, so the engine (and any helper it starts) shows its retry waits here and Retry now ends them.
     val retryControl = RetryControl()
-    val newJob = appRunLeases.launch(appProcessScope, modelName, AgentToolRunContext(approvalBroker) + retryControl,
-        start = kotlinx.coroutines.CoroutineStart.LAZY) { activity ->
+    val newJob = appRunLeases.launch(
+        appProcessScope,
+        modelName,
+        AgentToolRunContext(approvalBroker) + retryControl,
+        start = kotlinx.coroutines.CoroutineStart.LAZY
+    ) { activity ->
         var terminalPhase = AgentRunPhase.INTERRUPTED
         updateOwnedStream { it?.copy(phase = AgentRunPhase.RUNNING) }
         val approvalObserver = launch {
             activity.waitingForApproval.collect { waiting ->
-                updateOwnedStream { current -> current?.copy(phase = when {
-                    waiting -> AgentRunPhase.WAITING_APPROVAL
-                    current.phase == AgentRunPhase.WAITING_APPROVAL -> AgentRunPhase.RUNNING
-                    else -> current.phase
-                }) }
+                updateOwnedStream { current ->
+                    current?.copy(
+                        phase = when {
+                            waiting -> AgentRunPhase.WAITING_APPROVAL
+                            current.phase == AgentRunPhase.WAITING_APPROVAL -> AgentRunPhase.RUNNING
+                            else -> current.phase
+                        }
+                    )
+                }
             }
         }
         val retryObserver = launch {
@@ -239,9 +249,15 @@ internal fun GenerationHost.beginGeneration(
             val result = patched
             val live = LiveTurns.stateOf(targetVariantId)?.value
             if (result != null && live != null) {
-                LiveTurns.publish(live.copy(content = result.content, thinkingSummary = result.thinkingSummary,
-                    trailingThinking = result.trailingThinking, thinkingSignature = result.thinkingSignature,
-                    thinkingDurationMs = result.thinkingDurationMs))
+                LiveTurns.publish(
+                    live.copy(
+                        content = result.content,
+                        thinkingSummary = result.thinkingSummary,
+                        trailingThinking = result.trailingThinking,
+                        thinkingSignature = result.thinkingSignature,
+                        thinkingDurationMs = result.thinkingDurationMs
+                    )
+                )
             }
         }
 
@@ -487,9 +503,11 @@ internal fun GenerationHost.beginGeneration(
                 val thinkingBehind = displayedThinkingLen != cachedVisibleThinkLen || effStepLen != cachedVisibleStepThinkLen
                 // Keep visible prose reveals on hardware VSync independent of accumulated thinking length:
                 // long agent thinking traces (>32 KB) must never throttle content streaming down to 20-30 fps.
-                val holdContent = !networkDone && contentBehind &&
+                val holdContent = !networkDone &&
+                    contentBehind &&
                     now - lastContentCopyMs < visibleTextCopyIntervalMs(displayedContentLen)
-                val holdThinking = !networkDone && thinkingBehind &&
+                val holdThinking = !networkDone &&
+                    thinkingBehind &&
                     now - lastThinkingCopyMs < visibleTextCopyIntervalMs(maxOf(displayedThinkingLen, effStepLen))
                 val shouldCopyContent = contentBehind && !holdContent
                 val shouldCopyThinking = thinkingBehind && !holdThinking
@@ -544,8 +562,10 @@ internal fun GenerationHost.beginGeneration(
         try {
             var finalSessionForCall = mergedSessionForApi
             var finalHistoryForCall = effectiveHistory
-            val effectiveCtxLimit = (effectiveProfileForApi.customModelSpecs[modelName]?.contextWindowTokens
-                ?: effectiveProfileForApi.contextWindowTokens)
+            val effectiveCtxLimit = (
+                effectiveProfileForApi.customModelSpecs[modelName]?.contextWindowTokens
+                    ?: effectiveProfileForApi.contextWindowTokens
+                )
             val autoCompactThresholdTokens = (effectiveCtxLimit * 85) / 100
             var minTokensForNextAutoCompact = autoCompactThresholdTokens
             var lastMidStreamCompactCheckMs = activity.elapsedMs
@@ -907,14 +927,18 @@ internal fun GenerationHost.beginGeneration(
                                 accumulatedUsageRecords = if (index < 0) accumulatedUsageRecords + update.record else {
                                     accumulatedUsageRecords.toMutableList().also { it[index] = update.record }
                                 }
-                                latestTokenMetrics = update.metrics.copy(durationMs = latestTokenMetrics.durationMs,
-                                    ttftMs = latestTokenMetrics.ttftMs, tokensPerSec = latestTokenMetrics.tokensPerSec)
+                                latestTokenMetrics = update.metrics.copy(
+                                    durationMs = latestTokenMetrics.durationMs,
+                                    ttftMs = latestTokenMetrics.ttftMs,
+                                    tokensPerSec = latestTokenMetrics.tokensPerSec
+                                )
                                 patchVariantMemory { v -> v.copy(apiUsageRecords = accumulatedUsageRecords, tokenMetrics = latestTokenMetrics) }
                             }
                             is StreamUpdate.Completed -> {
                                 terminalPhase = if ((update.goalTracker ?: latestGoalTracker)?.let {
-                                    it.goalObjective.isNotBlank() && !it.isCompleted
-                                } == true) AgentRunPhase.INTERRUPTED else AgentRunPhase.COMPLETED
+                                        it.goalObjective.isNotBlank() && !it.isCompleted
+                                    } == true
+                                ) AgentRunPhase.INTERRUPTED else AgentRunPhase.COMPLETED
                                 accumulatedUsageRecords = update.apiUsageRecords
                                 latestTokenMetrics = update.metrics
                                 if (update.fullContent.length > networkContentTarget.length) {
@@ -1087,7 +1111,8 @@ internal fun GenerationHost.beginGeneration(
         }
     }
 
-    processState.runs.attach(identity,
+    processState.runs.attach(
+        identity,
         SessionStreamRuntime(
             sessionId = sessionId,
             targetNodeId = targetAssistantNodeId,

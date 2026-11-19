@@ -169,17 +169,20 @@ data class ProviderProfile(
     val anthropicBetaHeaders: String = "",
     val rawJsonExtraBody: String = ""
 ) {
-    fun calculateTurnCostUsd(metrics: TokenMetrics): Double {
-        return tokenPricing().estimate(metrics) ?: 0.0
-    }
+    fun calculateTurnCostUsd(metrics: TokenMetrics): Double = tokenPricing().estimate(metrics) ?: 0.0
 
     fun tokenPricing(modelId: String = defaultModel): TokenPricing {
         val model = customModelSpecs[modelId]
         model?.knownPricing?.let { return it }
         val base = if (pricingModelId.isNotBlank() && pricingModelId != modelId) TokenPricing()
-            else knownPricing ?: legacyTokenPricing(inputPricePerM, outputPricePerM, cacheReadPricePerM, cacheWritePricePerM, reasoningPricePerM)
-        return if (model == null) base else legacyTokenPricing(model.inputPricePerM, model.outputPricePerM,
-            model.cacheReadPricePerM, model.cacheWritePricePerM, model.reasoningPricePerM).withMissingFrom(base)
+        else knownPricing ?: legacyTokenPricing(inputPricePerM, outputPricePerM, cacheReadPricePerM, cacheWritePricePerM, reasoningPricePerM)
+        return if (model == null) base else legacyTokenPricing(
+            model.inputPricePerM,
+            model.outputPricePerM,
+            model.cacheReadPricePerM,
+            model.cacheWritePricePerM,
+            model.reasoningPricePerM
+        ).withMissingFrom(base)
     }
 }
 
@@ -217,7 +220,8 @@ data class ToolCallRecord(
 data class TodoItem(
     val id: String,
     val content: String,
-    val status: String = "pending" // "pending", "in_progress", "completed", "cancelled"
+    // "pending", "in_progress", "completed", "cancelled"
+    val status: String = "pending"
 )
 
 @Immutable
@@ -232,11 +236,15 @@ data class GoalTrackerState(
         get() = todos.count { it.status.equals("completed", ignoreCase = true) }
 
     val hasPendingOrInProgress: Boolean
-        get() = !isCompleted && (todos.isEmpty() && goalObjective.isNotBlank() ||
-            todos.any {
-                val s = it.status.lowercase()
-                s == "pending" || s == "in_progress"
-            })
+        get() = !isCompleted &&
+            (
+                todos.isEmpty() &&
+                    goalObjective.isNotBlank() ||
+                    todos.any {
+                        val s = it.status.lowercase()
+                        s == "pending" || s == "in_progress"
+                    }
+                )
 }
 
 @Immutable
@@ -385,9 +393,8 @@ data class CharacterOrScenarioCard(
 ) {
     fun buildCompiledInstructions(userName: String = "User"): String {
         val sb = StringBuilder()
-        fun replaceMacros(text: String): String =
-            text.replace("{{char}}", name.ifBlank { "Character" }, ignoreCase = true)
-                .replace("{{user}}", userName, ignoreCase = true)
+        fun replaceMacros(text: String): String = text.replace("{{char}}", name.ifBlank { "Character" }, ignoreCase = true)
+            .replace("{{user}}", userName, ignoreCase = true)
 
         if (systemPrompt.isNotBlank()) {
             sb.appendLine(replaceMacros(systemPrompt.trim()))
@@ -446,12 +453,12 @@ data class AssistantAgent(
     val authorsNote: String = "",
     val authorsNoteDepth: Int = 2,
     val defaultProfileId: String = "", // Blank = follow Global Model
-    val defaultModelId: String = "",   // Blank = follow Global Model
-    val thinkingEffort: String = "",   // Blank = follow Profile/Global
-    val temperature: Double? = null,   // null = omit from API request
-    val topP: Double? = null,          // null = omit from API request
-    val maxOutputTokens: Int? = null,  // null = omit; 0 = unlimited
-    val contextMessageLimit: Int = 0,  // 0 = unlimited history messages
+    val defaultModelId: String = "", // Blank = follow Global Model
+    val thinkingEffort: String = "", // Blank = follow Profile/Global
+    val temperature: Double? = null, // null = omit from API request
+    val topP: Double? = null, // null = omit from API request
+    val maxOutputTokens: Int? = null, // null = omit; 0 = unlimited
+    val contextMessageLimit: Int = 0, // 0 = unlimited history messages
     val activeCard: CharacterOrScenarioCard? = null,
     val fragments: List<ContextFragment> = emptyList(),
     val workspacePath: String = "",

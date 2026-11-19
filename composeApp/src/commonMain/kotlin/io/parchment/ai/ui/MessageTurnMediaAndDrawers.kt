@@ -64,8 +64,13 @@ internal fun TurnAttachmentsSection(
     val imageAtts = attachments.filter {
         val m = it.mimeType.lowercase()
         val l = it.fileName.lowercase()
-        m.startsWith("image/") || l.endsWith(".png") || l.endsWith(".jpg") ||
-            l.endsWith(".jpeg") || l.endsWith(".webp") || l.endsWith(".gif") || l.endsWith(".bmp")
+        m.startsWith("image/") ||
+            l.endsWith(".png") ||
+            l.endsWith(".jpg") ||
+            l.endsWith(".jpeg") ||
+            l.endsWith(".webp") ||
+            l.endsWith(".gif") ||
+            l.endsWith(".bmp")
     }
     val otherAtts = attachments.filterNot { it in imageAtts }
 
@@ -183,10 +188,16 @@ private fun AttachmentFileChip(
     val mime = att.mimeType.lowercase()
     val lower = att.fileName.lowercase()
     val isPdf = mime == "application/pdf" || lower.endsWith(".pdf")
-    val isVid = mime.startsWith("video/") || lower.endsWith(".mp4") ||
-        lower.endsWith(".webm") || lower.endsWith(".mov") || lower.endsWith(".mkv")
-    val isAud = mime.startsWith("audio/") || lower.endsWith(".mp3") ||
-        lower.endsWith(".wav") || lower.endsWith(".ogg") || lower.endsWith(".flac")
+    val isVid = mime.startsWith("video/") ||
+        lower.endsWith(".mp4") ||
+        lower.endsWith(".webm") ||
+        lower.endsWith(".mov") ||
+        lower.endsWith(".mkv")
+    val isAud = mime.startsWith("audio/") ||
+        lower.endsWith(".mp3") ||
+        lower.endsWith(".wav") ||
+        lower.endsWith(".ogg") ||
+        lower.endsWith(".flac")
     val iconAndAction = when {
         isPdf -> KissIcon.FILE_TEXT to Strings.openPdf
         isVid -> KissIcon.VIDEO to Strings.playVideo
@@ -648,6 +659,7 @@ internal fun TurnRawWireDrawer(
     rawResponsePreview: String
 ) {
     val p = LocalParchmentPalette.current
+
     @Suppress("DEPRECATION")
     val clipboard = LocalClipboardManager.current
     AnimatedVisibility(

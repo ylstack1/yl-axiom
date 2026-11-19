@@ -1,6 +1,5 @@
 package io.parchment.ai
 
-import io.parchment.ai.runtime.AppForeground
 import android.Manifest
 import android.app.Activity
 import android.content.ComponentCallbacks2
@@ -19,17 +18,16 @@ import androidx.activity.ComponentActivity
 import androidx.activity.OnBackPressedCallback
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
-import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.ui.graphics.luminance
-import androidx.core.view.WindowCompat
-import io.parchment.ai.ui.LocalParchmentPalette
 import androidx.activity.result.ActivityResultLauncher
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.ui.ExperimentalComposeUiApi
+import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.platform.InterceptPlatformTextInput
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.platform.PlatformTextInputMethodRequest
+import androidx.core.view.WindowCompat
 import androidx.lifecycle.lifecycleScope
 import io.parchment.ai.platform.AndroidPlatformHost
 import io.parchment.ai.platform.CrashRecorder
@@ -37,13 +35,15 @@ import io.parchment.ai.platform.PickedBinaryFile
 import io.parchment.ai.platform.PlatformPickers
 import io.parchment.ai.platform.PlatformRuntime
 import io.parchment.ai.platform.PlatformStorage
+import io.parchment.ai.runtime.AppForeground
+import io.parchment.ai.ui.LocalParchmentPalette
 import io.parchment.ai.ui.ParchmentApp
 import io.parchment.ai.ui.preloadProcessStateInBackground
-import java.io.OutputStream
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import java.io.OutputStream
 
 class MainActivity : ComponentActivity() {
 
@@ -295,8 +295,7 @@ class MainActivity : ComponentActivity() {
         return deferred.await()
     }
 
-    suspend fun requestExportFile(defaultFileName: String, bytes: ByteArray): String? =
-        runCatching { requestExportStream(defaultFileName) { it.write(bytes) } }.getOrNull()
+    suspend fun requestExportFile(defaultFileName: String, bytes: ByteArray): String? = runCatching { requestExportStream(defaultFileName) { it.write(bytes) } }.getOrNull()
 
     /** Writes off the main thread. A failed export removes the partial document it created. */
     suspend fun requestExportStream(defaultFileName: String, write: (OutputStream) -> Unit): String? {
@@ -387,8 +386,10 @@ class MainActivity : ComponentActivity() {
 
     fun requestNotificationPermission() {
         runOnUiThread {
-            if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU || notificationPermissionRequested ||
-                !lifecycle.currentState.isAtLeast(androidx.lifecycle.Lifecycle.State.RESUMED)) return@runOnUiThread
+            if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU ||
+                notificationPermissionRequested ||
+                !lifecycle.currentState.isAtLeast(androidx.lifecycle.Lifecycle.State.RESUMED)
+            ) return@runOnUiThread
             if (checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED) return@runOnUiThread
             notificationPermissionRequested = true
             runCatching { notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS) }

@@ -71,8 +71,7 @@ internal const val DEV_BUILD_UPDATE_MESSAGE =
     "This is a development build, so it doesn't install updates. Update the installed Parchment instead."
 
 /** Reads GitHub's nullable `sha256:<hex>` asset digest; anything else counts as not published. */
-internal fun sha256FromAssetDigest(rawDigest: String?): String =
-    rawDigest.orEmpty().trim().removePrefix("sha256:").lowercase().takeIf(SHA256_HEX::matches).orEmpty()
+internal fun sha256FromAssetDigest(rawDigest: String?): String = rawDigest.orEmpty().trim().removePrefix("sha256:").lowercase().takeIf(SHA256_HEX::matches).orEmpty()
 
 object OtaUpdateEngine {
 

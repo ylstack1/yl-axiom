@@ -9,7 +9,6 @@ import io.ktor.http.ContentType
 import io.ktor.http.Url
 import io.ktor.http.contentType
 import io.parchment.ai.platform.McpProcess
-import kotlin.concurrent.Volatile
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
@@ -35,6 +34,7 @@ import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.intOrNull
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.put
+import kotlin.concurrent.Volatile
 
 internal open class McpException(message: String) : Exception(message)
 
@@ -48,6 +48,7 @@ internal interface McpTransport {
     /** The revision sent on HTTP requests; the client sets it after negotiation. */
     var protocolVersion: String
     val isAlive: Boolean get() = true
+
     /** True once after the server answered 404 to a request carrying its session: that session has ended. */
     fun takeLostSession(): Boolean = false
     suspend fun request(message: JsonObject): JsonObject
@@ -55,15 +56,17 @@ internal interface McpTransport {
     suspend fun close()
 }
 
-private fun sanitizeHeaderValue(raw: String): String =
-    raw.trim().replace("\r", "").replace("\n", "")
+private fun sanitizeHeaderValue(raw: String): String = raw.trim().replace("\r", "").replace("\n", "")
 
 /** Streamable HTTP: one POST per message, answered with JSON or an event stream. */
 internal class HttpMcpTransport(url: String, bearerToken: String) : McpTransport {
     private val cleanUrl = url.trim()
     private val cleanToken = sanitizeHeaderValue(bearerToken)
+
     @Volatile override var protocolVersion = MCP_HANDSHAKE_VERSION
+
     @Volatile private var sessionId = ""
+
     @Volatile private var sessionLost = false
 
     override fun takeLostSession(): Boolean = sessionLost.also { sessionLost = false }
@@ -179,6 +182,7 @@ internal class ProcessMcpTransport(private val process: McpProcess) : McpTranspo
     private val lock = Mutex()
     private val writeLock = Mutex()
     private val waiting = mutableMapOf<String, CompletableDeferred<JsonObject>>()
+
     @Volatile private var ended = false
     override val isAlive: Boolean get() = !ended
 
@@ -191,10 +195,12 @@ internal class ProcessMcpTransport(private val process: McpProcess) : McpTranspo
                     val id = message["id"] ?: continue
                     if ("method" in message) {
                         // Parchment offers no client features, so a server's own requests are refused.
-                        write(buildJsonObject {
-                            put("jsonrpc", "2.0"); put("id", id)
-                            put("error", buildJsonObject { put("code", -32601); put("message", "Method not found") })
-                        })
+                        write(
+                            buildJsonObject {
+                                put("jsonrpc", "2.0"); put("id", id)
+                                put("error", buildJsonObject { put("code", -32601); put("message", "Method not found") })
+                            }
+                        )
                     } else {
                         lock.withLock { waiting.remove(id.toString()) }?.complete(message)
                     }
@@ -252,6 +258,7 @@ internal class McpClient(private val transport: McpTransport) {
     private var nextId = 0L
     private var stateless = false
     private val opScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+
     @kotlin.concurrent.Volatile private var connected = false
     private val connectOp = CoalescedOp(opScope) { performConnect() }
     private val listToolsOp = CoalescedOp(opScope) { fetchTools() }
@@ -389,11 +396,14 @@ internal class McpClient(private val transport: McpTransport) {
     private suspend fun performConnect() {
         if (connected) return
         val response = try {
-            exchange("initialize", buildJsonObject {
-                put("protocolVersion", MCP_HANDSHAKE_VERSION)
-                put("capabilities", JsonObject(emptyMap()))
-                put("clientInfo", buildJsonObject { put("name", "Parchment"); put("version", "2") })
-            })
+            exchange(
+                "initialize",
+                buildJsonObject {
+                    put("protocolVersion", MCP_HANDSHAKE_VERSION)
+                    put("capabilities", JsonObject(emptyMap()))
+                    put("clientInfo", buildJsonObject { put("name", "Parchment"); put("version", "2") })
+                }
+            )
         } catch (httpErr: McpHttpException) {
             // A pure 2026-07-28 HTTP server may reject initialize or the 2025 header with 400/404/405/422.
             if (httpErr.statusCode in setOf(400, 404, 405, 422)) {
@@ -437,8 +447,11 @@ internal class McpClient(private val transport: McpTransport) {
                 val tool = element as? JsonObject ?: return@forEach
                 val name = (tool["name"] as? JsonPrimitive)?.contentOrNull?.takeIf { it.isNotBlank() } ?: return@forEach
                 val schema = tool["inputSchema"] as? JsonObject ?: JsonObject(emptyMap())
-                tools += McpToolInfo(name, (tool["description"] as? JsonPrimitive)?.contentOrNull.orEmpty(),
-                    if ("type" in schema) schema else JsonObject(schema + ("type" to JsonPrimitive("object"))))
+                tools += McpToolInfo(
+                    name,
+                    (tool["description"] as? JsonPrimitive)?.contentOrNull.orEmpty(),
+                    if ("type" in schema) schema else JsonObject(schema + ("type" to JsonPrimitive("object")))
+                )
             }
             val next = (page["nextCursor"] as? JsonPrimitive)?.contentOrNull?.takeIf { it.isNotBlank() }
             if (next == null || !seenCursors.add(next) || tools.size >= MCP_MAX_TOOLS) return tools.take(MCP_MAX_TOOLS)
@@ -483,5 +496,4 @@ internal fun renderToolContent(result: JsonObject): String {
 }
 
 /** Accepts only a JSON object for a tool's arguments. */
-internal fun parseMcpArguments(argumentsJson: String): JsonObject? =
-    runCatching { AiProviderEngine.json.parseToJsonElement(argumentsJson.ifBlank { "{}" }).jsonObject }.getOrNull()
+internal fun parseMcpArguments(argumentsJson: String): JsonObject? = runCatching { AiProviderEngine.json.parseToJsonElement(argumentsJson.ifBlank { "{}" }).jsonObject }.getOrNull()

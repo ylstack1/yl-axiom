@@ -1,7 +1,6 @@
 package io.parchment.ai.ui
 
 import androidx.compose.foundation.background
-import io.parchment.ai.strings.Strings
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
@@ -23,7 +22,6 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -35,11 +33,12 @@ import io.parchment.ai.model.DefaultModelConfig
 import io.parchment.ai.model.MessageNavVisibility
 import io.parchment.ai.model.PreferencesConfig
 import io.parchment.ai.model.ProviderProfile
-import io.parchment.ai.model.keepsProviderState
 import io.parchment.ai.model.SendShortcutMode
 import io.parchment.ai.model.ThemeConfig
 import io.parchment.ai.model.ViewMode
+import io.parchment.ai.model.keepsProviderState
 import io.parchment.ai.network.OtaUpdateEngine
+import io.parchment.ai.strings.Strings
 
 // ============================================================================================
 // Settings search, item by item
@@ -330,8 +329,15 @@ internal fun GlobalSettingsSearchResultsSubpage(
     val hitShortcutsSection = matchingShortcuts.isNotEmpty() || hit("Keyboard Shortcuts", "Shortcuts", "Keybindings", "Hotkeys", "Send Shortcut")
     val hitOtaBackup = hit("Backup & Updates", "OTA", "Check for Updates at Launch", "GitHub Release", "Update", "Export Backup", "Restore Backup", "Wipe All Local Data", "storage")
 
-    val hasAnyResult = anyPrefMatch || anyProviderMatch || anyWorkspaceMatch || anyDefaultModelMatch ||
-        matchingAssistants.isNotEmpty() || matchingLore.isNotEmpty() || hitWorldBookGeneral || hitShortcutsSection || hitOtaBackup
+    val hasAnyResult = anyPrefMatch ||
+        anyProviderMatch ||
+        anyWorkspaceMatch ||
+        anyDefaultModelMatch ||
+        matchingAssistants.isNotEmpty() ||
+        matchingLore.isNotEmpty() ||
+        hitWorldBookGeneral ||
+        hitShortcutsSection ||
+        hitOtaBackup
 
     Column(
         modifier = Modifier

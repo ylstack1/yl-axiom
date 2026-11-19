@@ -66,8 +66,10 @@ internal fun AiProviderEngine.extractMarkdownLinksAsCitations(text: String): Lis
     for (match in mdLinkRegex.findAll(text)) {
         val label = match.groupValues.getOrNull(1)?.trim().orEmpty()
         val url = match.groupValues.getOrNull(2)?.trim().orEmpty()
-        if (url.isNotBlank() && !url.endsWith(".png", ignoreCase = true) &&
-            !url.endsWith(".jpg", ignoreCase = true) && !url.endsWith(".mp4", ignoreCase = true)
+        if (url.isNotBlank() &&
+            !url.endsWith(".png", ignoreCase = true) &&
+            !url.endsWith(".jpg", ignoreCase = true) &&
+            !url.endsWith(".mp4", ignoreCase = true)
         ) {
             out.add(
                 RawWebCitation(
@@ -354,12 +356,11 @@ internal fun AiProviderEngine.bindSourcesToMessageLines(
         "how", "why", "can", "will", "into", "your", "more", "about", "http", "https", "www", "com", "org", "io", "dev"
     )
 
-    fun extractSignificantTokens(s: String): Set<String> =
-        s.lowercase()
-            .split(Regex("[^a-z0-9.]+"))
-            .map { it.trim('.') }
-            .filter { it.length >= 3 && it !in stopWords }
-            .toSet()
+    fun extractSignificantTokens(s: String): Set<String> = s.lowercase()
+        .split(Regex("[^a-z0-9.]+"))
+        .map { it.trim('.') }
+        .filter { it.length >= 3 && it !in stopWords }
+        .toSet()
 
     return groupedByUrl.entries.mapIndexed { idx, (url, group) ->
         val citationIndex = idx + 1

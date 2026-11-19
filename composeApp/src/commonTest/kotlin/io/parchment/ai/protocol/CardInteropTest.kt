@@ -37,8 +37,7 @@ class CardInteropTest {
       }
     }"""
 
-    private fun exported(card: CharacterOrScenarioCard) =
-        CardAndPromptCodec.cardDocument(card, v3 = card.sourceFormat.startsWith("chara_card_v3")).toString()
+    private fun exported(card: CharacterOrScenarioCard) = CardAndPromptCodec.cardDocument(card, v3 = card.sourceFormat.startsWith("chara_card_v3")).toString()
 
     private fun data(json: String) = Json.parseToJsonElement(json).jsonObject.getValue("data").jsonObject
     private fun entries(data: JsonObject) = data.getValue("character_book").jsonObject.getValue("entries").jsonArray.map { it.jsonObject }
@@ -107,7 +106,8 @@ class CardInteropTest {
     }
 
     @OptIn(ExperimentalEncodingApi::class)
-    @Test fun aPngCarriesAV2ChunkAndARealV3Chunk() {
+    @Test
+    fun aPngCarriesAV2ChunkAndARealV3Chunk() {
         val png = CardAndPromptCodec.exportCardToPngBytes(CardAndPromptCodec.parseCardJson(v3))
         val chunks = CardAndPromptCodec.extractPngTextChunks(png)
         fun spec(key: String): String {

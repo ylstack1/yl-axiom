@@ -211,6 +211,7 @@ object LatexMathRenderer {
         modifier: Modifier = Modifier
     ) {
         val p = LocalParchmentPalette.current
+
         @Suppress("DEPRECATION")
         val clipboard = LocalClipboardManager.current
         val cleaned = rawLatex.trim()
@@ -447,18 +448,18 @@ object LatexMathRenderer {
     private val MATH_UNDERLINE_STYLE = SpanStyle(textDecoration = TextDecoration.Underline)
 
     private class MathStyleSheet(private val palette: ParchmentPalette) {
-        private var _codeUpright: SpanStyle? = null
-        private var _cancel: SpanStyle? = null
+        private var cachedCodeUpright: SpanStyle? = null
+        private var cachedCancel: SpanStyle? = null
 
-        fun codeUpright(): SpanStyle = _codeUpright ?: SpanStyle(
+        fun codeUpright(): SpanStyle = cachedCodeUpright ?: SpanStyle(
             fontFamily = palette.codeFontFamily,
             fontStyle = FontStyle.Normal
-        ).also { _codeUpright = it }
+        ).also { cachedCodeUpright = it }
 
-        fun cancel(): SpanStyle = _cancel ?: SpanStyle(
+        fun cancel(): SpanStyle = cachedCancel ?: SpanStyle(
             textDecoration = TextDecoration.LineThrough,
             color = palette.mutedInk
-        ).also { _cancel = it }
+        ).also { cachedCancel = it }
     }
 
     /**

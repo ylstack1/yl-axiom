@@ -28,14 +28,14 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.text.AnnotatedString
-import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.layout
+import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -132,7 +132,8 @@ internal fun MessageTurnItem(
     }
     val isLivePeekOnly = isActivelyThinkingThisNode && manualThinkingToggle == false
     val turnText = remember(activeVar.content, activeVar.toolCalls) { turnTextLayout(activeVar.content, activeVar.toolCalls) }
-    val stepsOnScreen = isReasoningExpanded && !isLivePeekOnly &&
+    val stepsOnScreen = isReasoningExpanded &&
+        !isLivePeekOnly &&
         ((preferences.showThinkingCards && activeVar.thinkingSummary.isNotBlank()) || (preferences.showToolCards && activeVar.toolCalls.isNotEmpty()))
     // Text written between tools sits in the timeline when it is open, and joins the reply when it is not.
     val replyText = when {
@@ -202,10 +203,12 @@ internal fun MessageTurnItem(
         buildList {
             add(PlatformMenuItem(Strings.copy) { turnClipboard.setText(AnnotatedString(activeVar.content)) })
             if (!activeVar.isStreaming) {
-                add(PlatformMenuItem(Strings.editMessage) {
-                    editBuffer = activeVar.content
-                    isEditing = true
-                })
+                add(
+                    PlatformMenuItem(Strings.editMessage) {
+                        editBuffer = activeVar.content
+                        isEditing = true
+                    }
+                )
             }
             if (isAssistant) add(PlatformMenuItem(if (node.pinned) Strings.unpinReply else Strings.pinReply, onTogglePin))
             if (isAssistant && !activeVar.isStreaming) add(PlatformMenuItem(Strings.regenerateResponse, onRegenerate))
@@ -254,8 +257,11 @@ internal fun MessageTurnItem(
             MessageTurnGoalTrackerCard(activeVar.goalTracker)
 
             // Main Prose Content OR In-Place Editor
-            val shrinkBubble = !isEditing && !activeVar.isStreaming && activeVar.attachments.isEmpty() &&
-                activeVar.mediaItems.isEmpty() && activeVar.content.length < MAX_SHRINKABLE_BUBBLE_CHARS &&
+            val shrinkBubble = !isEditing &&
+                !activeVar.isStreaming &&
+                activeVar.attachments.isEmpty() &&
+                activeVar.mediaItems.isEmpty() &&
+                activeVar.content.length < MAX_SHRINKABLE_BUBBLE_CHARS &&
                 !activeVar.content.contains("```")
             val contentModifier = when {
                 showBubbles -> Modifier.messageBubble(fromUser = !isAssistant, shrink = shrinkBubble, fill = if (isAssistant) p.cardBg else p.accent.copy(alpha = 0.16f), edge = if (isAssistant) p.border else Color.Transparent)
@@ -405,8 +411,12 @@ private fun MessageTurnHeader(
         userName.ifBlank { Strings.user }
     }
     // Header and version bar; a wrapping row so the name, model and version pills never overlap on a phone.
-    val showTurnHeader = isAssistant || preferences.showUserAvatar || preferences.showUserName ||
-        preferences.showUserTimestamp || node.variants.size > 1 || !node.includedInContext
+    val showTurnHeader = isAssistant ||
+        preferences.showUserAvatar ||
+        preferences.showUserName ||
+        preferences.showUserTimestamp ||
+        node.variants.size > 1 ||
+        !node.includedInContext
     if (!showTurnHeader) return
 
     @OptIn(ExperimentalLayoutApi::class)

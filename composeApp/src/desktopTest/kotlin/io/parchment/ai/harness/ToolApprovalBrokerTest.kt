@@ -6,10 +6,13 @@ import kotlinx.coroutines.flow.first
 import kotlin.test.*
 
 class ToolApprovalBrokerTest {
-    private val policy = ToolAccessScope(AgentPermissionPolicy(
-        workspacePath = "unused", workspaceMode = WorkspaceMode.READ_WRITE,
-        approvalMode = ToolApprovalMode.ASK_EVERY_TOOL
-    ))
+    private val policy = ToolAccessScope(
+        AgentPermissionPolicy(
+            workspacePath = "unused",
+            workspaceMode = WorkspaceMode.READ_WRITE,
+            approvalMode = ToolApprovalMode.ASK_EVERY_TOOL
+        )
+    )
     private val arguments = """{"path":"notes.md"}"""
 
     private val quiet = ToolAccessScope(policy.policy.copy(approvalMode = ToolApprovalMode.NEVER))

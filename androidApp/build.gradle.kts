@@ -7,6 +7,11 @@ import java.security.PrivateKey
 // this module owns only what an application needs: its id, version, signing, R8 and the bundled fonts.
 plugins {
     alias(libs.plugins.androidApplication)
+    alias(libs.plugins.ktlint)
+}
+
+ktlint {
+    outputToConsole.set(true)
 }
 
 val appVersionProp = (project.findProperty("appVersion") as? String)?.removePrefix("v")?.trim()
@@ -57,6 +62,9 @@ android {
         targetSdk = libs.versions.android.targetSdk.get().toInt()
         versionCode = appVersionCodeProp
         versionName = appVersionProp
+        ndk {
+            abiFilters += "arm64-v8a"
+        }
     }
 
     signingConfigs {

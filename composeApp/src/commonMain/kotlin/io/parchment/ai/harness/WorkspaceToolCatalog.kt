@@ -412,8 +412,7 @@ internal object WorkspaceToolCatalog {
         return externalToolsProvider().filter { tool -> policy == null || policy.allowsTool(tool.name) }
     }
 
-    fun shouldDeferMcpSchemas(policy: AgentPermissionPolicy?): Boolean =
-        allowedMcpTools(policy).size > DEFERRED_MCP_SCHEMA_THRESHOLD
+    fun shouldDeferMcpSchemas(policy: AgentPermissionPolicy?): Boolean = allowedMcpTools(policy).size > DEFERRED_MCP_SCHEMA_THRESHOLD
 
     fun deferredMcpToolsCatalogPrompt(
         policy: AgentPermissionPolicy?,
@@ -466,10 +465,17 @@ internal object WorkspaceToolCatalog {
             if (tool.name == "web_search" && !includeLocalWebSearchTool) return@filter false
             if (!hasMountedWorkspace) {
                 if (!goalModeActive) {
-                    tool.name == "web_search" || tool.name == "web_fetch" || tool.name == "calc_eval" ||
-                        tool.name == "dice_roll" || tool.name == "ask_user" || tool.name == "agent_delegate" ||
-                        tool.name == "todo_write" || tool.name == "goal_complete" || tool.name == "agent_memory" ||
-                        tool.name == ComputerUse.TOOL_NAME || isMcpToolName(tool.name)
+                    tool.name == "web_search" ||
+                        tool.name == "web_fetch" ||
+                        tool.name == "calc_eval" ||
+                        tool.name == "dice_roll" ||
+                        tool.name == "ask_user" ||
+                        tool.name == "agent_delegate" ||
+                        tool.name == "todo_write" ||
+                        tool.name == "goal_complete" ||
+                        tool.name == "agent_memory" ||
+                        tool.name == ComputerUse.TOOL_NAME ||
+                        isMcpToolName(tool.name)
                 } else {
                     !tool.requiresWorkspaceFolder
                 }

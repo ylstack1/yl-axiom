@@ -1,0 +1,61 @@
+[workspace]
+resolver = "3"
+members = [
+    "crates/parchment-model",
+    "crates/parchment-storage",
+    "crates/parchment-protocol",
+    "crates/parchment-prose",
+    "crates/parchment-harness",
+    "crates/parchment-core",
+    "crates/parchment-desktop",
+    "crates/parchment-xtask",
+]
+
+[workspace.package]
+version = "3.0.0"
+edition = "2024"
+license = "MIT"
+repository = "https://github.com/baros4294/parchment"
+
+[workspace.dependencies]
+anyhow = "1"
+async-trait = "0.1"
+base64 = "0.22"
+bytes = "1"
+futures-util = "0.3"
+globset = "0.4"
+grep-regex = "0.1"
+grep-searcher = "0.1"
+ignore = "0.4"
+reqwest = { version = "0.13.5", default-features = false, features = ["rustls", "http2", "stream", "json"] }
+rusqlite = { version = "0.43.0", features = ["bundled"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = { version = "1", features = ["preserve_order"] }
+thiserror = "2"
+tokio = { version = "1.54.1", features = ["rt-multi-thread", "macros", "sync", "time", "io-util", "net", "process"] }
+url = "2"
+zip = { version = "9.7.1", default-features = false, features = ["deflate-flate2-zlib-rs"] }
+
+# Keep GPUI and dependencies fast in dev builds without heavy debuginfo RAM bloat.
+[profile.dev]
+debug = "line-tables-only"
+
+[profile.dev.package."*"]
+opt-level = 2
+debug = false
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 1
+panic = "abort"
+strip = "symbols"
+
+# Size-optimized profile for Android arm64-v8a cdylib (.so) builds.
+[profile.release-android]
+inherits = "release"
+opt-level = "z"
+lto = "fat"
+codegen-units = 1
+panic = "abort"
+strip = "symbols"

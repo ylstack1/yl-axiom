@@ -1,6 +1,6 @@
 # Parchment performance
 
-Parchment is built for low-end hardware first and 120Hz+ smoothness on modern displays. Measure with `python scripts/verify.py perf`; it builds the ProGuard-shrunk desktop release package (including its prebuilt JDK 25 Project Leyden AOT cache), runs it against 300 synthetic chats in a scratch folder (never your data) and, when a phone is connected, measures the Android app already installed on it (`--android-install` installs the local release APK first).
+Parchment is built for low-end hardware first and 120Hz+ smoothness on modern displays. Measure both targets with `cargo xtask perf`; it builds and benchmarks the standalone native GPUI Windows `.exe` against 300 synthetic chats + an 87.6 KB live streaming code-fence stress test in a scratch folder (never your data), checks Android `libparchment_core.so` & APK size budgets, and measures the installed Android app over `adb` when a phone is connected (`--android-install` installs the local release APK first).
 
 ## Reference devices
 
@@ -11,16 +11,18 @@ Under 4 GB of RAM, or with Android's low-RAM flag, the app runs in low-memory mo
 
 ## Budgets
 
-| Measure | Budget | Before (v2.0.70) | Now |
+| Measure | Budget | v2 Baseline (2026-11-18) | v3 Native Rust + GPUI / JNI (2026-11-19) |
 |---|---|---|---|
-| Desktop start to chat title, 300 chats | 1.0 s | 1.65 s (3.1 s without class archive) | 0.87 s (865 ms; 0.78 s first launch after update; 0.82 s on a 9 MB 190-turn active chat via deferred stub hydration) |
-| Desktop idle private memory | < 200 MB | about 306 MB (dev run) | 193.8 MB (Generational Shenandoah + C1-only JIT `-XX:TieredStopAtLevel=1`, `0.5%` idle CPU, `48 MiB` Skia D3D12 GPU resource cap preventing `259 MB` D3D12MA pool bloat) |
-| Android APK | 5 MB | 15.5 MB | 4.5 MB (R8 Full Mode + resource shrinking + Baseline & Startup Profiles) |
-| Android cold start | 0.5 s | not measured | needs a phone |
-| Android idle PSS | < 100 MB | not measured | needs a phone |
-| Frame time while streaming, p95 | 8 ms desktop (120Hz), 16 ms low-end Android (60Hz) | not measured | 5.0 ms for the prose renderer alone (p50 3.0, CPU drawing, `FrameTimeProbeTest`); 6.8 ms in the full app with a 200-message chat (p50 5.7, `LiveTurnStreamingTest`); 0 hover/press/pulse-dot recompositions (`KissMotionZeroRecompositionTest`) |
+| Windows binary / runtime footprint | < 35 MB | 173.5 MB (JLink + Leyden AOT image) | **22.61 MB** standalone `.exe` (0 DLLs; 7.7x smaller) |
+| Desktop start to chat title, 300 chats | < 0.35 s | 0.77 s (`774 ms` cold / `865 ms` warm) | **0.26 s** (`250 ms` window / `261 ms` title; `3.47 ms` core startup; 3.0x faster) |
+| Desktop idle private memory | < 130 MB | 194.3 MB (Shenandoah + Skia D3D12) | **116.6 MB** (`~38 MB` heap + `~78 MB` Intel Iris Xe UMA swapchain; 40% lower) |
+| Frame time while streaming (200-msg chat, 87 KB code fence), p95 | < 4 ms desktop (120Hz), 16 ms Android | 6.8 ms (`max 27.0 ms`, `LiveTurnStreamingTest`) | **0.360 ms CPU p95** (`p50 0.168 ms`, `vsync_p95 17.34 ms`, `vsync_max 18.09 ms`, `0` dropped frames; 19x faster) |
+| 78 KB streaming code-fence prose parse | < 5 ms / < 1 MB alloc | 97 ms / 386 MB alloc churn | **1.55–1.72 ms / 371 KB alloc** (>1,000x less alloc churn, ~60x faster) |
+| Streaming checkpoint / 1,000-msg save | < 2 ms | 198 ms / 19.3 MB full JSON (`4.9 ms` sidecar) | **< 1 ms** SQLite WAL incremental upsert (zero-clone borrowed meta serialization) |
+| Android signed Release APK | <= 7.5 MB | 4.5 MB (Kotlin only) | **6.30 MB** (R8 Full Mode + `1.85 MB` uncompressed 16 KB-aligned `libparchment_core.so`, `useLegacyPackaging=false`) |
+| Android cold start / idle PSS | 0.5 s / < 100 MB | needs a phone | needs a phone |
 
-"Now" is the 2026-11-18 ProGuard-shrunk release measurement on an i5-1135G7 with 7.7 GB. Packaging repacks all ~80 application and dependency JARs into a single `DEFLATED` `$APPDIR/parchment-all.jar` (`21.6 MB`, concatenating `META-INF/services/*` entries so cold NTFS/Defender launches open 1 compact file instead of 80 without inflating mapped working-set RAM) and normalizes all packaged file timestamps to an even-second zero-nanosecond UTC epoch before generating `$APPDIR/parchment.aot` (`-XX:AOTCacheOutput` with `-Dskiko.library.path=$APPDIR` and Inno Setup `TimeStampsInUTC=yes`), so installed `.EXE` releases map AOT-linked Compose, Skia, and app classes across every timezone without post-install warmup. Budgets were lowered on 2026-11-17 with the user's agreement to target near-instant startup, memory residency, and 120Hz/60Hz streaming. Only change a budget with the user's agreement, and record why.
+Measure both v3 desktop and Android with `cargo xtask perf` (`--android-install` to push the local signed APK first). Release profiles live in `Cargo.toml` (`[profile.release]`, `[profile.release-android]`) and `androidApp/build.gradle.kts` (R8 Full Mode + resource shrinking).
 
 ### Measured decisions (2026-11-18)
 
@@ -44,16 +46,17 @@ Under 4 GB of RAM, or with Android's low-RAM flag, the app runs in low-memory mo
 
 ## CI workflow budgets
 
-Measured against GitHub Actions runs on `ubuntu-latest` / `windows-latest` (updated 2026-11-19) and guarded by `.github/scripts/test_ci_changes.py`:
+Measured against GitHub Actions runs on `ubuntu-latest` / `windows-latest` and enforced via `crates/parchment-xtask/src/ci.rs` (`cargo xtask ci ...`):
 
-| Workflow / Job | Baseline (2026-11-17) | Budget (Incremental / PR) | Budget (Cold / Release) | Key invariants |
-|---|---|---|---|---|
-| **Build Android APK & Windows EXE (wall clock)** | `341–365 s` (peak `432 s`) | **`<= 160 s`** | **`<= 210 s`** | `ParchmentBuildConfig` reads `/parchment-build.properties`; `paths-ignore` skips Release Please metadata PRs |
-| — `preflight` | `16–21 s` | **`<= 12 s`** | **`<= 12 s`** | C-regex single-pass `quality.py` (`0.99 s`), diff check, and workflow unit tests run concurrently |
-| — `test-desktop` (2 shards) | `126–180 s` (`59 s` skew) | **`<= 80 s`** | **`<= 100 s`** | Runtime-cost sharding (`shard_tests.py`), `-Pparchment.testForks=3` (isolated per-worker data dirs), `-Xmx5g` |
-| — `test-windows-native` | bundled in `build-windows-exe` (`+108 s`) | **`<= 105 s`** (parallel) | **`<= 115 s`** (parallel) | Split out of `build-windows-exe` as a parallel job with `-Pparchment.testForks=2`; skipped on `installer/`-only edits |
-| — `build-android-apk` + parallel `release-sbom` | `217–332 s` | **`<= 110 s`** | **`<= 195 s`** | Split SDK cache (`android-platform-37-v2` + `android-build-tools-37-v2`, save on `main` only), `-x :androidApp:lintVitalRelease`, parallel `release-sbom` (`-49 s`) |
-| — `build-windows-exe` | `264–375 s` | **`<= 135 s`** | **`<= 185 s`** | `compose.desktop.application.downloadWix=false` (`-29 s` WiX eliminated), single `STORED` `jrt:/` `jdk-library.jar` (`0` loose NTFS `.class` files for ProGuard), no `desktopTest` on critical path, `LZMANumBlockThreads=4`, `lzma2/fast` PR / `lzma2/max` release |
-| **Quality signals (PR wall clock)** | `433 s` (`313 s` before 2026-11-19) | **`<= 130 s`** | **`<= 150 s`** | Virtual-clock invalidation-settled `UiGalleryTest` (`131 s -> 20 s`, 40 PNGs), Kover `coverage` with `-Pparchment.testForks=4`, platform-only SDK restore (`sbom`) |
-| **CodeQL (wall clock)** | `513 s` (`257 s` before 2026-11-19) | **`<= 175 s`** (`0 s` test-only) | **`<= 195 s`** | Platform-only SDK 37 restore (`~65 MB`), `kotlin.parallel.tasks.in.project=true` (compiles desktop & Android concurrently), `-Xmx5g` |
-| **Dependency submission** | `130 s` (`69 s` before 2026-11-19) | **`<= 40 s`** | **`<= 45 s`** | Platform-only SDK 37 restore (`~65 MB`) + static license hashes |
+| Workflow / Job | Budget (Incremental / PR) | Budget (Cold / Release) | Key invariants |
+|---|---|---|---|
+| **Build Android APK & Windows EXE** | **`<= 160 s`** | **`<= 240 s`** | Path-filtered per stack (`rust_core`, `rust_windows`, `desktop_tests`, `windows_tests`, `android`); concurrency cancels superseded branch/PR runs |
+| — `preflight` | **`<= 15 s`** | **`<= 15 s`** | Pure-Rust zero-dep `parchment-xtask`: unit tests + static quality review + `rustfmt --check` + path planner |
+| — `rust-core-check` | **`<= 45 s`** | **`<= 110 s`** | `Swatinem/rust-cache`, `rustfmt`, `clippy -D warnings`, workspace & slim `android-jni` tests (parallel with Kotlin) |
+| — `test-desktop` (2 shards) | **`<= 85 s`** | **`<= 105 s`** | Deterministic `@Test` sharding (`cargo xtask ci shard-tests`), `ktlintCheck` on shard 0, `-Pparchment.testForks=3` |
+| — `test-windows-native` | **`<= 105 s`** (parallel) | **`<= 115 s`** (parallel) | Parallel Windows-native Kotlin suites (`-Pparchment.testForks=2`), skipped on pure Rust/`installer/` edits |
+| — `build-android-apk` + parallel `release-sbom` | **`<= 120 s`** | **`<= 210 s`** | Cached `cargo-ndk` + `Swatinem/rust-cache` builds 16 KB-aligned `libparchment_core.so`, split Android SDK 37 caches, R8 APK `<= 7.50 MB` |
+| — `build-windows-exe` | **`<= 120 s`** | **`<= 210 s`** | `Swatinem/rust-cache`, full Windows `clippy` + `cargo test --workspace`, standalone `parchment-desktop.exe` `<= 35 MB`, Inno Setup (`lzma2/fast` PR / `lzma2/max` release) + silent install smoke test |
+| **Quality signals (PR wall clock)** | **`<= 130 s`** | **`<= 150 s`** | Parallel Kover `coverage`, virtual-clock `UiGalleryTest`, and CycloneDX SBOM validation (`cargo xtask ci check-sbom`) |
+| **CodeQL (wall clock)** | **`<= 175 s`** (`0 s` test-only) | **`<= 195 s`** | Path-filtered `java-kotlin` (manual parallel compile), `rust` (`build-mode: none`), and `actions` |
+| **Dependency submission** | **`<= 40 s`** | **`<= 45 s`** | Platform-only SDK 37 restore (`~65 MB`) + static license hashes |

@@ -1,0 +1,9 @@
+[package]
+name = "parchment-xtask"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+
+# Pure Rust std only — compiles in ~1.5 s with zero external dependencies.
+[dependencies]

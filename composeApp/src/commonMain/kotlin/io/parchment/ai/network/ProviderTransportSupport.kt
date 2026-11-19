@@ -64,19 +64,17 @@ private val DISALLOWED_EXTRA_BODY_KEYS = setOf(
  * and other format characters, CR/LF and other controls, then outer whitespace (including no-break spaces).
  * They are invisible in the key field yet make the provider reject the request.
  */
-internal fun stripInvisibleCredentialChars(raw: String): String =
-    raw.filterNot { it.category == CharCategory.FORMAT || it.category == CharCategory.CONTROL }.trim()
+internal fun stripInvisibleCredentialChars(raw: String): String = raw.filterNot { it.category == CharCategory.FORMAT || it.category == CharCategory.CONTROL }.trim()
 
 private fun sanitizeHeaderToken(raw: String): String = stripInvisibleCredentialChars(raw)
 
 /** Resolves the concrete wire dialect for a profile (Custom delegates to its explicit [ProviderProfile.customDialect]). */
-internal fun resolveProviderWireProtocol(profile: ProviderProfile): ProviderProtocol =
-    when (resolveProviderWireDialect(profile)) {
-        CUSTOM_DIALECT_GEMINI -> ProviderProtocol.GEMINI_INTERACTIONS
-        CUSTOM_DIALECT_ANTHROPIC -> ProviderProtocol.ANTHROPIC_MESSAGES
-        CUSTOM_DIALECT_OPENAI_RESPONSES, CUSTOM_DIALECT_OPENAI_CHAT -> ProviderProtocol.OPENAI_RESPONSES
-        else -> ProviderProtocol.CUSTOM
-    }
+internal fun resolveProviderWireProtocol(profile: ProviderProfile): ProviderProtocol = when (resolveProviderWireDialect(profile)) {
+    CUSTOM_DIALECT_GEMINI -> ProviderProtocol.GEMINI_INTERACTIONS
+    CUSTOM_DIALECT_ANTHROPIC -> ProviderProtocol.ANTHROPIC_MESSAGES
+    CUSTOM_DIALECT_OPENAI_RESPONSES, CUSTOM_DIALECT_OPENAI_CHAT -> ProviderProtocol.OPENAI_RESPONSES
+    else -> ProviderProtocol.CUSTOM
+}
 
 /** Resolves the concrete wire dialect (`openai_chat`, `openai_responses`, `anthropic_messages`, `gemini_interactions`). */
 internal fun resolveProviderWireDialect(profile: ProviderProfile): String {
@@ -111,8 +109,7 @@ internal fun MessageVariant.effectiveWireDialect(): String {
 }
 
 /** True when the custom profile has no dialect chosen yet — Send must be blocked. */
-internal fun isProviderCustomDialectUnresolved(profile: ProviderProfile): Boolean =
-    profile.protocol.isCustomWire && resolveProviderWireProtocol(profile) == ProviderProtocol.CUSTOM
+internal fun isProviderCustomDialectUnresolved(profile: ProviderProfile): Boolean = profile.protocol.isCustomWire && resolveProviderWireProtocol(profile) == ProviderProtocol.CUSTOM
 
 internal fun resolveProviderSmartEndpointUrl(
     profile: ProviderProfile,
@@ -208,7 +205,9 @@ internal fun ProviderProfile.hasCustomHeader(headerName: String): Boolean {
     if (customHeadersRaw.isBlank()) return false
     return customHeadersRaw.lines().any { line ->
         val trimmed = line.trim()
-        trimmed.isNotEmpty() && !trimmed.startsWith("#") && trimmed.contains(":") &&
+        trimmed.isNotEmpty() &&
+            !trimmed.startsWith("#") &&
+            trimmed.contains(":") &&
             trimmed.substringBefore(":").trim().equals(headerName, ignoreCase = true)
     }
 }

@@ -1,7 +1,6 @@
 package io.parchment.ai.ui
 
 import androidx.compose.animation.AnimatedVisibility
-import io.parchment.ai.strings.Strings
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.interaction.MutableInteractionSource
@@ -52,10 +51,10 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import io.parchment.ai.model.AppStateSnapshot
 import io.parchment.ai.model.AuthHeaderMode
+import io.parchment.ai.model.CUSTOM_DIALECTS
 import io.parchment.ai.model.ChatSession
 import io.parchment.ai.model.ModelPricingSpec
 import io.parchment.ai.model.ProviderProfile
-import io.parchment.ai.model.CUSTOM_DIALECTS
 import io.parchment.ai.model.ProviderProtocol
 import io.parchment.ai.model.customDialectLabel
 import io.parchment.ai.model.keepsProviderState
@@ -64,6 +63,7 @@ import io.parchment.ai.network.ModelsDevClient
 import io.parchment.ai.network.fetchAvailableModels
 import io.parchment.ai.network.stripInvisibleCredentialChars
 import io.parchment.ai.platform.PlatformRuntime
+import io.parchment.ai.strings.Strings
 import kotlinx.collections.immutable.toImmutableList
 import kotlinx.coroutines.launch
 
@@ -236,7 +236,8 @@ internal fun ProvidersSubpage(
                                     text = "+ ${proto.displayName.substringBefore(" API")}",
                                     compact = true,
                                     style = SepiaButtonStyle.GHOST,
-                                    modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp), wrapText = true,
+                                    modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp),
+                                    wrapText = true,
                                     onClick = {
                                         onAddProfile(proto)
                                         showAddProviderMenu = false
@@ -366,7 +367,8 @@ internal fun ProvidersSubpage(
                                         text = "+ ${proto.displayName.substringBefore(" API")}",
                                         compact = true,
                                         style = SepiaButtonStyle.GHOST,
-                                        modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp), wrapText = true,
+                                        modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp),
+                                        wrapText = true,
                                         onClick = {
                                             onAddProfile(proto)
                                             showAddProviderMenu = false
@@ -1391,15 +1393,18 @@ private fun ModelConfigSubpage(
         val ctx = ctxText.trim().toIntOrNull() ?: 0 // 0 = Unlimited!
         val maxOut = maxOutText.trim().toIntOrNull() // null = Stripped!
         val pricing = io.parchment.ai.model.TokenPricing(
-            io.parchment.ai.model.parsePriceText(inPriceText), io.parchment.ai.model.parsePriceText(outPriceText),
-            io.parchment.ai.model.parsePriceText(cachePriceText), io.parchment.ai.model.parsePriceText(writePriceText),
-            io.parchment.ai.model.parsePriceText(thinkPriceText), io.parchment.ai.model.parsePriceText(longWritePriceText))
+            io.parchment.ai.model.parsePriceText(inPriceText),
+            io.parchment.ai.model.parsePriceText(outPriceText),
+            io.parchment.ai.model.parsePriceText(cachePriceText),
+            io.parchment.ai.model.parsePriceText(writePriceText),
+            io.parchment.ai.model.parsePriceText(thinkPriceText),
+            io.parchment.ai.model.parsePriceText(longWritePriceText)
+        )
         val inP = pricing.inputPerM ?: 0.0
         val outP = pricing.outputPerM ?: 0.0
         val cacheP = pricing.cacheReadPerM ?: 0.0
         val thinkP = pricing.reasoningPerM ?: 0.0
         val priceChanged = pricing != initialPricing
-
 
         val spec = ModelPricingSpec(
             modelId = modelId,
@@ -1500,23 +1505,63 @@ private fun ModelConfigSubpage(
             }
         ) {
             Column(verticalArrangement = Arrangement.spacedBy(Space.s10)) {
-                SepiaTextField(value = ctxText, onValueChange = { ctxText = it; saveSpec() },
-                    label = Strings.conversationLimitInTokens0, monospace = true, modifier = Modifier.fillMaxWidth())
-                SepiaTextField(value = maxOutText, onValueChange = { maxOutText = it; saveSpec() },
-                    label = Strings.replyLimitInTokensBlank2, monospace = true, modifier = Modifier.fillMaxWidth())
+                SepiaTextField(
+                    value = ctxText,
+                    onValueChange = { ctxText = it; saveSpec() },
+                    label = Strings.conversationLimitInTokens0,
+                    monospace = true,
+                    modifier = Modifier.fillMaxWidth()
+                )
+                SepiaTextField(
+                    value = maxOutText,
+                    onValueChange = { maxOutText = it; saveSpec() },
+                    label = Strings.replyLimitInTokensBlank2,
+                    monospace = true,
+                    modifier = Modifier.fillMaxWidth()
+                )
                 BasicText(Strings.pricesAreUsdPerMillionTokens, style = p.uiLabelStyle)
-                SepiaTextField(value = inPriceText, onValueChange = { inPriceText = it; saveSpec() },
-                    label = Strings.input, monospace = true, modifier = Modifier.fillMaxWidth())
-                SepiaTextField(value = outPriceText, onValueChange = { outPriceText = it; saveSpec() },
-                    label = Strings.output, monospace = true, modifier = Modifier.fillMaxWidth())
-                SepiaTextField(value = cachePriceText, onValueChange = { cachePriceText = it; saveSpec() },
-                    label = Strings.reusedInput, monospace = true, modifier = Modifier.fillMaxWidth())
-                SepiaTextField(value = writePriceText, onValueChange = { writePriceText = it; saveSpec() },
-                    label = Strings.savedForReuse, monospace = true, modifier = Modifier.fillMaxWidth())
-                SepiaTextField(value = longWritePriceText, onValueChange = { longWritePriceText = it; saveSpec() },
-                    label = Strings.savedLongerForReuse, monospace = true, modifier = Modifier.fillMaxWidth())
-                SepiaTextField(value = thinkPriceText, onValueChange = { thinkPriceText = it; saveSpec() },
-                    label = Strings.reasoning, monospace = true, modifier = Modifier.fillMaxWidth())
+                SepiaTextField(
+                    value = inPriceText,
+                    onValueChange = { inPriceText = it; saveSpec() },
+                    label = Strings.input,
+                    monospace = true,
+                    modifier = Modifier.fillMaxWidth()
+                )
+                SepiaTextField(
+                    value = outPriceText,
+                    onValueChange = { outPriceText = it; saveSpec() },
+                    label = Strings.output,
+                    monospace = true,
+                    modifier = Modifier.fillMaxWidth()
+                )
+                SepiaTextField(
+                    value = cachePriceText,
+                    onValueChange = { cachePriceText = it; saveSpec() },
+                    label = Strings.reusedInput,
+                    monospace = true,
+                    modifier = Modifier.fillMaxWidth()
+                )
+                SepiaTextField(
+                    value = writePriceText,
+                    onValueChange = { writePriceText = it; saveSpec() },
+                    label = Strings.savedForReuse,
+                    monospace = true,
+                    modifier = Modifier.fillMaxWidth()
+                )
+                SepiaTextField(
+                    value = longWritePriceText,
+                    onValueChange = { longWritePriceText = it; saveSpec() },
+                    label = Strings.savedLongerForReuse,
+                    monospace = true,
+                    modifier = Modifier.fillMaxWidth()
+                )
+                SepiaTextField(
+                    value = thinkPriceText,
+                    onValueChange = { thinkPriceText = it; saveSpec() },
+                    label = Strings.reasoning,
+                    monospace = true,
+                    modifier = Modifier.fillMaxWidth()
+                )
             }
         }
     }

@@ -1,0 +1,487 @@
+//! Async streaming request executor combining all 5 wire dialects, HTTP 400 reasoning self-healing,
+//! `Retry-After`/backoff retry scheduling, and primary->legacy fallback (never for `CUSTOM`).
+
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+
+use parchment_model::{
+    ApiUsageRecord, ChatSession, GoalTrackerState, MessageNode, ModelPricingSpec, ProviderProfile,
+    TokenMetrics, ToolCallRecord,
+};
+
+use crate::error_policy::{
+    ProtocolError, ProviderHttpError, is_transient_or_proxy_timeout_error, parse_retry_after_ms,
+    retry_delay_ms, should_fallback_to_legacy_protocol,
+};
+use crate::signatures::{append_signature_chunk_safe, step_down_reasoning_effort};
+use crate::sse::{
+    INITIAL_LINE_TIMEOUT, STREAMING_LINE_TIMEOUT, SseFrame, SseStreamConsumer,
+    drive_sse_or_json_stream,
+};
+use crate::usage::ProviderUsageLedger;
+use crate::wire::{
+    RawWebCitation, StreamEvent, ToolDefinition, WireAdaptOptions, WireDialect, WireStreamParser,
+    build_wire_request, resolve_primary_dialect,
+};
+
+const MAX_TRANSIENT_RETRIES: usize = 3;
+const MAX_HTTP_400_HEALS: usize = 5;
+
+#[derive(Debug, Clone)]
+pub struct RoundExecutionResult {
+    pub dialect_used: WireDialect,
+    pub interaction_id: String,
+    pub content: String,
+    pub thinking_summary: String,
+    pub thinking_signature: String,
+    pub tool_calls: Vec<ToolCallRecord>,
+    pub citations: Vec<RawWebCitation>,
+    pub hit_output_limit: bool,
+    pub token_metrics: TokenMetrics,
+    pub usage_records: Vec<ApiUsageRecord>,
+}
+
+pub trait StreamCallbacks {
+    fn on_text_delta(&mut self, _delta: &str) {}
+    fn on_thinking_delta(&mut self, _delta: &str) {}
+    fn on_status(&mut self, _status: &str) {}
+    fn on_retry_wait(&mut self, _attempt: usize, _wait_ms: u64, _reason: &str) {}
+}
+
+pub struct NoopCallbacks;
+impl StreamCallbacks for NoopCallbacks {}
+
+pub struct ProtocolClient {
+    http: reqwest::Client,
+    initial_line_timeout: Duration,
+    streaming_line_timeout: Duration,
+    max_retry_wait_override_ms: Option<u64>,
+}
+
+impl ProtocolClient {
+    pub fn new(http: reqwest::Client) -> Self {
+        Self {
+            http,
+            initial_line_timeout: INITIAL_LINE_TIMEOUT,
+            streaming_line_timeout: STREAMING_LINE_TIMEOUT,
+            max_retry_wait_override_ms: None,
+        }
+    }
+
+    /// Used by deterministic local fixture tests so retries run in milliseconds instead of minutes.
+    pub fn with_test_timings(
+        http: reqwest::Client,
+        line_timeout: Duration,
+        max_retry_wait_ms: u64,
+    ) -> Self {
+        Self {
+            http,
+            initial_line_timeout: line_timeout,
+            streaming_line_timeout: line_timeout,
+            max_retry_wait_override_ms: Some(max_retry_wait_ms),
+        }
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub async fn execute_round<C: StreamCallbacks>(
+        &self,
+        profile: &ProviderProfile,
+        model: &str,
+        session: &ChatSession,
+        history_nodes: &[MessageNode],
+        tools: &[ToolDefinition],
+        goal_state: Option<&GoalTrackerState>,
+        continue_prefix: &str,
+        owner_run_id: &str,
+        catalog_spec: Option<ModelPricingSpec>,
+        callbacks: &mut C,
+    ) -> Result<RoundExecutionResult, ProtocolError> {
+        let primary = resolve_primary_dialect(profile)?;
+        let mut ledger = ProviderUsageLedger::new(
+            profile.clone(),
+            model.to_string(),
+            session.id.clone(),
+            owner_run_id.to_string(),
+            "chat".to_string(),
+            catalog_spec,
+        );
+
+        let primary_res = self
+            .execute_on_dialect(
+                profile,
+                primary,
+                model,
+                session,
+                history_nodes,
+                tools,
+                goal_state,
+                continue_prefix,
+                &mut ledger,
+                callbacks,
+            )
+            .await;
+
+        match primary_res {
+            Ok(ok) => Ok(ok),
+            Err(err) => {
+                // CUSTOM protocol NEVER falls back to another dialect.
+                if !profile.protocol.is_custom_wire()
+                    && let Some(fallback) = primary.legacy_fallback()
+                    && should_fallback_to_legacy_protocol(
+                        &err,
+                        profile.use_legacy_fallback_endpoint,
+                    )
+                {
+                    callbacks.on_status(&format!(
+                        "Primary endpoint failed; falling back to {}",
+                        fallback.wire_name()
+                    ));
+                    return self
+                        .execute_on_dialect(
+                            profile,
+                            fallback,
+                            model,
+                            session,
+                            history_nodes,
+                            tools,
+                            goal_state,
+                            continue_prefix,
+                            &mut ledger,
+                            callbacks,
+                        )
+                        .await;
+                }
+                Err(err)
+            }
+        }
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    async fn execute_on_dialect<C: StreamCallbacks>(
+        &self,
+        profile: &ProviderProfile,
+        dialect: WireDialect,
+        model: &str,
+        session: &ChatSession,
+        history_nodes: &[MessageNode],
+        tools: &[ToolDefinition],
+        goal_state: Option<&GoalTrackerState>,
+        continue_prefix: &str,
+        ledger: &mut ProviderUsageLedger,
+        callbacks: &mut C,
+    ) -> Result<RoundExecutionResult, ProtocolError> {
+        let mut adapt = WireAdaptOptions::default();
+        let mut transient_attempts = 0usize;
+        let mut heal_attempts = 0usize;
+        let started = Instant::now();
+
+        loop {
+            let wire_req = build_wire_request(
+                profile,
+                dialect,
+                model,
+                session,
+                history_nodes,
+                tools,
+                goal_state,
+                continue_prefix,
+                &adapt,
+            )?;
+
+            let usage_req_id = ledger.begin(dialect.usage_dialect());
+            let mut req_builder = self.http.post(&wire_req.url).body(wire_req.body_json);
+            for (k, v) in &wire_req.headers {
+                req_builder = req_builder.header(k.as_str(), v.as_str());
+            }
+
+            let response = match req_builder.send().await {
+                Ok(resp) => resp,
+                Err(e) => {
+                    let err = ProtocolError::Transport(e.to_string());
+                    if is_transient_or_proxy_timeout_error(&err)
+                        && transient_attempts < MAX_TRANSIENT_RETRIES
+                    {
+                        transient_attempts += 1;
+                        let wait_ms =
+                            self.capped_wait(retry_delay_ms(transient_attempts, &err, 0.5, None));
+                        callbacks.on_retry_wait(transient_attempts, wait_ms, &err.to_string());
+                        tokio::time::sleep(Duration::from_millis(wait_ms)).await;
+                        continue;
+                    }
+                    return Err(err);
+                }
+            };
+
+            let status = response.status().as_u16();
+            if !(200..300).contains(&status) {
+                let headers_map = response.headers().clone();
+                let body = response.text().await.unwrap_or_default();
+                let now_ms = SystemTime::now()
+                    .duration_since(UNIX_EPOCH)
+                    .map(|d| d.as_millis() as i64)
+                    .unwrap_or(0);
+                let retry_after_ms = parse_retry_after_ms(
+                    |name| headers_map.get(name).and_then(|v| v.to_str().ok()),
+                    &body,
+                    now_ms,
+                );
+                // HTTP 400 reasoning & parameter self-healing ladder (before failing or falling back).
+                if status == 400
+                    && heal_attempts < MAX_HTTP_400_HEALS
+                    && self.try_heal_http_400(profile, dialect, &body, &mut adapt)
+                {
+                    heal_attempts += 1;
+                    callbacks.on_status("Retrying with adjusted provider reasoning parameters...");
+                    continue;
+                }
+
+                let http_err = ProtocolError::Http(ProviderHttpError {
+                    label: dialect.wire_name().to_string(),
+                    status,
+                    body,
+                    retry_after_ms,
+                });
+
+                if is_transient_or_proxy_timeout_error(&http_err)
+                    && transient_attempts < MAX_TRANSIENT_RETRIES
+                {
+                    transient_attempts += 1;
+                    let wait_ms =
+                        self.capped_wait(retry_delay_ms(transient_attempts, &http_err, 0.5, None));
+                    callbacks.on_retry_wait(transient_attempts, wait_ms, &http_err.to_string());
+                    tokio::time::sleep(Duration::from_millis(wait_ms)).await;
+                    continue;
+                }
+
+                return Err(http_err);
+            }
+
+            // Stream SSE / plain-JSON response body.
+            let mut consumer = RoundStreamConsumer {
+                parser: WireStreamParser::new(dialect),
+                events_buf: Vec::with_capacity(16),
+                interaction_id: String::new(),
+                content: String::new(),
+                thinking_summary: String::new(),
+                thinking_signature: String::new(),
+                tool_calls: Vec::new(),
+                citations: Vec::new(),
+                hit_output_limit: false,
+                first_token_ms: None,
+                started,
+                usage_req_id: &usage_req_id,
+                ledger,
+                callbacks,
+            };
+
+            let stream_res = drive_sse_or_json_stream(
+                response.bytes_stream(),
+                self.initial_line_timeout,
+                self.streaming_line_timeout,
+                &mut consumer,
+            )
+            .await;
+
+            let RoundStreamConsumer {
+                interaction_id,
+                content,
+                thinking_summary,
+                thinking_signature,
+                tool_calls,
+                citations,
+                hit_output_limit,
+                first_token_ms,
+                ..
+            } = consumer;
+
+            match stream_res {
+                Ok(()) => {
+                    let duration_ms = started.elapsed().as_millis() as i64;
+                    let token_metrics = ledger
+                        .aggregate_metrics(first_token_ms.unwrap_or(duration_ms), duration_ms);
+                    return Ok(RoundExecutionResult {
+                        dialect_used: dialect,
+                        interaction_id,
+                        content,
+                        thinking_summary,
+                        thinking_signature,
+                        tool_calls,
+                        citations,
+                        hit_output_limit,
+                        token_metrics,
+                        usage_records: ledger.records(),
+                    });
+                }
+                Err(err) => {
+                    // Only retry automatically if nothing was streamed to the caller yet.
+                    let can_retry = content.is_empty()
+                        && tool_calls.is_empty()
+                        && is_transient_or_proxy_timeout_error(&err)
+                        && transient_attempts < MAX_TRANSIENT_RETRIES;
+                    if can_retry {
+                        transient_attempts += 1;
+                        let wait_ms =
+                            self.capped_wait(retry_delay_ms(transient_attempts, &err, 0.5, None));
+                        callbacks.on_retry_wait(transient_attempts, wait_ms, &err.to_string());
+                        tokio::time::sleep(Duration::from_millis(wait_ms)).await;
+                        continue;
+                    }
+                    return Err(err);
+                }
+            }
+        }
+    }
+
+    fn try_heal_http_400(
+        &self,
+        profile: &ProviderProfile,
+        dialect: WireDialect,
+        body: &str,
+        adapt: &mut WireAdaptOptions,
+    ) -> bool {
+        let lower = body.to_ascii_lowercase();
+        let current_eff = adapt
+            .reasoning_effort_override
+            .as_deref()
+            .unwrap_or(profile.thinking_effort.as_str());
+
+        // 1. Anthropic adaptive `display` stripped BEFORE dropping reasoning (stable contract!).
+        if dialect == WireDialect::AnthropicMessages
+            && !adapt.omit_anthropic_adaptive_display
+            && !adapt.omit_reasoning
+            && (lower.contains("display") || lower.contains("extra inputs are not permitted"))
+        {
+            adapt.omit_anthropic_adaptive_display = true;
+            return true;
+        }
+
+        // 2. Reasoning effort downgrade ladder (`max -> xhigh -> high`, `minimal -> low`).
+        if !adapt.omit_reasoning
+            && let Some(next_effort) = step_down_reasoning_effort(current_eff, &lower)
+        {
+            adapt.reasoning_effort_override = Some(next_effort.to_string());
+            return true;
+        }
+
+        // 3. OpenAI Chat max_completion_tokens vs max_tokens parameter mismatch.
+        if dialect == WireDialect::OpenAiChat && adapt.use_max_tokens_key.is_none() {
+            if lower.contains("max_completion_tokens") {
+                adapt.use_max_tokens_key = Some(true);
+                return true;
+            }
+            if lower.contains("max_tokens") {
+                adapt.use_max_tokens_key = Some(false);
+                return true;
+            }
+        }
+
+        // 4. Strip unsupported temperature/top_p when reasoning is active or endpoint rejects sampling.
+        if !adapt.strip_sampling && (lower.contains("temperature") || lower.contains("top_p")) {
+            adapt.strip_sampling = true;
+            return true;
+        }
+
+        // 5. Last resort: drop reasoning if endpoint rejects reasoning/thinking fields outright.
+        if !adapt.omit_reasoning && (lower.contains("reasoning") || lower.contains("thinking")) {
+            adapt.omit_reasoning = true;
+            return true;
+        }
+
+        false
+    }
+
+    fn capped_wait(&self, ms: u64) -> u64 {
+        match self.max_retry_wait_override_ms {
+            Some(cap) => ms.min(cap),
+            None => ms,
+        }
+    }
+}
+
+struct RoundStreamConsumer<'a, C: StreamCallbacks> {
+    parser: WireStreamParser,
+    events_buf: Vec<StreamEvent>,
+    interaction_id: String,
+    content: String,
+    thinking_summary: String,
+    thinking_signature: String,
+    tool_calls: Vec<ToolCallRecord>,
+    citations: Vec<RawWebCitation>,
+    hit_output_limit: bool,
+    first_token_ms: Option<i64>,
+    started: Instant,
+    usage_req_id: &'a str,
+    ledger: &'a mut ProviderUsageLedger,
+    callbacks: &'a mut C,
+}
+
+impl<C: StreamCallbacks> RoundStreamConsumer<'_, C> {
+    fn drain_events(&mut self) {
+        for ev in self.events_buf.drain(..) {
+            match ev {
+                StreamEvent::Status(s) => self.callbacks.on_status(&s),
+                StreamEvent::InteractionId(id) => self.interaction_id = id,
+                StreamEvent::ThinkingDelta(d) => {
+                    if self.first_token_ms.is_none() {
+                        self.first_token_ms = Some(self.started.elapsed().as_millis() as i64);
+                    }
+                    self.thinking_summary.push_str(&d);
+                    self.callbacks.on_thinking_delta(&d);
+                }
+                StreamEvent::ThinkingSignature(s) => {
+                    append_signature_chunk_safe(&mut self.thinking_signature, &s);
+                }
+                StreamEvent::TextDelta(d) => {
+                    if self.first_token_ms.is_none() {
+                        self.first_token_ms = Some(self.started.elapsed().as_millis() as i64);
+                    }
+                    self.content.push_str(&d);
+                    self.callbacks.on_text_delta(&d);
+                }
+                StreamEvent::ToolCall {
+                    id,
+                    name,
+                    arguments_json,
+                    thought_signature,
+                } => {
+                    let starts_tool_step = self.tool_calls.is_empty();
+                    self.tool_calls.push(ToolCallRecord {
+                        id,
+                        name,
+                        arguments_json,
+                        thought_signature,
+                        starts_tool_step,
+                        ..Default::default()
+                    });
+                }
+                StreamEvent::Citation(c) => self.citations.push(c),
+                StreamEvent::Usage { response_id, usage } => {
+                    self.ledger.update(self.usage_req_id, &response_id, &usage);
+                }
+                StreamEvent::OutputLimit => self.hit_output_limit = true,
+                StreamEvent::Done => {}
+            }
+        }
+    }
+}
+
+impl<C: StreamCallbacks> SseStreamConsumer for RoundStreamConsumer<'_, C> {
+    fn is_finished(&self) -> bool {
+        self.parser.is_finished()
+    }
+
+    fn on_frame(&mut self, frame: &SseFrame) -> Result<(), ProtocolError> {
+        self.events_buf.clear();
+        self.parser
+            .consume_sse(&frame.event_type, &frame.data, &mut self.events_buf)?;
+        self.drain_events();
+        Ok(())
+    }
+
+    fn on_plain_json(&mut self, body: &str) -> Result<(), ProtocolError> {
+        self.events_buf.clear();
+        self.parser.consume_sse("", body, &mut self.events_buf)?;
+        self.parser.flush_pending_tools(&mut self.events_buf);
+        self.drain_events();
+        Ok(())
+    }
+}

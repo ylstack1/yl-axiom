@@ -1,9 +1,6 @@
 package io.parchment.ai.ui
 
 import androidx.compose.foundation.background
-import io.parchment.ai.model.MessageNode
-import io.parchment.ai.model.MessageRole
-import io.parchment.ai.strings.Strings
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -38,6 +35,9 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import io.parchment.ai.model.MessageNode
+import io.parchment.ai.model.MessageRole
+import io.parchment.ai.strings.Strings
 
 /** One thing the command palette can do. [shortcut] is shown beside it, for example "Ctrl+N". */
 internal data class PaletteCommand(val label: String, val shortcut: String = "", val run: () -> Unit)
@@ -108,7 +108,8 @@ internal fun filterMessageMapTurns(messages: List<MessageNode>, query: String, p
     val q = query.trim()
     return messages.mapIndexedNotNull { idx, node ->
         val roleOk = !promptsOnly || node.role == MessageRole.USER
-        val textOk = q.isEmpty() || node.activeVariant.content.contains(q, ignoreCase = true) ||
+        val textOk = q.isEmpty() ||
+            node.activeVariant.content.contains(q, ignoreCase = true) ||
             node.activeVariant.thinkingSummary.contains(q, ignoreCase = true)
         if (roleOk && textOk) idx to node else null
     }
@@ -192,8 +193,10 @@ internal fun CommandPalette(
                 ) {
                     BasicText(
                         command.label,
-                        style = p.uiBodyStyle.copy(color = if (isSelected) p.accent else p.primaryInk,
-                            fontWeight = if (isSelected) FontWeight.Medium else FontWeight.Normal),
+                        style = p.uiBodyStyle.copy(
+                            color = if (isSelected) p.accent else p.primaryInk,
+                            fontWeight = if (isSelected) FontWeight.Medium else FontWeight.Normal
+                        ),
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
                         modifier = Modifier.weight(1f)

@@ -28,7 +28,6 @@ import io.parchment.ai.protocol.O200kTokenizer
 import io.parchment.ai.runtime.AppForeground
 import io.parchment.ai.runtime.runActivityFlow
 import io.parchment.ai.strings.Strings
-import kotlin.io.encoding.ExperimentalEncodingApi
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
@@ -48,6 +47,7 @@ import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
+import kotlin.io.encoding.ExperimentalEncodingApi
 
 @Immutable
 data class ModelModalityProfile(
@@ -103,8 +103,7 @@ internal const val MAX_DOWNLOADED_IMAGE_BYTES = 64 * 1024 * 1024
 internal const val MAX_DOWNLOADED_AUDIO_BYTES = 128 * 1024 * 1024
 internal const val MAX_DOWNLOADED_VIDEO_BYTES = 512 * 1024 * 1024
 
-internal fun oversizedAttachmentMessage(fileName: String, sizeBytes: Long): String =
-    "\"$fileName\" is ${sizeBytes / (1024L * 1024L)} MB, over the ${MAX_INLINE_ATTACHMENT_BYTES / (1024L * 1024L)} MB limit for files sent with a request. Remove it or attach a smaller file."
+internal fun oversizedAttachmentMessage(fileName: String, sizeBytes: Long): String = "\"$fileName\" is ${sizeBytes / (1024L * 1024L)} MB, over the ${MAX_INLINE_ATTACHMENT_BYTES / (1024L * 1024L)} MB limit for files sent with a request. Remove it or attach a smaller file."
 
 @OptIn(ExperimentalEncodingApi::class)
 object AiProviderEngine {
@@ -116,6 +115,7 @@ object AiProviderEngine {
      */
     internal const val MAX_SAFETY_HORIZON_STEPS = 10_000
     internal const val MAX_PRE_TOKEN_RETRIES = 10
+
     /** The longest wait between attempts when the server gave no hint of its own (`retryDelayMs`). */
     internal const val RETRY_WAIT_SECONDS = 60
 
@@ -143,8 +143,7 @@ object AiProviderEngine {
     internal class AcceptedJobException(message: String, cause: Throwable? = null) : NoRetryException(message, cause)
 
     /** The chat reached the spend limit set in Settings. */
-    internal class SpendLimitException(limitUsd: Double) :
-        NoRetryException("This chat reached its ${"$"}$limitUsd spend limit. Raise or clear the limit in Settings to continue.")
+    internal class SpendLimitException(limitUsd: Double) : NoRetryException("This chat reached its ${"$"}$limitUsd spend limit. Raise or clear the limit in Settings to continue.")
 
     /**
      * Counts down [waitMs] (from `retryDelayMs`) in whole seconds. It ends early when someone returns to the app or
@@ -553,14 +552,11 @@ object AiProviderEngine {
         }
     }
 
-    internal fun resolveWireProtocol(profile: ProviderProfile): ProviderProtocol =
-        resolveProviderWireProtocol(profile)
+    internal fun resolveWireProtocol(profile: ProviderProfile): ProviderProtocol = resolveProviderWireProtocol(profile)
 
-    internal fun resolveWireDialect(profile: ProviderProfile): String =
-        resolveProviderWireDialect(profile)
+    internal fun resolveWireDialect(profile: ProviderProfile): String = resolveProviderWireDialect(profile)
 
-    internal fun isCustomDialectUnresolved(profile: ProviderProfile): Boolean =
-        isProviderCustomDialectUnresolved(profile)
+    internal fun isCustomDialectUnresolved(profile: ProviderProfile): Boolean = isProviderCustomDialectUnresolved(profile)
 
     internal fun resolveSmartEndpointUrl(
         profile: ProviderProfile,
@@ -583,17 +579,13 @@ object AiProviderEngine {
         val precedingText: String = ""
     )
 
-    internal fun buildUrlWithAuthQuery(profile: ProviderProfile, rawUrl: String): String =
-        buildProviderUrlWithAuthQuery(profile, rawUrl)
+    internal fun buildUrlWithAuthQuery(profile: ProviderProfile, rawUrl: String): String = buildProviderUrlWithAuthQuery(profile, rawUrl)
 
-    internal fun HttpRequestBuilder.applyAuthAndCustomHeaders(profile: ProviderProfile) =
-        applyProviderAuthAndCustomHeaders(profile)
+    internal fun HttpRequestBuilder.applyAuthAndCustomHeaders(profile: ProviderProfile) = applyProviderAuthAndCustomHeaders(profile)
 
-    internal fun mergeRawJsonExtraBody(base: JsonObject, rawExtraJson: String): JsonObject =
-        mergeProviderRawJsonExtraBody(base, rawExtraJson, json)
+    internal fun mergeRawJsonExtraBody(base: JsonObject, rawExtraJson: String): JsonObject = mergeProviderRawJsonExtraBody(base, rawExtraJson, json)
 
-    internal fun deepMergeJsonObjects(target: JsonObject, overrideObj: JsonObject): JsonObject =
-        deepMergeProviderJsonObjects(target, overrideObj)
+    internal fun deepMergeJsonObjects(target: JsonObject, overrideObj: JsonObject): JsonObject = deepMergeProviderJsonObjects(target, overrideObj)
 
     internal suspend fun readSseOrJsonFallback(
         channel: ByteReadChannel,

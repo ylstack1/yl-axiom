@@ -22,72 +22,71 @@ private val API_VERSION_SUFFIX_REGEX =
  * Dynamically fetches the available model IDs from the active provider or custom proxy endpoint.
  * Supports Google `/v1beta/models`, OpenAI `/v1/models`, `/api/v3/models`, and Anthropic `/v1/models` formats.
  */
-suspend fun AiProviderEngine.fetchAvailableModels(profile: ProviderProfile): Result<List<String>> =
-    withContext(Dispatchers.IO) {
-        runCatching {
-            val base = profile.baseUrl.trim().trimEnd('#').trimEnd('/')
-            val wireProtocol = resolveWireProtocol(profile)
-            val hasVersionSuffix = API_VERSION_SUFFIX_REGEX.containsMatchIn(base)
-            val candidateUrls = when {
-                base.endsWith("/models", ignoreCase = true) -> listOf(base)
-                hasVersionSuffix -> listOf(
-                    "$base/models",
-                    "${base.replace(API_VERSION_SUFFIX_REGEX, "")}/v1/models"
-                ).distinct()
-                wireProtocol == ProviderProtocol.GEMINI_INTERACTIONS -> listOf(
-                    "$base/v1beta/models?pageSize=200",
-                    "$base/v1/models",
-                    "$base/models"
-                )
-                wireProtocol == ProviderProtocol.ANTHROPIC_MESSAGES -> listOf(
-                    "$base/v1/models?limit=100",
-                    "$base/v1/models",
-                    "$base/models"
-                )
-                else -> listOf(
-                    "$base/v1/models",
-                    "$base/api/v3/models",
-                    "$base/models"
-                )
-            }
+suspend fun AiProviderEngine.fetchAvailableModels(profile: ProviderProfile): Result<List<String>> = withContext(Dispatchers.IO) {
+    runCatching {
+        val base = profile.baseUrl.trim().trimEnd('#').trimEnd('/')
+        val wireProtocol = resolveWireProtocol(profile)
+        val hasVersionSuffix = API_VERSION_SUFFIX_REGEX.containsMatchIn(base)
+        val candidateUrls = when {
+            base.endsWith("/models", ignoreCase = true) -> listOf(base)
+            hasVersionSuffix -> listOf(
+                "$base/models",
+                "${base.replace(API_VERSION_SUFFIX_REGEX, "")}/v1/models"
+            ).distinct()
+            wireProtocol == ProviderProtocol.GEMINI_INTERACTIONS -> listOf(
+                "$base/v1beta/models?pageSize=200",
+                "$base/v1/models",
+                "$base/models"
+            )
+            wireProtocol == ProviderProtocol.ANTHROPIC_MESSAGES -> listOf(
+                "$base/v1/models?limit=100",
+                "$base/v1/models",
+                "$base/models"
+            )
+            else -> listOf(
+                "$base/v1/models",
+                "$base/api/v3/models",
+                "$base/models"
+            )
+        }
 
-            var lastError = ""
-            for (rawUrl in candidateUrls) {
-                val url = buildUrlWithAuthQuery(profile, rawUrl)
-                val respResult = runCatching {
-                    httpClient.get(url) {
-                        applyAuthAndCustomHeaders(profile)
-                        if (wireProtocol == ProviderProtocol.ANTHROPIC_MESSAGES) {
-                            applyAnthropicVersionHeader(profile)
-                        }
+        var lastError = ""
+        for (rawUrl in candidateUrls) {
+            val url = buildUrlWithAuthQuery(profile, rawUrl)
+            val respResult = runCatching {
+                httpClient.get(url) {
+                    applyAuthAndCustomHeaders(profile)
+                    if (wireProtocol == ProviderProtocol.ANTHROPIC_MESSAGES) {
+                        applyAnthropicVersionHeader(profile)
                     }
                 }
-                val resp = respResult.getOrNull()
-                if (resp == null) {
-                    val err = respResult.exceptionOrNull()
-                    lastError = err?.message ?: err?.let { it::class.simpleName } ?: "Connection failed"
-                    continue
-                }
-
-                val bodyText = resp.bodyAsText()
-                if (!resp.status.isSuccess()) {
-                    lastError = "HTTP ${resp.status.value}: ${bodyText.take(240)}"
-                    continue
-                }
-
-                val parsed = parseModelsListJson(bodyText)
-                if (parsed.isNotEmpty()) {
-                    return@runCatching parsed
-                }
+            }
+            val resp = respResult.getOrNull()
+            if (resp == null) {
+                val err = respResult.exceptionOrNull()
+                lastError = err?.message ?: err?.let { it::class.simpleName } ?: "Connection failed"
+                continue
             }
 
-            if (lastError.isNotBlank()) {
-                error(lastError)
-            } else {
-                error("Endpoint returned an empty model list.")
+            val bodyText = resp.bodyAsText()
+            if (!resp.status.isSuccess()) {
+                lastError = "HTTP ${resp.status.value}: ${bodyText.take(240)}"
+                continue
+            }
+
+            val parsed = parseModelsListJson(bodyText)
+            if (parsed.isNotEmpty()) {
+                return@runCatching parsed
             }
         }
+
+        if (lastError.isNotBlank()) {
+            error(lastError)
+        } else {
+            error("Endpoint returned an empty model list.")
+        }
     }
+}
 
 internal fun AiProviderEngine.recordDiscoveredModality(modelId: String, modalities: List<String>) {
     val clean = modelId.trim().removePrefix("models/").lowercase()
@@ -254,22 +253,32 @@ internal fun AiProviderEngine.parseModelsListJson(bodyText: String): List<String
             val rhs = archMod.substringAfter("->")
             rhs.split("+", ",", "/").map { it.trim() }.filter { it.isNotEmpty() }.forEach(outList::add)
         }
-        val modelType = ((item["type"] as? JsonPrimitive)?.contentOrNull
-            ?: (item["mode"] as? JsonPrimitive)?.contentOrNull
-            ?: (item["task_type"] as? JsonPrimitive)?.contentOrNull
-            ?: (item["task"] as? JsonPrimitive)?.contentOrNull)?.trim()?.lowercase().orEmpty()
+        val modelType = (
+            (item["type"] as? JsonPrimitive)?.contentOrNull
+                ?: (item["mode"] as? JsonPrimitive)?.contentOrNull
+                ?: (item["task_type"] as? JsonPrimitive)?.contentOrNull
+                ?: (item["task"] as? JsonPrimitive)?.contentOrNull
+            )?.trim()?.lowercase().orEmpty()
         val tags = (item["tags"] as? JsonArray)
             ?.mapNotNull { (it as? JsonPrimitive)?.contentOrNull?.trim()?.lowercase() }.orEmpty()
         when {
             modelType.contains("video") || tags.any { it.contains("video") } -> outList.add("video")
             modelType.contains("image") || tags.any { it.contains("image") } -> outList.add("image")
-            modelType.contains("audio_speech") || modelType == "tts" || modelType == "speech" ||
-                modelType == "audio" || tags.any { it.contains("audio") || it.contains("tts") } -> outList.add("audio")
-            modelType == "chat" || modelType == "text" || modelType == "language" ||
-                modelType == "responses" || modelType == "completion" -> outList.add("text")
+            modelType.contains("audio_speech") ||
+                modelType == "tts" ||
+                modelType == "speech" ||
+                modelType == "audio" ||
+                tags.any { it.contains("audio") || it.contains("tts") } -> outList.add("audio")
+            modelType == "chat" ||
+                modelType == "text" ||
+                modelType == "language" ||
+                modelType == "responses" ||
+                modelType == "completion" -> outList.add("text")
         }
-        val genMethods = ((item["supportedGenerationMethods"] as? JsonArray)
-            ?: (item["supported_generation_methods"] as? JsonArray))
+        val genMethods = (
+            (item["supportedGenerationMethods"] as? JsonArray)
+                ?: (item["supported_generation_methods"] as? JsonArray)
+            )
             ?.mapNotNull { (it as? JsonPrimitive)?.contentOrNull?.lowercase() }.orEmpty()
         if (genMethods.any { it.contains("bidi") }) {
             outList.add("text")

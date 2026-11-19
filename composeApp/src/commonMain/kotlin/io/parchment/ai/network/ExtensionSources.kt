@@ -1,10 +1,10 @@
 package io.parchment.ai.network
 
+import io.ktor.http.encodeURLParameter
 import io.parchment.ai.harness.WorkspaceHarness
 import io.parchment.ai.model.McpServerConfig
 import io.parchment.ai.platform.LocalSkillBundle
 import io.parchment.ai.platform.PlatformWorkspace
-import io.ktor.http.encodeURLParameter
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.IO
 import kotlinx.coroutines.withContext
@@ -151,11 +151,16 @@ internal suspend fun installSkillFromGitHub(
     installValidatedSkillFiles(fallback, files, skipped, exists, write)
 }
 
-internal fun isZipPayload(fileName: String, bytes: ByteArray): Boolean =
-    fileName.trim().endsWith(".zip", ignoreCase = true) ||
-        (bytes.size >= 4 && bytes[0] == 0x50.toByte() && bytes[1] == 0x4B.toByte() &&
-            ((bytes[2] == 0x03.toByte() && bytes[3] == 0x04.toByte()) ||
-                (bytes[2] == 0x05.toByte() && bytes[3] == 0x06.toByte())))
+internal fun isZipPayload(fileName: String, bytes: ByteArray): Boolean = fileName.trim().endsWith(".zip", ignoreCase = true) ||
+    (
+        bytes.size >= 4 &&
+            bytes[0] == 0x50.toByte() &&
+            bytes[1] == 0x4B.toByte() &&
+            (
+                (bytes[2] == 0x03.toByte() && bytes[3] == 0x04.toByte()) ||
+                    (bytes[2] == 0x05.toByte() && bytes[3] == 0x06.toByte())
+                )
+        )
 
 /** Installs a validated local folder or `.zip` skill bundle using identical guards to GitHub install. */
 internal suspend fun installSkillFromLocalBundle(
@@ -354,8 +359,11 @@ internal fun mergeImportedMcpServers(
     for (server in imported) {
         val duplicate = result.any { cur ->
             (server.url.isNotBlank() && cur.url.equals(server.url, ignoreCase = true)) ||
-                (server.command.isNotBlank() && cur.command.equals(server.command, ignoreCase = true) &&
-                    cur.name.equals(server.name, ignoreCase = true))
+                (
+                    server.command.isNotBlank() &&
+                        cur.command.equals(server.command, ignoreCase = true) &&
+                        cur.name.equals(server.name, ignoreCase = true)
+                    )
         }
         if (!duplicate) {
             result += server.copy(id = "$idPrefix-${added++}", enabled = false)

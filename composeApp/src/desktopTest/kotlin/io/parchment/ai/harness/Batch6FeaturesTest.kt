@@ -114,8 +114,12 @@ class Batch6FeaturesTest {
     fun privacyRetentionBadgesReflectLocalityStorageFlagsAndCatalogPricingTruthfully() = runBlocking<Unit>(Dispatchers.Swing) {
         // 1. Local endpoint -> Local (POSITIVE)
         val localProf = ProviderProfile(
-            id = "p-local", name = "Ollama", protocol = ProviderProtocol.CUSTOM,
-            baseUrl = "http://127.0.0.1:11434/v1", defaultModel = "qwen3:32b", savedModels = listOf("qwen3:32b")
+            id = "p-local",
+            name = "Ollama",
+            protocol = ProviderProtocol.CUSTOM,
+            baseUrl = "http://127.0.0.1:11434/v1",
+            defaultModel = "qwen3:32b",
+            savedModels = listOf("qwen3:32b")
         )
         val localBadges = resolveModelPrivacyBadges(localProf, "qwen3:32b")
         assertEquals(listOf(Strings.privacyBadgeLocal), localBadges.map { it.label })
@@ -123,8 +127,12 @@ class Batch6FeaturesTest {
 
         // 2. Stateless vs Stored OpenAI Responses + Paid vs Free vs Unknown pricing
         val statelessPaid = ProviderProfile(
-            id = "p-oai", name = "OpenAI", protocol = ProviderProtocol.OPENAI_RESPONSES,
-            storeServerSide = false, defaultModel = "gpt-5", savedModels = listOf("gpt-5", "model-unknown"),
+            id = "p-oai",
+            name = "OpenAI",
+            protocol = ProviderProtocol.OPENAI_RESPONSES,
+            storeServerSide = false,
+            defaultModel = "gpt-5",
+            savedModels = listOf("gpt-5", "model-unknown"),
             customModelSpecs = mapOf(
                 "gpt-5" to ModelPricingSpec("gpt-5", knownPricing = TokenPricing(inputPerM = 2.0, outputPerM = 8.0))
             )
@@ -137,8 +145,12 @@ class Batch6FeaturesTest {
         assertEquals(listOf(Strings.privacyBadgeNoStore), unknownBadges.map { it.label })
 
         val storedFree = ProviderProfile(
-            id = "p-free", name = "Gateway", protocol = ProviderProtocol.GEMINI_INTERACTIONS,
-            storeServerSide = true, defaultModel = "open/demo:free", savedModels = listOf("open/demo:free"),
+            id = "p-free",
+            name = "Gateway",
+            protocol = ProviderProtocol.GEMINI_INTERACTIONS,
+            storeServerSide = true,
+            defaultModel = "open/demo:free",
+            savedModels = listOf("open/demo:free"),
             customModelSpecs = mapOf(
                 "open/demo:free" to ModelPricingSpec("open/demo:free", knownPricing = TokenPricing(inputPerM = 0.0, outputPerM = 0.0))
             )

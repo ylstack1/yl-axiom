@@ -34,8 +34,7 @@ internal class WorkspaceTreeScanner(
         val isDirectory: Boolean,
         val length: Long
     ) {
-        fun formatListing(): String =
-            if (isDirectory) "$relPath/" else "$relPath ($length bytes)"
+        fun formatListing(): String = if (isDirectory) "$relPath/" else "$relPath ($length bytes)"
     }
 
     private data class CachedWorkspaceTree(
@@ -160,9 +159,11 @@ internal class WorkspaceTreeScanner(
             !entry.isDirectory &&
                 entry.length <= config.maxSearchFileBytes &&
                 (!config.requirePositiveSearchFileBytes || entry.length > 0L) &&
-                (cleanFilter.isEmpty() ||
-                    entry.name.contains(cleanFilter, ignoreCase = true) ||
-                    (config.filterSearchByRelPath && entry.relPath.contains(cleanFilter, ignoreCase = true)))
+                (
+                    cleanFilter.isEmpty() ||
+                        entry.name.contains(cleanFilter, ignoreCase = true) ||
+                        (config.filterSearchByRelPath && entry.relPath.contains(cleanFilter, ignoreCase = true))
+                    )
         }.sortedBy { it.relPath }
 
         val nonImportHits = AtomicInteger(0)
@@ -269,19 +270,18 @@ internal class WorkspaceTreeScanner(
         }
     }
 
-    private fun walkEntries(startDir: File, rootPath: Path): Sequence<CachedEntry> =
-        startDir.walkTopDown()
-            .onEnter { dir ->
-                (dir == startDir || !WorkspacePathGuard.isIgnoredDirectory(dir.name)) &&
-                    WorkspacePathGuard.canTraverse(rootPath, dir.toPath())
-            }
-            .maxDepth(MAX_WALK_DEPTH)
-            .filter { file ->
-                file != startDir &&
-                    !WorkspacePathGuard.isIgnoredDirectory(file.name) &&
-                    (file.isDirectory || WorkspacePathGuard.canTraverseVerifiedChild(rootPath, file.toPath()))
-            }
-            .map { file -> toEntry(rootPath, file) }
+    private fun walkEntries(startDir: File, rootPath: Path): Sequence<CachedEntry> = startDir.walkTopDown()
+        .onEnter { dir ->
+            (dir == startDir || !WorkspacePathGuard.isIgnoredDirectory(dir.name)) &&
+                WorkspacePathGuard.canTraverse(rootPath, dir.toPath())
+        }
+        .maxDepth(MAX_WALK_DEPTH)
+        .filter { file ->
+            file != startDir &&
+                !WorkspacePathGuard.isIgnoredDirectory(file.name) &&
+                (file.isDirectory || WorkspacePathGuard.canTraverseVerifiedChild(rootPath, file.toPath()))
+        }
+        .map { file -> toEntry(rootPath, file) }
 
     private fun toEntry(rootPath: Path, file: File): CachedEntry {
         val pathForRel = if (config.canonicalizeRelativize) file.canonicalFile.toPath() else file.toPath()

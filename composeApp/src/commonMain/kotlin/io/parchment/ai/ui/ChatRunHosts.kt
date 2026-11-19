@@ -41,8 +41,7 @@ internal class GenerationHost(
     fun updateLiveTurnById(sessionId: String, turn: LiveTurnRef, transform: SessionUpdate) = updateLiveTurn(sessionId, turn, transform)
     fun updateLiveTurnInMemory(sessionId: String, turn: LiveTurnRef, transform: SessionUpdate) = updateInMemory(sessionId, turn, transform)
     fun generateTopicTitle(sessionId: String, forceRegenerate: Boolean = false) = generateTitle(sessionId, forceRegenerate)
-    suspend fun generateTrackedUtility(sessionId: String, purpose: String, profile: ProviderProfile, model: String, prompt: String, maxOutputTokens: Int? = null): Result<String> =
-        trackedUtility(sessionId, purpose, profile, model, prompt, maxOutputTokens)
+    suspend fun generateTrackedUtility(sessionId: String, purpose: String, profile: ProviderProfile, model: String, prompt: String, maxOutputTokens: Int? = null): Result<String> = trackedUtility(sessionId, purpose, profile, model, prompt, maxOutputTokens)
 }
 
 /** Everything the story summary may read or change in the app. */
@@ -59,6 +58,5 @@ internal class StorySummaryHost(
     val activeSession: ChatSession get() = activeSessionProvider()
     fun completeSessionForAction(session: ChatSession): ChatSession? = completeAction(session)
     fun updateSessionById(sessionId: String, immediate: Boolean = false, transform: SessionUpdate) = updateSession(sessionId, immediate, transform)
-    suspend fun generateTrackedUtility(sessionId: String, purpose: String, profile: ProviderProfile, model: String, prompt: String, maxOutputTokens: Int? = null): Result<String> =
-        trackedUtility(sessionId, purpose, profile, model, prompt, maxOutputTokens)
+    suspend fun generateTrackedUtility(sessionId: String, purpose: String, profile: ProviderProfile, model: String, prompt: String, maxOutputTokens: Int? = null): Result<String> = trackedUtility(sessionId, purpose, profile, model, prompt, maxOutputTokens)
 }

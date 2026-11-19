@@ -96,8 +96,10 @@ class RendererBoundsTest {
     }
 
     @Test fun randomDelimiterSoupNeverThrowsOrStalls() {
-        val parts = listOf("*", "**", "_", "`", "```\n", "$", "$$", "\\[", "\\]", "{", "}", "\\frac", "\\boxed", "^", "<svg", "<g>", "</g>",
-            "<!--", "-->", "\"", "'", "|", "\n", "\n\n", "[", "](", ")", "\\begin{a}", "\\end{a}", "é", "😀", "\u0000", " ", "x")
+        val parts = listOf(
+            "*", "**", "_", "`", "```\n", "$", "$$", "\\[", "\\]", "{", "}", "\\frac", "\\boxed", "^", "<svg", "<g>", "</g>",
+            "<!--", "-->", "\"", "'", "|", "\n", "\n\n", "[", "](", ")", "\\begin{a}", "\\end{a}", "é", "😀", "\u0000", " ", "x"
+        )
         val random = Random(7)
         repeat(300) {
             val text = buildString { repeat(random.nextInt(1, 2_000)) { append(parts[random.nextInt(parts.size)]) } }
@@ -147,10 +149,24 @@ class RendererBoundsTest {
     }
 
     @Test fun storedChatSearchMatchesVisibleTextOnly() {
-        val chat = io.parchment.ai.model.ChatSession("chat", "Title", 1L, 1L, "p", messages = listOf(
-            io.parchment.ai.model.MessageNode("m", io.parchment.ai.model.MessageRole.USER, listOf(
-                io.parchment.ai.model.MessageVariant("old", content = "Discarded draft"),
-                io.parchment.ai.model.MessageVariant("new", content = "He said \"héllo\"\nthen left")), activeVariantIndex = 1)))
+        val chat = io.parchment.ai.model.ChatSession(
+            "chat",
+            "Title",
+            1L,
+            1L,
+            "p",
+            messages = listOf(
+                io.parchment.ai.model.MessageNode(
+                    "m",
+                    io.parchment.ai.model.MessageRole.USER,
+                    listOf(
+                        io.parchment.ai.model.MessageVariant("old", content = "Discarded draft"),
+                        io.parchment.ai.model.MessageVariant("new", content = "He said \"héllo\"\nthen left")
+                    ),
+                    activeVariantIndex = 1
+                )
+            )
+        )
         val raw = compactStateJson.encodeToString(io.parchment.ai.model.ChatSession.serializer(), chat)
         assertTrue(storedChatJsonContains(raw, "chat", "HÉLLO"))
         assertTrue(storedChatJsonContains(raw, "chat", "\"héllo\"\nthen"), "Quotes and newlines are escaped in storage")
@@ -286,7 +302,8 @@ class RendererBoundsTest {
     }
 
     @OptIn(ExperimentalComposeUiApi::class)
-    @Test fun longCodeFenceChunksRoundTripAndStreamRenderQuickly() = runBlocking<Unit>(Dispatchers.Swing) {
+    @Test
+    fun longCodeFenceChunksRoundTripAndStreamRenderQuickly() = runBlocking<Unit>(Dispatchers.Swing) {
         val shortCode = (1..60).joinToString("\n") { "line $it" }
         assertEquals(listOf(shortCode), splitCodeFenceChunks(shortCode))
 

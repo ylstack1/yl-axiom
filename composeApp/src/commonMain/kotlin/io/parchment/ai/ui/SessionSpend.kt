@@ -33,9 +33,11 @@ internal fun sessionSpendSummary(session: ChatSession, profile: ProviderProfile)
     session.messages.forEach { node ->
         node.variants.forEach { variant ->
             variant.apiUsageRecords.forEach(::add)
-            if (node.role == MessageRole.ASSISTANT && variant.apiUsageRecords.isEmpty() &&
+            if (node.role == MessageRole.ASSISTANT &&
+                variant.apiUsageRecords.isEmpty() &&
                 (variant.legacyUsageOwnerSessionId.isBlank() || variant.legacyUsageOwnerSessionId == session.id) &&
-                (variant.tokenMetrics.totalTokens > 0L || variant.tokenMetrics.estimatedCostUsd > 0.0)) {
+                (variant.tokenMetrics.totalTokens > 0L || variant.tokenMetrics.estimatedCostUsd > 0.0)
+            ) {
                 legacyTurns++
                 val estimate = variant.tokenMetrics.estimatedCostUsd.takeIf { it.isFinite() && it > 0 }
                     ?: profile.calculateTurnCostUsd(variant.tokenMetrics)
@@ -52,9 +54,15 @@ internal fun ChatSession.withSpendProvenance(): ChatSession {
     fun owned(record: ApiUsageRecord) = if (record.ownerSessionId.isBlank()) record.copy(ownerSessionId = id) else record
     return copy(
         utilityUsageRecords = utilityUsageRecords.map(::owned),
-        messages = messages.map { node -> node.copy(variants = node.variants.map { variant ->
-            variant.copy(apiUsageRecords = variant.apiUsageRecords.map(::owned),
-                legacyUsageOwnerSessionId = variant.legacyUsageOwnerSessionId.ifBlank { id })
-        }) }
+        messages = messages.map { node ->
+            node.copy(
+                variants = node.variants.map { variant ->
+                    variant.copy(
+                        apiUsageRecords = variant.apiUsageRecords.map(::owned),
+                        legacyUsageOwnerSessionId = variant.legacyUsageOwnerSessionId.ifBlank { id }
+                    )
+                }
+            )
+        }
     )
 }

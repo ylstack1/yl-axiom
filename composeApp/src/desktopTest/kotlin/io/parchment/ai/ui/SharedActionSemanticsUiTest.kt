@@ -36,16 +36,16 @@ class SharedActionSemanticsUiTest {
         fun flatten(node: SemanticsNode): List<SemanticsNode> = listOf(node) + node.children.flatMap(::flatten)
         return scene.semanticsOwners.flatMap { flatten(it.rootSemanticsNode) }
     }
-    private fun text(node: SemanticsNode) =
-        node.config.getOrNull(SemanticsProperties.Text).orEmpty().joinToString(" ") { it.text }
-    private fun description(node: SemanticsNode) =
-        node.config.getOrNull(SemanticsProperties.ContentDescription).orEmpty().joinToString(" ")
-    private fun click(node: SemanticsNode) =
-        assertTrue(requireNotNull(node.config.getOrNull(SemanticsActions.OnClick)?.action).invoke())
+    private fun text(node: SemanticsNode) = node.config.getOrNull(SemanticsProperties.Text).orEmpty().joinToString(" ") { it.text }
+    private fun description(node: SemanticsNode) = node.config.getOrNull(SemanticsProperties.ContentDescription).orEmpty().joinToString(" ")
+    private fun click(node: SemanticsNode) = assertTrue(requireNotNull(node.config.getOrNull(SemanticsActions.OnClick)?.action).invoke())
 
     private fun withScene(
-        width: Int = 320, height: Int = 320, fontScale: Float = 1f,
-        content: @Composable () -> Unit, check: (ImageComposeScene) -> Unit
+        width: Int = 320,
+        height: Int = 320,
+        fontScale: Float = 1f,
+        content: @Composable () -> Unit,
+        check: (ImageComposeScene) -> Unit
     ) = runBlocking<Unit>(Dispatchers.Swing) {
         val scene = ImageComposeScene(width, height, density = Density(1f, fontScale), coroutineContext = Dispatchers.Swing.immediate)
         try {
@@ -76,11 +76,21 @@ class SharedActionSemanticsUiTest {
     private fun tap(scene: ImageComposeScene, x: Float, y: Float) {
         val position = Offset(x, y)
         scene.sendPointerEvent(PointerEventType.Move, position, type = PointerType.Mouse)
-        scene.sendPointerEvent(PointerEventType.Press, position, type = PointerType.Mouse,
-            buttons = PointerButtons(isPrimaryPressed = true), button = PointerButton.Primary)
+        scene.sendPointerEvent(
+            PointerEventType.Press,
+            position,
+            type = PointerType.Mouse,
+            buttons = PointerButtons(isPrimaryPressed = true),
+            button = PointerButton.Primary
+        )
         scene.render(16_000_000L).close()
-        scene.sendPointerEvent(PointerEventType.Release, position, type = PointerType.Mouse,
-            buttons = PointerButtons(isPrimaryPressed = false), button = PointerButton.Primary)
+        scene.sendPointerEvent(
+            PointerEventType.Release,
+            position,
+            type = PointerType.Mouse,
+            buttons = PointerButtons(isPrimaryPressed = false),
+            button = PointerButton.Primary
+        )
         scene.render(32_000_000L).close()
     }
 
@@ -177,8 +187,10 @@ class SharedActionSemanticsUiTest {
                 val cancel = nodes(scene).single { text(it) == "Cancel" }
                 val delete = nodes(scene).single { text(it) == "Delete" }
                 listOf(cancel, delete).forEach {
-                    assertTrue(it.boundsInRoot.top >= 0f && it.boundsInRoot.bottom <= height.toFloat(),
-                        "Action ${text(it)} is off screen at ${width}x$height: ${it.boundsInRoot}")
+                    assertTrue(
+                        it.boundsInRoot.top >= 0f && it.boundsInRoot.bottom <= height.toFloat(),
+                        "Action ${text(it)} is off screen at ${width}x$height: ${it.boundsInRoot}"
+                    )
                 }
                 assertTrue(nodes(scene).any { it.config.contains(SemanticsActions.ScrollBy) }, "Long message must scroll")
                 click(delete)
@@ -199,8 +211,12 @@ class SharedActionSemanticsUiTest {
             val palette = buildPaletteFromConfig(config)
             val surfaces = listOf(palette.canvasBg, palette.sheetBg, palette.cardBg, palette.elevatedBg)
             mapOf(
-                "primary" to palette.primaryInk, "narration" to palette.narrationInk, "muted" to palette.mutedInk,
-                "danger" to palette.danger, "success" to palette.success, "accent" to palette.accent,
+                "primary" to palette.primaryInk,
+                "narration" to palette.narrationInk,
+                "muted" to palette.mutedInk,
+                "danger" to palette.danger,
+                "success" to palette.success,
+                "accent" to palette.accent,
                 "accentSecondary" to palette.accentSecondary
             ).forEach { (name, ink) ->
                 surfaces.forEach { surface ->

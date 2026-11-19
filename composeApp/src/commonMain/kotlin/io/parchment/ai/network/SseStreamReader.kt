@@ -38,8 +38,7 @@ internal suspend fun readProviderSseOrJsonFallback(
         }
         try {
             var currentEvent = ""
-            val dataLines = mutableListOf<String>()
-            var dataLinesChars = 0
+            val dataBuf = StringBuilder()
             val rawFallbackBuffer = StringBuilder()
             var sawSseLine = false
             var sawSseComment = false
@@ -48,6 +47,13 @@ internal suspend fun readProviderSseOrJsonFallback(
             suspend fun deliver(eventType: String, data: String) {
                 if (data == "[DONE]") sawDone = true else sawEvent = true
                 onSseEvent(eventType, data)
+            }
+            suspend fun flushData(clearEvent: Boolean) {
+                if (dataBuf.isEmpty()) return
+                val combined = dataBuf.toString()
+                dataBuf.setLength(0)
+                deliver(currentEvent, combined)
+                if (clearEvent) currentEvent = ""
             }
 
             while (!channel.isClosedForRead) {
@@ -72,12 +78,7 @@ internal suspend fun readProviderSseOrJsonFallback(
                     line.startsWith("event:") -> {
                         sawSseLine = true
                         sawAnyData = true
-                        if (dataLines.isNotEmpty()) {
-                            val combined = dataLines.joinToString("\n")
-                            dataLines.clear()
-                            dataLinesChars = 0
-                            deliver(currentEvent, combined)
-                        }
+                        flushData(clearEvent = false)
                         currentEvent = fieldValue(line, "event:".length)
                     }
                     line.startsWith("data:") -> {
@@ -85,34 +86,25 @@ internal suspend fun readProviderSseOrJsonFallback(
                         sawAnyData = true
                         val dataVal = fieldValue(line, "data:".length)
                         if (dataVal == "[DONE]") {
-                            if (dataLines.isNotEmpty()) {
-                                deliver(currentEvent, dataLines.joinToString("\n"))
-                                dataLines.clear()
-                                dataLinesChars = 0
-                            }
+                            flushData(clearEvent = false)
                             deliver(currentEvent, "[DONE]")
                             currentEvent = ""
-                        } else if (dataLines.isEmpty() && isCompleteJsonObject(dataVal)) {
+                        } else if (dataBuf.isEmpty() && isCompleteJsonObject(dataVal)) {
                             // A complete JSON object on one data: line is delivered at once, without waiting for
                             // the blank line: some proxies hold that line back or merge records.
                             deliver(currentEvent, dataVal)
                             currentEvent = ""
                         } else {
-                            check(dataLinesChars.toLong() + dataVal.length.toLong() <= maxBufferedChars.toLong()) {
+                            val sep = if (dataBuf.isEmpty()) 0L else 1L
+                            check(dataBuf.length.toLong() + sep + dataVal.length.toLong() <= maxBufferedChars.toLong()) {
                                 "SSE event exceeded the $maxBufferedChars character limit."
                             }
-                            dataLines.add(dataVal)
-                            dataLinesChars += dataVal.length + 1
+                            if (dataBuf.isNotEmpty()) dataBuf.append('\n')
+                            dataBuf.append(dataVal)
                         }
                     }
                     line.isBlank() -> {
-                        if (dataLines.isNotEmpty()) {
-                            val combinedData = dataLines.joinToString("\n")
-                            dataLines.clear()
-                            dataLinesChars = 0
-                            deliver(currentEvent, combinedData)
-                            currentEvent = ""
-                        }
+                        flushData(clearEvent = true)
                     }
                     else -> {
                         if (!sawSseLine) {
@@ -125,8 +117,8 @@ internal suspend fun readProviderSseOrJsonFallback(
                 }
             }
 
-            if (dataLines.isNotEmpty()) {
-                deliver(currentEvent, dataLines.joinToString("\n"))
+            if (dataBuf.isNotEmpty()) {
+                flushData(clearEvent = false)
             } else if (!sawSseLine && rawFallbackBuffer.isNotBlank()) {
                 onPlainJsonFallback(rawFallbackBuffer.toString().trim())
             }
@@ -150,17 +142,20 @@ private fun fieldValue(line: String, start: Int): String {
 }
 
 private fun isCompleteJsonObject(text: String): Boolean {
-    if (!text.startsWith("{")) return false
+    val len = text.length
+    if (len < 2 || text[0] != '{') return false
     var depth = 0
     var inString = false
     var escaped = false
-    for ((index, ch) in text.withIndex()) {
+    val lastIdx = len - 1
+    for (index in 0 until len) {
+        val ch = text[index]
         when {
             escaped -> escaped = false
             inString -> if (ch == '\\') escaped = true else if (ch == '"') inString = false
             ch == '"' -> inString = true
             ch == '{' || ch == '[' -> depth++
-            ch == '}' || ch == ']' -> if (--depth == 0) return index == text.lastIndex
+            ch == '}' || ch == ']' -> if (--depth == 0) return index == lastIdx
         }
     }
     return false

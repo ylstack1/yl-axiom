@@ -82,7 +82,8 @@ internal fun WorkspaceSubpage(
         ) {
             Column(verticalArrangement = Arrangement.spacedBy(Space.s12)) {
                 AgentPermissionEditor(
-                    defaults = permissionDefaults, overrides = permissionOverrides,
+                    defaults = permissionDefaults,
+                    overrides = permissionOverrides,
                     onChange = { value -> onUpdateSession { it.copy(permissionOverrides = value) } },
                     onReset = { onUpdateSession { it.copy(permissionOverrides = AgentPermissionOverrides()) } }
                 )
@@ -103,7 +104,8 @@ internal fun WorkspaceSubpage(
                     if (!hasGlobalMemory) {
                         SepiaButton(
                             text = Strings.createProjectMemoryFile,
-                            modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp), wrapText = true,
+                            modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp),
+                            wrapText = true,
                             enabled = effectiveWsMode != WorkspaceMode.READ_ONLY,
                             style = SepiaButtonStyle.OUTLINE,
                             onClick = {
@@ -151,7 +153,8 @@ internal fun WorkspaceSubpage(
 
         SepiaSectionCard(title = Strings.agentTools) {
             AgentToolRegistry(
-                policy = toolPolicy, overrides = permissionOverrides,
+                policy = toolPolicy,
+                overrides = permissionOverrides,
                 onChange = { value -> onUpdateSession { it.copy(permissionOverrides = value) } }
             )
         }

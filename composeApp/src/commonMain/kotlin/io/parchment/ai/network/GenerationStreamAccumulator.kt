@@ -92,6 +92,7 @@ internal class GenerationStreamAccumulator(
     private var currentBurstLastMs = -1L
     private var lastRawReq = ""
     private var lastRawResp = ""
+
     // The request behind lastRawReq, known by length and hash so the whole request text is not kept alive.
     private var lastRawReqLength = -1
     private var lastRawReqHash = 0
@@ -104,7 +105,7 @@ internal class GenerationStreamAccumulator(
     }
 
     val hasNoFinalAnswer: Boolean
-        get() = contentBuilder.toString().isBlank() && generatedMedia.isEmpty()
+        get() = contentBuilder.isBlank() && generatedMedia.isEmpty()
 
     val hasThoughtsOrTools: Boolean
         get() = thinkingBuilder.isNotBlank() || signatureBuilder.isNotBlank() || executedTools.isNotEmpty()
@@ -435,7 +436,9 @@ internal class GenerationStreamAccumulator(
         )
 
         // If web search or URL tools were active and the model included inline markdown citations, bind them too
-        if (profile.enableWebSearch || profile.enableUrlContext || executedTools.any {
+        if (profile.enableWebSearch ||
+            profile.enableUrlContext ||
+            executedTools.any {
                 it.name.equals("web_fetch", ignoreCase = true) || it.name.equals("web_search", ignoreCase = true)
             }
         ) {

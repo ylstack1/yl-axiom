@@ -112,8 +112,7 @@ fun parseHexColor(hex: String, fallback: Color = Color(0xFFF4ECD8)): Color {
 }
 
 /** Saved font names from older versions ("JetBrainsMono Nerd") and new ones ("JetBrains Mono") compare equal. */
-internal fun canonicalFontName(name: String): String =
-    name.trim().lowercase().removeSuffix(" nerd").replace(" ", "")
+internal fun canonicalFontName(name: String): String = name.trim().lowercase().removeSuffix(" nerd").replace(" ", "")
 
 fun buildPaletteFromConfig(config: ThemeConfig): ParchmentPalette {
     val canvasBg = parseHexColor(config.canvasBgHex, Color(0xFFF4ECD8))

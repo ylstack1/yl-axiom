@@ -112,8 +112,11 @@ internal object AndroidOwnedShell {
             "Exit Code: ${exitCode.get()}\n${output.snapshot(6000).trim()}"
         } catch (error: Throwable) {
             val partial = output.snapshot(3000).trim()
-            throw IllegalStateException((error.message ?: "Shell execution failed.") +
-                if (partial.isEmpty()) "" else "\nPartial output:\n$partial", error)
+            throw IllegalStateException(
+                (error.message ?: "Shell execution failed.") +
+                    if (partial.isEmpty()) "" else "\nPartial output:\n$partial",
+                error
+            )
         } finally {
             terminateOwnedSession()
             runCatching { process.outputStream.close() }

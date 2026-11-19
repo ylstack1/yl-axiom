@@ -28,8 +28,12 @@ internal object WorkspaceWebSearch {
         val sb = StringBuilder()
         for (b in raw.encodeToByteArray()) {
             val c = b.toInt() and 0xFF
-            if ((c in 'a'.code..'z'.code) || (c in 'A'.code..'Z'.code) || (c in '0'.code..'9'.code) ||
-                c == '-'.code || c == '_'.code || c == '.'.code
+            if ((c in 'a'.code..'z'.code) ||
+                (c in 'A'.code..'Z'.code) ||
+                (c in '0'.code..'9'.code) ||
+                c == '-'.code ||
+                c == '_'.code ||
+                c == '.'.code
             ) {
                 sb.append(c.toChar())
             } else if (c == ' '.code) {

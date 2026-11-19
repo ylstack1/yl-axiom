@@ -38,7 +38,7 @@ internal class RunActivity(
     val waitingForApproval: StateFlow<Boolean> = waitingState.asStateFlow()
 
     private fun runnable(): Boolean = if (branches.isEmpty()) !rootWaiting
-        else branches.values.any { it == Work.RUNNING } || branches.values.all { it == Work.COMPLETE }
+    else branches.values.any { it == Work.RUNNING } || branches.values.all { it == Work.COMPLETE }
 
     private fun sample() {
         val now = nowMs()

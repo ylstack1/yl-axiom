@@ -199,11 +199,9 @@ internal object WorkspaceContextCache {
         return fresh
     }
 
-    fun discoverSkills(workspaceRoot: String): List<WorkspaceHarness.WorkspaceSkill> =
-        if (workspaceRoot.isBlank()) emptyList() else getOrLoad(workspaceRoot).skills
+    fun discoverSkills(workspaceRoot: String): List<WorkspaceHarness.WorkspaceSkill> = if (workspaceRoot.isBlank()) emptyList() else getOrLoad(workspaceRoot).skills
 
-    fun discoverCommands(workspaceRoot: String): List<WorkspaceHarness.WorkspaceSlashCommand> =
-        if (workspaceRoot.isBlank()) emptyList() else getOrLoad(workspaceRoot).commands
+    fun discoverCommands(workspaceRoot: String): List<WorkspaceHarness.WorkspaceSlashCommand> = if (workspaceRoot.isBlank()) emptyList() else getOrLoad(workspaceRoot).commands
 
     fun expandCommand(workspaceRoot: String, rawInput: String): String? {
         val trimmed = rawInput.trim()
@@ -261,11 +259,9 @@ internal object WorkspaceContextCache {
         return if (SKILL_NAME.matches(candidate)) candidate else "saved-skill"
     }
 
-    fun listDiscoveredContextFileNames(workspaceRoot: String): List<String> =
-        if (workspaceRoot.isBlank()) emptyList() else getOrLoad(workspaceRoot).fileNames
+    fun listDiscoveredContextFileNames(workspaceRoot: String): List<String> = if (workspaceRoot.isBlank()) emptyList() else getOrLoad(workspaceRoot).fileNames
 
-    fun discoverContextFiles(workspaceRoot: String): String =
-        if (workspaceRoot.isBlank()) "" else getOrLoad(workspaceRoot).combinedContent
+    fun discoverContextFiles(workspaceRoot: String): String = if (workspaceRoot.isBlank()) "" else getOrLoad(workspaceRoot).combinedContent
 
     fun discoverGlobalMemory(appStorageRoot: String = ""): String {
         val key = appStorageRoot.trim()

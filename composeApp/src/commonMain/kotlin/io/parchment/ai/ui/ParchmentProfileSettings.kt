@@ -1,28 +1,24 @@
 package io.parchment.ai.ui
 
 import androidx.compose.foundation.Image
-import io.parchment.ai.strings.Strings
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.ui.text.style.TextOverflow
-import androidx.compose.ui.semantics.Role
-import androidx.compose.ui.semantics.clearAndSetSemantics
-import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
-import androidx.compose.foundation.layout.fillMaxHeight
-import androidx.compose.foundation.layout.FlowRow
-import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.selection.selectableGroup
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicText
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -33,7 +29,10 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import io.parchment.ai.model.ChatSession
@@ -42,14 +41,14 @@ import io.parchment.ai.model.ThemeConfig
 import io.parchment.ai.platform.PlatformPickers
 import io.parchment.ai.platform.PlatformRuntime
 import io.parchment.ai.platform.PlatformStorage
+import io.parchment.ai.strings.Strings
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 /** A chat with its own name keeps it; otherwise the profile name applies, including to {{user}}. */
-internal fun ChatSession.withProfileName(preferences: PreferencesConfig): ChatSession =
-    if (preferences.profileName.isBlank() || (userName.isNotBlank() && userName != "User")) this
-    else copy(userName = preferences.profileName)
+internal fun ChatSession.withProfileName(preferences: PreferencesConfig): ChatSession = if (preferences.profileName.isBlank() || (userName.isNotBlank() && userName != "User")) this
+else copy(userName = preferences.profileName)
 
 @Composable
 internal fun ProfilePicture(picture: ImageBitmap?, size: Dp) {

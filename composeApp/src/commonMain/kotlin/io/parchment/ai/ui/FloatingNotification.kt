@@ -1,7 +1,6 @@
 package io.parchment.ai.ui
 
 import androidx.compose.animation.AnimatedVisibility
-import io.parchment.ai.strings.Strings
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInVertically
@@ -38,6 +37,7 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import io.parchment.ai.strings.Strings
 
 @Composable
 internal fun FloatingNotification(

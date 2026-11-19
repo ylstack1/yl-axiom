@@ -1,7 +1,6 @@
 package io.parchment.ai.ui
 
 import androidx.compose.animation.AnimatedVisibility
-import io.parchment.ai.strings.Strings
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
@@ -21,6 +20,7 @@ import io.parchment.ai.model.AppStateSnapshot
 import io.parchment.ai.model.ChatSession
 import io.parchment.ai.model.DefaultModelConfig
 import io.parchment.ai.model.ProviderProfile
+import io.parchment.ai.strings.Strings
 
 // ============================================================================================
 // Settings page 4: Default models (chat, titles, context compression, translation).

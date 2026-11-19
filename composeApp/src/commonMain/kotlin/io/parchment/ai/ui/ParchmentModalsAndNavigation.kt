@@ -1,6 +1,5 @@
 package io.parchment.ai.ui
 
-import io.parchment.ai.strings.Strings
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -41,6 +40,8 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.key.Key
@@ -51,8 +52,6 @@ import androidx.compose.ui.input.key.type
 import androidx.compose.ui.input.pointer.PointerEventType
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
-import androidx.compose.ui.focus.FocusRequester
-import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.semantics.Role
@@ -75,9 +74,10 @@ import io.parchment.ai.model.AppStateSnapshot
 import io.parchment.ai.model.AssistantAgent
 import io.parchment.ai.model.ChatSession
 import io.parchment.ai.model.ProviderProfile
-import io.parchment.ai.protocol.ContextWindowBreakdown
 import io.parchment.ai.platform.PlatformPickers
 import io.parchment.ai.platform.PlatformStorage
+import io.parchment.ai.protocol.ContextWindowBreakdown
+import io.parchment.ai.strings.Strings
 import kotlinx.coroutines.launch
 
 // Chat tabs: a tab strip on desktop and a tab grid on phones.
@@ -889,6 +889,7 @@ internal fun ParchmentAttachmentViewerModal(
     onClose: () -> Unit
 ) {
     val p = LocalParchmentPalette.current
+
     @Suppress("DEPRECATION")
     val clipboard = LocalClipboardManager.current
     val scope = rememberCoroutineScope()
@@ -1119,7 +1120,8 @@ internal fun ParchmentAttachmentViewerModal(
                 val linesCount = remember(item.textContent) { countLinesFast(item.textContent) }
                 val lowerTitle = remember(item.title) { item.title.lowercase() }
                 val isSvgContent = remember(item.title, item.mimeType, item.textContent) {
-                    lowerTitle.endsWith(".svg") || item.mimeType.equals("image/svg+xml", ignoreCase = true) ||
+                    lowerTitle.endsWith(".svg") ||
+                        item.mimeType.equals("image/svg+xml", ignoreCase = true) ||
                         (item.textContent.contains("<svg", ignoreCase = true) && item.textContent.contains("</svg>", ignoreCase = true))
                 }
                 val isMarkdownContent = remember(item.title, item.mimeType) {

@@ -26,10 +26,10 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Shape
-import io.parchment.ai.platform.PlatformRuntime
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import io.parchment.ai.platform.PlatformRuntime
 
 // The design system in code: docs/DESIGN.md explains when to use each value. New UI takes these instead of
 // literal numbers; older screens move over as each surface is reworked.
@@ -44,6 +44,7 @@ object Space {
     val s12 = 12.dp
     val s16 = 16.dp
     val s24 = 24.dp
+
     /** Also the smallest touch target. */
     val s48 = 48.dp
 }
@@ -63,10 +64,13 @@ object Radius {
 object LineWidth {
     /** Dividers and the borders of resting surfaces. */
     val hairline = 0.75.dp
+
     /** Borders that must stay visible, such as inputs. */
     val emphasis = 1.dp
+
     /** The border of the selected item in a list of choices. */
     val selected = 1.5.dp
+
     /** The keyboard focus ring. */
     val focus = 2.dp
 }
@@ -109,8 +113,8 @@ object CategoryColor {
 
 /** Legibility alphas applied on top of [ParchmentPalette.mutedInk] so disabled/hint text stays >= 3.0:1. */
 object Alpha {
-    const val disabledInk = 0.88f
-    const val placeholder = 0.88f
+    const val DISABLED_INK = 0.88f
+    const val PLACEHOLDER = 0.88f
 }
 
 /**
@@ -120,12 +124,16 @@ object Alpha {
 object Motion {
     /** Leaving: fades out, small feedback. */
     const val QUICK = 110
+
     /** Arriving: fades in, menus, hints. */
     const val STANDARD = 150
+
     /** Things that travel: slides, color changes. */
     const val MEDIUM = 180
+
     /** Overlays that leave slowly enough to be read. */
     const val SLOW = 250
+
     /** One half-cycle of a looping activity indicator. */
     const val LOOP = 750
 
@@ -154,8 +162,7 @@ private const val MAX_TEXT_GROWTH = 1.6f
  * The shadow under something floating above the page. Low-memory devices skip it (shadows are among the costliest
  * things to draw); the overlay's border still separates it from the page.
  */
-fun Modifier.overlayShadow(shape: Shape): Modifier =
-    if (PlatformRuntime.isLowMemoryDevice) this else shadow(Elevation.overlay, shape)
+fun Modifier.overlayShadow(shape: Shape): Modifier = if (PlatformRuntime.isLowMemoryDevice) this else shadow(Elevation.overlay, shape)
 
 /** Scrolls the list to [index], jumping instead of gliding when Reduce motion is on. */
 suspend fun LazyListState.scrollToItemWithMotion(index: Int, reduceMotion: Boolean) {
@@ -182,59 +189,49 @@ fun stableAction(block: () -> Unit): () -> Unit {
 
 /** A timed animation that is instant when the person has turned on Reduce motion. */
 @Composable
-fun <T> motionTween(durationMillis: Int = Motion.STANDARD): FiniteAnimationSpec<T> =
-    if (LocalReduceMotion.current) snap() else tween(durationMillis)
+fun <T> motionTween(durationMillis: Int = Motion.STANDARD): FiniteAnimationSpec<T> = if (LocalReduceMotion.current) snap() else tween(durationMillis)
 
 /** A spring for size and position changes; instant when Reduce motion is on. */
 @Composable
 fun <T> motionSpring(
     stiffness: Float = Spring.StiffnessMediumLow,
     dampingRatio: Float = Spring.DampingRatioNoBouncy
-): FiniteAnimationSpec<T> =
-    if (LocalReduceMotion.current) snap() else spring(dampingRatio = dampingRatio, stiffness = stiffness)
+): FiniteAnimationSpec<T> = if (LocalReduceMotion.current) snap() else spring(dampingRatio = dampingRatio, stiffness = stiffness)
 
 /** Vertical disclosure transitions that honor [LocalReduceMotion]. */
 @Composable
-fun motionExpandEnter(stiffness: Float = Spring.StiffnessMediumLow, fadeDurationMillis: Int = Motion.STANDARD): EnterTransition =
-    if (LocalReduceMotion.current) EnterTransition.None
-    else expandVertically(motionSpring(stiffness)) + fadeIn(motionTween(fadeDurationMillis))
+fun motionExpandEnter(stiffness: Float = Spring.StiffnessMediumLow, fadeDurationMillis: Int = Motion.STANDARD): EnterTransition = if (LocalReduceMotion.current) EnterTransition.None
+else expandVertically(motionSpring(stiffness)) + fadeIn(motionTween(fadeDurationMillis))
 
 @Composable
-fun motionShrinkExit(stiffness: Float = Spring.StiffnessMediumLow, fadeDurationMillis: Int = Motion.QUICK): ExitTransition =
-    if (LocalReduceMotion.current) ExitTransition.None
-    else shrinkVertically(motionSpring(stiffness)) + fadeOut(motionTween(fadeDurationMillis))
+fun motionShrinkExit(stiffness: Float = Spring.StiffnessMediumLow, fadeDurationMillis: Int = Motion.QUICK): ExitTransition = if (LocalReduceMotion.current) ExitTransition.None
+else shrinkVertically(motionSpring(stiffness)) + fadeOut(motionTween(fadeDurationMillis))
 
 /** Floating pill pop transitions that honor [LocalReduceMotion]. */
 @Composable
-fun motionPopEnter(): EnterTransition =
-    if (LocalReduceMotion.current) EnterTransition.None
-    else slideInVertically(initialOffsetY = { it / 2 }, animationSpec = motionSpring(Motion.POP_STIFFNESS)) +
-        scaleIn(initialScale = 0.90f, animationSpec = motionSpring(Motion.POP_STIFFNESS, 0.8f)) +
-        fadeIn(motionTween(Motion.QUICK))
+fun motionPopEnter(): EnterTransition = if (LocalReduceMotion.current) EnterTransition.None
+else slideInVertically(initialOffsetY = { it / 2 }, animationSpec = motionSpring(Motion.POP_STIFFNESS)) +
+    scaleIn(initialScale = 0.90f, animationSpec = motionSpring(Motion.POP_STIFFNESS, 0.8f)) +
+    fadeIn(motionTween(Motion.QUICK))
 
 @Composable
-fun motionPopExit(): ExitTransition =
-    if (LocalReduceMotion.current) ExitTransition.None
-    else slideOutVertically(targetOffsetY = { it / 2 }, animationSpec = motionTween(Motion.QUICK)) +
-        scaleOut(targetScale = 0.92f, animationSpec = motionTween(Motion.QUICK)) +
-        fadeOut(motionTween(Motion.QUICK))
+fun motionPopExit(): ExitTransition = if (LocalReduceMotion.current) ExitTransition.None
+else slideOutVertically(targetOffsetY = { it / 2 }, animationSpec = motionTween(Motion.QUICK)) +
+    scaleOut(targetScale = 0.92f, animationSpec = motionTween(Motion.QUICK)) +
+    fadeOut(motionTween(Motion.QUICK))
 
 /** Horizontal drawer panel transitions that honor [LocalReduceMotion]. */
 @Composable
-fun motionSideExpandEnter(): EnterTransition =
-    if (LocalReduceMotion.current) EnterTransition.None
-    else expandHorizontally(motionSpring()) + fadeIn(motionTween(Motion.STANDARD))
+fun motionSideExpandEnter(): EnterTransition = if (LocalReduceMotion.current) EnterTransition.None
+else expandHorizontally(motionSpring()) + fadeIn(motionTween(Motion.STANDARD))
 
 @Composable
-fun motionSideShrinkExit(): ExitTransition =
-    if (LocalReduceMotion.current) ExitTransition.None
-    else shrinkHorizontally(motionSpring()) + fadeOut(motionTween(Motion.QUICK))
+fun motionSideShrinkExit(): ExitTransition = if (LocalReduceMotion.current) ExitTransition.None
+else shrinkHorizontally(motionSpring()) + fadeOut(motionTween(Motion.QUICK))
 
 /** Simple fade transitions that honor [LocalReduceMotion]. */
 @Composable
-fun motionFadeEnter(durationMillis: Int = Motion.STANDARD): EnterTransition =
-    if (LocalReduceMotion.current) EnterTransition.None else fadeIn(motionTween(durationMillis))
+fun motionFadeEnter(durationMillis: Int = Motion.STANDARD): EnterTransition = if (LocalReduceMotion.current) EnterTransition.None else fadeIn(motionTween(durationMillis))
 
 @Composable
-fun motionFadeExit(durationMillis: Int = Motion.STANDARD): ExitTransition =
-    if (LocalReduceMotion.current) ExitTransition.None else fadeOut(motionTween(durationMillis))
+fun motionFadeExit(durationMillis: Int = Motion.STANDARD): ExitTransition = if (LocalReduceMotion.current) ExitTransition.None else fadeOut(motionTween(durationMillis))

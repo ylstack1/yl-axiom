@@ -48,8 +48,7 @@ class HoverHintUiTest {
         } finally { scene.close() }
     }
 
-    private fun hover(scene: ImageComposeScene, x: Float, y: Float) =
-        scene.sendPointerEvent(PointerEventType.Move, Offset(x, y), type = PointerType.Mouse)
+    private fun hover(scene: ImageComposeScene, x: Float, y: Float) = scene.sendPointerEvent(PointerEventType.Move, Offset(x, y), type = PointerType.Mouse)
 
     @Test fun hintAppearsOnHoverAndLeavesWithThePointer() = withButton(900) { scene ->
         assertEquals(1, scene.semanticsOwners.size, "No hint before hovering")

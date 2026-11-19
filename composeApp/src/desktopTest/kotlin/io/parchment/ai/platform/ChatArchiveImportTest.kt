@@ -45,8 +45,7 @@ class ChatArchiveImportTest {
         return out.toByteArray()
     }
 
-    private fun extract(bytes: ByteArray, limits: ChatArchiveLimits = permissive, decode: (List<String>) -> List<String> = { it }) =
-        ChatArchiveExtractor.extract(bytes, root, limits, decode)
+    private fun extract(bytes: ByteArray, limits: ChatArchiveLimits = permissive, decode: (List<String>) -> List<String> = { it }) = ChatArchiveExtractor.extract(bytes, root, limits, decode)
 
     private fun assertRejected(bytes: ByteArray, expected: String, limits: ChatArchiveLimits = permissive) {
         val error = assertFailsWith<ChatArchiveException> { extract(bytes, limits) }
@@ -144,8 +143,7 @@ class ChatArchiveImportTest {
         override fun close() { closed = true }
     }
 
-    private fun importStream(name: String, bytes: ByteArray, limits: ChatArchiveLimits = permissive) =
-        ChatArchiveExtractor.importChatFile(name, TrickleStream(bytes), root, limits) { it }
+    private fun importStream(name: String, bytes: ByteArray, limits: ChatArchiveLimits = permissive) = ChatArchiveExtractor.importChatFile(name, TrickleStream(bytes), root, limits) { it }
 
     @Test fun streamedBundleCommitsItsMedia() {
         val image = Random(3).nextBytes(150_000)
@@ -207,14 +205,34 @@ class ChatArchiveImportTest {
 
     @Test fun craftedChatCannotPullLocalFilesIntoAppStorage() {
         val secret = File(root, "secret-notes.txt").apply { writeText("private") }
-        val crafted = ChatSession("crafted-chat", "Crafted", 1L, 1L, "profile", messages = listOf(
-            MessageNode(id = "m", role = MessageRole.USER, variants = listOf(
-                MessageVariant(id = "v", content = "x",
-                    attachments = listOf(PromptAttachment(id = "a", fileName = "notes.txt", mimeType = "text/plain", localFilePath = secret.absolutePath)),
-                    mediaItems = listOf(GeneratedMediaItem(id = "g", kind = MediaKind.IMAGE,
-                        localFilePath = "\\\\attacker\\share\\a.png", remoteUrl = "C:\\Windows\\System32\\calc.exe")))
-            ))
-        ))
+        val crafted = ChatSession(
+            "crafted-chat",
+            "Crafted",
+            1L,
+            1L,
+            "profile",
+            messages = listOf(
+                MessageNode(
+                    id = "m",
+                    role = MessageRole.USER,
+                    variants = listOf(
+                        MessageVariant(
+                            id = "v",
+                            content = "x",
+                            attachments = listOf(PromptAttachment(id = "a", fileName = "notes.txt", mimeType = "text/plain", localFilePath = secret.absolutePath)),
+                            mediaItems = listOf(
+                                GeneratedMediaItem(
+                                    id = "g",
+                                    kind = MediaKind.IMAGE,
+                                    localFilePath = "\\\\attacker\\share\\a.png",
+                                    remoteUrl = "C:\\Windows\\System32\\calc.exe"
+                                )
+                            )
+                        )
+                    )
+                )
+            )
+        )
         val bytes = CardAndPromptCodec.prettyJson.encodeToString(ChatSession.serializer(), crafted).encodeToByteArray()
         val imported = ChatArchiveExtractor.importChatFile(
             fileName = "crafted.chat.json",

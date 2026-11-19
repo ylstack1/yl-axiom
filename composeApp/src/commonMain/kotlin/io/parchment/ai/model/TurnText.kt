@@ -26,9 +26,12 @@ fun turnTextLayout(content: String, tools: List<ToolCallRecord>): TurnTextLayout
     }
     if (!written.startsWith(content)) return unordered
     var visible = content.length
-    return TurnTextLayout(tools.map { tool ->
-        tool.precedingText.take(visible).also { visible -= it.length }
-    }, "")
+    return TurnTextLayout(
+        tools.map { tool ->
+            tool.precedingText.take(visible).also { visible -= it.length }
+        },
+        ""
+    )
 }
 
 /** The text written since the last tool, which belongs to the tool about to run. */

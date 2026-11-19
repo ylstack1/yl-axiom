@@ -3,10 +3,10 @@ package io.parchment.ai.network
 import io.ktor.client.request.prepareGet
 import io.ktor.client.statement.bodyAsChannel
 import io.ktor.http.isSuccess
+import io.parchment.ai.model.ChargePricing
+import io.parchment.ai.model.ContextPricingTier
 import io.parchment.ai.model.ModelPricingSpec
 import io.parchment.ai.model.TokenPricing
-import io.parchment.ai.model.ContextPricingTier
-import io.parchment.ai.model.ChargePricing
 import io.parchment.ai.model.legacyTokenPricing
 import io.parchment.ai.platform.PlatformRuntime
 import kotlinx.coroutines.CancellationException
@@ -93,14 +93,12 @@ internal class RegistryCatalogClient(
         lastFetchEpochMs = Long.MIN_VALUE
     }
 
-    private fun isCacheFreshLocked(now: Long): Boolean =
-        cachedCatalog.isNotEmpty() &&
-            lastFetchEpochMs != Long.MIN_VALUE &&
-            (now - lastFetchEpochMs) in 0L until cacheTtlMs
+    private fun isCacheFreshLocked(now: Long): Boolean = cachedCatalog.isNotEmpty() &&
+        lastFetchEpochMs != Long.MIN_VALUE &&
+        (now - lastFetchEpochMs) in 0L until cacheTtlMs
 
-    private fun isFailureInCooldownLocked(now: Long): Boolean =
-        lastFailureEpochMs != Long.MIN_VALUE &&
-            (now - lastFailureEpochMs) in 0L until failureCooldownMs
+    private fun isFailureInCooldownLocked(now: Long): Boolean = lastFailureEpochMs != Long.MIN_VALUE &&
+        (now - lastFailureEpochMs) in 0L until failureCooldownMs
 
     private suspend fun getOrStartSync(
         bypassFailureCooldown: Boolean
@@ -456,10 +454,24 @@ object ModelsDevClient {
         }
 
         val mergedPricing = if (existing.knownPricing != null || incoming.knownPricing != null) {
-            (existing.knownPricing ?: legacyTokenPricing(existing.inputPricePerM, existing.outputPricePerM, existing.cacheReadPricePerM,
-                existing.cacheWritePricePerM, existing.reasoningPricePerM)).withMissingFrom(incoming.knownPricing
-                ?: legacyTokenPricing(incoming.inputPricePerM, incoming.outputPricePerM, incoming.cacheReadPricePerM,
-                    incoming.cacheWritePricePerM, incoming.reasoningPricePerM))
+            (
+                existing.knownPricing ?: legacyTokenPricing(
+                    existing.inputPricePerM,
+                    existing.outputPricePerM,
+                    existing.cacheReadPricePerM,
+                    existing.cacheWritePricePerM,
+                    existing.reasoningPricePerM
+                )
+                ).withMissingFrom(
+                incoming.knownPricing
+                    ?: legacyTokenPricing(
+                        incoming.inputPricePerM,
+                        incoming.outputPricePerM,
+                        incoming.cacheReadPricePerM,
+                        incoming.cacheWritePricePerM,
+                        incoming.reasoningPricePerM
+                    )
+            )
         } else null
         return existing.copy(
             displayName = existing.displayName.ifBlank { incoming.displayName },
@@ -546,9 +558,12 @@ object ModelsDevClient {
         var matched: ModelPricingSpec? = null
         var matchedSlug: String? = null
         for ((key, spec) in catalog) {
-            val matchesWithout = checkWithoutSlash && key.startsWith(withoutSlash) &&
+            val matchesWithout = checkWithoutSlash &&
+                key.startsWith(withoutSlash) &&
                 isDelimiterChar(key.getOrNull(withoutSlash.length))
-            val matchesCanonical = !matchesWithout && checkCanonical && key.startsWith(canonical) &&
+            val matchesCanonical = !matchesWithout &&
+                checkCanonical &&
+                key.startsWith(canonical) &&
                 isDelimiterChar(key.getOrNull(canonical.length))
             if (!matchesWithout && !matchesCanonical) continue
 
@@ -569,41 +584,35 @@ object ModelsDevClient {
      * Returns the cached `outputModalities` (`text`, `image`, `video`, `audio`) for [modelId]
      * if the registry has already been fetched during this session, or an empty list otherwise.
      */
-    fun getCachedOutputModalities(modelId: String): List<String> =
-        lookupSpecInCatalog(defaultCatalogClient.cachedCatalog, modelId)?.outputModalities.orEmpty()
+    fun getCachedOutputModalities(modelId: String): List<String> = lookupSpecInCatalog(defaultCatalogClient.cachedCatalog, modelId)?.outputModalities.orEmpty()
 
     /** Releases the bulk multi-thousand-model catalog from heap when the app is minimized or under memory pressure. */
     fun trimMemoryCache() {
         defaultCatalogClient.clearCache()
     }
 
-    internal fun getCachedSpec(modelId: String): ModelPricingSpec? =
-        lookupSpecInCatalog(defaultCatalogClient.cachedCatalog, modelId)
+    internal fun getCachedSpec(modelId: String): ModelPricingSpec? = lookupSpecInCatalog(defaultCatalogClient.cachedCatalog, modelId)
 
     /**
      * Returns the cached `inputModalities` for [modelId] if already loaded.
      */
-    fun getCachedInputModalities(modelId: String): List<String> =
-        lookupSpecInCatalog(defaultCatalogClient.cachedCatalog, modelId)?.inputModalities.orEmpty()
+    fun getCachedInputModalities(modelId: String): List<String> = lookupSpecInCatalog(defaultCatalogClient.cachedCatalog, modelId)?.inputModalities.orEmpty()
 
     /**
      * Returns the cached vendor/creator name for [modelId] if known in the registry.
      */
-    fun getCachedVendorSlug(modelId: String): String? =
-        lookupSpecInCatalog(defaultCatalogClient.cachedCatalog, modelId)?.providerName?.takeIf { it.isNotBlank() }
+    fun getCachedVendorSlug(modelId: String): String? = lookupSpecInCatalog(defaultCatalogClient.cachedCatalog, modelId)?.providerName?.takeIf { it.isNotBlank() }
 
     /**
      * Ensures the registry catalog is warming in the background (waiting only up to a short bound
      * without cancelling the in-flight sync) and returns any known output modalities for [modelId].
      */
-    suspend fun resolveOutputModalities(modelId: String): List<String> =
-        defaultCatalogClient.resolveOutputModalities(modelId)
+    suspend fun resolveOutputModalities(modelId: String): List<String> = defaultCatalogClient.resolveOutputModalities(modelId)
 
     suspend fun fetchModelSpec(
         modelId: String,
         bypassFailureCooldown: Boolean = false
-    ): Result<ModelPricingSpec> =
-        defaultCatalogClient.fetchModelSpec(modelId, bypassFailureCooldown = bypassFailureCooldown)
+    ): Result<ModelPricingSpec> = defaultCatalogClient.fetchModelSpec(modelId, bypassFailureCooldown = bypassFailureCooldown)
 
     internal fun indexOpenRouterCatalog(
         dto: OpenRouterCatalogDto,
@@ -657,15 +666,17 @@ object ModelsDevClient {
                 cacheWritePricePerM = cacheWritePerM,
                 reasoningPricePerM = reasoningPerM,
                 knownPricing = pricing(pricingObj, "prompt", "completion", "input_cache_read", "input_cache_write", "internal_reasoning", 1_000_000.0),
-                chargePricing = ChargePricing(buildMap {
-                    readRate(pricingObj?.get("web_search"))?.let { put("web_search", it) }
-                    readRate(pricingObj?.get("request"))?.let { put("request", it) }
-                    readRate(pricingObj?.get("audio"))?.let { put("input_audio", it) }
-                    readRate(pricingObj?.get("audio_output"))?.let { put("output_audio", it) }
-                    readRate(pricingObj?.get("input_audio_cache"))?.let { put("cached_input_audio", it) }
-                    readRate(pricingObj?.get("image"))?.let { put("input_image_count", it) }
-                    readRate(pricingObj?.get("image_output"))?.let { put("output_image_count", it) }
-                }),
+                chargePricing = ChargePricing(
+                    buildMap {
+                        readRate(pricingObj?.get("web_search"))?.let { put("web_search", it) }
+                        readRate(pricingObj?.get("request"))?.let { put("request", it) }
+                        readRate(pricingObj?.get("audio"))?.let { put("input_audio", it) }
+                        readRate(pricingObj?.get("audio_output"))?.let { put("output_audio", it) }
+                        readRate(pricingObj?.get("input_audio_cache"))?.let { put("cached_input_audio", it) }
+                        readRate(pricingObj?.get("image"))?.let { put("input_image_count", it) }
+                        readRate(pricingObj?.get("image_output"))?.let { put("output_image_count", it) }
+                    }
+                ),
                 contextWindowTokens = contextLen,
                 maxOutputTokens = maxCompletion,
                 outputModalities = outMods,
@@ -743,10 +754,14 @@ object ModelsDevClient {
             val outMods = when {
                 typeStr.contains("video") || tags.any { it.contains("video") } -> listOf("video")
                 typeStr.contains("image") || tags.any { it.contains("image") } -> listOf("image")
-                typeStr.contains("tts") || typeStr.contains("speech") ||
-                    typeStr.contains("audio") || typeStr.contains("music") -> listOf("audio")
-                typeStr.contains("chat") || typeStr.contains("completion") ||
-                    typeStr.contains("response") || tags.any { it.contains("chat") } -> listOf("text")
+                typeStr.contains("tts") ||
+                    typeStr.contains("speech") ||
+                    typeStr.contains("audio") ||
+                    typeStr.contains("music") -> listOf("audio")
+                typeStr.contains("chat") ||
+                    typeStr.contains("completion") ||
+                    typeStr.contains("response") ||
+                    tags.any { it.contains("chat") } -> listOf("text")
                 else -> emptyList()
             }
 
@@ -856,10 +871,12 @@ object ModelsDevClient {
                     cacheWritePricePerM = cacheWriteCost,
                     reasoningPricePerM = reasoningCost,
                     knownPricing = pricing(costObj, "input", "output", "cache_read", "cache_write"),
-                    chargePricing = ChargePricing(buildMap {
-                        readRate(costObj?.get("input_audio"), 0.000001)?.let { put("input_audio", it) }
-                        readRate(costObj?.get("output_audio"), 0.000001)?.let { put("output_audio", it) }
-                    }),
+                    chargePricing = ChargePricing(
+                        buildMap {
+                            readRate(costObj?.get("input_audio"), 0.000001)?.let { put("input_audio", it) }
+                            readRate(costObj?.get("output_audio"), 0.000001)?.let { put("output_audio", it) }
+                        }
+                    ),
                     contextPricingTiers = contextTiers(costObj),
                     contextWindowTokens = contextWindow,
                     maxOutputTokens = maxOutput,
@@ -893,14 +910,26 @@ object ModelsDevClient {
 
     private fun parsePerTokenToPerMillion(element: JsonElement?): Double = readRate(element, 1_000_000.0) ?: 0.0
 
-    private fun pricing(source: JsonObject?, input: String, output: String, cached: String, write: String,
-        reasoning: String = "reasoning", multiplier: Double = 1.0): TokenPricing? = TokenPricing(
-        readRate(source?.get(input), multiplier), readRate(source?.get(output), multiplier),
-        readRate(source?.get(cached), multiplier), readRate(source?.get(write), multiplier),
+    private fun pricing(
+        source: JsonObject?,
+        input: String,
+        output: String,
+        cached: String,
+        write: String,
+        reasoning: String = "reasoning",
+        multiplier: Double = 1.0
+    ): TokenPricing? = TokenPricing(
+        readRate(source?.get(input), multiplier),
+        readRate(source?.get(output), multiplier),
+        readRate(source?.get(cached), multiplier),
+        readRate(source?.get(write), multiplier),
         readRate(source?.get(reasoning), multiplier),
-        readRate(source?.get("cache_creation_input_token_cost_above_12hr")
-            ?: source?.get("cache_creation_input_token_cost_above_1hr")
-            ?: source?.get("input_cache_write_1h"), multiplier)
+        readRate(
+            source?.get("cache_creation_input_token_cost_above_12hr")
+                ?: source?.get("cache_creation_input_token_cost_above_1hr")
+                ?: source?.get("input_cache_write_1h"),
+            multiplier
+        )
     ).takeIf { it.hasAnyRate }
 
     private fun contextTiers(cost: JsonObject?): List<ContextPricingTier> = cost?.mapNotNull { (key, value) ->
@@ -920,8 +949,14 @@ object ModelsDevClient {
             groups.getOrPut(count * scalar) { mutableMapOf() }[match.groupValues[1]] = value
         }
         return groups.mapNotNull { (threshold, values) ->
-            pricing(JsonObject(values), "input_cost_per_token", "output_cost_per_token", "cache_read_input_token_cost",
-                "cache_creation_input_token_cost", multiplier = 1_000_000.0)?.let { ContextPricingTier(threshold, it) }
+            pricing(
+                JsonObject(values),
+                "input_cost_per_token",
+                "output_cost_per_token",
+                "cache_read_input_token_cost",
+                "cache_creation_input_token_cost",
+                multiplier = 1_000_000.0
+            )?.let { ContextPricingTier(threshold, it) }
         }
     }
 }

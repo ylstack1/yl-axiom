@@ -14,25 +14,41 @@ import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 class ProviderUsageTest {
-    private val profile = ProviderProfile(id = "fixture", name = "Fixture", protocol = ProviderProtocol.OPENAI_RESPONSES,
-        inputPricePerM = 1.0, outputPricePerM = 2.0, cacheReadPricePerM = 0.1)
+    private val profile = ProviderProfile(
+        id = "fixture",
+        name = "Fixture",
+        protocol = ProviderProtocol.OPENAI_RESPONSES,
+        inputPricePerM = 1.0,
+        outputPricePerM = 2.0,
+        cacheReadPricePerM = 0.1
+    )
 
-    private fun parse(dialect: UsageDialect, raw: String, final: Boolean = true) =
-        parseProviderUsage(dialect, Json.parseToJsonElement(raw).jsonObject, isFinal = final)
+    private fun parse(dialect: UsageDialect, raw: String, final: Boolean = true) = parseProviderUsage(dialect, Json.parseToJsonElement(raw).jsonObject, isFinal = final)
 
-    private fun responses(input: Long, output: Long = 10) = parse(UsageDialect.OPENAI_RESPONSES,
-        """{"input_tokens":$input,"input_tokens_details":{"cached_tokens":0,"cache_write_tokens":0},"output_tokens":$output,"output_tokens_details":{"reasoning_tokens":0}}""")
+    private fun responses(input: Long, output: Long = 10) = parse(
+        UsageDialect.OPENAI_RESPONSES,
+        """{"input_tokens":$input,"input_tokens_details":{"cached_tokens":0,"cache_write_tokens":0},"output_tokens":$output,"output_tokens_details":{"reasoning_tokens":0}}"""
+    )
 
     @Test
     fun openAiWriteLifetimesMatchTheOfficialCostExample() {
-        val usage = parse(UsageDialect.OPENAI_RESPONSES, """{
+        val usage = parse(
+            UsageDialect.OPENAI_RESPONSES,
+            """{
             "input_tokens":12000,
             "input_tokens_details":{"cached_tokens":4000,"cache_write_tokens":7000,
                 "cache_write_tokens_details":{"ttl_30m_tokens":3000,"ttl_12h_tokens":4000}},
             "output_tokens":50,"output_tokens_details":{"reasoning_tokens":10}
-        }""")
-        val record = ApiUsageRecord("request", wireDialect = UsageDialect.OPENAI_RESPONSES.wireName,
-            profileId = profile.id, model = "fixture-model", pricing = profile.tokenPricing(), usage = usage)
+        }"""
+        )
+        val record = ApiUsageRecord(
+            "request",
+            wireDialect = UsageDialect.OPENAI_RESPONSES.wireName,
+            profileId = profile.id,
+            model = "fixture-model",
+            pricing = profile.tokenPricing(),
+            usage = usage
+        )
         val metrics = usageRecordMetrics(record)
         assertEquals(12000L, metrics.inputTokens)
         assertEquals(7000L, metrics.cacheCreationInputTokens)
@@ -44,12 +60,21 @@ class ProviderUsageTest {
 
     @Test
     fun anthropicTotalInputIncludesReadsAndCreationWithoutDoubleCountingBins() {
-        val usage = parse(UsageDialect.ANTHROPIC, """{
+        val usage = parse(
+            UsageDialect.ANTHROPIC,
+            """{
             "input_tokens":2048,"cache_read_input_tokens":1800,"cache_creation_input_tokens":248,
             "cache_creation":{"ephemeral_5m_input_tokens":148,"ephemeral_1h_input_tokens":100},"output_tokens":503
-        }""")
-        val record = ApiUsageRecord("request", wireDialect = UsageDialect.ANTHROPIC.wireName,
-            profileId = profile.id, model = "fixture-model", pricing = profile.tokenPricing(), usage = usage)
+        }"""
+        )
+        val record = ApiUsageRecord(
+            "request",
+            wireDialect = UsageDialect.ANTHROPIC.wireName,
+            profileId = profile.id,
+            model = "fixture-model",
+            pricing = profile.tokenPricing(),
+            usage = usage
+        )
         assertEquals(4096L, usage.inputTokens)
         assertEquals(248L, usage.cacheCreationInputTokens)
         assertEquals(308.0, cacheCreationCostUnits(record))
@@ -60,8 +85,12 @@ class ProviderUsageTest {
 
     @Test
     fun cumulativeAnthropicUpdatesRetainTheOtherInputComponentsAndExplicitZero() {
-        val initial = parse(UsageDialect.ANTHROPIC, """{"input_tokens":50,"cache_read_input_tokens":100,
-            "cache_creation_input_tokens":20,"cache_creation":{"ephemeral_5m_input_tokens":20,"ephemeral_1h_input_tokens":0},"output_tokens":3}""", false)
+        val initial = parse(
+            UsageDialect.ANTHROPIC,
+            """{"input_tokens":50,"cache_read_input_tokens":100,
+            "cache_creation_input_tokens":20,"cache_creation":{"ephemeral_5m_input_tokens":20,"ephemeral_1h_input_tokens":0},"output_tokens":3}""",
+            false
+        )
         val delta = parse(UsageDialect.ANTHROPIC, """{"input_tokens":80,"output_tokens":10}""", false)
         val updated = initial.updatedBy(delta)
         assertEquals(200L, updated.inputTokens)
@@ -77,10 +106,14 @@ class ProviderUsageTest {
 
     @Test
     fun geminiCachedInputIsAlreadyIncludedAndThoughtTokensAreSeparate() {
-        val interaction = parse(UsageDialect.GEMINI_INTERACTIONS,
-            """{"total_input_tokens":100,"total_cached_tokens":40,"total_output_tokens":30,"total_thought_tokens":20}""")
-        val content = parse(UsageDialect.GEMINI_CONTENT,
-            """{"promptTokenCount":100,"cachedContentTokenCount":40,"candidatesTokenCount":30,"thoughtsTokenCount":20}""")
+        val interaction = parse(
+            UsageDialect.GEMINI_INTERACTIONS,
+            """{"total_input_tokens":100,"total_cached_tokens":40,"total_output_tokens":30,"total_thought_tokens":20}"""
+        )
+        val content = parse(
+            UsageDialect.GEMINI_CONTENT,
+            """{"promptTokenCount":100,"cachedContentTokenCount":40,"candidatesTokenCount":30,"thoughtsTokenCount":20}"""
+        )
         assertEquals(interaction, content)
         assertEquals(100L, interaction.inputTokens)
         assertEquals(30L, interaction.nonReasoningOutputTokens)
@@ -133,8 +166,10 @@ class ProviderUsageTest {
         assertTrue(metrics.usageIsComplete)
         assertEquals(0L, metrics.totalTokens)
         assertEquals(0.0, metrics.estimatedCostUsd)
-        val final = AiProviderEngine.computeTurnTokenMetrics(0, 0, 0, 0, 500, "visible text", "summary", emptyList(),
-            5000, 100, 5000, 0, hasReportedInput = true, hasReportedOutput = true, hasReportedReasoning = true)
+        val final = AiProviderEngine.computeTurnTokenMetrics(
+            0, 0, 0, 0, 500, "visible text", "summary", emptyList(),
+            5000, 100, 5000, 0, hasReportedInput = true, hasReportedOutput = true, hasReportedReasoning = true
+        )
         assertEquals(0L, final.totalTokens)
         assertEquals(0.0, final.tokensPerSec)
     }
@@ -151,8 +186,10 @@ class ProviderUsageTest {
 
     @Test
     fun malformedCountsAndNonFinitePricingRemainUnavailable() {
-        val bad = parse(UsageDialect.OPENAI_RESPONSES,
-            """{"input_tokens":-1,"output_tokens":{},"input_tokens_details":{"cached_tokens":true}}""")
+        val bad = parse(
+            UsageDialect.OPENAI_RESPONSES,
+            """{"input_tokens":-1,"output_tokens":{},"input_tokens_details":{"cached_tokens":true}}"""
+        )
         assertNull(bad.inputTokens)
         assertNull(bad.outputTokens)
         assertTrue(bad.invalidCounts)
@@ -166,37 +203,54 @@ class ProviderUsageTest {
     fun aStartedResponseIsNotFinalJustBecauseItHasCumulativeCounters() {
         val ledger = ProviderUsageLedger(profile, "fixture-model")
         val request = ledger.begin(UsageDialect.ANTHROPIC)
-        val start = parse(UsageDialect.ANTHROPIC, """{"input_tokens":50,"cache_read_input_tokens":0,
-            "cache_creation_input_tokens":0,"output_tokens":3}""", false)
+        val start = parse(
+            UsageDialect.ANTHROPIC,
+            """{"input_tokens":50,"cache_read_input_tokens":0,
+            "cache_creation_input_tokens":0,"output_tokens":3}""",
+            false
+        )
         ledger.update(request.requestId, "message", UsageDialect.ANTHROPIC, start)
         assertFalse(ledger.metrics().usageIsComplete)
-        ledger.update(request.requestId, "message", UsageDialect.ANTHROPIC,
-            parseProviderUsage(UsageDialect.ANTHROPIC, null, isFinal = true))
+        ledger.update(
+            request.requestId,
+            "message",
+            UsageDialect.ANTHROPIC,
+            parseProviderUsage(UsageDialect.ANTHROPIC, null, isFinal = true)
+        )
         assertTrue(ledger.metrics().usageIsComplete)
     }
 
     @Test
     fun omittedZeroCacheAndProto3ScalarsResolveWithoutClobberingAnthropicDeltas() {
-        val openAiNoWrite = parse(UsageDialect.OPENAI_RESPONSES,
-            """{"input_tokens":300,"input_tokens_details":{"cached_tokens":40},"output_tokens":50,"output_tokens_details":{"reasoning_tokens":10}}""")
+        val openAiNoWrite = parse(
+            UsageDialect.OPENAI_RESPONSES,
+            """{"input_tokens":300,"input_tokens_details":{"cached_tokens":40},"output_tokens":50,"output_tokens_details":{"reasoning_tokens":10}}"""
+        )
         assertEquals(0L, openAiNoWrite.cacheCreationInputTokens)
         assertTrue(openAiNoWrite.isComplete)
         val openAiNoDetails = parse(UsageDialect.OPENAI_RESPONSES, """{"input_tokens":300,"output_tokens":50}""")
         assertNull(openAiNoDetails.cachedInputTokens)
 
-        val openAiHalfTtl = parse(UsageDialect.OPENAI_RESPONSES,
-            """{"input_tokens":500,"input_tokens_details":{"cached_tokens":0,"cache_write_tokens":200,"cache_write_tokens_details":{"ttl_12h_tokens":200}},"output_tokens":10}""")
+        val openAiHalfTtl = parse(
+            UsageDialect.OPENAI_RESPONSES,
+            """{"input_tokens":500,"input_tokens_details":{"cached_tokens":0,"cache_write_tokens":200,"cache_write_tokens_details":{"ttl_12h_tokens":200}},"output_tokens":10}"""
+        )
         assertEquals(0L, openAiHalfTtl.shortCacheCreationInputTokens)
         assertEquals(200L, openAiHalfTtl.longCacheCreationInputTokens)
         assertFalse(openAiHalfTtl.invalidCounts)
 
-        val gptImageDetails = parse(UsageDialect.OPENAI_RESPONSES,
-            """{"input_tokens":50,"input_tokens_details":{"text_tokens":10,"image_tokens":40},"output_tokens":20}""")
+        val gptImageDetails = parse(
+            UsageDialect.OPENAI_RESPONSES,
+            """{"input_tokens":50,"input_tokens_details":{"text_tokens":10,"image_tokens":40},"output_tokens":20}"""
+        )
         assertEquals(0L, gptImageDetails.cachedInputTokens)
         assertEquals(0L, gptImageDetails.cacheCreationInputTokens)
 
-        val anthropicStart = parse(UsageDialect.ANTHROPIC,
-            """{"input_tokens":50,"cache_read_input_tokens":100,"cache_creation_input_tokens":40,"cache_creation":{"ephemeral_1h_input_tokens":40},"output_tokens":3}""", final = false)
+        val anthropicStart = parse(
+            UsageDialect.ANTHROPIC,
+            """{"input_tokens":50,"cache_read_input_tokens":100,"cache_creation_input_tokens":40,"cache_creation":{"ephemeral_1h_input_tokens":40},"output_tokens":3}""",
+            final = false
+        )
         assertEquals(0L, anthropicStart.shortCacheCreationInputTokens)
         assertEquals(40L, anthropicStart.longCacheCreationInputTokens)
         val anthropicDelta = parse(UsageDialect.ANTHROPIC, """{"output_tokens":12}""", final = false)

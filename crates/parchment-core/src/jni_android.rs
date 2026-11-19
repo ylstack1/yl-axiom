@@ -1,0 +1,218 @@
+//! Direct zero-JNA JNI bridge for Android (`io.parchment.ai.platform.ParchmentNativeCore`).
+//!
+//! Uses `jni 0.22` (`EnvUnowned::with_env`) so Rust panics can never unwind across JNI boundaries,
+//! keeping the Android APK lean (0 JNA overhead, 0 reflection) and R8-safe.
+
+use std::path::Path;
+use std::sync::Arc;
+
+use jni::EnvUnowned;
+use jni::errors::{Error as JniError, ThrowRuntimeExAndDefault};
+use jni::objects::{JByteArray, JClass, JString};
+use jni::sys::{jboolean, jint, jlong};
+
+use crate::ParchmentCore;
+
+unsafe fn borrow_handle<'a>(handle: jlong) -> Option<&'a ParchmentCore> {
+    if handle == 0 {
+        None
+    } else {
+        Some(unsafe { &*(handle as usize as *const ParchmentCore) })
+    }
+}
+
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_io_parchment_ai_platform_ParchmentNativeCore_nativeOpen<'caller>(
+    mut unowned_env: EnvUnowned<'caller>,
+    _class: JClass<'caller>,
+    storage_dir: JString<'caller>,
+) -> jlong {
+    unowned_env
+        .with_env(|env| -> Result<jlong, JniError> {
+            let dir_str = storage_dir.try_to_string(env)?;
+            let dir_path = Path::new(&dir_str);
+            let _ = std::fs::create_dir_all(dir_path);
+            let Ok(core) = ParchmentCore::open(dir_path.join("parchment.db")) else {
+                return Ok(0);
+            };
+            // Idempotent, non-destructive migration of existing v2 Android files on first open.
+            let _ = core.migrate_v2_data_dir(dir_path, false);
+            Ok(Arc::into_raw(core) as usize as jlong)
+        })
+        .resolve::<ThrowRuntimeExAndDefault>()
+}
+
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_io_parchment_ai_platform_ParchmentNativeCore_nativeLoadSettingsJson<
+    'caller,
+>(
+    mut unowned_env: EnvUnowned<'caller>,
+    _class: JClass<'caller>,
+    handle: jlong,
+) -> JString<'caller> {
+    unowned_env
+        .with_env(|env| -> Result<JString<'caller>, JniError> {
+            let Some(core) = (unsafe { borrow_handle(handle) }) else {
+                return Ok(JString::null());
+            };
+            match core.load_settings_json() {
+                Ok(Some(json)) => JString::from_str(env, json),
+                _ => Ok(JString::null()),
+            }
+        })
+        .resolve::<ThrowRuntimeExAndDefault>()
+}
+
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_io_parchment_ai_platform_ParchmentNativeCore_nativeSaveSettingsJson<
+    'caller,
+>(
+    mut unowned_env: EnvUnowned<'caller>,
+    _class: JClass<'caller>,
+    handle: jlong,
+    json: JString<'caller>,
+) -> jboolean {
+    unowned_env
+        .with_env(|env| -> Result<jboolean, JniError> {
+            let Some(core) = (unsafe { borrow_handle(handle) }) else {
+                return Ok(false);
+            };
+            let raw = json.try_to_string(env)?;
+            Ok(core.save_settings_json(&raw).is_ok())
+        })
+        .resolve::<ThrowRuntimeExAndDefault>()
+}
+
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_io_parchment_ai_platform_ParchmentNativeCore_nativeLoadChatJson<
+    'caller,
+>(
+    mut unowned_env: EnvUnowned<'caller>,
+    _class: JClass<'caller>,
+    handle: jlong,
+    chat_id: JString<'caller>,
+) -> JString<'caller> {
+    unowned_env
+        .with_env(|env| -> Result<JString<'caller>, JniError> {
+            let Some(core) = (unsafe { borrow_handle(handle) }) else {
+                return Ok(JString::null());
+            };
+            let cid = chat_id.try_to_string(env)?;
+            match core.load_chat_json(&cid) {
+                Ok(Some(json)) => JString::from_str(env, json),
+                _ => Ok(JString::null()),
+            }
+        })
+        .resolve::<ThrowRuntimeExAndDefault>()
+}
+
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_io_parchment_ai_platform_ParchmentNativeCore_nativeSaveChatJson<
+    'caller,
+>(
+    mut unowned_env: EnvUnowned<'caller>,
+    _class: JClass<'caller>,
+    handle: jlong,
+    json: JString<'caller>,
+) -> jboolean {
+    unowned_env
+        .with_env(|env| -> Result<jboolean, JniError> {
+            let Some(core) = (unsafe { borrow_handle(handle) }) else {
+                return Ok(false);
+            };
+            let raw = json.try_to_string(env)?;
+            Ok(core.save_chat_json(&raw).is_ok())
+        })
+        .resolve::<ThrowRuntimeExAndDefault>()
+}
+
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_io_parchment_ai_platform_ParchmentNativeCore_nativeDeleteChat<
+    'caller,
+>(
+    mut unowned_env: EnvUnowned<'caller>,
+    _class: JClass<'caller>,
+    handle: jlong,
+    chat_id: JString<'caller>,
+) -> jboolean {
+    unowned_env
+        .with_env(|env| -> Result<jboolean, JniError> {
+            let Some(core) = (unsafe { borrow_handle(handle) }) else {
+                return Ok(false);
+            };
+            let cid = chat_id.try_to_string(env)?;
+            Ok(core.delete_chat(&cid).unwrap_or(false))
+        })
+        .resolve::<ThrowRuntimeExAndDefault>()
+}
+
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_io_parchment_ai_platform_ParchmentNativeCore_nativeSearchChatIds<
+    'caller,
+>(
+    mut unowned_env: EnvUnowned<'caller>,
+    _class: JClass<'caller>,
+    handle: jlong,
+    query: JString<'caller>,
+    limit: jint,
+) -> JString<'caller> {
+    unowned_env
+        .with_env(|env| -> Result<JString<'caller>, JniError> {
+            let Some(core) = (unsafe { borrow_handle(handle) }) else {
+                return Ok(JString::null());
+            };
+            let q = query.try_to_string(env)?;
+            let lim = limit.max(1) as u32;
+            match core.search_chat_ids_newline(&q, lim) {
+                Ok(lines) => JString::from_str(env, lines),
+                Err(_) => Ok(JString::null()),
+            }
+        })
+        .resolve::<ThrowRuntimeExAndDefault>()
+}
+
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_io_parchment_ai_platform_ParchmentNativeCore_nativeWorkspaceSearch<
+    'caller,
+>(
+    mut unowned_env: EnvUnowned<'caller>,
+    _class: JClass<'caller>,
+    root_path: JString<'caller>,
+    query: JString<'caller>,
+    scope_path: JString<'caller>,
+    file_glob: JString<'caller>,
+    max_results: jint,
+) -> JString<'caller> {
+    unowned_env
+        .with_env(|env| -> Result<JString<'caller>, JniError> {
+            let root = root_path.try_to_string(env)?;
+            let q = query.try_to_string(env)?;
+            let scope = scope_path.try_to_string(env)?;
+            let glob = file_glob.try_to_string(env)?;
+            let max_res = max_results.clamp(1, 500) as usize;
+            match ParchmentCore::workspace_search_native(&root, &q, &scope, &glob, max_res) {
+                Ok(hits) => JString::from_str(env, hits),
+                Err(_) => Ok(JString::null()),
+            }
+        })
+        .resolve::<ThrowRuntimeExAndDefault>()
+}
+
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_io_parchment_ai_platform_ParchmentNativeCore_nativeExtractDocx<
+    'caller,
+>(
+    mut unowned_env: EnvUnowned<'caller>,
+    _class: JClass<'caller>,
+    bytes: JByteArray<'caller>,
+) -> JString<'caller> {
+    unowned_env
+        .with_env(|env| -> Result<JString<'caller>, JniError> {
+            let raw = env.convert_byte_array(&bytes)?;
+            match ParchmentCore::extract_docx_native(&raw) {
+                Ok(text) => JString::from_str(env, text),
+                Err(_) => Ok(JString::null()),
+            }
+        })
+        .resolve::<ThrowRuntimeExAndDefault>()
+}

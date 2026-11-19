@@ -1,3 +1,5 @@
+import org.jetbrains.compose.desktop.application.dsl.TargetFormat
+import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 import java.net.URI
 import java.nio.file.FileSystems
 import java.nio.file.Files
@@ -6,8 +8,6 @@ import java.util.jar.JarEntry
 import java.util.jar.JarFile
 import java.util.jar.JarOutputStream
 import java.util.zip.CRC32
-import org.jetbrains.compose.desktop.application.dsl.TargetFormat
-import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 
 // The shared module: all app code for desktop and Android. The Android APK itself (applicationId, signing,
 // R8) is built by :androidApp, because AGP 9 no longer lets an application live in a multiplatform module.
@@ -19,6 +19,11 @@ plugins {
     alias(libs.plugins.kotlinSerialization)
     // Dev-only hot reload for desktop UI work: ./gradlew :composeApp:hotRunDesktop (see docs/ARCHITECTURE.md).
     alias(libs.plugins.composeHotReload)
+    alias(libs.plugins.ktlint)
+}
+
+ktlint {
+    outputToConsole.set(true)
 }
 
 val appVersionProp = providers.gradleProperty("appVersion")
@@ -84,20 +89,20 @@ kotlin {
         commonMain {
             resources.srcDir(generateBuildConfig.map { it.outputs.files.singleFile })
             dependencies {
-            // Compose Foundation and UI only: no Material.
-            implementation(libs.compose.runtime)
-            implementation(libs.compose.foundation)
-            implementation(libs.compose.ui)
+                // Compose Foundation and UI only: no Material.
+                implementation(libs.compose.runtime)
+                implementation(libs.compose.foundation)
+                implementation(libs.compose.ui)
 
-            // Coroutines, Immutable Collections & JSON Serialization
-            implementation(libs.kotlinx.collections.immutable)
-            implementation(libs.kotlinx.coroutines.core)
-            implementation(libs.kotlinx.serialization.json)
+                // Coroutines, Immutable Collections & JSON Serialization
+                implementation(libs.kotlinx.collections.immutable)
+                implementation(libs.kotlinx.coroutines.core)
+                implementation(libs.kotlinx.serialization.json)
 
-            // Ktor HTTP/2 & SSE Streaming Engine
-            implementation(libs.ktor.client.core)
-            implementation(libs.ktor.client.content.negotiation)
-            implementation(libs.ktor.serialization.kotlinx.json)
+                // Ktor HTTP/2 & SSE Streaming Engine
+                implementation(libs.ktor.client.core)
+                implementation(libs.ktor.client.content.negotiation)
+                implementation(libs.ktor.serialization.kotlinx.json)
             }
         }
 
@@ -130,7 +135,7 @@ composeCompiler {
     }
 }
 
-// The UI gallery renders every screen to PNG; verify.py passes -Pparchment.gallery=true only when it is wanted.
+// The UI gallery renders every screen to PNG; cargo xtask passes -Pparchment.gallery=true only when it is wanted.
 // Parallel test forks stay 1 locally (low-RAM safe) and scale on multi-core CI runners via -Pparchment.testForks=N;
 // DesktopPlatformHost gives every Gradle worker JVM its own isolated temp data directory.
 val renderGallery = providers.gradleProperty("parchment.gallery").orElse("false")

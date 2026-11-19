@@ -40,12 +40,15 @@ jobs:
           fetch-depth: 1
           fetch-tags: false
 
+      - name: Set up Rust Toolchain
+        uses: dtolnay/rust-toolchain@39008827e6b4319a349e9a42dfc90579dd25f1ca # stable
+
       - name: Classify Affected Signals
         id: filter
         env:
           GH_TOKEN: ${{ github.token }}
           BASE_SHA: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || '' }}
-        run: python3 .github/scripts/ci_changes.py quality-signals
+        run: cargo xtask ci plan quality-signals
 
   coverage:
     name: Test coverage
@@ -61,6 +64,9 @@ jobs:
           fetch-depth: 1
           fetch-tags: false
 
+      - name: Set up Rust Toolchain
+        uses: dtolnay/rust-toolchain@39008827e6b4319a349e9a42dfc90579dd25f1ca # stable
+
       - name: Set up JDK 25 (Temurin)
         uses: actions/setup-java@d1374f8ac74474200d16ef8ecee22c7ae7a51880 # v6.3.0
         with:
@@ -74,7 +80,7 @@ jobs:
       - name: Tests with Coverage
         run: |
           chmod +x ./gradlew
-          python3 .github/scripts/run_gradle.py -- --init-script .github/scripts/kover.init.gradle.kts \
+          cargo xtask ci run-gradle -- --init-script .github/scripts/kover.init.gradle.kts \
             :composeApp:koverXmlReport :composeApp:koverHtmlReport :composeApp:koverLog \
             -Dorg.gradle.jvmargs="-Xmx5g -XX:+UseParallelGC -XX:MaxMetaspaceSize=1g -Dfile.encoding=UTF-8" \
             -Pparchment.testForks=4 \
@@ -104,6 +110,9 @@ jobs:
           fetch-depth: 1
           fetch-tags: false
 
+      - name: Set up Rust Toolchain
+        uses: dtolnay/rust-toolchain@39008827e6b4319a349e9a42dfc90579dd25f1ca # stable
+
       - name: Set up JDK 25 (Temurin)
         uses: actions/setup-java@d1374f8ac74474200d16ef8ecee22c7ae7a51880 # v6.3.0
         with:
@@ -116,7 +125,7 @@ jobs:
       - name: Render UI Gallery
         run: |
           chmod +x ./gradlew
-          python3 .github/scripts/run_gradle.py -- :composeApp:desktopTest \
+          cargo xtask ci run-gradle -- :composeApp:desktopTest \
             --tests io.parchment.ai.ui.UiGalleryTest \
             -Pparchment.gallery=true \
             -Dorg.gradle.jvmargs="-Xmx5g -XX:+UseParallelGC -XX:MaxMetaspaceSize=1g -Dfile.encoding=UTF-8" \
@@ -147,6 +156,9 @@ jobs:
           fetch-depth: 1
           fetch-tags: false
 
+      - name: Set up Rust Toolchain
+        uses: dtolnay/rust-toolchain@39008827e6b4319a349e9a42dfc90579dd25f1ca # stable
+
       - name: Set up JDK 25 (Temurin)
         uses: actions/setup-java@d1374f8ac74474200d16ef8ecee22c7ae7a51880 # v6.3.0
         with:
@@ -172,10 +184,9 @@ jobs:
       - name: Generate and Validate SBOM
         run: |
           chmod +x ./gradlew
-          python3 .github/scripts/run_gradle.py -- --init-script .github/scripts/sbom.init.gradle.kts cyclonedxBom \
+          cargo xtask ci run-gradle -- --init-script .github/scripts/sbom.init.gradle.kts cyclonedxBom \
             --no-daemon --no-configuration-cache --no-build-cache --max-workers=4 -PappVersion=1.0.0
-          PYTHONPATH=.github/scripts python3 .github/scripts/test_check_sbom.py
-          python3 .github/scripts/check_sbom.py build/reports/cyclonedx/bom.json
+          cargo xtask ci check-sbom build/reports/cyclonedx/bom.json
 
       - name: Upload SBOM
         if: ${{ !cancelled() }}

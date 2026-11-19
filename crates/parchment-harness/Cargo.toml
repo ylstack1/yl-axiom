@@ -1,0 +1,41 @@
+[package]
+name = "parchment-harness"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[features]
+default = ["network", "ripgrep"]
+ripgrep = [
+    "dep:globset",
+    "dep:grep-regex",
+    "dep:grep-searcher",
+    "dep:ignore",
+]
+network = [
+    "dep:async-trait",
+    "dep:futures-util",
+    "dep:parchment-protocol",
+    "dep:reqwest",
+    "dep:tokio",
+    "dep:url",
+]
+
+[dependencies]
+async-trait = { workspace = true, optional = true }
+base64.workspace = true
+futures-util = { workspace = true, optional = true }
+globset = { workspace = true, optional = true }
+grep-regex = { workspace = true, optional = true }
+grep-searcher = { workspace = true, optional = true }
+ignore = { workspace = true, optional = true }
+parchment-model = { path = "../parchment-model" }
+parchment-protocol = { path = "../parchment-protocol", optional = true }
+parchment-storage = { path = "../parchment-storage" }
+reqwest = { workspace = true, optional = true }
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tokio = { workspace = true, optional = true }
+url = { workspace = true, optional = true }
+zip.workspace = true

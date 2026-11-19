@@ -31,9 +31,6 @@ import androidx.compose.ui.unit.dp
 import io.parchment.ai.harness.WorkspaceHarness
 import io.parchment.ai.model.McpServerConfig
 import io.parchment.ai.model.PreferencesConfig
-import io.parchment.ai.platform.PlatformPickers
-import io.parchment.ai.platform.PlatformRuntime
-import io.parchment.ai.platform.PlatformWorkspace
 import io.parchment.ai.network.McpRegistry
 import io.parchment.ai.network.McpServerState
 import io.parchment.ai.network.RegistryServer
@@ -46,6 +43,9 @@ import io.parchment.ai.network.mergeImportedMcpServers
 import io.parchment.ai.network.parseGitHubFolder
 import io.parchment.ai.network.parseMcpConfigJson
 import io.parchment.ai.network.searchMcpRegistry
+import io.parchment.ai.platform.PlatformPickers
+import io.parchment.ai.platform.PlatformRuntime
+import io.parchment.ai.platform.PlatformWorkspace
 import io.parchment.ai.strings.Strings
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
@@ -179,11 +179,9 @@ internal fun SkillInstallCard(workspacePath: String, canWrite: Boolean, onNotify
     var busy by remember { mutableStateOf(false) }
     val writable = canWrite && workspacePath.isNotBlank()
 
-    suspend fun existsInWorkspace(path: String): Boolean =
-        withContext(Dispatchers.IO) { PlatformWorkspace.workspaceRead(workspacePath, path, 1, 1).isSuccess }
+    suspend fun existsInWorkspace(path: String): Boolean = withContext(Dispatchers.IO) { PlatformWorkspace.workspaceRead(workspacePath, path, 1, 1).isSuccess }
 
-    suspend fun writeToWorkspace(path: String, text: String): Result<String> =
-        withContext(Dispatchers.IO) { PlatformWorkspace.workspaceWrite(workspacePath, path, text) }
+    suspend fun writeToWorkspace(path: String, text: String): Result<String> = withContext(Dispatchers.IO) { PlatformWorkspace.workspaceWrite(workspacePath, path, text) }
 
     SepiaSectionCard(title = Strings.installASkill, subtitle = Strings.skillsTeachTheAgentHow) {
         Column(verticalArrangement = Arrangement.spacedBy(Space.s8)) {
@@ -354,14 +352,22 @@ internal fun McpServersCard(
                         if (server.command.isNotBlank()) BasicText(Strings.aLocalCommandRunsWithYour, style = p.uiLabelStyle)
                     }
                     statuses[server.id]?.let { status ->
-                        BasicText(when (status.state) {
-                            McpServerState.CONNECTING -> status.message.ifBlank { Strings.connecting }
-                            McpServerState.READY -> Strings.connected(plural(status.toolCount, "tool"))
-                            McpServerState.FAILED -> status.message
-                        }, style = p.uiLabelStyle)
+                        BasicText(
+                            when (status.state) {
+                                McpServerState.CONNECTING -> status.message.ifBlank { Strings.connecting }
+                                McpServerState.READY -> Strings.connected(plural(status.toolCount, "tool"))
+                                McpServerState.FAILED -> status.message
+                            },
+                            style = p.uiLabelStyle
+                        )
                         if (status.state == McpServerState.FAILED && server.enabled) {
-                            SepiaButton(Strings.restartServer, compact = true, style = SepiaButtonStyle.OUTLINE, hint = Strings.restartServerHint,
-                                onClick = { McpRegistry.restartNow(server.id) })
+                            SepiaButton(
+                                Strings.restartServer,
+                                compact = true,
+                                style = SepiaButtonStyle.OUTLINE,
+                                hint = Strings.restartServerHint,
+                                onClick = { McpRegistry.restartNow(server.id) }
+                            )
                         }
                     }
                     SepiaButton(Strings.remove, compact = true, style = SepiaButtonStyle.GHOST, onClick = {

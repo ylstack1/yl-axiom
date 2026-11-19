@@ -62,8 +62,12 @@ internal object PublicWebTransport {
     }
 
     internal fun isPublicAddress(address: InetAddress): Boolean {
-        if (address.isAnyLocalAddress || address.isLoopbackAddress || address.isLinkLocalAddress ||
-            address.isSiteLocalAddress || address.isMulticastAddress) return false
+        if (address.isAnyLocalAddress ||
+            address.isLoopbackAddress ||
+            address.isLinkLocalAddress ||
+            address.isSiteLocalAddress ||
+            address.isMulticastAddress
+        ) return false
         val bytes = address.address
         return when (bytes.size) {
             4 -> deniedV4.none { matches(bytes, it) }
@@ -100,10 +104,12 @@ internal object PublicWebTransport {
             check(isCancelled?.invoke() != true) { STOPPED }
             val remaining = deadline - System.nanoTime()
             check(remaining > 0) { "Web request timed out." }
-            val call = client.newCall(Request.Builder().url(target).get()
-                .header("User-Agent", "ParchmentAI/${ParchmentBuildConfig.APP_VERSION}")
-                .header("Accept", accept)
-                .build())
+            val call = client.newCall(
+                Request.Builder().url(target).get()
+                    .header("User-Agent", "ParchmentAI/${ParchmentBuildConfig.APP_VERSION}")
+                    .header("Accept", accept)
+                    .build()
+            )
             call.timeout().timeout(remaining, TimeUnit.NANOSECONDS)
             val watcher = if (isCancelled == null) null else cancellationWatcher.scheduleAtFixedRate({
                 runCatching { if (isCancelled.invoke()) call.cancel() }

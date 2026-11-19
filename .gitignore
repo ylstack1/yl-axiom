@@ -2,6 +2,8 @@
 .kotlin/
 build/
 composeApp/build/
+androidApp/build/
+androidApp/src/main/jniLibs/
 local.properties
 .idea/
 *.iml
@@ -14,3 +16,4 @@ Thumbs.db
 parchment-portable-data/
 __pycache__/
 *.py[cod]
+/target/

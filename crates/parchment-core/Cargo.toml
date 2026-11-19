@@ -1,0 +1,34 @@
+[package]
+name = "parchment-core"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[lib]
+name = "parchment_core"
+crate-type = ["cdylib", "rlib"]
+
+[features]
+default = ["network"]
+network = [
+    "dep:futures-util",
+    "dep:parchment-protocol",
+    "dep:reqwest",
+    "dep:tokio",
+    "parchment-harness/network",
+    "parchment-harness/ripgrep",
+]
+android-jni = ["dep:jni"]
+
+[dependencies]
+futures-util = { workspace = true, optional = true }
+jni = { version = "0.22", optional = true }
+parchment-harness = { path = "../parchment-harness", default-features = false }
+parchment-model = { path = "../parchment-model" }
+parchment-prose = { path = "../parchment-prose" }
+parchment-protocol = { path = "../parchment-protocol", optional = true }
+parchment-storage = { path = "../parchment-storage" }
+reqwest = { workspace = true, optional = true }
+serde.workspace = true
+serde_json.workspace = true
+tokio = { workspace = true, optional = true }

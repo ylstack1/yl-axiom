@@ -13,8 +13,10 @@ actual object PlatformRuntime {
 
     @Volatile
     var windowStatusCallback: ((String) -> Unit)? = null
+
     @Volatile
     private var stateFlushCallback: ((Boolean) -> Unit)? = null
+
     @Volatile
     private var backHandlerCallback: (() -> Boolean)? = null
 
@@ -29,13 +31,15 @@ actual object PlatformRuntime {
 
     init {
         runCatching {
-            Runtime.getRuntime().addShutdownHook(Thread {
-                try {
-                    flushPendingStateNow()
-                } finally {
-                    if (isWindows && windowsPowerLeaseLazy.isInitialized()) windowsPowerLease.close()
+            Runtime.getRuntime().addShutdownHook(
+                Thread {
+                    try {
+                        flushPendingStateNow()
+                    } finally {
+                        if (isWindows && windowsPowerLeaseLazy.isInitialized()) windowsPowerLease.close()
+                    }
                 }
-            })
+            )
         }
     }
 
@@ -50,8 +54,7 @@ actual object PlatformRuntime {
         runCatching { stateFlushCallback?.invoke(true) }
     }
 
-    actual fun takeCrashReport(): CrashReport? =
-        CrashRecorder.takeReport(DesktopPlatformHost.resolveStorageDir())?.let { CrashReport(it, CrashRecorder.reportSaysSaved(it)) }
+    actual fun takeCrashReport(): CrashReport? = CrashRecorder.takeReport(DesktopPlatformHost.resolveStorageDir())?.let { CrashReport(it, CrashRecorder.reportSaysSaved(it)) }
 
     actual fun flushPendingStateAsync() {
         runCatching { stateFlushCallback?.invoke(false) }
@@ -61,9 +64,7 @@ actual object PlatformRuntime {
         backHandlerCallback = handler
     }
 
-    actual fun handleSystemBackPressed(): Boolean {
-        return runCatching { backHandlerCallback?.invoke() == true }.getOrDefault(false)
-    }
+    actual fun handleSystemBackPressed(): Boolean = runCatching { backHandlerCallback?.invoke() == true }.getOrDefault(false)
 
     actual fun isIgnoringBatteryOptimizations(): Boolean = true
 
@@ -137,9 +138,12 @@ actual object PlatformRuntime {
         ProcessBuilder(
             "powershell.exe",
             "-NoProfile",
-            "-ExecutionPolicy", "Bypass",
-            "-WindowStyle", "Hidden",
-            "-File", psScriptFile.absolutePath
+            "-ExecutionPolicy",
+            "Bypass",
+            "-WindowStyle",
+            "Hidden",
+            "-File",
+            psScriptFile.absolutePath
         ).start()
 
         // Exit current instance after 400ms so the silent installer can replace files cleanly

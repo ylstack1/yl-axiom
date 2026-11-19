@@ -1,8 +1,8 @@
 package io.parchment.ai.ui
 
 import io.parchment.ai.model.AppStateSnapshot
-import io.parchment.ai.strings.Strings
 import io.parchment.ai.model.ChatSession
+import io.parchment.ai.strings.Strings
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -195,7 +195,8 @@ internal class ParchmentDiskWriter(
             if (attempt {
                     val session = entry.session
                     if (session == null) deleteSession(id) else saveSession(session)
-                }) {
+                }
+            ) {
                 pending.update { latest ->
                     latest.copy(
                         chats = if (latest.chats[id]?.revision == entry.revision) latest.chats - id else latest.chats,
@@ -222,11 +223,11 @@ internal class ParchmentDiskWriter(
         }
         // A settings migration may strip embedded history; commit it only after its chat files succeed.
         pending.value.settings?.takeIf { it.revision == batch.settings?.revision && it.requiredChats.isEmpty() }?.let { entry ->
-                if (attempt { saveSettings(entry.snapshot) }) {
-                    pending.update { latest ->
-                        if (latest.settings?.revision == entry.revision) latest.copy(settings = null) else latest
-                    }
+            if (attempt { saveSettings(entry.snapshot) }) {
+                pending.update { latest ->
+                    if (latest.settings?.revision == entry.revision) latest.copy(settings = null) else latest
                 }
+            }
         }
         val error = failure
         if (error != null) {

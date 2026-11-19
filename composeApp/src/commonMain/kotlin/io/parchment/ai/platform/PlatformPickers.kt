@@ -15,8 +15,7 @@ internal const val MAX_INLINE_ATTACHMENT_BYTES = 50L * 1024L * 1024L
 internal const val MAX_INLINE_TEXT_ATTACHMENT_BYTES = 8L * 1024L * 1024L
 
 /** Attachments must fit in a request; card and settings files only need to fit in memory. */
-fun maxPickedFileBytes(allowedExtensions: List<String>): Long =
-    if (allowedExtensions.isEmpty() || "*" in allowedExtensions) MAX_INLINE_ATTACHMENT_BYTES else MAX_IMPORTED_DOCUMENT_BYTES
+fun maxPickedFileBytes(allowedExtensions: List<String>): Long = if (allowedExtensions.isEmpty() || "*" in allowedExtensions) MAX_INLINE_ATTACHMENT_BYTES else MAX_IMPORTED_DOCUMENT_BYTES
 
 /** Text to place in the request, or null when the file is binary or too large to inline. */
 internal fun inlineAttachmentText(bytes: ByteArray): String? {
@@ -44,44 +43,69 @@ fun normalizePickedBinaryFile(
     val cleanHint = explicitMimeType.trim().lowercase().substringBefore(';')
     val magicMime: String = when {
         bytes.size >= 8 &&
-            bytes[0] == 0x89.toByte() && bytes[1] == 0x50.toByte() &&
-            bytes[2] == 0x4E.toByte() && bytes[3] == 0x47.toByte() -> "image/png"
+            bytes[0] == 0x89.toByte() &&
+            bytes[1] == 0x50.toByte() &&
+            bytes[2] == 0x4E.toByte() &&
+            bytes[3] == 0x47.toByte() -> "image/png"
         bytes.size >= 6 &&
-            bytes[0] == 0x47.toByte() && bytes[1] == 0x49.toByte() &&
-            bytes[2] == 0x46.toByte() && bytes[3] == 0x38.toByte() -> "image/gif"
+            bytes[0] == 0x47.toByte() &&
+            bytes[1] == 0x49.toByte() &&
+            bytes[2] == 0x46.toByte() &&
+            bytes[3] == 0x38.toByte() -> "image/gif"
         bytes.size >= 12 &&
-            bytes[0] == 0x52.toByte() && bytes[1] == 0x49.toByte() &&
-            bytes[2] == 0x46.toByte() && bytes[3] == 0x46.toByte() &&
-            bytes[8] == 0x57.toByte() && bytes[9] == 0x45.toByte() &&
-            bytes[10] == 0x42.toByte() && bytes[11] == 0x50.toByte() -> "image/webp"
+            bytes[0] == 0x52.toByte() &&
+            bytes[1] == 0x49.toByte() &&
+            bytes[2] == 0x46.toByte() &&
+            bytes[3] == 0x46.toByte() &&
+            bytes[8] == 0x57.toByte() &&
+            bytes[9] == 0x45.toByte() &&
+            bytes[10] == 0x42.toByte() &&
+            bytes[11] == 0x50.toByte() -> "image/webp"
         bytes.size >= 3 &&
-            bytes[0] == 0xFF.toByte() && bytes[1] == 0xD8.toByte() &&
+            bytes[0] == 0xFF.toByte() &&
+            bytes[1] == 0xD8.toByte() &&
             bytes[2] == 0xFF.toByte() -> "image/jpeg"
         bytes.size >= 2 &&
-            bytes[0] == 0x42.toByte() && bytes[1] == 0x4D.toByte() -> "image/bmp"
+            bytes[0] == 0x42.toByte() &&
+            bytes[1] == 0x4D.toByte() -> "image/bmp"
         bytes.size >= 5 &&
-            bytes[0] == 0x25.toByte() && bytes[1] == 0x50.toByte() &&
-            bytes[2] == 0x44.toByte() && bytes[3] == 0x46.toByte() &&
+            bytes[0] == 0x25.toByte() &&
+            bytes[1] == 0x50.toByte() &&
+            bytes[2] == 0x44.toByte() &&
+            bytes[3] == 0x46.toByte() &&
             bytes[4] == 0x2D.toByte() -> "application/pdf"
         bytes.size >= 12 &&
-            bytes[4] == 0x66.toByte() && bytes[5] == 0x74.toByte() &&
-            bytes[6] == 0x79.toByte() && bytes[7] == 0x70.toByte() -> "video/mp4"
+            bytes[4] == 0x66.toByte() &&
+            bytes[5] == 0x74.toByte() &&
+            bytes[6] == 0x79.toByte() &&
+            bytes[7] == 0x70.toByte() -> "video/mp4"
         bytes.size >= 4 &&
-            bytes[0] == 0x1A.toByte() && bytes[1] == 0x45.toByte() &&
-            bytes[2] == 0xDF.toByte() && bytes[3] == 0xA3.toByte() -> "video/webm"
+            bytes[0] == 0x1A.toByte() &&
+            bytes[1] == 0x45.toByte() &&
+            bytes[2] == 0xDF.toByte() &&
+            bytes[3] == 0xA3.toByte() -> "video/webm"
         bytes.size >= 12 &&
-            bytes[0] == 0x52.toByte() && bytes[1] == 0x49.toByte() &&
-            bytes[2] == 0x46.toByte() && bytes[3] == 0x46.toByte() &&
-            bytes[8] == 0x57.toByte() && bytes[9] == 0x41.toByte() &&
-            bytes[10] == 0x56.toByte() && bytes[11] == 0x45.toByte() -> "audio/wav"
+            bytes[0] == 0x52.toByte() &&
+            bytes[1] == 0x49.toByte() &&
+            bytes[2] == 0x46.toByte() &&
+            bytes[3] == 0x46.toByte() &&
+            bytes[8] == 0x57.toByte() &&
+            bytes[9] == 0x41.toByte() &&
+            bytes[10] == 0x56.toByte() &&
+            bytes[11] == 0x45.toByte() -> "audio/wav"
         bytes.size >= 4 &&
-            bytes[0] == 0x4F.toByte() && bytes[1] == 0x67.toByte() &&
-            bytes[2] == 0x67.toByte() && bytes[3] == 0x53.toByte() -> "audio/ogg"
+            bytes[0] == 0x4F.toByte() &&
+            bytes[1] == 0x67.toByte() &&
+            bytes[2] == 0x67.toByte() &&
+            bytes[3] == 0x53.toByte() -> "audio/ogg"
         bytes.size >= 4 &&
-            bytes[0] == 0x66.toByte() && bytes[1] == 0x4C.toByte() &&
-            bytes[2] == 0x61.toByte() && bytes[3] == 0x43.toByte() -> "audio/flac"
+            bytes[0] == 0x66.toByte() &&
+            bytes[1] == 0x4C.toByte() &&
+            bytes[2] == 0x61.toByte() &&
+            bytes[3] == 0x43.toByte() -> "audio/flac"
         bytes.size >= 3 &&
-            bytes[0] == 0x49.toByte() && bytes[1] == 0x44.toByte() &&
+            bytes[0] == 0x49.toByte() &&
+            bytes[1] == 0x44.toByte() &&
             bytes[2] == 0x33.toByte() -> "audio/mp3"
         else -> ""
     }
@@ -169,18 +193,24 @@ fun normalizePickedBinaryFile(
 expect object PlatformPickers {
     // System file pickers: attachments, card and system prompt import and export, and custom fonts.
     suspend fun pickFileForImport(allowedExtensions: List<String>): PickedBinaryFile?
+
     /** Lets the user choose one or more files at once with the native OS picker; empty when cancelled. */
     suspend fun pickFilesForImport(allowedExtensions: List<String>): List<PickedBinaryFile>
+
     /** Lets the user choose chat exports and imports each one, streaming archives instead of loading them into memory. */
     suspend fun <T> pickAndImportChatFiles(decode: (chatJsons: List<String>) -> T): List<ChatImportOutcome<T>>
     suspend fun saveFileForExport(defaultFileName: String, bytes: ByteArray): String?
+
     /** Streams a chat bundle to a chosen file, reading [chats] one at a time. Null means the user cancelled. */
     suspend fun exportChatBundle(defaultFileName: String, chats: Sequence<ChatBundleEntry>): String?
+
     /** Copies a local media file to a chosen location without loading it into memory. Null means cancelled or missing. */
     suspend fun exportLocalFile(defaultFileName: String, filePath: String): String?
     suspend fun pickWorkspaceDirectory(currentPath: String): String?
+
     /** Lets the user choose a local directory with a custom dialog title (reuses OS folder picker). */
     suspend fun pickDirectory(dialogTitle: String, currentPath: String = ""): String?
+
     /** Desktop-only native picker returning a local executable or script path without reading its bytes. */
     suspend fun pickLocalCommandFile(dialogTitle: String = "Select Local MCP Server Executable or Script"): String?
     suspend fun pickFontFile(dialogTitle: String = "Select .TTF or .OTF Font"): String?

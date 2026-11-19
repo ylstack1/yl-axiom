@@ -20,9 +20,19 @@ data class ProviderTokenUsage(
     val isFinal: Boolean = false,
     val charges: ProviderChargeUsage = ProviderChargeUsage()
 ) {
-    val isComplete: Boolean get() = inputTokens != null && outputTokens != null && !invalidCounts &&
-        listOfNotNull(inputTokens, outputTokens, cachedInputTokens, cacheCreationInputTokens,
-            shortCacheCreationInputTokens, longCacheCreationInputTokens, reasoningTokens, uncachedInputTokens).all { it >= 0L } &&
+    val isComplete: Boolean get() = inputTokens != null &&
+        outputTokens != null &&
+        !invalidCounts &&
+        listOfNotNull(
+            inputTokens,
+            outputTokens,
+            cachedInputTokens,
+            cacheCreationInputTokens,
+            shortCacheCreationInputTokens,
+            longCacheCreationInputTokens,
+            reasoningTokens,
+            uncachedInputTokens
+        ).all { it >= 0L } &&
         (cachedInputTokens ?: 0L) <= inputTokens &&
         (cacheCreationInputTokens ?: 0L) <= inputTokens - (cachedInputTokens ?: 0L) &&
         (uncachedInputTokens == null || cachedInputTokens != null && cacheCreationInputTokens != null) &&
@@ -73,10 +83,14 @@ data class TokenPricing(
 ) {
     val hasAnyRate: Boolean get() = inputPerM != null || outputPerM != null || cacheReadPerM != null || cacheWritePerM != null || reasoningPerM != null || longCacheWritePerM != null
     fun withMissingFrom(other: TokenPricing): TokenPricing = TokenPricing(
-        inputPerM ?: other.inputPerM, outputPerM ?: other.outputPerM, cacheReadPerM ?: other.cacheReadPerM,
-        cacheWritePerM ?: other.cacheWritePerM, reasoningPerM ?: other.reasoningPerM,
+        inputPerM ?: other.inputPerM,
+        outputPerM ?: other.outputPerM,
+        cacheReadPerM ?: other.cacheReadPerM,
+        cacheWritePerM ?: other.cacheWritePerM,
+        reasoningPerM ?: other.reasoningPerM,
         longCacheWritePerM ?: other.longCacheWritePerM
     )
+
     /** Token-only estimate; no missing rate is interpreted as a free service. */
     fun estimate(metrics: TokenMetrics, shortWriteTokens: Long? = null, longWriteTokens: Long? = null): Double? {
         val input = metrics.inputTokens.coerceAtLeast(0L)
@@ -91,11 +105,15 @@ data class TokenPricing(
         val writeUnits = metrics.cacheCreationCostUnits.takeIf { it.isFinite() && it >= created.toDouble() }
             ?.coerceAtMost(created.toDouble() * 2.0) ?: created.toDouble()
         val shortWriteRate = cacheWritePerM ?: inputPerM?.times(1.25)
-        val writeCost = if (shortWriteTokens != null && longWriteTokens != null &&
-            shortWriteTokens >= 0 && longWriteTokens >= 0 && saturatingTokenSum(shortWriteTokens, longWriteTokens) == created) {
+        val writeCost = if (shortWriteTokens != null &&
+            longWriteTokens != null &&
+            shortWriteTokens >= 0 &&
+            longWriteTokens >= 0 &&
+            saturatingTokenSum(shortWriteTokens, longWriteTokens) == created
+        ) {
             val shortCost = cost(shortWriteTokens.toDouble(), shortWriteRate)
             val longCost = if (longCacheWritePerM != null) cost(longWriteTokens.toDouble(), longCacheWritePerM)
-                else cost((writeUnits - shortWriteTokens).coerceAtLeast(0.0), shortWriteRate)
+            else cost((writeUnits - shortWriteTokens).coerceAtLeast(0.0), shortWriteRate)
             if (shortCost != null && longCost != null) shortCost + longCost else null
         } else cost(writeUnits, shortWriteRate)
         val terms = listOf(
@@ -124,8 +142,10 @@ data class ProviderChargeUsage(
     val invalid: Boolean = false
 ) {
     fun updatedBy(next: ProviderChargeUsage) = ProviderChargeUsage(
-        next.reportedTotalUsd ?: reportedTotalUsd, units + next.units,
-        observedComponents + next.observedComponents, invalid || next.invalid
+        next.reportedTotalUsd ?: reportedTotalUsd,
+        units + next.units,
+        observedComponents + next.observedComponents,
+        invalid || next.invalid
     )
 }
 

@@ -17,14 +17,17 @@ internal object DesktopPlatformHost {
         if (!System.getProperty("org.gradle.test.worker").isNullOrBlank()) {
             val testDir = java.nio.file.Files.createTempDirectory("parchment-test-data-").toFile()
             val ownedPath = testDir.canonicalFile.toPath()
-            Runtime.getRuntime().addShutdownHook(Thread({
-                val temporaryRoot = File(System.getProperty("java.io.tmpdir")).canonicalFile.toPath()
-                if (testDir.canonicalFile.toPath() == ownedPath && ownedPath.startsWith(temporaryRoot) &&
-                    testDir.name.startsWith("parchment-test-data-")
-                ) {
-                    runCatching { AtomicFileStorage.deleteTree(ownedPath) }
-                }
-            }, "parchment-test-storage-cleanup"))
+            Runtime.getRuntime().addShutdownHook(
+                Thread({
+                    val temporaryRoot = File(System.getProperty("java.io.tmpdir")).canonicalFile.toPath()
+                    if (testDir.canonicalFile.toPath() == ownedPath &&
+                        ownedPath.startsWith(temporaryRoot) &&
+                        testDir.name.startsWith("parchment-test-data-")
+                    ) {
+                        runCatching { AtomicFileStorage.deleteTree(ownedPath) }
+                    }
+                }, "parchment-test-storage-cleanup")
+            )
             cachedStorageDir = testDir
             return testDir
         }

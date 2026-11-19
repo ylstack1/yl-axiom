@@ -17,19 +17,26 @@ import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
 import kotlin.test.Test
 import kotlin.test.assertEquals
-import kotlin.test.assertFalse
 import kotlin.test.assertFailsWith
+import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
 class ParchmentHydrationPersistenceTest {
     private fun full(id: String) = ChatSession(
-        id = id, title = "original", createdAt = 1L, updatedAt = 1L, profileId = "profile",
+        id = id,
+        title = "original",
+        createdAt = 1L,
+        updatedAt = 1L,
+        profileId = "profile",
         storySummary = "Complete continuity memory",
         authorsNote = "Keep the author note",
-        messages = listOf(MessageNode(
-            id = "message", role = MessageRole.ASSISTANT,
-            variants = listOf(MessageVariant(id = "variant", content = "complete content ".repeat(50)))
-        ))
+        messages = listOf(
+            MessageNode(
+                id = "message",
+                role = MessageRole.ASSISTANT,
+                variants = listOf(MessageVariant(id = "variant", content = "complete content ".repeat(50)))
+            )
+        )
     )
 
     @Test
@@ -39,6 +46,7 @@ class ParchmentHydrationPersistenceTest {
         val base = AppStateSnapshot().copy(activeSessionId = "no-such-chat-$stamp", sessions = emptyList())
         fun titleOf(state: AppStateSnapshot, id: String) = state.sessions.first { it.id == id }.title
         fun chatFile(id: String) = java.io.File(PlatformStorage.getChatsStorageDirectoryPath(), PlatformStorage.chatFolderName(id) + "/chat.json")
+
         /** Same length and modification time: only the index can tell the old content apart. */
         fun swapTitleKeepingStamp(id: String, from: String, to: String) {
             val file = chatFile(id)
@@ -204,12 +212,22 @@ class ParchmentHydrationPersistenceTest {
     @Test
     fun hydrationPreservesClearedMetadataAndDrafts() {
         val id = "test-cleared-metadata-" + PlatformRuntime.currentTimeMillis()
-        val original = full(id).copy(workspacePath = "previous-root", workspaceMode = WorkspaceMode.READ_WRITE,
-            modelOverride = "previous-model", systemPrompt = "previous instructions")
+        val original = full(id).copy(
+            workspacePath = "previous-root",
+            workspaceMode = WorkspaceMode.READ_WRITE,
+            modelOverride = "previous-model",
+            systemPrompt = "previous instructions"
+        )
         try {
             saveSingleChatSessionToDisk(original)
-            val edited = dehydrateChatSessionToCompactStub(original).copy(workspacePath = "", workspaceMode = WorkspaceMode.OFF,
-                modelOverride = "", systemPrompt = "", draftInput = "new draft", updatedAt = 2L)
+            val edited = dehydrateChatSessionToCompactStub(original).copy(
+                workspacePath = "",
+                workspaceMode = WorkspaceMode.OFF,
+                modelOverride = "",
+                systemPrompt = "",
+                draftInput = "new draft",
+                updatedAt = 2L
+            )
             val hydrated = hydrateSessionFromDiskIfNeeded(edited)
             assertEquals("", hydrated.workspacePath)
             assertEquals(WorkspaceMode.OFF, hydrated.workspaceMode)
@@ -258,10 +276,25 @@ class ParchmentHydrationPersistenceTest {
     @Test
     fun missingLocalAttachmentRetainsItsOnlyInlineCopy() {
         val original = full("missing-inline").let { session ->
-            session.copy(messages = session.messages.map { node -> node.copy(variants = node.variants.map { variant ->
-                variant.copy(attachments = listOf(PromptAttachment(id = "inline", fileName = "missing.png", mimeType = "image/png",
-                    localFilePath = "missing-file-${PlatformRuntime.currentTimeMillis()}.png", base64Data = "AAAA")))
-            }) })
+            session.copy(
+                messages = session.messages.map { node ->
+                    node.copy(
+                        variants = node.variants.map { variant ->
+                            variant.copy(
+                                attachments = listOf(
+                                    PromptAttachment(
+                                        id = "inline",
+                                        fileName = "missing.png",
+                                        mimeType = "image/png",
+                                        localFilePath = "missing-file-${PlatformRuntime.currentTimeMillis()}.png",
+                                        base64Data = "AAAA"
+                                    )
+                                )
+                            )
+                        }
+                    )
+                }
+            )
         }
         assertEquals("AAAA", stripRedundantAttachmentBase64(original).messages.single().activeVariant.attachments.single().base64Data)
     }
@@ -269,12 +302,27 @@ class ParchmentHydrationPersistenceTest {
     @Test
     fun exportHydratesFullHistoryAndPreservesPartialUsageForRecovery() {
         val id = "test-usage-export-" + PlatformRuntime.currentTimeMillis()
-        val record = io.parchment.ai.model.ApiUsageRecord("request", "response", "openai_responses", "fixture", "fixture-model",
-            usage = io.parchment.ai.model.ProviderTokenUsage(inputTokens = 0L, cachedInputTokens = 0L,
-                cacheCreationInputTokens = 0L, outputTokens = null, outputIncludesReasoning = true))
-        val original = full(id).let { session -> session.copy(messages = session.messages.map { node ->
-            node.copy(variants = node.variants.map { it.copy(apiUsageRecords = listOf(record)) })
-        }) }
+        val record = io.parchment.ai.model.ApiUsageRecord(
+            "request",
+            "response",
+            "openai_responses",
+            "fixture",
+            "fixture-model",
+            usage = io.parchment.ai.model.ProviderTokenUsage(
+                inputTokens = 0L,
+                cachedInputTokens = 0L,
+                cacheCreationInputTokens = 0L,
+                outputTokens = null,
+                outputIncludesReasoning = true
+            )
+        )
+        val original = full(id).let { session ->
+            session.copy(
+                messages = session.messages.map { node ->
+                    node.copy(variants = node.variants.map { it.copy(apiUsageRecords = listOf(record)) })
+                }
+            )
+        }
         try {
             saveSingleChatSessionToDisk(original)
             val exported = encodeChatSessionJsonForExport(dehydrateChatSessionToCompactStub(original)).decodeToString()
@@ -287,9 +335,20 @@ class ParchmentHydrationPersistenceTest {
             assertEquals(null, restored.usage.outputTokens)
             val profile = io.parchment.ai.model.ProviderProfile("fixture", "Fixture", io.parchment.ai.model.ProviderProtocol.OPENAI_RESPONSES)
             val ledger = io.parchment.ai.network.ProviderUsageLedger(profile, "fixture-model", listOf(restored))
-            ledger.update(null, "response", io.parchment.ai.network.UsageDialect.OPENAI_RESPONSES,
-                io.parchment.ai.model.ProviderTokenUsage(inputTokens = 100L, cachedInputTokens = 0L, cacheCreationInputTokens = 0L,
-                    reasoningTokens = 0L, outputTokens = 5L, outputIncludesReasoning = true, isFinal = true))
+            ledger.update(
+                null,
+                "response",
+                io.parchment.ai.network.UsageDialect.OPENAI_RESPONSES,
+                io.parchment.ai.model.ProviderTokenUsage(
+                    inputTokens = 100L,
+                    cachedInputTokens = 0L,
+                    cacheCreationInputTokens = 0L,
+                    reasoningTokens = 0L,
+                    outputTokens = 5L,
+                    outputIncludesReasoning = true,
+                    isFinal = true
+                )
+            )
             assertEquals(1, ledger.metrics().reportedRequests)
             assertEquals(100L, ledger.metrics().inputTokens)
             assertEquals(5L, ledger.metrics().outputTokens)

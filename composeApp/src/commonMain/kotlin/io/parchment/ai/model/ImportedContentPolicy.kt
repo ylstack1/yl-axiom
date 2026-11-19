@@ -28,19 +28,21 @@ fun portableImportedMediaPath(rawPath: String): String {
 
 internal fun ChatSession.withPortableImportedMedia(): ChatSession = copy(
     messages = messages.map { node ->
-        node.copy(variants = node.variants.map { variant ->
-            variant.copy(
-                attachments = variant.attachments.map {
-                    it.copy(localFilePath = portableImportedMediaPath(it.localFilePath))
-                },
-                mediaItems = variant.mediaItems.map {
-                    it.copy(
-                        localFilePath = portableImportedMediaPath(it.localFilePath),
-                        remoteUrl = it.remoteUrl.takeIf(::isWebLink).orEmpty()
-                    )
-                }
-            )
-        })
+        node.copy(
+            variants = node.variants.map { variant ->
+                variant.copy(
+                    attachments = variant.attachments.map {
+                        it.copy(localFilePath = portableImportedMediaPath(it.localFilePath))
+                    },
+                    mediaItems = variant.mediaItems.map {
+                        it.copy(
+                            localFilePath = portableImportedMediaPath(it.localFilePath),
+                            remoteUrl = it.remoteUrl.takeIf(::isWebLink).orEmpty()
+                        )
+                    }
+                )
+            }
+        )
     }
 )
 

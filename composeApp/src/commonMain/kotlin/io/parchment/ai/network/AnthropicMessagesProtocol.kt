@@ -1,7 +1,5 @@
 package io.parchment.ai.network
 
-import io.parchment.ai.strings.Strings
-
 import io.ktor.client.request.get
 import io.ktor.client.request.header
 import io.ktor.client.request.preparePost
@@ -14,7 +12,6 @@ import io.ktor.http.isSuccess
 import io.ktor.serialization.kotlinx.json.json
 import io.parchment.ai.harness.ToolAccessScope
 import io.parchment.ai.harness.WorkspaceHarness
-import io.parchment.ai.model.turnTextLayout
 import io.parchment.ai.model.AgentPermissionResolver
 import io.parchment.ai.model.ChatSession
 import io.parchment.ai.model.GoalTrackerState
@@ -23,8 +20,10 @@ import io.parchment.ai.model.MessageRole
 import io.parchment.ai.model.ProviderProfile
 import io.parchment.ai.model.ToolApprovalMode
 import io.parchment.ai.model.ToolCallRecord
+import io.parchment.ai.model.turnTextLayout
 import io.parchment.ai.network.AiProviderEngine.RawWebCitation
 import io.parchment.ai.network.AiProviderEngine.StepRetriesExhaustedException
+import io.parchment.ai.strings.Strings
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
@@ -135,10 +134,11 @@ internal suspend fun AiProviderEngine.executeAnthropicMessagesLoop(
             val lowerEffort = effort.lowercase()
             val thinkBudget = profile.thinkingBudgetTokens ?: 0
             val isThinkingRequested = lowerEffort != "none" && lowerEffort != "off" && thinkingModeOverride != "omit"
-            val useBudgetMode = isThinkingRequested && (
-                thinkingModeOverride == "budget" ||
-                    (thinkingModeOverride == "auto" && thinkBudget >= 1024)
-                )
+            val useBudgetMode = isThinkingRequested &&
+                (
+                    thinkingModeOverride == "budget" ||
+                        (thinkingModeOverride == "auto" && thinkBudget >= 1024)
+                    )
             val useAdaptiveMode = isThinkingRequested && !useBudgetMode
             val payloadObj = buildJsonObject {
                 put("model", model)
@@ -191,13 +191,15 @@ internal suspend fun AiProviderEngine.executeAnthropicMessagesLoop(
                 // System prompt with automatic ephemeral prompt caching breakpoint
                 if (systemInstruction.isNotBlank()) {
                     putJsonArray("system") {
-                        add(buildJsonObject {
-                            put("type", "text")
-                            put("text", systemInstruction)
-                            putJsonObject("cache_control") {
-                                put("type", "ephemeral")
+                        add(
+                            buildJsonObject {
+                                put("type", "text")
+                                put("text", systemInstruction)
+                                putJsonObject("cache_control") {
+                                    put("type", "ephemeral")
+                                }
                             }
-                        })
+                        )
                     }
                 }
 
@@ -214,11 +216,13 @@ internal suspend fun AiProviderEngine.executeAnthropicMessagesLoop(
                 )
                 val allAnthropicTools = buildJsonArray {
                     if (profile.enableWebSearch && !omitNativeWebSearchOnRetry) {
-                        add(buildJsonObject {
-                            put("type", "web_search_20250305")
-                            put("name", "web_search")
-                            put("max_uses", 5)
-                        })
+                        add(
+                            buildJsonObject {
+                                put("type", "web_search_20250305")
+                                put("name", "web_search")
+                                put("max_uses", 5)
+                            }
+                        )
                     }
                     wsTools.forEach { add(it) }
                 }
@@ -234,23 +238,25 @@ internal suspend fun AiProviderEngine.executeAnthropicMessagesLoop(
                     val lastMsgIdx = coalescedBaseMessages.size - 1
                     for ((msgIdx, msgPair) in coalescedBaseMessages.withIndex()) {
                         val (roleStr, blocks) = msgPair
-                        add(buildJsonObject {
-                            put("role", roleStr)
-                            putJsonArray("content") {
-                                val lastBlockIdx = blocks.size - 1
-                                for ((bIdx, bObj) in blocks.withIndex()) {
-                                    val blockType = bObj["type"]?.jsonPrimitive?.contentOrNull
-                                    val canAttachCache = blockType != "thinking" && blockType != "redacted_thinking"
-                                    if (msgIdx == lastMsgIdx && bIdx == lastBlockIdx && extraLoopMessages.isEmpty() && canAttachCache) {
-                                        val withCache = bObj.toMutableMap()
-                                        withCache["cache_control"] = buildJsonObject { put("type", "ephemeral") }
-                                        add(JsonObject(withCache))
-                                    } else {
-                                        add(bObj)
+                        add(
+                            buildJsonObject {
+                                put("role", roleStr)
+                                putJsonArray("content") {
+                                    val lastBlockIdx = blocks.size - 1
+                                    for ((bIdx, bObj) in blocks.withIndex()) {
+                                        val blockType = bObj["type"]?.jsonPrimitive?.contentOrNull
+                                        val canAttachCache = blockType != "thinking" && blockType != "redacted_thinking"
+                                        if (msgIdx == lastMsgIdx && bIdx == lastBlockIdx && extraLoopMessages.isEmpty() && canAttachCache) {
+                                            val withCache = bObj.toMutableMap()
+                                            withCache["cache_control"] = buildJsonObject { put("type", "ephemeral") }
+                                            add(JsonObject(withCache))
+                                        } else {
+                                            add(bObj)
+                                        }
                                     }
                                 }
                             }
-                        })
+                        )
                     }
                     val compactedAnthropicExtras = compactAnthropicExtraMessages(extraLoopMessages)
                     if (compactedAnthropicExtras !== extraLoopMessages) {
@@ -294,7 +300,6 @@ internal suspend fun AiProviderEngine.executeAnthropicMessagesLoop(
                         throw providerHttpError("Anthropic Messages", response, err)
                     }
 
-
                     var msgId = ""
 
                     var streamFinished = false
@@ -312,15 +317,23 @@ internal suspend fun AiProviderEngine.executeAnthropicMessagesLoop(
                                     msgId = msgObj?.get("id")?.jsonPrimitive?.contentOrNull ?: ""
                                     val usage = msgObj?.get("usage") as? JsonObject
                                     if (usage != null) {
-                                        onUsage(usageRequestId, msgId, UsageDialect.ANTHROPIC,
-                                            parseProviderUsage(UsageDialect.ANTHROPIC, usage))
+                                        onUsage(
+                                            usageRequestId,
+                                            msgId,
+                                            UsageDialect.ANTHROPIC,
+                                            parseProviderUsage(UsageDialect.ANTHROPIC, usage)
+                                        )
                                     }
                                 }
                                 "content_block_start" -> {
                                     val idx = evObj["index"]?.jsonPrimitive?.intOrNull ?: streamBlocksByIndex.size
                                     val cb = evObj["content_block"] as? JsonObject
-                                    onUsage(usageRequestId, msgId, UsageDialect.ANTHROPIC,
-                                        parseProviderUsage(UsageDialect.ANTHROPIC, null, response = evObj))
+                                    onUsage(
+                                        usageRequestId,
+                                        msgId,
+                                        UsageDialect.ANTHROPIC,
+                                        parseProviderUsage(UsageDialect.ANTHROPIC, null, response = evObj)
+                                    )
                                     when (cb?.get("type")?.jsonPrimitive?.contentOrNull) {
                                         "thinking" -> {
                                             val initThink = cb["thinking"]?.jsonPrimitive?.contentOrNull ?: ""
@@ -421,8 +434,12 @@ internal suspend fun AiProviderEngine.executeAnthropicMessagesLoop(
                                 }
                                 "message_stop" -> {
                                     streamFinished = true
-                                    onUsage(usageRequestId, msgId, UsageDialect.ANTHROPIC,
-                                        parseProviderUsage(UsageDialect.ANTHROPIC, null, isFinal = true))
+                                    onUsage(
+                                        usageRequestId,
+                                        msgId,
+                                        UsageDialect.ANTHROPIC,
+                                        parseProviderUsage(UsageDialect.ANTHROPIC, null, isFinal = true)
+                                    )
                                 }
                                 "message_delta" -> {
                                     val stopReason = ((evObj["delta"] as? JsonObject)?.get("stop_reason") as? JsonPrimitive)?.contentOrNull
@@ -431,8 +448,12 @@ internal suspend fun AiProviderEngine.executeAnthropicMessagesLoop(
                                     if (stopReason == "pause_turn") turnPaused = true
                                     val usage = evObj["usage"] as? JsonObject
                                     if (usage != null || !stopReason.isNullOrBlank()) {
-                                        onUsage(usageRequestId, msgId, UsageDialect.ANTHROPIC,
-                                            parseProviderUsage(UsageDialect.ANTHROPIC, usage, isFinal = !stopReason.isNullOrBlank()))
+                                        onUsage(
+                                            usageRequestId,
+                                            msgId,
+                                            UsageDialect.ANTHROPIC,
+                                            parseProviderUsage(UsageDialect.ANTHROPIC, usage, isFinal = !stopReason.isNullOrBlank())
+                                        )
                                     }
                                 }
                                 "error" -> {
@@ -455,8 +476,12 @@ internal suspend fun AiProviderEngine.executeAnthropicMessagesLoop(
                             val id = (root["id"] as? JsonPrimitive)?.contentOrNull ?: ""
                             val usage = root["usage"] as? JsonObject
                             if (usage != null) {
-                                onUsage(usageRequestId, id, UsageDialect.ANTHROPIC,
-                                    parseProviderUsage(UsageDialect.ANTHROPIC, usage, isFinal = true, response = root))
+                                onUsage(
+                                    usageRequestId,
+                                    id,
+                                    UsageDialect.ANTHROPIC,
+                                    parseProviderUsage(UsageDialect.ANTHROPIC, usage, isFinal = true, response = root)
+                                )
                             }
                             val contentArr = root["content"] as? JsonArray
                             contentArr?.forEachIndexed { idx, el ->
@@ -520,7 +545,8 @@ internal suspend fun AiProviderEngine.executeAnthropicMessagesLoop(
                         onStatus(Strings.endpointRejectedSamplingParametersRetryingWith)
                         continue
                     }
-                    if (!omitNativeWebSearchOnRetry && profile.enableWebSearch &&
+                    if (!omitNativeWebSearchOnRetry &&
+                        profile.enableWebSearch &&
                         (errMsg.contains("web_search_20250305") || errMsg.contains("web_search"))
                     ) {
                         omitNativeWebSearchOnRetry = true
@@ -532,9 +558,15 @@ internal suspend fun AiProviderEngine.executeAnthropicMessagesLoop(
                         onStatus(Strings.endpointRejectedAdaptiveDisplayRetryingWithout)
                         continue
                     }
-                    if (useAdaptiveMode && (errMsg.contains("effort") || errMsg.contains("output_config") ||
-                            errMsg.contains("max") || errMsg.contains("xhigh") ||
-                            errMsg.contains("unsupported_value") || errMsg.contains("invalid_value"))
+                    if (useAdaptiveMode &&
+                        (
+                            errMsg.contains("effort") ||
+                                errMsg.contains("output_config") ||
+                                errMsg.contains("max") ||
+                                errMsg.contains("xhigh") ||
+                                errMsg.contains("unsupported_value") ||
+                                errMsg.contains("invalid_value")
+                            )
                     ) {
                         val currentEffort = adaptiveEffortOverride ?: when (lowerEffort) {
                             "minimal" -> "low"
@@ -547,7 +579,9 @@ internal suspend fun AiProviderEngine.executeAnthropicMessagesLoop(
                             continue
                         }
                     }
-                    if (useAdaptiveMode && !triedBudgetThinking && thinkingModeOverride != "budget" &&
+                    if (useAdaptiveMode &&
+                        !triedBudgetThinking &&
+                        thinkingModeOverride != "budget" &&
                         (errMsg.contains("adaptive") || errMsg.contains("output_config") || errMsg.contains("effort") || errMsg.contains("display"))
                     ) {
                         triedAdaptiveThinking = true
@@ -555,7 +589,9 @@ internal suspend fun AiProviderEngine.executeAnthropicMessagesLoop(
                         onStatus(Strings.endpointDoesNotSupportAdaptiveThinking)
                         continue
                     }
-                    if (useBudgetMode && !triedAdaptiveThinking && thinkingModeOverride != "adaptive" &&
+                    if (useBudgetMode &&
+                        !triedAdaptiveThinking &&
+                        thinkingModeOverride != "adaptive" &&
                         (errMsg.contains("budget_tokens") || errMsg.contains("enabled") || errMsg.contains("thinking"))
                     ) {
                         triedBudgetThinking = true
@@ -570,9 +606,15 @@ internal suspend fun AiProviderEngine.executeAnthropicMessagesLoop(
                         onStatus(Strings.endpointRejectedThinkingConfigurationRetryingWith)
                         continue
                     }
-                    if (!foldHistoricalToolsOnRetry && hasHistoricalToolsOrSigs &&
-                        (errMsg.contains("signature") || errMsg.contains("thinking") || errMsg.contains("tool_use") ||
-                            errMsg.contains("tool_result") || errMsg.contains("invalid_request"))
+                    if (!foldHistoricalToolsOnRetry &&
+                        hasHistoricalToolsOrSigs &&
+                        (
+                            errMsg.contains("signature") ||
+                                errMsg.contains("thinking") ||
+                                errMsg.contains("tool_use") ||
+                                errMsg.contains("tool_result") ||
+                                errMsg.contains("invalid_request")
+                            )
                     ) {
                         foldHistoricalToolsOnRetry = true
                         onStatus(Strings.endpointRejectedHistoricalThinkingToolBlocks)
@@ -606,32 +648,40 @@ internal suspend fun AiProviderEngine.executeAnthropicMessagesLoop(
             when (block) {
                 is AnthropicStreamBlock.Thinking -> {
                     if (block.signature.isNotEmpty()) {
-                        assistantContentBlocksForToolLoop.add(buildJsonObject {
-                            put("type", "thinking")
-                            put("thinking", block.thinking.toString())
-                            put("signature", block.signature.toString())
-                        })
+                        assistantContentBlocksForToolLoop.add(
+                            buildJsonObject {
+                                put("type", "thinking")
+                                put("thinking", block.thinking.toString())
+                                put("signature", block.signature.toString())
+                            }
+                        )
                     }
                 }
                 is AnthropicStreamBlock.RedactedThinking -> {
                     if (block.data.isNotEmpty()) {
-                        assistantContentBlocksForToolLoop.add(buildJsonObject {
-                            put("type", "redacted_thinking")
-                            put("data", block.data)
-                        })
+                        assistantContentBlocksForToolLoop.add(
+                            buildJsonObject {
+                                put("type", "redacted_thinking")
+                                put("data", block.data)
+                            }
+                        )
                     }
                 }
                 is AnthropicStreamBlock.ServerBlock -> {
-                    assistantContentBlocksForToolLoop.add(block.resolved { raw ->
-                        runCatching { json.parseToJsonElement(raw).jsonObject }.getOrNull()
-                    })
+                    assistantContentBlocksForToolLoop.add(
+                        block.resolved { raw ->
+                            runCatching { json.parseToJsonElement(raw).jsonObject }.getOrNull()
+                        }
+                    )
                 }
                 is AnthropicStreamBlock.Text -> {
                     if (block.text.isNotEmpty()) {
-                        assistantContentBlocksForToolLoop.add(buildJsonObject {
-                            put("type", "text")
-                            put("text", block.text.toString())
-                        })
+                        assistantContentBlocksForToolLoop.add(
+                            buildJsonObject {
+                                put("type", "text")
+                                put("text", block.text.toString())
+                            }
+                        )
                     }
                 }
                 is AnthropicStreamBlock.ToolUse -> {
@@ -640,12 +690,14 @@ internal suspend fun AiProviderEngine.executeAnthropicMessagesLoop(
                         turnToolCalls.add(block.id to (block.name to argsStr))
                         val parsedArgs = runCatching { json.parseToJsonElement(argsStr).jsonObject }
                             .getOrElse { JsonObject(emptyMap()) }
-                        assistantContentBlocksForToolLoop.add(buildJsonObject {
-                            put("type", "tool_use")
-                            put("id", block.id)
-                            put("name", block.name)
-                            put("input", parsedArgs)
-                        })
+                        assistantContentBlocksForToolLoop.add(
+                            buildJsonObject {
+                                put("type", "tool_use")
+                                put("id", block.id)
+                                put("name", block.name)
+                                put("input", parsedArgs)
+                            }
+                        )
                     }
                 }
             }
@@ -661,10 +713,12 @@ internal suspend fun AiProviderEngine.executeAnthropicMessagesLoop(
                     put("content", JsonArray(prevBlocks + blocks))
                 }
             } else {
-                extraLoopMessages.add(buildJsonObject {
-                    put("role", "assistant")
-                    put("content", JsonArray(blocks))
-                })
+                extraLoopMessages.add(
+                    buildJsonObject {
+                        put("role", "assistant")
+                        put("content", JsonArray(blocks))
+                    }
+                )
             }
         }
 
@@ -678,15 +732,19 @@ internal suspend fun AiProviderEngine.executeAnthropicMessagesLoop(
             val stopHookPrompt = circuitBreaker.evaluateStopHookPrompt()
             if (stopHookPrompt != null) {
                 appendAssistantExtraBlocks(assistantContentBlocksForToolLoop)
-                extraLoopMessages.add(buildJsonObject {
-                    put("role", "user")
-                    putJsonArray("content") {
-                        add(buildJsonObject {
-                            put("type", "text")
-                            put("text", stopHookPrompt)
-                        })
+                extraLoopMessages.add(
+                    buildJsonObject {
+                        put("role", "user")
+                        putJsonArray("content") {
+                            add(
+                                buildJsonObject {
+                                    put("type", "text")
+                                    put("text", stopHookPrompt)
+                                }
+                            )
+                        }
                     }
-                })
+                )
                 onStatus(Strings.goalWorkCheckContinuingIncompleteChecklist)
                 continue
             }
@@ -727,10 +785,12 @@ internal suspend fun AiProviderEngine.executeAnthropicMessagesLoop(
             }
         }
 
-        extraLoopMessages.add(buildJsonObject {
-            put("role", "user")
-            put("content", JsonArray(toolResultBlocks))
-        })
+        extraLoopMessages.add(
+            buildJsonObject {
+                put("role", "user")
+                put("content", JsonArray(toolResultBlocks))
+            }
+        )
         val trippedReason = circuitBreaker.checkTripped()
         if (trippedReason != null) {
             onStatus(trippedReason)
@@ -783,7 +843,8 @@ internal fun AiProviderEngine.buildAnthropicBaseMessages(
             val prevBlocks = last.second
             val lastPrev = prevBlocks.lastOrNull()
             val firstNew = newBlocks.firstOrNull()
-            if (lastPrev != null && firstNew != null &&
+            if (lastPrev != null &&
+                firstNew != null &&
                 lastPrev["type"]?.jsonPrimitive?.contentOrNull == "text" &&
                 firstNew["type"]?.jsonPrimitive?.contentOrNull == "text"
             ) {
@@ -846,27 +907,33 @@ internal fun AiProviderEngine.buildAnthropicBaseMessages(
                         batchSig.isNotBlank() &&
                         isValidAnthropicSignature(batchSig, nodeVar?.providerProtocol, nodeVar?.modelUsed.orEmpty(), currentModel)
                     ) {
-                        assistantToolBlocks.add(buildJsonObject {
-                            put("type", "thinking")
-                            put("thinking", batchThinking)
-                            put("signature", batchSig)
-                        })
+                        assistantToolBlocks.add(
+                            buildJsonObject {
+                                put("type", "thinking")
+                                put("thinking", batchThinking)
+                                put("signature", batchSig)
+                            }
+                        )
                     }
                     if (batch.precedingText.isNotBlank()) {
-                        assistantToolBlocks.add(buildJsonObject {
-                            put("type", "text")
-                            put("text", batch.precedingText.trimEnd())
-                        })
+                        assistantToolBlocks.add(
+                            buildJsonObject {
+                                put("type", "text")
+                                put("text", batch.precedingText.trimEnd())
+                            }
+                        )
                     }
                     for ((tc, callId) in batch.calls.zip(callIds)) {
                         val parsedArgs = runCatching { json.parseToJsonElement(tc.argumentsJson.ifBlank { "{}" }).jsonObject }
                             .getOrElse { JsonObject(emptyMap()) }
-                        assistantToolBlocks.add(buildJsonObject {
-                            put("type", "tool_use")
-                            put("id", callId)
-                            put("name", tc.name)
-                            put("input", parsedArgs)
-                        })
+                        assistantToolBlocks.add(
+                            buildJsonObject {
+                                put("type", "tool_use")
+                                put("id", callId)
+                                put("name", tc.name)
+                                put("input", parsedArgs)
+                            }
+                        )
                     }
                     appendRoleBlocks("assistant", assistantToolBlocks)
 
@@ -905,21 +972,25 @@ internal fun AiProviderEngine.buildAnthropicBaseMessages(
                     thinkSig.isNotBlank() &&
                     isValidAnthropicSignature(thinkSig, nodeVar?.providerProtocol, nodeVar?.modelUsed.orEmpty(), currentModel)
                 ) {
-                    assistantBlocks.add(buildJsonObject {
-                        put("type", "thinking")
-                        put("thinking", thinkSummary)
-                        put("signature", thinkSig)
-                    })
+                    assistantBlocks.add(
+                        buildJsonObject {
+                            put("type", "thinking")
+                            put("thinking", thinkSummary)
+                            put("signature", thinkSig)
+                        }
+                    )
                 }
                 val resolvedText = when {
                     cleanText.isNotBlank() -> cleanText
                     thinkSig.isBlank() && thinkSummary.isNotBlank() -> "[Interrupted during thinking — partial thoughts:\n$thinkSummary]"
                     else -> "..."
                 }
-                assistantBlocks.add(buildJsonObject {
-                    put("type", "text")
-                    put("text", resolvedText)
-                })
+                assistantBlocks.add(
+                    buildJsonObject {
+                        put("type", "text")
+                        put("text", resolvedText)
+                    }
+                )
                 appendRoleBlocks("assistant", assistantBlocks)
             }
         } else {
@@ -927,26 +998,32 @@ internal fun AiProviderEngine.buildAnthropicBaseMessages(
             for (att in binaryAttachments) {
                 val m = att.mimeType.lowercase()
                 if (m != "application/pdf" && m !in ANTHROPIC_IMAGE_TYPES) {
-                    userBlocks.add(buildJsonObject {
-                        put("type", "text")
-                        put("text", att.unsupportedAttachmentNote())
-                    })
+                    userBlocks.add(
+                        buildJsonObject {
+                            put("type", "text")
+                            put("text", att.unsupportedAttachmentNote())
+                        }
+                    )
                     continue
                 }
                 val blockType = if (m == "application/pdf") "document" else "image"
-                userBlocks.add(buildJsonObject {
-                    put("type", blockType)
-                    putJsonObject("source") {
-                        put("type", "base64")
-                        put("media_type", att.mimeType)
-                        put("data", att.base64Data)
+                userBlocks.add(
+                    buildJsonObject {
+                        put("type", blockType)
+                        putJsonObject("source") {
+                            put("type", "base64")
+                            put("media_type", att.mimeType)
+                            put("data", att.base64Data)
+                        }
                     }
-                })
+                )
             }
-            userBlocks.add(buildJsonObject {
-                put("type", "text")
-                put("text", text.ifBlank { " " })
-            })
+            userBlocks.add(
+                buildJsonObject {
+                    put("type", "text")
+                    put("text", text.ifBlank { " " })
+                }
+            )
             appendRoleBlocks("user", userBlocks)
         }
     }
@@ -995,21 +1072,25 @@ private fun AiProviderEngine.compactAnthropicExtraMessages(messages: List<JsonOb
                         val contentEl = bObj["content"]
                         val compactedEl: JsonElement? = when (contentEl) {
                             is JsonPrimitive -> JsonPrimitive(WorkspaceHarness.compactStaleToolOutputText(idx, total, "tool", contentEl.content))
-                            is JsonArray -> JsonArray(contentEl.map { inner ->
-                                val innerObj = inner as? JsonObject
-                                val innerTxt = (innerObj?.get("text") as? JsonPrimitive)?.contentOrNull
-                                if (innerObj != null && (innerObj["type"] as? JsonPrimitive)?.contentOrNull == "text" && innerTxt != null) {
-                                    JsonObject(innerObj + ("text" to JsonPrimitive(WorkspaceHarness.compactStaleToolOutputText(idx, total, "tool", innerTxt))))
-                                } else inner
-                            })
+                            is JsonArray -> JsonArray(
+                                contentEl.map { inner ->
+                                    val innerObj = inner as? JsonObject
+                                    val innerTxt = (innerObj?.get("text") as? JsonPrimitive)?.contentOrNull
+                                    if (innerObj != null && (innerObj["type"] as? JsonPrimitive)?.contentOrNull == "text" && innerTxt != null) {
+                                        JsonObject(innerObj + ("text" to JsonPrimitive(WorkspaceHarness.compactStaleToolOutputText(idx, total, "tool", innerTxt))))
+                                    } else inner
+                                }
+                            )
                             else -> null
                         }
                         if (compactedEl != null) {
-                            add(buildJsonObject {
-                                for ((k, v) in bObj) {
-                                    if (k == "content") put("content", compactedEl) else put(k, v)
+                            add(
+                                buildJsonObject {
+                                    for ((k, v) in bObj) {
+                                        if (k == "content") put("content", compactedEl) else put(k, v)
+                                    }
                                 }
-                            })
+                            )
                         } else {
                             add(el)
                         }

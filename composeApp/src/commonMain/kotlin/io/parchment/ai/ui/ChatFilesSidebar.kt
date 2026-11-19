@@ -1,7 +1,6 @@
 package io.parchment.ai.ui
 
 import androidx.compose.foundation.background
-import io.parchment.ai.strings.Strings
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -36,18 +35,19 @@ import io.parchment.ai.model.MediaKind
 import io.parchment.ai.model.MessageRole
 import io.parchment.ai.model.PromptAttachment
 import io.parchment.ai.model.WebSourceCitation
+import io.parchment.ai.platform.PlatformStorage
+import io.parchment.ai.platform.PlatformWorkspace
+import io.parchment.ai.strings.Strings
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.IO
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
-import io.parchment.ai.platform.PlatformStorage
-import io.parchment.ai.platform.PlatformWorkspace
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.IO
-import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
 
 // ============================================================================================
 // Right sidebar: the chat's files, generated media and sources (`ParchmentRightFilesSidebar`).
@@ -106,8 +106,7 @@ private val rightVaultJson = Json {
 private val VAULT_CODE_FENCE_REGEX = Regex("```([a-zA-Z0-9_+-]*)\\n([\\s\\S]*?)```")
 private val VAULT_LINE_NUMBER_STRIP_REGEX = Regex("^\\d+:\\s?")
 
-internal fun stripWorkspaceReadLineNumbers(rawRead: String): String =
-    rawRead.lines().drop(1).joinToString("\n") { it.replaceFirst(VAULT_LINE_NUMBER_STRIP_REGEX, "") }
+internal fun stripWorkspaceReadLineNumbers(rawRead: String): String = rawRead.lines().drop(1).joinToString("\n") { it.replaceFirst(VAULT_LINE_NUMBER_STRIP_REGEX, "") }
 
 /**
  * Counts the chat's files for the top bar badge without parsing or building lists; the full
@@ -654,8 +653,11 @@ internal fun ParchmentRightFilesSidebar(
                         val att = entry.attachment
                         val mime = att.mimeType.lowercase()
                         val lowerName = att.fileName.lowercase()
-                        val isImg = mime.startsWith("image/") || lowerName.endsWith(".png") ||
-                            lowerName.endsWith(".jpg") || lowerName.endsWith(".jpeg") || lowerName.endsWith(".webp")
+                        val isImg = mime.startsWith("image/") ||
+                            lowerName.endsWith(".png") ||
+                            lowerName.endsWith(".jpg") ||
+                            lowerName.endsWith(".jpeg") ||
+                            lowerName.endsWith(".webp")
                         val isPdf = mime == "application/pdf" || lowerName.endsWith(".pdf")
                         val isVid = mime.startsWith("video/") || lowerName.endsWith(".mp4")
                         val isAud = mime.startsWith("audio/") || lowerName.endsWith(".mp3") || lowerName.endsWith(".wav")
@@ -859,4 +861,3 @@ internal fun ParchmentRightFilesSidebar(
         }
     }
 }
-

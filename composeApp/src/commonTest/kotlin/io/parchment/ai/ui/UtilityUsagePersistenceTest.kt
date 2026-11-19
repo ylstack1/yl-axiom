@@ -2,16 +2,32 @@ package io.parchment.ai.ui
 
 import io.parchment.ai.model.*
 import io.parchment.ai.network.aggregateApiUsageRecords
-import kotlinx.serialization.json.Json
 import io.parchment.ai.platform.PlatformRuntime
 import io.parchment.ai.platform.PlatformStorage
+import kotlinx.serialization.json.Json
 import kotlin.test.*
 
 class UtilityUsagePersistenceTest {
-    private val usage = ProviderTokenUsage(inputTokens = 10, cachedInputTokens = 0, cacheCreationInputTokens = 0,
-        shortCacheCreationInputTokens = 0, longCacheCreationInputTokens = 0, outputTokens = 20, reasoningTokens = 0, isFinal = true)
-    private val record = ApiUsageRecord("request", wireDialect = "openai_responses", profileId = "profile", model = "model",
-        usage = usage, ownerSessionId = "chat", ownerRunId = "run", purpose = "translation")
+    private val usage = ProviderTokenUsage(
+        inputTokens = 10,
+        cachedInputTokens = 0,
+        cacheCreationInputTokens = 0,
+        shortCacheCreationInputTokens = 0,
+        longCacheCreationInputTokens = 0,
+        outputTokens = 20,
+        reasoningTokens = 0,
+        isFinal = true
+    )
+    private val record = ApiUsageRecord(
+        "request",
+        wireDialect = "openai_responses",
+        profileId = "profile",
+        model = "model",
+        usage = usage,
+        ownerSessionId = "chat",
+        ownerRunId = "run",
+        purpose = "translation"
+    )
     private val chat = ChatSession("chat", "Chat", 1, 1, "profile")
 
     @Test fun cumulativeUpdatesReplaceOneRequestWithoutDoubleCounting() {
@@ -40,8 +56,13 @@ class UtilityUsagePersistenceTest {
     @Test fun diskHydrationAndMetadataEditsPreserveUtilityRequests() {
         val id = "test-utility-hydration-${PlatformRuntime.currentTimeMillis()}"
         val owned = record.copy(ownerSessionId = id)
-        val full = chat.copy(id = id, utilityUsageRecords = listOf(owned), messages = listOf(
-            MessageNode("message", MessageRole.ASSISTANT, variants = listOf(MessageVariant("variant", "Full history ".repeat(40))))))
+        val full = chat.copy(
+            id = id,
+            utilityUsageRecords = listOf(owned),
+            messages = listOf(
+                MessageNode("message", MessageRole.ASSISTANT, variants = listOf(MessageVariant("variant", "Full history ".repeat(40))))
+            )
+        )
         try {
             saveSingleChatSessionToDisk(full)
             val stub = dehydrateChatSessionToCompactStub(full).copy(title = "Renamed")

@@ -1,7 +1,5 @@
 package io.parchment.ai.network
 
-import io.parchment.ai.strings.Strings
-
 import io.ktor.client.request.get
 import io.ktor.client.request.post
 import io.ktor.client.request.prepareGet
@@ -28,7 +26,7 @@ import io.parchment.ai.platform.MAX_INLINE_ATTACHMENT_BYTES
 import io.parchment.ai.platform.PlatformRuntime
 import io.parchment.ai.platform.PlatformStorage
 import io.parchment.ai.platform.PlatformWorkspace
-import kotlin.io.encoding.Base64
+import io.parchment.ai.strings.Strings
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.currentCoroutineContext
@@ -46,6 +44,7 @@ import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.put
 import kotlinx.serialization.json.putJsonArray
 import kotlinx.serialization.json.putJsonObject
+import kotlin.io.encoding.Base64
 
 // Generated images, video and speech, and binary attachments sent to providers.
 
@@ -222,10 +221,12 @@ internal suspend fun AiProviderEngine.executeByteDanceArkGeneration(
         val arkPayloadObj = buildJsonObject {
             put("model", model)
             putJsonArray("content") {
-                add(buildJsonObject {
-                    put("type", "text")
-                    put("text", latestUserPrompt)
-                })
+                add(
+                    buildJsonObject {
+                        put("type", "text")
+                        put("text", latestUserPrompt)
+                    }
+                )
                 for ((imgIdx, img) in refImages.withIndex()) {
                     val imgRole = when {
                         refImages.size == 1 -> "first_frame"
@@ -233,13 +234,15 @@ internal suspend fun AiProviderEngine.executeByteDanceArkGeneration(
                         refImages.size == 2 && imgIdx == 1 -> "last_frame"
                         else -> "reference_image"
                     }
-                    add(buildJsonObject {
-                        put("type", "image_url")
-                        putJsonObject("image_url") {
-                            put("url", "data:${img.mimeType};base64,${img.base64Data}")
+                    add(
+                        buildJsonObject {
+                            put("type", "image_url")
+                            putJsonObject("image_url") {
+                                put("url", "data:${img.mimeType};base64,${img.base64Data}")
+                            }
+                            put("role", imgRole)
                         }
-                        put("role", imgRole)
-                    })
+                    )
                 }
             }
             if (profile.mediaAspectRatio.isNotBlank()) {
@@ -458,7 +461,8 @@ internal suspend fun AiProviderEngine.executeByteDanceArkGeneration(
                 } catch (e: Throwable) {
                     if (++failedPolls >= MAX_VIDEO_POLL_FAILURES) {
                         throw AiProviderEngine.AcceptedJobException(
-                            "Video task $taskId was accepted, but its status could not be read, so it was not submitted again. ${e.message.orEmpty()}", e
+                            "Video task $taskId was accepted, but its status could not be read, so it was not submitted again. ${e.message.orEmpty()}",
+                            e
                         )
                     }
                     onStatus(Strings.videoStatusCheckFailedTryingAgain(failedPolls, MAX_VIDEO_POLL_FAILURES), taskRef)
@@ -591,7 +595,7 @@ internal suspend fun AiProviderEngine.executeByteDanceArkGeneration(
             for ((pIdx, candPayload) in candidatePayloads.withIndex()) {
                 val finalPayload = mergeRawJsonExtraBody(candPayload, profile.rawJsonExtraBody)
                 reqStr = json.encodeToString(JsonObject.serializer(), finalPayload)
-                onStatus(Strings.generatingImage(model,  profile.mediaAspectRatio ), "")
+                onStatus(Strings.generatingImage(model, profile.mediaAspectRatio), "")
                 onRawWire(reqStr, "Dispatching to $finalUrl ...")
 
                 ensureAgentPolicyCurrent(session, profile)
@@ -709,29 +713,29 @@ internal suspend fun AiProviderEngine.executeByteDanceArkGeneration(
  * reading lazily from `localFilePath` on disk when `base64Data` is empty so multi-megabyte base64 strings never bloat RAM or JSON state.
  */
 /** Downloads generated media without letting one response exhaust memory. */
-internal suspend fun AiProviderEngine.downloadMediaBytes(url: String, maxBytes: Int): ByteArray =
-    httpClient.prepareGet(url).execute { response ->
-        check(response.status.isSuccess()) { "Media download failed: HTTP ${response.status.value}" }
-        val channel = response.bodyAsChannel()
-        var bytes = ByteArray(64 * 1024)
-        var size = 0
-        while (!channel.isClosedForRead) {
-            if (size == bytes.size) bytes = bytes.copyOf(minOf(bytes.size * 2L, maxBytes + 1L).toInt())
-            val read = channel.readAvailable(bytes, size, bytes.size - size)
-            if (read <= 0) break
-            size += read
-            check(size <= maxBytes) { "Media download exceeded the $maxBytes byte limit." }
-        }
-        bytes.copyOf(size)
+internal suspend fun AiProviderEngine.downloadMediaBytes(url: String, maxBytes: Int): ByteArray = httpClient.prepareGet(url).execute { response ->
+    check(response.status.isSuccess()) { "Media download failed: HTTP ${response.status.value}" }
+    val channel = response.bodyAsChannel()
+    var bytes = ByteArray(64 * 1024)
+    var size = 0
+    while (!channel.isClosedForRead) {
+        if (size == bytes.size) bytes = bytes.copyOf(minOf(bytes.size * 2L, maxBytes + 1L).toInt())
+        val read = channel.readAvailable(bytes, size, bytes.size - size)
+        if (read <= 0) break
+        size += read
+        check(size <= maxBytes) { "Media download exceeded the $maxBytes byte limit." }
     }
+    bytes.copyOf(size)
+}
 
 /** URLs written in model text are untrusted: they reach the public web, or this provider's own server. */
 private suspend fun AiProviderEngine.downloadModelTextMedia(url: String, maxBytes: Int, providerBaseUrl: String): ByteArray {
-    val fromProvider = providerBaseUrl.isNotBlank() && runCatching {
-        val target = Url(url)
-        val own = Url(providerBaseUrl)
-        target.host.equals(own.host, ignoreCase = true) && target.port == own.port
-    }.getOrDefault(false)
+    val fromProvider = providerBaseUrl.isNotBlank() &&
+        runCatching {
+            val target = Url(url)
+            val own = Url(providerBaseUrl)
+            target.host.equals(own.host, ignoreCase = true) && target.port == own.port
+        }.getOrDefault(false)
     if (fromProvider) return downloadMediaBytes(url, maxBytes)
     val job = currentCoroutineContext()[Job]
     return withContext(Dispatchers.IO) {
@@ -748,15 +752,13 @@ internal val ResolvedBinaryAttachment.isDocument: Boolean
     }
 
 /** Stands in for a file this wire cannot accept, so one attachment cannot fail every later request. */
-internal fun ResolvedBinaryAttachment.unsupportedAttachmentNote(): String =
-    "[Attachment not sent: ${fileName.ifBlank { "file" }} ($mimeType) is not supported by this API format.]"
+internal fun ResolvedBinaryAttachment.unsupportedAttachmentNote(): String = "[Attachment not sent: ${fileName.ifBlank { "file" }} ($mimeType) is not supported by this API format.]"
 
-internal fun hasUninlinedBinaryAttachments(nodes: List<MessageNode>): Boolean =
-    nodes.any { node ->
-        node.activeVariant?.attachments?.any { att ->
-            att.base64Data.isBlank() && att.localFilePath.isNotBlank()
-        } == true
-    }
+internal fun hasUninlinedBinaryAttachments(nodes: List<MessageNode>): Boolean = nodes.any { node ->
+    node.activeVariant?.attachments?.any { att ->
+        att.base64Data.isBlank() && att.localFilePath.isNotBlank()
+    } == true
+}
 
 /** Switches to [Dispatchers.IO] only when wire assembly needs to read local attachment files. */
 internal suspend fun <T> withBinaryAttachmentIo(
@@ -770,19 +772,23 @@ internal suspend fun <T> withBinaryAttachmentIo(
 
 internal suspend fun AiProviderEngine.resolveBinaryAttachmentsOnIo(
     nodeVar: MessageVariant?
-): List<ResolvedBinaryAttachment> =
-    if (nodeVar?.attachments?.any { it.base64Data.isBlank() && it.localFilePath.isNotBlank() } == true) {
-        withContext(Dispatchers.IO) { resolveBinaryAttachments(nodeVar) }
-    } else {
-        resolveBinaryAttachments(nodeVar)
-    }
+): List<ResolvedBinaryAttachment> = if (nodeVar?.attachments?.any { it.base64Data.isBlank() && it.localFilePath.isNotBlank() } == true) {
+    withContext(Dispatchers.IO) { resolveBinaryAttachments(nodeVar) }
+} else {
+    resolveBinaryAttachments(nodeVar)
+}
 
 internal fun AiProviderEngine.resolveBinaryAttachments(nodeVar: MessageVariant?): List<ResolvedBinaryAttachment> {
     if (nodeVar == null || nodeVar.attachments.isEmpty()) return emptyList()
     return nodeVar.attachments.mapNotNull { att ->
         val m = att.mimeType.lowercase()
-        val isBinaryMedia = m.startsWith("image/") || m.startsWith("video/") || m.startsWith("audio/") ||
-            m == "application/pdf" || m.contains("document") || m.contains("msword") || m.contains("officedocument")
+        val isBinaryMedia = m.startsWith("image/") ||
+            m.startsWith("video/") ||
+            m.startsWith("audio/") ||
+            m == "application/pdf" ||
+            m.contains("document") ||
+            m.contains("msword") ||
+            m.contains("officedocument")
         if (!isBinaryMedia && att.base64Data.isBlank()) return@mapNotNull null
         val b64 = if (att.base64Data.isNotBlank()) {
             att.base64Data

@@ -1,7 +1,5 @@
 package io.parchment.ai.network
 
-import io.parchment.ai.strings.Strings
-
 import io.ktor.client.request.get
 import io.parchment.ai.harness.AgentPermissionGate
 import io.parchment.ai.harness.AgentToolRunContext
@@ -19,22 +17,19 @@ import io.parchment.ai.model.ToolCallRecord
 import io.parchment.ai.network.AiProviderEngine.ToolStepBatch
 import io.parchment.ai.platform.PlatformRuntime
 import io.parchment.ai.runtime.RunActivityContext
-import kotlin.coroutines.AbstractCoroutineContextElement
-import kotlin.coroutines.CoroutineContext
-import kotlin.coroutines.EmptyCoroutineContext
+import io.parchment.ai.strings.Strings
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.channels.SendChannel
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.selects.select
 import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withPermit
-import kotlinx.coroutines.currentCoroutineContext
-import kotlinx.coroutines.ensureActive
-import kotlinx.coroutines.flow.Flow
-import kotlinx.coroutines.isActive
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.yield
 import kotlinx.serialization.json.Json
@@ -42,14 +37,19 @@ import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonObject
+import kotlin.coroutines.AbstractCoroutineContextElement
+import kotlin.coroutines.CoroutineContext
+import kotlin.coroutines.EmptyCoroutineContext
 
 // Workspace tool authorization and execution for the agent loops.
 
-internal suspend fun currentExpandedMcpTools(): Set<String> =
-    currentCoroutineContext()[AgentToolRunContext]?.expandedMcpToolsSnapshot() ?: emptySet()
+internal suspend fun currentExpandedMcpTools(): Set<String> = currentCoroutineContext()[AgentToolRunContext]?.expandedMcpToolsSnapshot() ?: emptySet()
 
 private suspend fun AiProviderEngine.authorizeWorkspaceTool(
-    scope: ToolAccessScope, callId: String, name: String, arguments: String,
+    scope: ToolAccessScope,
+    callId: String,
+    name: String,
+    arguments: String,
     activityContext: RunActivityContext? = null
 ): ToolAuthorization {
     currentCoroutineContext().ensureActive()
@@ -131,8 +131,13 @@ private suspend fun runMcpTool(permit: ToolExecutionPermit, callId: String, name
     }
     val result = McpRegistry.call(name, argumentsJson)
     currentCoroutineContext().ensureActive()
-    return ToolCallRecord(id = callId, name = name, argumentsJson = argumentsJson,
-        resultText = if (result.isError) "Error: ${result.text}" else result.text, isError = result.isError)
+    return ToolCallRecord(
+        id = callId,
+        name = name,
+        argumentsJson = argumentsJson,
+        resultText = if (result.isError) "Error: ${result.text}" else result.text,
+        isError = result.isError
+    )
 }
 
 private suspend fun runComputerTool(permit: ToolExecutionPermit, callId: String, name: String, argumentsJson: String): ToolCallRecord {
@@ -206,9 +211,13 @@ private suspend fun AiProviderEngine.executeWorkspaceToolWithLiveProgress(
     if (AgentPermissionGate.effect(accessScope, toolName, argumentsJson).requiresApproval) onStatus(Strings.awaitingApproval(intent))
     val authorization = authorizeWorkspaceTool(accessScope, callId, toolName, argumentsJson, activityContext)
     if (authorization is ToolAuthorization.Denied) return ToolCallRecord(
-        id = callId, name = toolName, argumentsJson = argumentsJson,
-        resultText = "Error: ${authorization.reason}", isError = true,
-        thoughtSignature = thoughtSignature, precedingThinking = precedingThinking
+        id = callId,
+        name = toolName,
+        argumentsJson = argumentsJson,
+        resultText = "Error: ${authorization.reason}",
+        isError = true,
+        thoughtSignature = thoughtSignature,
+        precedingThinking = precedingThinking
     )
     val permit = (authorization as ToolAuthorization.Allowed).permit
     onStatus("$intent…")
@@ -226,8 +235,12 @@ private suspend fun AiProviderEngine.executeWorkspaceToolWithLiveProgress(
     val liveChannel = kotlinx.coroutines.channels.Channel<String>(kotlinx.coroutines.channels.Channel.CONFLATED)
     val clock = activityContext?.activity?.let { activity -> { activity.elapsedMs } } ?: PlatformRuntime::monotonicTimeMillis
     val startMs = clock()
-    if (toolName == "ask_user" || toolName == "agent_delegate" || toolName == ComputerUse.TOOL_NAME ||
-        toolName == WorkspaceHarness.MCP_SCHEMA_TOOL_NAME || McpRegistry.isMcpTool(toolName)) {
+    if (toolName == "ask_user" ||
+        toolName == "agent_delegate" ||
+        toolName == ComputerUse.TOOL_NAME ||
+        toolName == WorkspaceHarness.MCP_SCHEMA_TOOL_NAME ||
+        McpRegistry.isMcpTool(toolName)
+    ) {
         val record = when {
             toolName == ComputerUse.TOOL_NAME -> runComputerTool(permit, callId, toolName, argumentsJson)
             toolName == "ask_user" -> answerFromUser(callId, argumentsJson)
@@ -235,8 +248,12 @@ private suspend fun AiProviderEngine.executeWorkspaceToolWithLiveProgress(
             toolName == WorkspaceHarness.MCP_SCHEMA_TOOL_NAME -> runMcpSchemaTool(permit.scope, callId, argumentsJson)
             else -> runMcpTool(permit, callId, toolName, argumentsJson)
         }
-        return record.copy(isRunning = false, durationMs = (clock() - startMs).coerceAtLeast(1L),
-            thoughtSignature = thoughtSignature, precedingThinking = precedingThinking)
+        return record.copy(
+            isRunning = false,
+            durationMs = (clock() - startMs).coerceAtLeast(1L),
+            thoughtSignature = thoughtSignature,
+            precedingThinking = precedingThinking
+        )
     }
     val runCtx = currentCoroutineContext()[AgentToolRunContext]
     val chatSessionId = runCtx?.broker?.chatId.orEmpty()
@@ -426,8 +443,11 @@ internal suspend fun AiProviderEngine.executeWorkspaceToolBatchWithLiveProgress(
                             val workerJob = currentCoroutineContext()[kotlinx.coroutines.Job]!!
                             val startedAt = activity?.elapsedMs ?: 0L
                             val raw = if (authorization is ToolAuthorization.Denied) ToolCallRecord(
-                                id = callId, name = fnName, argumentsJson = argsJson,
-                                resultText = "Error: ${authorization.reason}", isError = true
+                                id = callId,
+                                name = fnName,
+                                argumentsJson = argsJson,
+                                resultText = "Error: ${authorization.reason}",
+                                isError = true
                             ) else WorkspaceHarness.executeToolCall(
                                 workspaceRoot = workspaceRoot,
                                 mode = mode,

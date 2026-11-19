@@ -13,3 +13,15 @@ indent_size = 2
 
 [*.{bat,iss}]
 end_of_line = crlf
+
+[*.{kt,kts}]
+ktlint_code_style = intellij_idea
+ktlint_function_naming_ignore_when_annotated_with = Composable
+max_line_length = off
+ktlint_standard_no-wildcard-imports = disabled
+ktlint_standard_filename = disabled
+ktlint_standard_package-name = disabled
+ktlint_standard_trailing-comma-on-call-site = disabled
+ktlint_standard_trailing-comma-on-declaration-site = disabled
+ktlint_standard_statement-wrapping = disabled
+ktlint_standard_multiline-if-else = disabled

@@ -1,7 +1,6 @@
 package io.parchment.ai.ui
 
 import androidx.compose.animation.Crossfade
-import io.parchment.ai.strings.Strings
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
@@ -58,6 +57,7 @@ import io.parchment.ai.network.OtaReleaseInfo
 import io.parchment.ai.network.OtaUpdateEngine
 import io.parchment.ai.network.OtaUpdateState
 import io.parchment.ai.platform.PlatformRuntime
+import io.parchment.ai.strings.Strings
 
 enum class SettingsCategory(val icon: String, val label: String) {
     PREFERENCES("🖥", Strings.preferences),
@@ -118,193 +118,193 @@ fun ParchmentSettingsScreen(
             Column(modifier = Modifier.fillMaxSize()) {
                 SepiaDivider()
                 Row(modifier = Modifier.weight(1f).fillMaxWidth()) {
-                // Left Category Rail
-                Column(
-                    modifier = Modifier
-                        .textScaledWidth(225.dp)
-                        .fillMaxHeight()
-                        .background(p.sheetBg)
-                        .padding(Space.s16),
-                    verticalArrangement = Arrangement.spacedBy(Space.s6)
-                ) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth().heightIn(min = ControlHeight.compact),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
+                    // Left Category Rail
+                    Column(
+                        modifier = Modifier
+                            .textScaledWidth(225.dp)
+                            .fillMaxHeight()
+                            .background(p.sheetBg)
+                            .padding(Space.s16),
+                        verticalArrangement = Arrangement.spacedBy(Space.s6)
                     ) {
-                        BasicText(
-                            text = Strings.settings,
-                            style = p.uiHeaderStyle.copy(fontSize = 16.sp)
-                        )
-                        SepiaButton(
-                            text = Strings.chat,
-                            compact = true,
-                            style = SepiaButtonStyle.OUTLINE,
-                            onClick = onClose
-                        )
-                    }
-
-                    Spacer(Modifier.height(Space.s4))
-
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(Space.s4),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        SepiaTextField(
-                            value = settingsSearchQuery,
-                            onValueChange = { settingsSearchQuery = it },
-                            placeholder = Strings.searchAllSettings,
-                            minHeight = ControlHeight.compact,
-                            modifier = Modifier.weight(1f)
-                        )
-                        if (settingsSearchQuery.isNotEmpty()) {
-                            SepiaButton(
-                                text = "×",
-                                contentDescription = Strings.clearSearch,
-                                compact = true,
-                                style = SepiaButtonStyle.GHOST,
-                                onClick = { settingsSearchQuery = "" }
-                            )
-                        }
-                    }
-                    Spacer(Modifier.height(Space.s6))
-
-                    val categoryMatchCounts = remember(settingsSearchQuery, appState, activeProfile, activeSession) {
-                        val q = settingsSearchQuery.trim()
-                        if (q.isEmpty()) emptyMap()
-                        else SettingsCategory.entries.associateWith { cat ->
-                            countCategorySearchMatches(cat, q, appState, activeProfile, activeSession)
-                        }
-                    }
-
-                    SettingsCategory.entries.forEach { cat ->
-                        val isSelected = selectedCategory == cat
-                        val matchCount = categoryMatchCounts[cat] ?: 0
-                        val isHighlightedBySearch = settingsSearchQuery.isNotBlank() && matchCount > 0
-                        val shape = RoundedCornerShape(Radius.r10)
-                        val catIcon = remember(cat.icon) { parseKissLabelIcons(cat.icon).leadingIcon ?: KissIcon.SETTINGS }
-                        val interactionSource = remember { MutableInteractionSource() }
-                        val isHovered by interactionSource.collectIsHoveredAsState()
-                        val isPressed by interactionSource.collectIsPressedAsState()
                         Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .kissClickable(
-                                    pressScale = 0.97f,
-                                    hoverScale = 1.01f,
-                                    interactionSource = interactionSource,
-                                    selected = isSelected,
-                                    onClick = {
-                                        selectedCategory = cat
-                                        settingsSearchQuery = ""
-                                    }
-                                )
-                                .clip(shape)
-                                .background(
-                                    when {
-                                        isSelected -> p.cardBg
-                                        isHighlightedBySearch -> p.accent.copy(alpha = 0.10f)
-                                        isPressed -> p.accent.copy(alpha = 0.12f)
-                                        isHovered -> p.accent.copy(alpha = 0.08f)
-                                        else -> Color.Transparent
-                                    }
-                                )
-                                .then(if (isSelected) Modifier.rubricMark(p.accent, verticalInset = 9.dp) else Modifier)
-                                .padding(horizontal = Space.s12, vertical = 9.dp),
+                            modifier = Modifier.fillMaxWidth().heightIn(min = ControlHeight.compact),
                             horizontalArrangement = Arrangement.SpaceBetween,
                             verticalAlignment = Alignment.CenterVertically
                         ) {
-                            Row(
-                                horizontalArrangement = Arrangement.spacedBy(Space.s10),
-                                verticalAlignment = Alignment.CenterVertically,
+                            BasicText(
+                                text = Strings.settings,
+                                style = p.uiHeaderStyle.copy(fontSize = 16.sp)
+                            )
+                            SepiaButton(
+                                text = Strings.chat,
+                                compact = true,
+                                style = SepiaButtonStyle.OUTLINE,
+                                onClick = onClose
+                            )
+                        }
+
+                        Spacer(Modifier.height(Space.s4))
+
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(Space.s4),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            SepiaTextField(
+                                value = settingsSearchQuery,
+                                onValueChange = { settingsSearchQuery = it },
+                                placeholder = Strings.searchAllSettings,
+                                minHeight = ControlHeight.compact,
                                 modifier = Modifier.weight(1f)
-                            ) {
-                                KissVectorIcon(
-                                    icon = catIcon,
-                                    tint = if (isSelected || isHovered || isPressed || isHighlightedBySearch) p.accent else p.mutedInk,
-                                    size = IconSize.lg
-                                )
-                                BasicText(
-                                    text = cat.label,
-                                    style = p.uiBodyStyle.copy(
-                                        fontWeight = if (isSelected || isHighlightedBySearch) FontWeight.Medium else FontWeight.Normal,
-                                        fontSize = 14.sp
-                                    )
+                            )
+                            if (settingsSearchQuery.isNotEmpty()) {
+                                SepiaButton(
+                                    text = "×",
+                                    contentDescription = Strings.clearSearch,
+                                    compact = true,
+                                    style = SepiaButtonStyle.GHOST,
+                                    onClick = { settingsSearchQuery = "" }
                                 )
                             }
-                            if (settingsSearchQuery.isNotBlank() && matchCount > 0) {
-                                Box(
-                                    modifier = Modifier
-                                        .clip(RoundedCornerShape(Radius.pill))
-                                        .background(p.accent.copy(alpha = 0.18f))
-                                        .padding(horizontal = Space.s6, vertical = Space.s2)
+                        }
+                        Spacer(Modifier.height(Space.s6))
+
+                        val categoryMatchCounts = remember(settingsSearchQuery, appState, activeProfile, activeSession) {
+                            val q = settingsSearchQuery.trim()
+                            if (q.isEmpty()) emptyMap()
+                            else SettingsCategory.entries.associateWith { cat ->
+                                countCategorySearchMatches(cat, q, appState, activeProfile, activeSession)
+                            }
+                        }
+
+                        SettingsCategory.entries.forEach { cat ->
+                            val isSelected = selectedCategory == cat
+                            val matchCount = categoryMatchCounts[cat] ?: 0
+                            val isHighlightedBySearch = settingsSearchQuery.isNotBlank() && matchCount > 0
+                            val shape = RoundedCornerShape(Radius.r10)
+                            val catIcon = remember(cat.icon) { parseKissLabelIcons(cat.icon).leadingIcon ?: KissIcon.SETTINGS }
+                            val interactionSource = remember { MutableInteractionSource() }
+                            val isHovered by interactionSource.collectIsHoveredAsState()
+                            val isPressed by interactionSource.collectIsPressedAsState()
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .kissClickable(
+                                        pressScale = 0.97f,
+                                        hoverScale = 1.01f,
+                                        interactionSource = interactionSource,
+                                        selected = isSelected,
+                                        onClick = {
+                                            selectedCategory = cat
+                                            settingsSearchQuery = ""
+                                        }
+                                    )
+                                    .clip(shape)
+                                    .background(
+                                        when {
+                                            isSelected -> p.cardBg
+                                            isHighlightedBySearch -> p.accent.copy(alpha = 0.10f)
+                                            isPressed -> p.accent.copy(alpha = 0.12f)
+                                            isHovered -> p.accent.copy(alpha = 0.08f)
+                                            else -> Color.Transparent
+                                        }
+                                    )
+                                    .then(if (isSelected) Modifier.rubricMark(p.accent, verticalInset = 9.dp) else Modifier)
+                                    .padding(horizontal = Space.s12, vertical = 9.dp),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Row(
+                                    horizontalArrangement = Arrangement.spacedBy(Space.s10),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    modifier = Modifier.weight(1f)
                                 ) {
+                                    KissVectorIcon(
+                                        icon = catIcon,
+                                        tint = if (isSelected || isHovered || isPressed || isHighlightedBySearch) p.accent else p.mutedInk,
+                                        size = IconSize.lg
+                                    )
                                     BasicText(
-                                        text = matchCount.toString(),
-                                        style = p.uiLabelStyle.copy(
-                                            fontSize = 11.sp,
-                                            color = p.accent,
-                                            fontWeight = FontWeight.Bold,
-                                            fontFeatureSettings = "tnum"
+                                        text = cat.label,
+                                        style = p.uiBodyStyle.copy(
+                                            fontWeight = if (isSelected || isHighlightedBySearch) FontWeight.Medium else FontWeight.Normal,
+                                            fontSize = 14.sp
                                         )
                                     )
+                                }
+                                if (settingsSearchQuery.isNotBlank() && matchCount > 0) {
+                                    Box(
+                                        modifier = Modifier
+                                            .clip(RoundedCornerShape(Radius.pill))
+                                            .background(p.accent.copy(alpha = 0.18f))
+                                            .padding(horizontal = Space.s6, vertical = Space.s2)
+                                    ) {
+                                        BasicText(
+                                            text = matchCount.toString(),
+                                            style = p.uiLabelStyle.copy(
+                                                fontSize = 11.sp,
+                                                color = p.accent,
+                                                fontWeight = FontWeight.Bold,
+                                                fontFeatureSettings = "tnum"
+                                            )
+                                        )
+                                    }
                                 }
                             }
                         }
                     }
-                }
 
-                Box(
-                    modifier = Modifier
-                        .width(LineWidth.hairline)
-                        .fillMaxHeight()
-                        .background(p.border.copy(alpha = 0.7f))
-                )
-
-                // Right Subpage Viewport
-                Crossfade(
-                    targetState = selectedCategory,
-                    animationSpec = motionTween(Motion.STANDARD),
-                    modifier = Modifier.weight(1f).fillMaxHeight()
-                ) { cat ->
-                    SettingsSubpageContent(
-                        category = cat,
-                        searchQuery = settingsSearchQuery,
-                        appState = appState,
-                        activeProfile = activeProfile,
-                        activeSession = activeSession,
-                        otaState = otaState,
-                        onJumpToCategory = { targetCat ->
-                            selectedCategory = targetCat
-                            settingsSearchQuery = ""
-                        },
-                        onSelectProfile = onSelectProfile,
-                        onUpdateProfile = onUpdateProfile,
-                        onUpdateProfileById = onUpdateProfileById,
-                        onAddProfile = onAddProfile,
-                        onDeleteProfile = onDeleteProfile,
-                        onUpdateAssistants = onUpdateAssistants,
-                        onUpdateDefaultModels = onUpdateDefaultModels,
-                        onUpdatePreferences = onUpdatePreferences,
-                        onUpdateTheme = onUpdateTheme,
-                        onUpdateSession = onUpdateSession,
-                        onUpdateGlobalWorldBook = onUpdateGlobalWorldBook,
-                        onSaveCardToLibrary = onSaveCardToLibrary,
-                        onSavePresetToLibrary = onSavePresetToLibrary,
-                        onDeletePresetFromLibrary = onDeletePresetFromLibrary,
-                        onUpdateOtaSettings = onUpdateOtaSettings,
-                        onCheckOtaNow = onCheckOtaNow,
-                        onInstallOtaRelease = onInstallOtaRelease,
-                        onRestoreFullBackup = onRestoreFullBackup,
-                        onImportChatSessions = onImportChatSessions,
-                        onWipeAllData = onWipeAllData,
-                        onDeleteChatSessionById = onDeleteChatSessionById,
-                        onInspectAttachment = onInspectAttachment,
-                        onShortcutCaptureInterceptorChange = onShortcutCaptureInterceptorChange,
-                        onNotify = onNotify
+                    Box(
+                        modifier = Modifier
+                            .width(LineWidth.hairline)
+                            .fillMaxHeight()
+                            .background(p.border.copy(alpha = 0.7f))
                     )
-                }
+
+                    // Right Subpage Viewport
+                    Crossfade(
+                        targetState = selectedCategory,
+                        animationSpec = motionTween(Motion.STANDARD),
+                        modifier = Modifier.weight(1f).fillMaxHeight()
+                    ) { cat ->
+                        SettingsSubpageContent(
+                            category = cat,
+                            searchQuery = settingsSearchQuery,
+                            appState = appState,
+                            activeProfile = activeProfile,
+                            activeSession = activeSession,
+                            otaState = otaState,
+                            onJumpToCategory = { targetCat ->
+                                selectedCategory = targetCat
+                                settingsSearchQuery = ""
+                            },
+                            onSelectProfile = onSelectProfile,
+                            onUpdateProfile = onUpdateProfile,
+                            onUpdateProfileById = onUpdateProfileById,
+                            onAddProfile = onAddProfile,
+                            onDeleteProfile = onDeleteProfile,
+                            onUpdateAssistants = onUpdateAssistants,
+                            onUpdateDefaultModels = onUpdateDefaultModels,
+                            onUpdatePreferences = onUpdatePreferences,
+                            onUpdateTheme = onUpdateTheme,
+                            onUpdateSession = onUpdateSession,
+                            onUpdateGlobalWorldBook = onUpdateGlobalWorldBook,
+                            onSaveCardToLibrary = onSaveCardToLibrary,
+                            onSavePresetToLibrary = onSavePresetToLibrary,
+                            onDeletePresetFromLibrary = onDeletePresetFromLibrary,
+                            onUpdateOtaSettings = onUpdateOtaSettings,
+                            onCheckOtaNow = onCheckOtaNow,
+                            onInstallOtaRelease = onInstallOtaRelease,
+                            onRestoreFullBackup = onRestoreFullBackup,
+                            onImportChatSessions = onImportChatSessions,
+                            onWipeAllData = onWipeAllData,
+                            onDeleteChatSessionById = onDeleteChatSessionById,
+                            onInspectAttachment = onInspectAttachment,
+                            onShortcutCaptureInterceptorChange = onShortcutCaptureInterceptorChange,
+                            onNotify = onNotify
+                        )
+                    }
                 }
             }
         } else {
@@ -714,6 +714,4 @@ private fun SettingsSubpageContent(
  * Selects a sensible initial chat model when a brand-new profile fetches models for the first time,
  * skipping utility/research/embedding endpoints like `deep-research*` or `text-embedding*`.
  */
-fun pickBestInitialChatModel(models: List<String>): String {
-    return models.firstOrNull() ?: ""
-}
+fun pickBestInitialChatModel(models: List<String>): String = models.firstOrNull() ?: ""

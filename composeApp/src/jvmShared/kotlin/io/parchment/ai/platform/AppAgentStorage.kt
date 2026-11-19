@@ -11,8 +11,7 @@ internal object AppAgentStorage {
     private const val MAX_MEMORY_READ_CHARS = 250_000
     private val unsafeSessionCharacters = Regex("[^a-zA-Z0-9._-]")
 
-    private fun resolveStorageRoot(defaultRoot: () -> File, overridePath: String): File =
-        if (overridePath.isNotBlank()) File(overridePath) else defaultRoot()
+    private fun resolveStorageRoot(defaultRoot: () -> File, overridePath: String): File = if (overridePath.isNotBlank()) File(overridePath) else defaultRoot()
 
     private fun sessionTodoFile(storageRoot: File, sessionId: String): File {
         val chatsRoot = File(storageRoot, "chats").canonicalFile

@@ -1,10 +1,9 @@
 package io.parchment.ai.ui
 
 import io.parchment.ai.harness.settledForDisk
-import io.parchment.ai.model.AppStateSnapshot
 import io.parchment.ai.model.AgentPermissionOverrides
 import io.parchment.ai.model.AgentPermissionResolver
-import io.parchment.ai.model.withImportedPermissions
+import io.parchment.ai.model.AppStateSnapshot
 import io.parchment.ai.model.AssistantAgent
 import io.parchment.ai.model.CharacterOrScenarioCard
 import io.parchment.ai.model.ChatSession
@@ -19,9 +18,10 @@ import io.parchment.ai.model.PreferencesConfig
 import io.parchment.ai.model.PromptAttachment
 import io.parchment.ai.model.ProviderProfile
 import io.parchment.ai.model.ProviderProtocol
-import io.parchment.ai.model.mapProtocolToDialect
 import io.parchment.ai.model.SystemPromptPreset
 import io.parchment.ai.model.ThemeConfig
+import io.parchment.ai.model.mapProtocolToDialect
+import io.parchment.ai.model.withImportedPermissions
 import io.parchment.ai.platform.ChatBundleEntry
 import io.parchment.ai.platform.ChatFileStamp
 import io.parchment.ai.platform.ChatImportOutcome
@@ -201,7 +201,8 @@ internal fun migrateLegacyProviderJson(raw: String): String {
         val legacyChain = obj["useStatefulChaining"]?.jsonPrimitive?.booleanOrNull == true
         val stored = obj["storeServerSide"]?.jsonPrimitive?.booleanOrNull == true
         // These profiles once shipped with storage on, which users never chose.
-        val resetStorage = resetBuiltInStorage && (legacyChain || stored) &&
+        val resetStorage = resetBuiltInStorage &&
+            (legacyChain || stored) &&
             obj["id"]?.jsonPrimitive?.contentOrNull in BUILT_IN_STORAGE_RESET_PROFILES
         val withoutLegacy = JsonObject(
             obj.filterKeys { it != "useExactEndpointUrl" }.mapValues { (_, v) -> v } +
@@ -367,7 +368,8 @@ internal fun extractLatestThoughtPeek(variant: MessageVariant): Pair<String, Str
         cleanTitle to ""
     } else {
         val prevBlock = if (lastIdx > 0) blocks[lastIdx - 1].trim() else ""
-        val prevIsStandaloneHeading = prevBlock.isNotEmpty() && !prevBlock.contains('\n') &&
+        val prevIsStandaloneHeading = prevBlock.isNotEmpty() &&
+            !prevBlock.contains('\n') &&
             ((prevBlock.startsWith("**") && prevBlock.endsWith("**") && prevBlock.length > 4) || prevBlock.startsWith("#"))
         val cleanTitle = if (prevIsStandaloneHeading) {
             prevBlock.removeSurrounding("**").replace(HEADING_HASH_PREFIX_REGEX, "").trim()
@@ -450,7 +452,8 @@ internal fun stripRedundantAttachmentBase64(session: ChatSession): ChatSession {
                     val relocatedPath = if (att.localFilePath.isNotBlank() && sessId.isNotBlank()) {
                         PlatformStorage.relocateLegacyMediaToChatFolder(att.localFilePath, sessId)
                     } else att.localFilePath
-                    val shouldStripB64 = relocatedPath.isNotBlank() && att.base64Data.isNotBlank() &&
+                    val shouldStripB64 = relocatedPath.isNotBlank() &&
+                        att.base64Data.isNotBlank() &&
                         PlatformStorage.isReadableLocalFile(relocatedPath)
                     if (relocatedPath != att.localFilePath || shouldStripB64) {
                         varAttChanged = true
@@ -484,8 +487,10 @@ internal fun stripRedundantAttachmentBase64(session: ChatSession): ChatSession {
                 v.toolCalls.map { tc ->
                     val rawTcSig = tc.thoughtSignature
                     val hasGluedTcSig = rawTcSig.length > 32 &&
-                        (rawTcSig.indexOf('=') in 0 until rawTcSig.trimEnd('=').length ||
-                            isGeminiServerSideToolSignature(rawTcSig))
+                        (
+                            rawTcSig.indexOf('=') in 0 until rawTcSig.trimEnd('=').length ||
+                                isGeminiServerSideToolSignature(rawTcSig)
+                            )
                     if (hasGluedTcSig) {
                         val sanitizedTcSig = sanitizeGeminiThoughtSignature(rawTcSig, forFunctionCall = true)
                         if (sanitizedTcSig != rawTcSig) {
@@ -747,7 +752,8 @@ internal fun saveLiveTurnToDisk(session: ChatSession, turn: LiveTurnRef) {
     val cleaned = stripRedundantAttachmentBase64(session.copy(messages = listOf(node.copy(variants = listOf(variant)))))
     val settled = cleaned.messages.single().variants.single().settledForDisk()
     PlatformStorage.saveChatLiveTurnJson(
-        session.id, compactStateJson.encodeToString(LiveTurnSidecar.serializer(), LiveTurnSidecar(turn.nodeId, settled))
+        session.id,
+        compactStateJson.encodeToString(LiveTurnSidecar.serializer(), LiveTurnSidecar(turn.nodeId, settled))
     )
 }
 
@@ -758,8 +764,12 @@ internal fun decodeChatSessionsFromRawJson(rawJsonText: String): List<ChatSessio
     runCatching {
         val elem = compactStateJson.parseToJsonElement(trimmed)
         if (elem is JsonObject) {
-            if (elem.containsKey("id") && elem.containsKey("title") && elem.containsKey("profileId") &&
-                !elem.containsKey("profiles") && !elem.containsKey("sessions")) {
+            if (elem.containsKey("id") &&
+                elem.containsKey("title") &&
+                elem.containsKey("profileId") &&
+                !elem.containsKey("profiles") &&
+                !elem.containsKey("sessions")
+            ) {
                 return listOf(compactStateJson.decodeFromJsonElement(ChatSession.serializer(), elem).withImportedPermissions())
             }
             if (elem.containsKey("sessions")) {
@@ -790,8 +800,7 @@ internal fun buildExportFileNameForChat(session: ChatSession): String {
     return if (shortId.isNotEmpty()) "$safeTitle-$shortId.chat.json" else "$safeTitle.chat.json"
 }
 
-internal fun buildExportZipFileNameForChat(session: ChatSession): String =
-    buildExportFileNameForChat(session).removeSuffix(".json") + ".zip"
+internal fun buildExportZipFileNameForChat(session: ChatSession): String = buildExportFileNameForChat(session).removeSuffix(".json") + ".zip"
 
 internal fun encodeChatSessionJsonForExport(session: ChatSession): ByteArray {
     val full = hydrateSessionFromDiskIfNeeded(session)
@@ -801,8 +810,7 @@ internal fun encodeChatSessionJsonForExport(session: ChatSession): ByteArray {
 }
 
 /** Streams [sessions] to a chosen file, hydrating one chat at a time. Null means the user cancelled. */
-internal suspend fun exportChatSessionsBundle(fileName: String, sessions: List<ChatSession>): String? =
-    PlatformPickers.exportChatBundle(fileName, sessions.asSequence().map(::chatBundleEntry))
+internal suspend fun exportChatSessionsBundle(fileName: String, sessions: List<ChatSession>): String? = PlatformPickers.exportChatBundle(fileName, sessions.asSequence().map(::chatBundleEntry))
 
 internal fun chatBundleEntry(rawSession: ChatSession): ChatBundleEntry {
     val mediaFileEntries = mutableListOf<Pair<String, String>>()
@@ -848,16 +856,14 @@ internal fun chatBundleEntry(rawSession: ChatSession): ChatBundleEntry {
     return ChatBundleEntry("$safeSessId/chat.json", chatJsonBytes, mediaFileEntries)
 }
 
-internal fun decodeImportedChats(rawJsons: List<String>): List<ChatSession> =
-    rawJsons.flatMap(::decodeChatSessionsFromRawJson).also {
-        check(it.isNotEmpty()) { "No valid chats were found." }
-    }
+internal fun decodeImportedChats(rawJsons: List<String>): List<ChatSession> = rawJsons.flatMap(::decodeChatSessionsFromRawJson).also {
+    check(it.isNotEmpty()) { "No valid chats were found." }
+}
 
 /** Lets the user choose chat exports and decodes each one, reporting per-file success or failure. */
-internal suspend fun pickAndDecodeChatImports(): List<ChatImportOutcome<List<ChatSession>>> =
-    PlatformPickers.pickAndImportChatFiles(::decodeImportedChats).map { outcome ->
-        ChatImportOutcome(outcome.fileName, outcome.result.mapCatching { chats -> chats.map(::stripRedundantAttachmentBase64) })
-    }
+internal suspend fun pickAndDecodeChatImports(): List<ChatImportOutcome<List<ChatSession>>> = PlatformPickers.pickAndImportChatFiles(::decodeImportedChats).map { outcome ->
+    ChatImportOutcome(outcome.fileName, outcome.result.mapCatching { chats -> chats.map(::stripRedundantAttachmentBase64) })
+}
 
 /**
  * Start-up loader for the first frame: reads only `parchment-settings.json` and the single active
@@ -1104,8 +1110,11 @@ private fun applyDesignDefaultsOnce(saved: AppStateSnapshot): AppStateSnapshot {
             if (it.id in builtInProfiles && it.thinkingEffort == "high") it.copy(thinkingEffort = "none") else it
         },
         preferences = saved.preferences.copy(
-            showUserAvatar = false, showUserName = false, showUserTimestamp = false,
-            showProviderAfterModelName = false, showAssistantAvatarInTitleBar = false
+            showUserAvatar = false,
+            showUserName = false,
+            showUserTimestamp = false,
+            showProviderAfterModelName = false,
+            showAssistantAvatarInTitleBar = false
         )
     )
 }
@@ -1133,7 +1142,8 @@ internal fun sanitizeLoadedSnapshot(saved: AppStateSnapshot): AppStateSnapshot {
             sess.copy(
                 assistantId = sess.assistantId.ifBlank { safeActiveAssistantId },
                 permissionOverrides = sess.permissionOverrides ?: AgentPermissionResolver.legacyOverrides(
-                    sess, safeProfiles.find { it.id == sess.profileId }
+                    sess,
+                    safeProfiles.find { it.id == sess.profileId }
                 ),
                 messages = sess.messages.map { node ->
                     node.copy(
@@ -1283,8 +1293,11 @@ internal fun createDefaultAppState(): AppStateSnapshot {
         theme = ThemeConfig(),
         designDefaultsApplied = true,
         preferences = PreferencesConfig(
-            showUserAvatar = false, showUserName = false, showUserTimestamp = false,
-            showProviderAfterModelName = false, showAssistantAvatarInTitleBar = false
+            showUserAvatar = false,
+            showUserName = false,
+            showUserTimestamp = false,
+            showProviderAfterModelName = false,
+            showAssistantAvatarInTitleBar = false
         )
     )
 }

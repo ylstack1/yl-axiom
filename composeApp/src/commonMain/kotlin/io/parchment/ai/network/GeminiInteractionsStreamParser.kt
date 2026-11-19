@@ -140,7 +140,8 @@ internal class GeminiInteractionsRoundParser(
             }
             else -> {
                 val unknownStatus = interactionStatus.orEmpty()
-                if (evObj.containsKey("outputs") || evObj.containsKey("steps") ||
+                if (evObj.containsKey("outputs") ||
+                    evObj.containsKey("steps") ||
                     unknownStatus in setOf("completed", "requires_action", "requires_continuation", "incomplete", "failed", "cancelled", "expired")
                 ) {
                     handleInteractionCompleted(evObj, interactionSub)
@@ -152,9 +153,14 @@ internal class GeminiInteractionsRoundParser(
     private fun isNonRetryableGeminiError(code: Int?, status: String): Boolean {
         if (code != null && code in setOf(400, 401, 403, 404, 413, 422)) return true
         return status.trim().uppercase() in setOf(
-            "INVALID_ARGUMENT", "PERMISSION_DENIED", "UNAUTHENTICATED",
-            "NOT_FOUND", "FAILED_PRECONDITION", "INVALID_REQUEST",
-            "SAFETY", "PROHIBITED_CONTENT"
+            "INVALID_ARGUMENT",
+            "PERMISSION_DENIED",
+            "UNAUTHENTICATED",
+            "NOT_FOUND",
+            "FAILED_PRECONDITION",
+            "INVALID_REQUEST",
+            "SAFETY",
+            "PROHIBITED_CONTENT"
         )
     }
 
@@ -419,7 +425,8 @@ internal class GeminiInteractionsRoundParser(
                 }
                 deltaType == "thought_signature" -> Unit // Already handled via uniqueSig above
                 deltaType == "image" -> emitImageFromObject(deltaObj)
-                deltaType == "function_call" || deltaType == "arguments_delta" ||
+                deltaType == "function_call" ||
+                    deltaType == "arguments_delta" ||
                     (stepTypeForIdx == "function_call" && hasArgsDelta) -> accumulateFunctionCallDelta(idx, deltaObj)
                 else -> {
                     val fallbackTxt = deltaObj["text"]?.jsonPrimitive?.contentOrNull

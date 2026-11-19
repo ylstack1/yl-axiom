@@ -43,14 +43,18 @@ class AgentPermissionHttpTest {
                     put("model", "fixture-model")
                     putJsonArray("output") {
                         if (round == 0 && toolCalls.isNotEmpty()) toolCalls.forEachIndexed { index, (name, arguments) ->
-                            add(buildJsonObject {
-                                put("type", "function_call"); put("call_id", "call-$index")
-                                put("name", name); put("arguments", arguments.toString())
-                            })
-                        } else add(buildJsonObject {
-                            put("type", "message"); put("role", "assistant")
-                            putJsonArray("content") { add(buildJsonObject { put("type", "output_text"); put("text", "Done.") }) }
-                        })
+                            add(
+                                buildJsonObject {
+                                    put("type", "function_call"); put("call_id", "call-$index")
+                                    put("name", name); put("arguments", arguments.toString())
+                                }
+                            )
+                        } else add(
+                            buildJsonObject {
+                                put("type", "message"); put("role", "assistant")
+                                putJsonArray("content") { add(buildJsonObject { put("type", "output_text"); put("text", "Done.") }) }
+                            }
+                        )
                     }
                     putJsonObject("usage") { put("input_tokens", 10); put("output_tokens", 10); put("total_tokens", 20) }
                 }.toString().toByteArray()
@@ -61,18 +65,37 @@ class AgentPermissionHttpTest {
             }
             start()
         }
-        val profile = ProviderProfile("fixture", "Fixture", ProviderProtocol.CUSTOM,
+        val profile = ProviderProfile(
+            "fixture",
+            "Fixture",
+            ProviderProtocol.CUSTOM,
             customDialect = CUSTOM_DIALECT_OPENAI_RESPONSES,
-            baseUrl = "http://127.0.0.1:${server.address.port}", defaultModel = "fixture-model",
-            thinkingEffort = "none", customModelSpecs = mapOf("fixture-model" to ModelPricingSpec("fixture-model")))
+            baseUrl = "http://127.0.0.1:${server.address.port}",
+            defaultModel = "fixture-model",
+            thinkingEffort = "none",
+            customModelSpecs = mapOf("fixture-model" to ModelPricingSpec("fixture-model"))
+        )
         val policy = AgentPermissionPolicy(workspacePath = root.toString(), workspaceMode = WorkspaceMode.READ_WRITE)
-        fun session(policy: AgentPermissionPolicy) = ChatSession("chat", "Fixture", 1L, 1L, profile.id,
-            workspacePath = policy.workspacePath, workspaceMode = policy.workspaceMode, permissionOverrides = policy.asOverrides())
+        fun session(policy: AgentPermissionPolicy) = ChatSession(
+            "chat",
+            "Fixture",
+            1L,
+            1L,
+            profile.id,
+            workspacePath = policy.workspacePath,
+            workspaceMode = policy.workspaceMode,
+            permissionOverrides = policy.asOverrides()
+        )
         fun updates(policy: AgentPermissionPolicy, profile: ProviderProfile = this.profile) = AiProviderEngine.streamGeneration(
             profile = profile,
             session = session(policy),
-            historyNodes = listOf(MessageNode("user", MessageRole.USER,
-                variants = listOf(MessageVariant("variant", content = "Perform the task, then reply Done."))))
+            historyNodes = listOf(
+                MessageNode(
+                    "user",
+                    MessageRole.USER,
+                    variants = listOf(MessageVariant("variant", content = "Perform the task, then reply Done."))
+                )
+            )
         )
         override fun close() {
             server.stop(0)
@@ -160,8 +183,14 @@ class AgentPermissionHttpTest {
     }
 
     @Test fun aHelperCannotWriteRunCommandsOrSpawnAnother() {
-        val parent = AgentPermissionPolicy(workspacePath = "workspace", workspaceMode = WorkspaceMode.READ_WRITE, shellAccess = ShellAccess.FULL_ACCESS,
-            webAccess = true, approvalMode = ToolApprovalMode.ASK_FOR_CHANGES, toolOverrides = mapOf("fs_glob" to false))
+        val parent = AgentPermissionPolicy(
+            workspacePath = "workspace",
+            workspaceMode = WorkspaceMode.READ_WRITE,
+            shellAccess = ShellAccess.FULL_ACCESS,
+            webAccess = true,
+            approvalMode = ToolApprovalMode.ASK_FOR_CHANGES,
+            toolOverrides = mapOf("fs_glob" to false)
+        )
         val policy = subagentPolicy(parent)
         val scope = ToolAccessScope(policy)
         listOf("fs_write", "fs_delete", "shell_exec", "agent_delegate", "ask_user", "web_search", "fs_glob").forEach {
@@ -243,8 +272,10 @@ class AgentPermissionHttpTest {
     }
 
     @Test fun parallelToolsEachReceiveTheirOwnApproval() = runBlocking {
-        val calls = listOf("calc_eval" to buildJsonObject { put("expression", "2+2") },
-            "calc_eval" to buildJsonObject { put("expression", "3+3") })
+        val calls = listOf(
+            "calc_eval" to buildJsonObject { put("expression", "2+2") },
+            "calc_eval" to buildJsonObject { put("expression", "3+3") }
+        )
         Fixture(calls).use { fixture ->
             val policy = fixture.policy.copy(approvalMode = ToolApprovalMode.ASK_EVERY_TOOL)
             val broker = ToolApprovalBroker("run", "chat", { ToolAccessScope(policy) })
@@ -295,8 +326,15 @@ class AgentPermissionHttpTest {
             val purposes = listOf("title", "summary", "compaction", "translation", "draft")
             for (purpose in purposes) {
                 val value = withTimeout(12_000) {
-                    AiProviderEngine.generateUtilityText(fixture.profile, "fixture-model", "Utility prompt", ownerSessionId = "owning-chat",
-                        ownerRunId = "run-$purpose", purpose = purpose, onUsage = { record, _ -> records[record.requestId] = record }).getOrThrow()
+                    AiProviderEngine.generateUtilityText(
+                        fixture.profile,
+                        "fixture-model",
+                        "Utility prompt",
+                        ownerSessionId = "owning-chat",
+                        ownerRunId = "run-$purpose",
+                        purpose = purpose,
+                        onUsage = { record, _ -> records[record.requestId] = record }
+                    ).getOrThrow()
                 }
                 assertEquals("Done.", value)
             }
@@ -315,8 +353,14 @@ class AgentPermissionHttpTest {
         Fixture(emptyList(), reject = true).use { fixture ->
             val records = linkedMapOf<String, ApiUsageRecord>()
             val result = withTimeout(12_000) {
-                AiProviderEngine.generateUtilityText(fixture.profile, "fixture-model", "Utility prompt", ownerSessionId = "chat", purpose = "summary",
-                    onUsage = { record, _ -> records[record.requestId] = record })
+                AiProviderEngine.generateUtilityText(
+                    fixture.profile,
+                    "fixture-model",
+                    "Utility prompt",
+                    ownerSessionId = "chat",
+                    purpose = "summary",
+                    onUsage = { record, _ -> records[record.requestId] = record }
+                )
             }
             assertTrue(result.isFailure)
             assertTrue(records.isNotEmpty())
@@ -324,8 +368,12 @@ class AgentPermissionHttpTest {
         }
         Fixture(emptyList()).use { fixture ->
             try {
-                AiProviderEngine.generateUtilityText(fixture.profile, "fixture-model", "Utility prompt",
-                    onUsage = { _, _ -> throw CancellationException("User stopped utility") })
+                AiProviderEngine.generateUtilityText(
+                    fixture.profile,
+                    "fixture-model",
+                    "Utility prompt",
+                    onUsage = { _, _ -> throw CancellationException("User stopped utility") }
+                )
                 fail("Cancellation was converted to a utility result")
             } catch (cancelled: CancellationException) {
                 assertEquals("User stopped utility", cancelled.message)
@@ -346,16 +394,24 @@ class AgentPermissionHttpTest {
             val usageRunIds = Collections.synchronizedList(mutableListOf<String>())
             val callA = async {
                 AiProviderEngine.generateUtilityText(
-                    fixture.profile, "fixture-model", "Summarize this.",
-                    ownerSessionId = "chat-1", ownerRunId = "run-a", purpose = "summary",
+                    fixture.profile,
+                    "fixture-model",
+                    "Summarize this.",
+                    ownerSessionId = "chat-1",
+                    ownerRunId = "run-a",
+                    purpose = "summary",
                     onUsage = { rec, _ -> usageRunIds.add(rec.ownerRunId) }
                 ).getOrThrow()
             }
             assertTrue(entered.await(3, TimeUnit.SECONDS))
             val callB = async {
                 AiProviderEngine.generateUtilityText(
-                    fixture.profile, "fixture-model", "Summarize this.",
-                    ownerSessionId = "chat-1", ownerRunId = "run-b", purpose = "summary",
+                    fixture.profile,
+                    "fixture-model",
+                    "Summarize this.",
+                    ownerSessionId = "chat-1",
+                    ownerRunId = "run-b",
+                    purpose = "summary",
                     onUsage = { rec, _ -> usageRunIds.add(rec.ownerRunId) }
                 ).getOrThrow()
             }
@@ -367,8 +423,12 @@ class AgentPermissionHttpTest {
             assertTrue("run-a" in usageRunIds && "run-b" in usageRunIds, "Both callers must receive usage attribution: $usageRunIds")
 
             val sequential = AiProviderEngine.generateUtilityText(
-                fixture.profile, "fixture-model", "Summarize this.",
-                ownerSessionId = "chat-1", ownerRunId = "run-c", purpose = "summary"
+                fixture.profile,
+                "fixture-model",
+                "Summarize this.",
+                ownerSessionId = "chat-1",
+                ownerRunId = "run-c",
+                purpose = "summary"
             ).getOrThrow()
             assertEquals("Done.", sequential)
             assertEquals(2, fixture.requests.size)

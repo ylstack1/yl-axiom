@@ -1,21 +1,21 @@
 package io.parchment.ai.ui
 
 import androidx.compose.runtime.snapshots.Snapshot
-import io.parchment.ai.strings.Strings
 import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.ImageComposeScene
 import androidx.compose.ui.InternalComposeUiApi
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyEvent
 import androidx.compose.ui.input.key.KeyEventType
-import androidx.compose.ui.semantics.SemanticsNode
 import androidx.compose.ui.semantics.SemanticsActions
+import androidx.compose.ui.semantics.SemanticsNode
 import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.semantics.getOrNull
 import androidx.compose.ui.unit.Density
 import io.parchment.ai.handleUnconsumedWindowKey
 import io.parchment.ai.platform.PlatformRuntime
 import io.parchment.ai.platform.PlatformStorage
+import io.parchment.ai.strings.Strings
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.runBlocking
@@ -53,11 +53,9 @@ class KeyboardShortcutTest {
         return scene.semanticsOwners.flatMap { flatten(it.rootSemanticsNode) }
     }
 
-    private fun anythingFocused(scene: ImageComposeScene) =
-        nodes(scene).any { it.config.getOrNull(SemanticsProperties.Focused) == true }
+    private fun anythingFocused(scene: ImageComposeScene) = nodes(scene).any { it.config.getOrNull(SemanticsProperties.Focused) == true }
 
-    private fun paletteOpen(scene: ImageComposeScene) =
-        nodes(scene).any { node -> node.config.getOrNull(SemanticsProperties.Text).orEmpty().any { it.text == Strings.typeACommandOrA } }
+    private fun paletteOpen(scene: ImageComposeScene) = nodes(scene).any { node -> node.config.getOrNull(SemanticsProperties.Text).orEmpty().any { it.text == Strings.typeACommandOrA } }
 
     /** What the desktop window does with a key: the focused element first, then the window's own fallback. */
     private suspend fun pressInWindow(
@@ -81,8 +79,7 @@ class KeyboardShortcutTest {
         action.invoke()
     }
 
-    private fun hasText(scene: ImageComposeScene, needle: String): Boolean =
-        nodes(scene).any { node -> node.config.getOrNull(SemanticsProperties.Text).orEmpty().any { it.text == needle } }
+    private fun hasText(scene: ImageComposeScene, needle: String): Boolean = nodes(scene).any { node -> node.config.getOrNull(SemanticsProperties.Text).orEmpty().any { it.text == needle } }
 
     @Test fun ctrlKOpensThePaletteWithNothingFocused() = runBlocking<Unit>(Dispatchers.Swing) {
         PlatformStorage.saveAppStateJson(compactStateJson.encodeToString(createDefaultAppState().copy(autoCheckOtaOnStartup = false)))
@@ -133,8 +130,7 @@ class KeyboardShortcutTest {
         }
     }
 
-    private fun promptJumpOpen(scene: ImageComposeScene) =
-        nodes(scene).any { node -> node.config.getOrNull(SemanticsProperties.Text).orEmpty().any { it.text == Strings.jumpToPromptPlaceholder } }
+    private fun promptJumpOpen(scene: ImageComposeScene) = nodes(scene).any { node -> node.config.getOrNull(SemanticsProperties.Text).orEmpty().any { it.text == Strings.jumpToPromptPlaceholder } }
 
     @Test fun ctrlGOpensThePromptJumpAndEscapeClosesIt() = runBlocking<Unit>(Dispatchers.Swing) {
         PlatformStorage.saveAppStateJson(compactStateJson.encodeToString(createDefaultAppState().copy(autoCheckOtaOnStartup = false)))

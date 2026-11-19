@@ -41,6 +41,7 @@ internal fun mapScreenshotPoint(x: Int, y: Int, scale: Double, screenWidth: Int,
 /** The primary display only. Input goes through the operating system like a person's would. */
 internal object DesktopComputerControl : ComputerControl {
     private val robot by lazy { Robot().apply { autoDelay = 40 } }
+
     @Volatile private var scale = 0.0
 
     override val isAvailable: Boolean get() = !GraphicsEnvironment.isHeadless()

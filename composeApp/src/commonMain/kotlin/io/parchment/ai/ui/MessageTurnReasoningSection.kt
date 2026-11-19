@@ -57,8 +57,10 @@ internal fun MessageTurnReasoningDrawer(
 ) {
     val p = LocalParchmentPalette.current
     val showDrawer = (isReasoningExpanded || isLivePeekOnly) &&
-        ((preferences.showThinkingCards && activeVar.thinkingSummary.isNotBlank()) ||
-            (preferences.showToolCards && activeVar.toolCalls.isNotEmpty()))
+        (
+            (preferences.showThinkingCards && activeVar.thinkingSummary.isNotBlank()) ||
+                (preferences.showToolCards && activeVar.toolCalls.isNotEmpty())
+            )
 
     AnimatedVisibility(
         visible = showDrawer,
@@ -389,8 +391,7 @@ internal fun groupConsecutiveTimelineSteps(
         val tc = tools[i]
         return !tc.isRunning && !tc.isError && tc.name.lowercase() in QUIET_LOOKUP_TOOLS
     }
-    fun joinsPrevious(i: Int): Boolean =
-        stepTextBefore(i).isBlank() && !(showThinking && tools[i].precedingThinking.isNotBlank())
+    fun joinsPrevious(i: Int): Boolean = stepTextBefore(i).isBlank() && !(showThinking && tools[i].precedingThinking.isNotBlank())
 
     val runs = ArrayList<IntRange>(tools.size)
     var start = 0

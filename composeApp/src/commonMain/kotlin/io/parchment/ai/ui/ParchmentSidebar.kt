@@ -1,7 +1,5 @@
 package io.parchment.ai.ui
 
-import androidx.compose.ui.focus.onFocusChanged
-import io.parchment.ai.strings.Strings
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.interaction.MutableInteractionSource
@@ -26,6 +24,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.semantics
@@ -37,6 +36,7 @@ import androidx.compose.ui.unit.sp
 import io.parchment.ai.model.AppStateSnapshot
 import io.parchment.ai.model.AssistantAgent
 import io.parchment.ai.model.ChatSession
+import io.parchment.ai.strings.Strings
 import kotlinx.collections.immutable.toImmutableList
 
 // Left sidebar: Assistants, Chats and Pinned.

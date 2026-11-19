@@ -275,8 +275,10 @@ internal object ChatArchiveExtractor {
     private fun hasEndOfCentralDirectory(bytes: ByteArray): Boolean {
         val lowest = maxOf(0, bytes.size - END_RECORD_SEARCH_BYTES)
         for (index in bytes.size - 22 downTo lowest) {
-            if (bytes[index] == 0x50.toByte() && bytes[index + 1] == 0x4B.toByte() &&
-                bytes[index + 2] == 0x05.toByte() && bytes[index + 3] == 0x06.toByte()
+            if (bytes[index] == 0x50.toByte() &&
+                bytes[index + 1] == 0x4B.toByte() &&
+                bytes[index + 2] == 0x05.toByte() &&
+                bytes[index + 3] == 0x06.toByte()
             ) return true
         }
         return false

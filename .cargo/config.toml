@@ -1,0 +1,14 @@
+[alias]
+xtask = "run --package parchment-xtask --"
+
+[build]
+# Keep parallel compilation within 7.7 GB host RAM to avoid pagefile thrashing.
+jobs = 4
+
+[target.aarch64-linux-android]
+rustflags = [
+    "-C", "force-unwind-tables=no",
+    "-C", "link-arg=-Wl,--gc-sections",
+    "-C", "link-arg=-Wl,--icf=safe",
+    "-C", "link-arg=-Wl,-z,max-page-size=16384",
+]

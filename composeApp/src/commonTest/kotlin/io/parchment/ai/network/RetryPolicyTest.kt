@@ -16,14 +16,11 @@ class RetryPolicyTest {
     private val lowest = object : Random() { override fun nextBits(bitCount: Int) = 0 }
     private val highest = object : Random() { override fun nextBits(bitCount: Int) = -1 ushr (32 - bitCount) }
 
-    private fun hint(headers: Map<String, String> = emptyMap(), body: String = "") =
-        parseRetryAfterMs({ name -> headers[name] }, body, now)
+    private fun hint(headers: Map<String, String> = emptyMap(), body: String = "") = parseRetryAfterMs({ name -> headers[name] }, body, now)
 
-    private fun geminiError(vararg details: String) =
-        """{"error":{"code":429,"message":"You exceeded your current quota.","status":"RESOURCE_EXHAUSTED","details":[${details.joinToString(",")}]}}"""
+    private fun geminiError(vararg details: String) = """{"error":{"code":429,"message":"You exceeded your current quota.","status":"RESOURCE_EXHAUSTED","details":[${details.joinToString(",")}]}}"""
 
-    private fun quota(id: String) =
-        """{"@type":"type.googleapis.com/google.rpc.QuotaFailure","violations":[{"quotaMetric":"m","quotaId":"$id"}]}"""
+    private fun quota(id: String) = """{"@type":"type.googleapis.com/google.rpc.QuotaFailure","violations":[{"quotaMetric":"m","quotaId":"$id"}]}"""
 
     private val retryInfo = """{"@type":"type.googleapis.com/google.rpc.RetryInfo","retryDelay":"15.002899939s"}"""
 
@@ -92,7 +89,8 @@ class RetryPolicyTest {
 
     @Test fun spendCapsBillingAndDailyQuotasStopAtOnce() {
         val spendCap = ProviderHttpException(
-            "Anthropic Messages", 429,
+            "Anthropic Messages",
+            429,
             """{"type":"error","error":{"type":"rate_limit_error","message":"Spend limit reached.","details":{"error_code":"enforced_spend_limit_reached"}}}"""
         )
         assertTrue(AiProviderEngine.isHardAuthOrQuotaError(spendCap))

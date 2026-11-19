@@ -1,8 +1,6 @@
 package io.parchment.ai.ui
 
 import androidx.compose.animation.AnimatedVisibility
-import io.parchment.ai.strings.Strings
-import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
@@ -11,7 +9,6 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.selection.selectableGroup
 import androidx.compose.foundation.text.BasicText
@@ -35,14 +32,21 @@ import io.parchment.ai.model.ThemeConfig
 import io.parchment.ai.model.ViewMode
 import io.parchment.ai.platform.PlatformPickers
 import io.parchment.ai.platform.PlatformRuntime
+import io.parchment.ai.strings.Strings
 import kotlinx.coroutines.launch
 
 // ============================================================================================
 // Settings page 1: Preferences.
 // ============================================================================================
 private val ACCENT_SWATCHES = listOf(
-    "#8B5A2B" to Strings.brown, "#9E4730" to Strings.rust, "#3B5998" to Strings.blue, "#1F6F54" to Strings.green,
-    "#5E4B8B" to Strings.purple, "#7A5216" to Strings.bronze, "#8C3823" to Strings.brick, "#2D3748" to Strings.slate
+    "#8B5A2B" to Strings.brown,
+    "#9E4730" to Strings.rust,
+    "#3B5998" to Strings.blue,
+    "#1F6F54" to Strings.green,
+    "#5E4B8B" to Strings.purple,
+    "#7A5216" to Strings.bronze,
+    "#8C3823" to Strings.brick,
+    "#2D3748" to Strings.slate
 )
 
 @Composable

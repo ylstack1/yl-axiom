@@ -33,39 +33,53 @@ class ExtensionSourcesTest {
         assertEquals(GitHubFolder("o", "r", "", ""), parseGitHubFolder("https://github.com/o/r"))
         assertEquals(GitHubFolder("o", "r", "main", "skills/pdf"), parseGitHubFolder("https://github.com/o/r/tree/main/skills/pdf/"))
         assertEquals(GitHubFolder("o", "r", "v1", "skills/pdf"), parseGitHubFolder("https://github.com/o/r/blob/v1/skills/pdf/SKILL.md?plain=1"))
-        listOf("https://evil.example/o/r", "http://github.com/o/r", "https://github.com/o", "https://github.com/o/r/issues/1",
-            "https://github.com/o/r/tree/main/../x", "https://github.com.evil.example/o/r").forEach { assertNull(parseGitHubFolder(it), it) }
+        listOf(
+            "https://evil.example/o/r",
+            "http://github.com/o/r",
+            "https://github.com/o",
+            "https://github.com/o/r/issues/1",
+            "https://github.com/o/r/tree/main/../x",
+            "https://github.com.evil.example/o/r"
+        ).forEach { assertNull(parseGitHubFolder(it), it) }
     }
 
     private val skill = "---\nname: demo\ndescription: Does a thing\n---\nBody"
     private val api = "https://api.github.com/repos/o/r/contents/skills/demo?ref=main"
 
-    private fun entry(name: String, type: String = "file", path: String = "skills/demo/$name", url: String = "https://raw.githubusercontent.com/o/r/main/$name") =
-        """{"name":"$name","type":"$type","path":"$path","download_url":${if (type == "file") "\"$url\"" else "null"}}"""
+    private fun entry(name: String, type: String = "file", path: String = "skills/demo/$name", url: String = "https://raw.githubusercontent.com/o/r/main/$name") = """{"name":"$name","type":"$type","path":"$path","download_url":${if (type == "file") "\"$url\"" else "null"}}"""
 
     private class Sandbox(val responses: Map<String, ByteArray>, val installed: Boolean = false) {
         val written = linkedMapOf<String, String>()
-        suspend fun install(folder: GitHubFolder) = installSkillFromGitHub(folder, { installed },
+        suspend fun install(folder: GitHubFolder) = installSkillFromGitHub(
+            folder,
+            { installed },
             { path, text -> written[path] = text; Result.success("ok") },
-            { url, _ -> responses[url] ?: error("Unexpected request: $url") })
+            { url, _ -> responses[url] ?: error("Unexpected request: $url") }
+        )
     }
 
     private val folder = GitHubFolder("o", "r", "main", "skills/demo")
     private fun raw(name: String) = "https://raw.githubusercontent.com/o/r/main/$name"
 
     @Test fun aSkillIsCopiedIntoTheWorkspace() = runBlocking<Unit> {
-        val sandbox = Sandbox(mapOf(
-            api to "[${entry("SKILL.md")},${entry("notes.md")},${entry("logo.png")}]".encodeToByteArray(),
-            raw("SKILL.md") to skill.encodeToByteArray(), raw("notes.md") to "Notes".encodeToByteArray(),
-            raw("logo.png") to byteArrayOf(0x89.toByte(), 0, 1, 2)
-        ))
+        val sandbox = Sandbox(
+            mapOf(
+                api to "[${entry("SKILL.md")},${entry("notes.md")},${entry("logo.png")}]".encodeToByteArray(),
+                raw("SKILL.md") to skill.encodeToByteArray(),
+                raw("notes.md") to "Notes".encodeToByteArray(),
+                raw("logo.png") to byteArrayOf(0x89.toByte(), 0, 1, 2)
+            )
+        )
         assertEquals("Installed demo, without 1 binary file.", sandbox.install(folder).getOrThrow())
         assertEquals(setOf(".parchment/skills/demo/SKILL.md", ".parchment/skills/demo/notes.md"), sandbox.written.keys)
     }
 
     @Test fun theManifestIsWrittenLastSoAFailedCopyCanBeRetried() = runBlocking<Unit> {
-        val responses = mapOf(api to "[${entry("SKILL.md")},${entry("notes.md")}]".encodeToByteArray(),
-            raw("SKILL.md") to skill.encodeToByteArray(), raw("notes.md") to "Notes".encodeToByteArray())
+        val responses = mapOf(
+            api to "[${entry("SKILL.md")},${entry("notes.md")}]".encodeToByteArray(),
+            raw("SKILL.md") to skill.encodeToByteArray(),
+            raw("notes.md") to "Notes".encodeToByteArray()
+        )
         val order = mutableListOf<String>()
         installSkillFromGitHub(folder, { false }, { path, _ -> order += path; Result.success("ok") }, { url, _ -> responses.getValue(url) }).getOrThrow()
         assertEquals(".parchment/skills/demo/SKILL.md", order.last())

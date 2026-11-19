@@ -7,7 +7,9 @@ import io.parchment.ai.model.ToolCallRecord
 internal const val INTERRUPTED_REPLY_NOTICE = "\n\n*[Interrupted: the app closed before this reply finished. Use Continue to resume.]*"
 
 private fun ToolCallRecord.isPlaceholderResult(): Boolean = resultText.isBlank() ||
-    resultText == "Running shell command…" || resultText == "Running $name…" || resultText == "Running $name in parallel…"
+    resultText == "Running shell command…" ||
+    resultText == "Running $name…" ||
+    resultText == "Running $name in parallel…"
 
 internal fun ToolCallRecord.wasCutOff(): Boolean = isRunning || (isPlaceholderResult() && resultText.isNotBlank())
 

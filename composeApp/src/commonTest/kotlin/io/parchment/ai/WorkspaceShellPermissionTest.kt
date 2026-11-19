@@ -35,9 +35,13 @@ class WorkspaceShellPermissionTest {
         )
         assertTrue(result.isError)
         assertTrue(result.resultText.contains("Shell execution is disabled"))
-        assertFalse(WorkspaceHarness.activeToolsForMode(
-            WorkspaceMode.READ_WRITE, "unused-permission-test-root", allowShell = false
-        ).any { it.name == "shell_exec" })
+        assertFalse(
+            WorkspaceHarness.activeToolsForMode(
+                WorkspaceMode.READ_WRITE,
+                "unused-permission-test-root",
+                allowShell = false
+            ).any { it.name == "shell_exec" }
+        )
     }
 
     @Test

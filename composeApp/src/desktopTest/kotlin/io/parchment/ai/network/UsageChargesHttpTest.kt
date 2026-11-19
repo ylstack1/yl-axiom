@@ -11,8 +11,12 @@ import java.util.concurrent.atomic.AtomicInteger
 import kotlin.test.*
 
 class UsageChargesHttpTest {
-    private fun withServer(body: String, status: Int = 200, sse: Boolean = false,
-        verify: (String, AtomicInteger) -> Unit) {
+    private fun withServer(
+        body: String,
+        status: Int = 200,
+        sse: Boolean = false,
+        verify: (String, AtomicInteger) -> Unit
+    ) {
         val server = HttpServer.create(InetSocketAddress("127.0.0.1", 0), 0)
         val executor = Executors.newCachedThreadPool()
         val calls = AtomicInteger()
@@ -26,15 +30,16 @@ class UsageChargesHttpTest {
             exchange.responseBody.use { it.write(bytes) }
         }
         server.start()
-        try { verify("http://127.0.0.1:${server.address.port}", calls) }
-        finally { server.stop(0); executor.shutdownNow() }
+        try { verify("http://127.0.0.1:${server.address.port}", calls) } finally { server.stop(0); executor.shutdownNow() }
     }
 
     private fun generate(baseUrl: String, dialect: String = "openai_chat", path: String = "", modality: String = "text"): List<StreamUpdate> = runBlocking {
-        val profile = ProviderProfile("fee-http", "Fees", if (path.isEmpty()) ProviderProtocol.CUSTOM else ProviderProtocol.OPENAI_RESPONSES,
+        val profile = ProviderProfile(
+            "fee-http", "Fees", if (path.isEmpty()) ProviderProtocol.CUSTOM else ProviderProtocol.OPENAI_RESPONSES,
             baseUrl = baseUrl + path, customDialect = dialect, defaultModel = "fee-fixture", useLegacyFallbackEndpoint = false,
             thinkingEffort = "none", inputPricePerM = 1.0, outputPricePerM = 2.0,
-            customModelSpecs = mapOf("fee-fixture" to ModelPricingSpec("fee-fixture", outputModalities = listOf(modality))))
+            customModelSpecs = mapOf("fee-fixture" to ModelPricingSpec("fee-fixture", outputModalities = listOf(modality)))
+        )
         val session = ChatSession("fee-http-chat", "Fees", 1, 1, profile.id)
         val user = MessageNode("user", MessageRole.USER, listOf(MessageVariant("variant", "Reply Done.")))
         withTimeout(15_000) { AiProviderEngine.streamGeneration(profile, session, listOf(user)).toList() }
@@ -65,9 +70,11 @@ class UsageChargesHttpTest {
     }
 
     @Test fun failedDirectMediaRequestsAreRecordedBeforeDispatchWithoutClaimingTheyWereFree() {
-        for ((path, modality, wire) in listOf(Triple("/v1/audio/speech", "audio", "openai_audio_speech"),
+        for ((path, modality, wire) in listOf(
+            Triple("/v1/audio/speech", "audio", "openai_audio_speech"),
             Triple("/v1/images/generations", "image", "image_generation"),
-            Triple("/v1/videos/generations", "video", "video_generation"))) {
+            Triple("/v1/videos/generations", "video", "video_generation")
+        )) {
             withServer("""{"error":{"message":"invalid_api_key"}}""", status = 401) { url, calls ->
                 val updates = generate(url, path = path, modality = modality)
                 val usage = updates.filterIsInstance<StreamUpdate.UsageUpdated>().first()
@@ -98,12 +105,21 @@ class UsageChargesHttpTest {
         }
         server.start()
         try {
-            val profile = ProviderProfile("img-usage", "Images", ProviderProtocol.OPENAI_RESPONSES,
-                baseUrl = "http://127.0.0.1:${server.address.port}", defaultModel = "gpt-image-fixture",
-                customModelSpecs = mapOf("gpt-image-fixture" to ModelPricingSpec("gpt-image-fixture",
-                    knownPricing = TokenPricing(inputPerM = 5.0, outputPerM = 10.0),
-                    chargePricing = ChargePricing(mapOf("output_image" to 0.00004)),
-                    outputModalities = listOf("image"))))
+            val profile = ProviderProfile(
+                "img-usage",
+                "Images",
+                ProviderProtocol.OPENAI_RESPONSES,
+                baseUrl = "http://127.0.0.1:${server.address.port}",
+                defaultModel = "gpt-image-fixture",
+                customModelSpecs = mapOf(
+                    "gpt-image-fixture" to ModelPricingSpec(
+                        "gpt-image-fixture",
+                        knownPricing = TokenPricing(inputPerM = 5.0, outputPerM = 10.0),
+                        chargePricing = ChargePricing(mapOf("output_image" to 0.00004)),
+                        outputModalities = listOf("image")
+                    )
+                )
+            )
             val session = ChatSession("img-usage-chat", "Img", 1, 1, profile.id)
             val user = MessageNode("user", MessageRole.USER, listOf(MessageVariant("v", "Draw a dot")))
             val completed = withTimeout(15_000) { AiProviderEngine.streamGeneration(profile, session, listOf(user)).toList() }

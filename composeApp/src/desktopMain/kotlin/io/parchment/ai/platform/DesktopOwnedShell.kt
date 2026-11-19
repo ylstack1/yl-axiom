@@ -78,8 +78,8 @@ internal object DesktopOwnedShell {
         val builder = if (isWin) {
             val psCommandWithNoProgress =
                 "[Console]::OutputEncoding = [System.Text.Encoding]::UTF8; " +
-                "\$OutputEncoding = [System.Text.Encoding]::UTF8; " +
-                "\$ProgressPreference = 'SilentlyContinue'; $command"
+                    "\$OutputEncoding = [System.Text.Encoding]::UTF8; " +
+                    "\$ProgressPreference = 'SilentlyContinue'; $command"
             val encodedCommand = Base64.getEncoder().encodeToString(psCommandWithNoProgress.toByteArray(Charsets.UTF_16LE))
             ProcessBuilder(
                 windowsShellExecutable,

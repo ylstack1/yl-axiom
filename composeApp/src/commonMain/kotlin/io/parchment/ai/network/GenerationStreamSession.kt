@@ -27,6 +27,7 @@ import kotlinx.coroutines.flow.FlowCollector
 
 private const val MAX_GOAL_NETWORK_RETRIES = 120
 private const val MAX_MID_STREAM_CONTINUATION_PASSES = 64
+
 /** A cut reply resumes after a short wait; only cuts that repeat within this window wait longer each time. */
 private const val CUT_MEMORY_MS = 5 * 60_000L
 
@@ -268,7 +269,8 @@ internal class GenerationStreamSession(
                 reasonSummary = actualErr.message ?: "Transient network/proxy error",
                 onStatus = { msg -> state.emitStatus(msg) }
             )
-        } else if (producedAnyOutput && isRetryable &&
+        } else if (producedAnyOutput &&
+            isRetryable &&
             (isLongGoalRun || continuationPass < MAX_MID_STREAM_CONTINUATION_PASSES)
         ) {
             // A stream cut by a proxy or a dropped connection: wait, then continue the reply in a new pass.
@@ -399,15 +401,24 @@ internal class GenerationStreamSession(
                 runLegacyOpenAiChatCompletions(effectiveProfile, effectiveHistoryNodes, effectiveContinuePrefix)
             !customProfile && (modalityProfile.isDedicatedVideo || isExplicitVideoPath) ->
                 runMediaEndpointWithFallback(
-                    effectiveProfile, effectiveHistoryNodes, effectiveContinuePrefix, rethrowNoRetry = true
+                    effectiveProfile,
+                    effectiveHistoryNodes,
+                    effectiveContinuePrefix,
+                    rethrowNoRetry = true
                 ) { runUniversalMediaGeneration(forceVideo = true) }
             !customProfile && isDirectImagesEndpoint ->
                 runMediaEndpointWithFallback(
-                    effectiveProfile, effectiveHistoryNodes, effectiveContinuePrefix, rethrowNoRetry = false
+                    effectiveProfile,
+                    effectiveHistoryNodes,
+                    effectiveContinuePrefix,
+                    rethrowNoRetry = false
                 ) { runUniversalMediaGeneration(forceVideo = false) }
             !customProfile && isDirectAudioEndpoint ->
                 runMediaEndpointWithFallback(
-                    effectiveProfile, effectiveHistoryNodes, effectiveContinuePrefix, rethrowNoRetry = false
+                    effectiveProfile,
+                    effectiveHistoryNodes,
+                    effectiveContinuePrefix,
+                    rethrowNoRetry = false
                 ) { runUniversalAudioSpeechGeneration() }
             // Try /v1/responses first. If it fails (or, with useLegacyFallbackEndpoint on, its
             // quick retries run out), hand the thoughts, tool calls and text so far to

@@ -20,15 +20,15 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
 import io.parchment.ai.ParchmentFileProvider
+import io.parchment.ai.ui.appProcessScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import java.io.File
 import java.io.FileInputStream
 import java.util.concurrent.ConcurrentHashMap
 import kotlin.io.encoding.Base64
 import kotlin.io.encoding.ExperimentalEncodingApi
-import io.parchment.ai.ui.appProcessScope
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
 
 @OptIn(ExperimentalEncodingApi::class)
 actual object PlatformPickers {
@@ -48,6 +48,7 @@ actual object PlatformPickers {
 
     private val fontCache = ConcurrentHashMap<String, FontFamily>()
     private val pendingSharedOrPastedFiles = mutableListOf<PickedBinaryFile>()
+
     @Volatile
     private var filesDroppedCallback: ((List<PickedBinaryFile>) -> Unit)? = null
 
@@ -74,10 +75,13 @@ actual object PlatformPickers {
         return withContext(Dispatchers.IO) {
             uris.map { uri ->
                 val name = uriDisplayName(ctx, uri)
-                ChatImportOutcome(name, runCatching {
-                    val source = checkNotNull(ctx.contentResolver.openInputStream(uri)) { "Unable to open the selected file." }
-                    ChatArchiveExtractor.importChatFile(name, source, AndroidPlatformHost.resolveStorageDir(), decode = decode)
-                })
+                ChatImportOutcome(
+                    name,
+                    runCatching {
+                        val source = checkNotNull(ctx.contentResolver.openInputStream(uri)) { "Unable to open the selected file." }
+                        ChatArchiveExtractor.importChatFile(name, source, AndroidPlatformHost.resolveStorageDir(), decode = decode)
+                    }
+                )
             }
         }
     }
@@ -193,17 +197,16 @@ actual object PlatformPickers {
         }.getOrNull()
     }
 
-    actual fun loadCustomFontFamily(fontPath: String): FontFamily? =
-        AppStorageInventory.loadCachedFontFamily(fontCache, fontPath) { file ->
-            FontFamily(
-                Font(file = file, weight = FontWeight.Normal, style = FontStyle.Normal),
-                Font(file = file, weight = FontWeight.Medium, style = FontStyle.Normal),
-                Font(file = file, weight = FontWeight.SemiBold, style = FontStyle.Normal),
-                Font(file = file, weight = FontWeight.Bold, style = FontStyle.Normal),
-                Font(file = file, weight = FontWeight.Normal, style = FontStyle.Italic),
-                Font(file = file, weight = FontWeight.Bold, style = FontStyle.Italic)
-            )
-        }
+    actual fun loadCustomFontFamily(fontPath: String): FontFamily? = AppStorageInventory.loadCachedFontFamily(fontCache, fontPath) { file ->
+        FontFamily(
+            Font(file = file, weight = FontWeight.Normal, style = FontStyle.Normal),
+            Font(file = file, weight = FontWeight.Medium, style = FontStyle.Normal),
+            Font(file = file, weight = FontWeight.SemiBold, style = FontStyle.Normal),
+            Font(file = file, weight = FontWeight.Bold, style = FontStyle.Normal),
+            Font(file = file, weight = FontWeight.Normal, style = FontStyle.Italic),
+            Font(file = file, weight = FontWeight.Bold, style = FontStyle.Italic)
+        )
+    }
 
     actual fun copyImageToClipboard(bytes: ByteArray): Boolean = runCatching {
         val ctx = AndroidPlatformHost.appContext ?: return false

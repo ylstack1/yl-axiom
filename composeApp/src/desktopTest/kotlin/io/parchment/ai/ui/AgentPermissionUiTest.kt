@@ -1,8 +1,8 @@
 package io.parchment.ai.ui
 
 import androidx.compose.foundation.background
-import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
@@ -20,9 +20,9 @@ import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.TextLayoutResult
 import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.dp
-import io.parchment.ai.harness.WorkspaceHarness
-import io.parchment.ai.harness.ToolApprovalBroker
 import io.parchment.ai.harness.ToolAccessScope
+import io.parchment.ai.harness.ToolApprovalBroker
+import io.parchment.ai.harness.WorkspaceHarness
 import io.parchment.ai.model.*
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
@@ -39,6 +39,7 @@ class AgentPermissionUiTest {
         fun flatten(node: SemanticsNode): List<SemanticsNode> = listOf(node) + node.children.flatMap(::flatten)
         return scene.semanticsOwners.flatMap { flatten(it.rootSemanticsNode) }
     }
+
     /** Publishes state written outside composition before rendering, so one frame observes it. */
     private fun settle(scene: ImageComposeScene, frameNanos: Long) {
         Snapshot.sendApplyNotifications()
@@ -50,7 +51,7 @@ class AgentPermissionUiTest {
         nodes(scene).forEach { node ->
             val results = mutableListOf<TextLayoutResult>()
             node.config.getOrNull(SemanticsActions.GetTextLayoutResult)?.action?.invoke(results)
-            results.forEach layoutLoop@ { layout ->
+            results.forEach layoutLoop@{ layout ->
                 if (!include(layout.layoutInput.text.text)) return@layoutLoop
                 val message = "$context: ${layout.layoutInput.text}; size=${layout.size}, paragraph=${layout.multiParagraph.width}x${layout.multiParagraph.height}"
                 // Paragraph constraint width can exceed naturally measured text width. Check the
@@ -89,20 +90,34 @@ class AgentPermissionUiTest {
     }
 
     @Test fun editorChoicesWrapAndRetainInheritanceAcrossNarrowAndLargeFonts() = runBlocking<Unit>(Dispatchers.Swing) {
-        val cases = listOf(Triple(380, 1f, "portrait"), Triple(740, 1f, "landscape"),
-            Triple(320, 1.8f, "large-font"), Triple(380, 1f, "dark"))
+        val cases = listOf(
+            Triple(380, 1f, "portrait"),
+            Triple(740, 1f, "landscape"),
+            Triple(320, 1.8f, "large-font"),
+            Triple(380, 1f, "dark")
+        )
         cases.forEach { (width, scale, name) ->
             val overrides = mutableStateOf(AgentPermissionOverrides())
             val defaults = AgentPermissionPolicy(workspacePath = "C:/Projects/a-long-workspace-name/another-long-folder", workspaceMode = WorkspaceMode.READ_ONLY)
-            val palette = buildPaletteFromConfig(if (name == "dark") ThemeConfig(
-                canvasBgHex = "181411", sheetBgHex = "211B16", cardBgHex = "29221C", elevatedBgHex = "352B22",
-                primaryInkHex = "F4ECD8", narrationInkHex = "D5C4A1", mutedInkHex = "B9A88A", accentHex = "E6A887"
-            ) else ThemeConfig())
+            val palette = buildPaletteFromConfig(
+                if (name == "dark") ThemeConfig(
+                    canvasBgHex = "181411",
+                    sheetBgHex = "211B16",
+                    cardBgHex = "29221C",
+                    elevatedBgHex = "352B22",
+                    primaryInkHex = "F4ECD8",
+                    narrationInkHex = "D5C4A1",
+                    mutedInkHex = "B9A88A",
+                    accentHex = "E6A887"
+                ) else ThemeConfig()
+            )
             val scene = ImageComposeScene(width, 3_800, density = Density(1f, scale), coroutineContext = Dispatchers.Swing.immediate)
             try {
                 scene.setContent {
-                    CompositionLocalProvider(LocalParchmentPalette provides palette,
-                        LocalParchmentWindowSize provides ParchmentWindowSize(width.dp, 720.dp)) {
+                    CompositionLocalProvider(
+                        LocalParchmentPalette provides palette,
+                        LocalParchmentWindowSize provides ParchmentWindowSize(width.dp, 720.dp)
+                    ) {
                         Column(Modifier.fillMaxSize().background(palette.canvasBg).verticalScroll(rememberScrollState()).padding(12.dp)) {
                             AgentPermissionEditor(defaults, overrides.value, { overrides.value = it }, onReset = { overrides.value = AgentPermissionOverrides() })
                             SepiaButton("Allow this exact action for this run", onClick = {}, modifier = Modifier.heightIn(min = 48.dp), wrapText = true)
@@ -185,10 +200,22 @@ class AgentPermissionUiTest {
         val profile = ProviderProfile("fixture", "Fixture", ProviderProtocol.OPENAI_RESPONSES, defaultModel = "explicit-model")
         val assistant = AssistantAgent("assistant", "Fixture assistant")
         val session = ChatSession("chat", "Fixture", 1L, 1L, profile.id)
-        val state = AppStateSnapshot(profiles = listOf(profile), activeProfileId = profile.id,
-            assistants = listOf(assistant), activeAssistantId = assistant.id)
-        val labels = listOf("Creativity, called temperature (", "Word variety, called Top-P (", "Reply limit in tokens (", "Legacy thinking budget (",
-            "History message limit (", "Prose font size (", "Code font size (", "Max reading width (")
+        val state = AppStateSnapshot(
+            profiles = listOf(profile),
+            activeProfileId = profile.id,
+            assistants = listOf(assistant),
+            activeAssistantId = assistant.id
+        )
+        val labels = listOf(
+            "Creativity, called temperature (",
+            "Word variety, called Top-P (",
+            "Reply limit in tokens (",
+            "Legacy thinking budget (",
+            "History message limit (",
+            "Prose font size (",
+            "Code font size (",
+            "Max reading width ("
+        )
         val presetLabels = ThemeConfig.PRESETS.map { it.name.substringBefore(" (") }
         listOf(320 to 1.8f, 740 to 1f).forEach { (width, scale) ->
             listOf("provider", "assistant", "fonts").forEach { page ->
@@ -198,13 +225,13 @@ class AgentPermissionUiTest {
                     scene.setContent {
                         CompositionLocalProvider(LocalParchmentWindowSize provides ParchmentWindowSize(width.dp, 720.dp)) {
                             Box(Modifier.fillMaxSize().background(LocalParchmentPalette.current.canvasBg)) {
-                            when (page) {
-                                "provider" -> Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(12.dp)) {
-                                    ProviderProtocolSubpage(profile, {}, {}, {})
+                                when (page) {
+                                    "provider" -> Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(12.dp)) {
+                                        ProviderProtocolSubpage(profile, {}, {}, {})
+                                    }
+                                    "assistant" -> AssistantsSubpage(state, { _, _ -> }, {})
+                                    else -> PreferencesSubpage(PreferencesConfig(), selectedTheme.value, session, "font", {}, { selectedTheme.value = it }, {}, {})
                                 }
-                                "assistant" -> AssistantsSubpage(state, { _, _ -> }, {})
-                                else -> PreferencesSubpage(PreferencesConfig(), selectedTheme.value, session, "font", {}, { selectedTheme.value = it }, {}, {})
-                            }
                             }
                         }
                     }
@@ -241,7 +268,8 @@ class AgentPermissionUiTest {
                         // The new selection can reach the semantics tree a frame before the old one clears,
                         // so render frames until exactly one theme reads as selected (a few frames at most).
                         fun selectedThemes() = nodes(scene).filter {
-                            it.config.getOrNull(SemanticsProperties.Role) == Role.RadioButton && text(it).isNotEmpty() &&
+                            it.config.getOrNull(SemanticsProperties.Role) == Role.RadioButton &&
+                                text(it).isNotEmpty() &&
                                 it.config.getOrNull(SemanticsProperties.Selected) == true
                         }
                         val frame = 1_100_000_000L
@@ -258,14 +286,23 @@ class AgentPermissionUiTest {
         val labels = ProviderProtocol.entries.map { it.displayName } + CUSTOM_DIALECTS.map(::customDialectLabel) +
             AuthHeaderMode.entries.map { it.label }
         listOf(320 to 1.8f, 740 to 1f).forEach { (width, scale) ->
-            val profile = mutableStateOf(ProviderProfile("fixture", "Fixture", ProviderProtocol.CUSTOM,
-                customDialect = CUSTOM_DIALECTS.first(), baseUrl = "https://example.invalid/exact-endpoint"))
+            val profile = mutableStateOf(
+                ProviderProfile(
+                    "fixture",
+                    "Fixture",
+                    ProviderProtocol.CUSTOM,
+                    customDialect = CUSTOM_DIALECTS.first(),
+                    baseUrl = "https://example.invalid/exact-endpoint"
+                )
+            )
             val scene = ImageComposeScene(width, 3_800, density = Density(1f, scale), coroutineContext = Dispatchers.Swing.immediate)
             try {
                 scene.setContent {
                     CompositionLocalProvider(LocalParchmentWindowSize provides ParchmentWindowSize(width.dp, 720.dp)) {
-                        Column(Modifier.fillMaxSize().background(LocalParchmentPalette.current.canvasBg)
-                            .verticalScroll(rememberScrollState()).padding(12.dp)) {
+                        Column(
+                            Modifier.fillMaxSize().background(LocalParchmentPalette.current.canvasBg)
+                                .verticalScroll(rememberScrollState()).padding(12.dp)
+                        ) {
                             ProviderProtocolSubpage(profile.value, { profile.value = it(profile.value) }, {}, {})
                         }
                     }
@@ -306,8 +343,12 @@ class AgentPermissionUiTest {
                 scene.setContent {
                     CompositionLocalProvider(LocalParchmentWindowSize provides ParchmentWindowSize(width.dp, 720.dp)) {
                         Column(Modifier.fillMaxSize().background(LocalParchmentPalette.current.canvasBg).padding(12.dp)) {
-                            SepiaToggleRow(title, rowState.value, { rowChanges++; rowState.value = it },
-                                subtitle = "A setting with a wrapping description at enlarged font sizes.")
+                            SepiaToggleRow(
+                                title,
+                                rowState.value,
+                                { rowChanges++; rowState.value = it },
+                                subtitle = "A setting with a wrapping description at enlarged font sizes."
+                            )
                             SepiaToggleSwitch(standaloneState.value, { standaloneChanges++; standaloneState.value = it }, label)
                         }
                     }

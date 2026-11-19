@@ -62,8 +62,17 @@ class RetryCountdownProbeTest {
         try {
             scene.setContent { ParchmentApp() }
             repeat(60) { frame(); kotlinx.coroutines.delay(5) }
-            parchmentProcessState.runs.attach(identity, SessionStreamRuntime(chat.id, targetNodeId = "retry-node",
-                statusText = status(wait(10)), retryWait = wait(10), retryControl = RetryControl()), cancelPrevious = false)
+            parchmentProcessState.runs.attach(
+                identity,
+                SessionStreamRuntime(
+                    chat.id,
+                    targetNodeId = "retry-node",
+                    statusText = status(wait(10)),
+                    retryWait = wait(10),
+                    retryControl = RetryControl()
+                ),
+                cancelPrevious = false
+            )
             repeat(30) { frame() }
             val untouched = parchmentProcessState.snapshot.value
             val ticks = (9L downTo 0L).map { seconds ->
@@ -72,10 +81,13 @@ class RetryCountdownProbeTest {
             }.sorted()
             val idle = (1..30).map { frame() }.sorted()
             assertSame(untouched, parchmentProcessState.snapshot.value, "A countdown must not replace the app state")
-            assertTrue(nodes(scene).any { node ->
-                node.config.getOrNull(SemanticsActions.OnClick) != null &&
-                    node.config.getOrNull(SemanticsProperties.Text).orEmpty().any { it.text == Strings.retryNow }
-            }, "The waiting run must offer Retry now")
+            assertTrue(
+                nodes(scene).any { node ->
+                    node.config.getOrNull(SemanticsActions.OnClick) != null &&
+                        node.config.getOrNull(SemanticsProperties.Text).orEmpty().any { it.text == Strings.retryNow }
+                },
+                "The waiting run must offer Retry now"
+            )
             fun p(list: List<Long>, q: Double) = list[((list.size - 1) * q).toInt()] / 1000.0
             val line = "retry_countdown ticks=${ticks.size} p50_ms=${"%.1f".format(p(ticks, 0.5))} " +
                 "p95_ms=${"%.1f".format(p(ticks, 0.95))} idle_p50_ms=${"%.1f".format(p(idle, 0.5))}"

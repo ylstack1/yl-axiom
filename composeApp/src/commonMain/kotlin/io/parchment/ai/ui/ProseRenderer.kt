@@ -1,25 +1,24 @@
 package io.parchment.ai.ui
 
 import androidx.compose.animation.AnimatedVisibility
-import io.parchment.ai.strings.Strings
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicText
-import androidx.compose.foundation.layout.ExperimentalLayoutApi
-import androidx.compose.foundation.layout.FlowRow
-import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.Immutable
@@ -47,16 +46,23 @@ import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import io.parchment.ai.platform.PlatformPickers
+import io.parchment.ai.strings.Strings
 import kotlinx.coroutines.launch
 
 @Immutable
 internal sealed class ProseBlock {
     @Immutable data class Heading(val level: Int, val text: String) : ProseBlock()
+
     @Immutable data class SceneBreak(val raw: String) : ProseBlock()
+
     @Immutable data class BlockQuote(val text: String) : ProseBlock()
+
     @Immutable data class CodeFence(val language: String, val code: String) : ProseBlock()
+
     @Immutable data class MathBlock(val rawLatex: String) : ProseBlock()
+
     @Immutable data class TableBlock(val headers: List<String>, val rows: List<List<String>>) : ProseBlock()
+
     @Immutable data class Paragraph(val text: String) : ProseBlock()
 }
 
@@ -90,6 +96,7 @@ internal class IncrementalProseBlockCache {
     private var stableBlocks: List<ProseBlock> = emptyList()
     private var lastFullText: String = ""
     private var lastFullBlocks: List<ProseBlock> = emptyList()
+
     /** A split that changed the parse stays wrong until the text reaches a new break, so don't re-test it each frame. */
     private var rejectedSplitEnd = -1
 
@@ -282,17 +289,19 @@ internal fun splitCodeFenceChunks(
  */
 fun stripMarkdownToPlainText(raw: String): String {
     if (raw.isEmpty()) return ""
-    return raw
-        .replace(MD_CODE_FENCE_OPEN_REGEX, "")
-        .replace("```", "")
-        .replace(MD_HEADING_PREFIX_REGEX, "")
-        .replace(MD_INLINE_LINK_REGEX, "$1")
-        .replace(MD_BOLD_AST_REGEX, "$1")
-        .replace(MD_BOLD_UND_REGEX, "$1")
-        .replace(MD_STRIKE_REGEX, "$1")
-        .replace(MD_ITALIC_AST_REGEX, "$1")
-        .replace(MD_INLINE_CODE_REGEX, "$1")
-        .trim()
+    var s = raw
+    if (s.contains("```")) {
+        s = s.replace(MD_CODE_FENCE_OPEN_REGEX, "").replace("```", "")
+    }
+    if (s.indexOf('#') != -1) s = s.replace(MD_HEADING_PREFIX_REGEX, "")
+    if (s.indexOf('[') != -1 && s.indexOf('(') != -1) s = s.replace(MD_INLINE_LINK_REGEX, "$1")
+    if (s.indexOf('*') != -1) {
+        s = s.replace(MD_BOLD_AST_REGEX, "$1").replace(MD_ITALIC_AST_REGEX, "$1")
+    }
+    if (s.indexOf("__") != -1) s = s.replace(MD_BOLD_UND_REGEX, "$1")
+    if (s.indexOf("~~") != -1) s = s.replace(MD_STRIKE_REGEX, "$1")
+    if (s.indexOf('`') != -1) s = s.replace(MD_INLINE_CODE_REGEX, "$1")
+    return s.trim()
 }
 
 @Composable
@@ -377,275 +386,276 @@ private fun ProseBlockItem(
 ) {
     val p = LocalParchmentPalette.current
     val scope = rememberCoroutineScope()
+
     @Suppress("DEPRECATION")
     val clipboard = LocalClipboardManager.current
     Column(modifier = Modifier.fillMaxWidth()) {
         when (block) {
-                    is ProseBlock.SceneBreak -> {
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(vertical = if (compactReasoningMode) 4.dp else 10.dp),
-                            horizontalArrangement = Arrangement.Center,
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            BasicText(
-                                text = "—   ",
-                                style = baseTextStyle.copy(
-                                    color = p.accentSecondary,
-                                    fontSize = (p.config.proseFontSizeSp * 0.88f).sp
-                                )
-                            )
-                            KissVectorIcon(
-                                icon = KissIcon.SPARKLES,
-                                tint = p.accentSecondary,
-                                size = if (compactReasoningMode) 11.dp else 13.dp
-                            )
-                            BasicText(
-                                text = "   —",
-                                style = baseTextStyle.copy(
-                                    color = p.accentSecondary,
-                                    fontSize = (p.config.proseFontSizeSp * 0.88f).sp
-                                )
-                            )
-                        }
-                    }
-
-                    is ProseBlock.Heading -> {
-                        val scale = if (compactReasoningMode) {
-                            when (block.level) {
-                                1 -> 1.12f
-                                2 -> 1.06f
-                                else -> 1.02f
-                            }
-                        } else {
-                            when (block.level) {
-                                1 -> 1.34f
-                                2 -> 1.20f
-                                else -> 1.08f
-                            }
-                        }
-                        val styledHeading = remember(block.text, p, enableMath, enableInlineDollarMath) {
-                            styleLiteraryParagraph(
-                                raw = block.text,
-                                palette = p,
-                                indentChars = 0,
-                                enableMath = enableMath,
-                                enableInlineDollarMath = enableInlineDollarMath
-                            )
-                        }
-                        val isHighlightedHeading = remember(block.text, highlightedLineSubstring) {
-                            highlightedLineSubstring.isNotBlank() &&
-                                (block.text.contains(highlightedLineSubstring, ignoreCase = true) ||
-                                    stripMarkdownToPlainText(block.text).contains(highlightedLineSubstring, ignoreCase = true))
-                        }
-                        BasicText(
-                            text = styledHeading,
-                            style = baseTextStyle.copy(
-                                fontSize = (baseTextStyle.fontSize.value * scale).sp,
-                                fontWeight = FontWeight.SemiBold,
-                                color = p.primaryInk
-                            ),
-                            modifier = Modifier
-                                .then(
-                                    if (isHighlightedHeading) {
-                                        Modifier
-                                            .fillMaxWidth()
-                                            .background(p.accent.copy(alpha = 0.14f), RoundedCornerShape(Radius.r6))
-                                            .border(1.dp, p.accent.copy(alpha = 0.7f), RoundedCornerShape(Radius.r6))
-                                            .padding(horizontal = Space.s8, vertical = Space.s4)
-                                    } else Modifier
-                                )
-                                .padding(
-                                    top = if (compactReasoningMode) 3.dp else 6.dp,
-                                    bottom = if (compactReasoningMode) 2.dp else 4.dp
-                                )
+            is ProseBlock.SceneBreak -> {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(vertical = if (compactReasoningMode) 4.dp else 10.dp),
+                    horizontalArrangement = Arrangement.Center,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    BasicText(
+                        text = "—   ",
+                        style = baseTextStyle.copy(
+                            color = p.accentSecondary,
+                            fontSize = (p.config.proseFontSizeSp * 0.88f).sp
                         )
-                    }
+                    )
+                    KissVectorIcon(
+                        icon = KissIcon.SPARKLES,
+                        tint = p.accentSecondary,
+                        size = if (compactReasoningMode) 11.dp else 13.dp
+                    )
+                    BasicText(
+                        text = "   —",
+                        style = baseTextStyle.copy(
+                            color = p.accentSecondary,
+                            fontSize = (p.config.proseFontSizeSp * 0.88f).sp
+                        )
+                    )
+                }
+            }
 
-                    is ProseBlock.BlockQuote -> {
-                        val styledQuote = remember(block.text, p, enableMath, enableInlineDollarMath) {
-                            styleLiteraryParagraph(
-                                raw = block.text,
-                                palette = p,
-                                indentChars = 0,
-                                enableMath = enableMath,
-                                enableInlineDollarMath = enableInlineDollarMath
-                            )
-                        }
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(vertical = 3.dp)
-                                .background(p.elevatedBg.copy(alpha = 0.5f), RoundedCornerShape(Radius.r6))
-                                .border(LineWidth.hairline, p.border.copy(alpha = 0.7f), RoundedCornerShape(Radius.r6))
-                                .padding(horizontal = Space.s12, vertical = Space.s8)
-                        ) {
-                            BasicText(
-                                text = styledQuote,
-                                style = baseTextStyle.copy(
-                                    fontStyle = FontStyle.Italic,
-                                    color = p.narrationInk
-                                )
-                            )
-                        }
+            is ProseBlock.Heading -> {
+                val scale = if (compactReasoningMode) {
+                    when (block.level) {
+                        1 -> 1.12f
+                        2 -> 1.06f
+                        else -> 1.02f
                     }
-
-                    is ProseBlock.CodeFence -> {
-                        var isCollapsed by remember(index, autoCollapseCodeBlocks) {
-                            mutableStateOf(autoCollapseCodeBlocks)
-                        }
-                        var isWrapped by rememberSaveable(index, wrapCodeBlocks) {
-                            mutableStateOf(wrapCodeBlocks)
-                        }
-                        val scanState = remember(index) { CodeFenceScanState() }.update(block.code)
-                        val isSvgArtifact = block.language.equals("svg", ignoreCase = true) ||
-                            (scanState.hasSvgOpen && scanState.hasSvgClose)
-                        val isDiffLang = block.language.equals("diff", ignoreCase = true) ||
-                            block.language.equals("patch", ignoreCase = true)
-                        var showSvgPreview by remember(index, isSvgArtifact) { mutableStateOf(isSvgArtifact) }
-                        var copiedCode by remember(index) { mutableStateOf(false) }
-                        var savedCode by remember(index) { mutableStateOf(false) }
-                        val shape = RoundedCornerShape(Radius.r10)
-                        Column(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(vertical = Space.s4)
-                                .clip(shape)
-                                .background(p.elevatedBg)
-                                .border(LineWidth.hairline, p.border.copy(alpha = 0.52f), shape)
-                        ) {
-                            @OptIn(ExperimentalLayoutApi::class)
-                            FlowRow(
-                                modifier = Modifier
+                } else {
+                    when (block.level) {
+                        1 -> 1.34f
+                        2 -> 1.20f
+                        else -> 1.08f
+                    }
+                }
+                val styledHeading = remember(block.text, p, enableMath, enableInlineDollarMath) {
+                    styleLiteraryParagraph(
+                        raw = block.text,
+                        palette = p,
+                        indentChars = 0,
+                        enableMath = enableMath,
+                        enableInlineDollarMath = enableInlineDollarMath
+                    )
+                }
+                val isHighlightedHeading = remember(block.text, highlightedLineSubstring) {
+                    highlightedLineSubstring.isNotBlank() &&
+                        (
+                            block.text.contains(highlightedLineSubstring, ignoreCase = true) ||
+                                stripMarkdownToPlainText(block.text).contains(highlightedLineSubstring, ignoreCase = true)
+                            )
+                }
+                BasicText(
+                    text = styledHeading,
+                    style = baseTextStyle.copy(
+                        fontSize = (baseTextStyle.fontSize.value * scale).sp,
+                        fontWeight = FontWeight.SemiBold,
+                        color = p.primaryInk
+                    ),
+                    modifier = Modifier
+                        .then(
+                            if (isHighlightedHeading) {
+                                Modifier
                                     .fillMaxWidth()
-                                    .background(p.sheetBg.copy(alpha = 0.85f))
-                                    .padding(horizontal = Space.s10, vertical = Space.s4),
-                                horizontalArrangement = Arrangement.SpaceBetween,
-                                verticalArrangement = Arrangement.spacedBy(Space.s4),
-                                itemVerticalAlignment = Alignment.CenterVertically
-                            ) {
-                                Row(
-                                    verticalAlignment = Alignment.CenterVertically,
-                                    horizontalArrangement = Arrangement.spacedBy(Space.s6),
-                                    modifier = Modifier.padding(top = Space.s4)
-                                ) {
-                                    KissVectorIcon(
-                                        icon = if (isSvgArtifact) KissIcon.IMAGE else KissIcon.CODE,
-                                        tint = p.accent,
-                                        size = 12.dp
-                                    )
-                                    val lineCount = scanState.lineCount
-                                    BasicText(
-                                        text = Strings.lines(block.language.ifBlank { "code" }, lineCount),
-                                        style = p.uiLabelStyle.copy(fontFamily = p.codeFontFamily)
-                                    )
-                                }
-                                Row(horizontalArrangement = Arrangement.spacedBy(Space.s4), verticalAlignment = Alignment.CenterVertically) {
-                                    if (isSvgArtifact) {
-                                        SepiaButton(
-                                            text = if (showSvgPreview) "‹/›" else "👁",
-                                            compact = true,
-                                            style = if (showSvgPreview) SepiaButtonStyle.SECONDARY else SepiaButtonStyle.GHOST,
-                                            contentDescription = if (showSvgPreview) Strings.showSource else Strings.showPreview,
-                                            onClick = {
-                                                showSvgPreview = !showSvgPreview
-                                                isCollapsed = false
-                                            }
-                                        )
+                                    .background(p.accent.copy(alpha = 0.14f), RoundedCornerShape(Radius.r6))
+                                    .border(1.dp, p.accent.copy(alpha = 0.7f), RoundedCornerShape(Radius.r6))
+                                    .padding(horizontal = Space.s8, vertical = Space.s4)
+                            } else Modifier
+                        )
+                        .padding(
+                            top = if (compactReasoningMode) 3.dp else 6.dp,
+                            bottom = if (compactReasoningMode) 2.dp else 4.dp
+                        )
+                )
+            }
+
+            is ProseBlock.BlockQuote -> {
+                val styledQuote = remember(block.text, p, enableMath, enableInlineDollarMath) {
+                    styleLiteraryParagraph(
+                        raw = block.text,
+                        palette = p,
+                        indentChars = 0,
+                        enableMath = enableMath,
+                        enableInlineDollarMath = enableInlineDollarMath
+                    )
+                }
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(vertical = 3.dp)
+                        .background(p.elevatedBg.copy(alpha = 0.5f), RoundedCornerShape(Radius.r6))
+                        .border(LineWidth.hairline, p.border.copy(alpha = 0.7f), RoundedCornerShape(Radius.r6))
+                        .padding(horizontal = Space.s12, vertical = Space.s8)
+                ) {
+                    BasicText(
+                        text = styledQuote,
+                        style = baseTextStyle.copy(
+                            fontStyle = FontStyle.Italic,
+                            color = p.narrationInk
+                        )
+                    )
+                }
+            }
+
+            is ProseBlock.CodeFence -> {
+                var isCollapsed by remember(index, autoCollapseCodeBlocks) {
+                    mutableStateOf(autoCollapseCodeBlocks)
+                }
+                var isWrapped by rememberSaveable(index, wrapCodeBlocks) {
+                    mutableStateOf(wrapCodeBlocks)
+                }
+                val scanState = remember(index) { CodeFenceScanState() }.update(block.code)
+                val isSvgArtifact = block.language.equals("svg", ignoreCase = true) ||
+                    (scanState.hasSvgOpen && scanState.hasSvgClose)
+                val isDiffLang = block.language.equals("diff", ignoreCase = true) ||
+                    block.language.equals("patch", ignoreCase = true)
+                var showSvgPreview by remember(index, isSvgArtifact) { mutableStateOf(isSvgArtifact) }
+                var copiedCode by remember(index) { mutableStateOf(false) }
+                var savedCode by remember(index) { mutableStateOf(false) }
+                val shape = RoundedCornerShape(Radius.r10)
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(vertical = Space.s4)
+                        .clip(shape)
+                        .background(p.elevatedBg)
+                        .border(LineWidth.hairline, p.border.copy(alpha = 0.52f), shape)
+                ) {
+                    @OptIn(ExperimentalLayoutApi::class)
+                    FlowRow(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .background(p.sheetBg.copy(alpha = 0.85f))
+                            .padding(horizontal = Space.s10, vertical = Space.s4),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalArrangement = Arrangement.spacedBy(Space.s4),
+                        itemVerticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(Space.s6),
+                            modifier = Modifier.padding(top = Space.s4)
+                        ) {
+                            KissVectorIcon(
+                                icon = if (isSvgArtifact) KissIcon.IMAGE else KissIcon.CODE,
+                                tint = p.accent,
+                                size = 12.dp
+                            )
+                            val lineCount = scanState.lineCount
+                            BasicText(
+                                text = Strings.lines(block.language.ifBlank { "code" }, lineCount),
+                                style = p.uiLabelStyle.copy(fontFamily = p.codeFontFamily)
+                            )
+                        }
+                        Row(horizontalArrangement = Arrangement.spacedBy(Space.s4), verticalAlignment = Alignment.CenterVertically) {
+                            if (isSvgArtifact) {
+                                SepiaButton(
+                                    text = if (showSvgPreview) "‹/›" else "👁",
+                                    compact = true,
+                                    style = if (showSvgPreview) SepiaButtonStyle.SECONDARY else SepiaButtonStyle.GHOST,
+                                    contentDescription = if (showSvgPreview) Strings.showSource else Strings.showPreview,
+                                    onClick = {
+                                        showSvgPreview = !showSvgPreview
+                                        isCollapsed = false
                                     }
-                                    if (!(isSvgArtifact && showSvgPreview)) {
-                                        SepiaButton(
-                                            text = "↩",
-                                            compact = true,
-                                            style = if (isWrapped) SepiaButtonStyle.SECONDARY else SepiaButtonStyle.GHOST,
-                                            contentDescription = if (isWrapped) Strings.unwrapCode else Strings.wrapCode,
-                                            onClick = { isWrapped = !isWrapped }
-                                        )
-                                    }
-                                    SepiaButton(
-                                        text = if (isCollapsed) "▸" else "▾",
-                                        compact = true,
-                                        style = SepiaButtonStyle.GHOST,
-                                        contentDescription = if (isCollapsed) Strings.expandCode else Strings.collapseCode,
-                                        onClick = { isCollapsed = !isCollapsed }
-                                    )
-                                    SepiaButton(
-                                        text = if (savedCode) "✓" else "📥",
-                                        compact = true,
-                                        style = SepiaButtonStyle.GHOST,
-                                        contentDescription = Strings.saveFile,
-                                        onClick = {
-                                            scope.launch {
-                                                val ext = inferCodeFenceExtension(block.language, isSvgArtifact)
-                                                val saved = PlatformPickers.saveFileForExport(
-                                                    "artifact-${index + 1}.$ext",
-                                                    block.code.encodeToByteArray()
-                                                )
-                                                if (saved != null) savedCode = true
-                                            }
-                                        }
-                                    )
-                                    SepiaButton(
-                                        text = if (copiedCode) "✓" else "📋",
-                                        compact = true,
-                                        style = SepiaButtonStyle.GHOST,
-                                        contentDescription = if (copiedCode) Strings.copied else Strings.copyCode,
-                                        onClick = {
-                                            clipboard.setText(AnnotatedString(block.code))
-                                            copiedCode = true
-                                        }
-                                    )
-                                }
+                                )
                             }
-                            AnimatedVisibility(
-                                visible = !isCollapsed,
-                                enter = motionExpandEnter(),
-                                exit = motionShrinkExit()
-                            ) {
-                                Column {
-                                    SepiaDivider()
-                                    if (isSvgArtifact && showSvgPreview) {
-                                        InlineSvgArtifactPreview(rawSvg = block.code)
-                                    } else if (isDiffLang) {
-                                        key(isWrapped) {
-                                            SepiaRawDiffLinesView(
-                                                rawDiffText = block.code,
-                                                wrapLines = isWrapped,
-                                                modifier = Modifier.padding(vertical = Space.s4)
+                            if (!(isSvgArtifact && showSvgPreview)) {
+                                SepiaButton(
+                                    text = "↩",
+                                    compact = true,
+                                    style = if (isWrapped) SepiaButtonStyle.SECONDARY else SepiaButtonStyle.GHOST,
+                                    contentDescription = if (isWrapped) Strings.unwrapCode else Strings.wrapCode,
+                                    onClick = { isWrapped = !isWrapped }
+                                )
+                            }
+                            SepiaButton(
+                                text = if (isCollapsed) "▸" else "▾",
+                                compact = true,
+                                style = SepiaButtonStyle.GHOST,
+                                contentDescription = if (isCollapsed) Strings.expandCode else Strings.collapseCode,
+                                onClick = { isCollapsed = !isCollapsed }
+                            )
+                            SepiaButton(
+                                text = if (savedCode) "✓" else "📥",
+                                compact = true,
+                                style = SepiaButtonStyle.GHOST,
+                                contentDescription = Strings.saveFile,
+                                onClick = {
+                                    scope.launch {
+                                        val ext = inferCodeFenceExtension(block.language, isSvgArtifact)
+                                        val saved = PlatformPickers.saveFileForExport(
+                                            "artifact-${index + 1}.$ext",
+                                            block.code.encodeToByteArray()
+                                        )
+                                        if (saved != null) savedCode = true
+                                    }
+                                }
+                            )
+                            SepiaButton(
+                                text = if (copiedCode) "✓" else "📋",
+                                compact = true,
+                                style = SepiaButtonStyle.GHOST,
+                                contentDescription = if (copiedCode) Strings.copied else Strings.copyCode,
+                                onClick = {
+                                    clipboard.setText(AnnotatedString(block.code))
+                                    copiedCode = true
+                                }
+                            )
+                        }
+                    }
+                    AnimatedVisibility(
+                        visible = !isCollapsed,
+                        enter = motionExpandEnter(),
+                        exit = motionShrinkExit()
+                    ) {
+                        Column {
+                            SepiaDivider()
+                            if (isSvgArtifact && showSvgPreview) {
+                                InlineSvgArtifactPreview(rawSvg = block.code)
+                            } else if (isDiffLang) {
+                                key(isWrapped) {
+                                    SepiaRawDiffLinesView(
+                                        rawDiffText = block.code,
+                                        wrapLines = isWrapped,
+                                        modifier = Modifier.padding(vertical = Space.s4)
+                                    )
+                                }
+                            } else {
+                                val codeChunks = remember(block.code) { splitCodeFenceChunks(block.code) }
+                                val scrollState = rememberScrollState()
+                                key(isWrapped) {
+                                    Box(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .then(if (isWrapped) Modifier else Modifier.horizontalScroll(scrollState))
+                                            .padding(11.dp)
+                                    ) {
+                                        val lineModifier = if (isWrapped) Modifier.fillMaxWidth() else Modifier
+                                        if (codeChunks.size == 1) {
+                                            BasicText(
+                                                text = codeChunks[0],
+                                                style = p.monoStyle,
+                                                softWrap = isWrapped,
+                                                modifier = lineModifier
                                             )
-                                        }
-                                    } else {
-                                        val codeChunks = remember(block.code) { splitCodeFenceChunks(block.code) }
-                                        val scrollState = rememberScrollState()
-                                        key(isWrapped) {
-                                            Box(
-                                                modifier = Modifier
-                                                    .fillMaxWidth()
-                                                    .then(if (isWrapped) Modifier else Modifier.horizontalScroll(scrollState))
-                                                    .padding(11.dp)
-                                            ) {
-                                                val lineModifier = if (isWrapped) Modifier.fillMaxWidth() else Modifier
-                                                if (codeChunks.size == 1) {
-                                                    BasicText(
-                                                        text = codeChunks[0],
-                                                        style = p.monoStyle,
-                                                        softWrap = isWrapped,
-                                                        modifier = lineModifier
-                                                    )
-                                                } else {
-                                                    // Chunk long code blocks into ~40-line paragraphs so settled prefixes skip Skia relayout while streaming.
-                                                    Column(modifier = lineModifier) {
-                                                        codeChunks.forEachIndexed { chunkIdx, chunk ->
-                                                            key(chunkIdx) {
-                                                                BasicText(
-                                                                    text = chunk,
-                                                                    style = p.monoStyle,
-                                                                    softWrap = isWrapped,
-                                                                    modifier = lineModifier
-                                                                )
-                                                            }
-                                                        }
+                                        } else {
+                                            // Chunk long code blocks into ~40-line paragraphs so settled prefixes skip Skia relayout while streaming.
+                                            Column(modifier = lineModifier) {
+                                                codeChunks.forEachIndexed { chunkIdx, chunk ->
+                                                    key(chunkIdx) {
+                                                        BasicText(
+                                                            text = chunk,
+                                                            style = p.monoStyle,
+                                                            softWrap = isWrapped,
+                                                            modifier = lineModifier
+                                                        )
                                                     }
                                                 }
                                             }
@@ -655,174 +665,176 @@ private fun ProseBlockItem(
                             }
                         }
                     }
+                }
+            }
 
-                    is ProseBlock.MathBlock -> {
-                        if (enableMath) {
-                            LatexMathRenderer.DisplayLatexBlock(rawLatex = block.rawLatex)
-                        } else {
-                            BasicText(text = block.rawLatex, style = p.monoStyle)
-                        }
-                    }
+            is ProseBlock.MathBlock -> {
+                if (enableMath) {
+                    LatexMathRenderer.DisplayLatexBlock(rawLatex = block.rawLatex)
+                } else {
+                    BasicText(text = block.rawLatex, style = p.monoStyle)
+                }
+            }
 
-                    is ProseBlock.TableBlock -> {
-                        val win = LocalParchmentWindowSize.current
-                        var copiedTable by remember(index) { mutableStateOf(false) }
-                        val colCount = maxOf(
-                            block.headers.size,
-                            block.rows.maxOfOrNull { it.size } ?: 0
-                        ).coerceAtLeast(1)
-                        val needsHorizontalScroll = colCount >= 4 || win.isCompact
-                        val shape = RoundedCornerShape(Radius.r8)
+            is ProseBlock.TableBlock -> {
+                val win = LocalParchmentWindowSize.current
+                var copiedTable by remember(index) { mutableStateOf(false) }
+                val colCount = maxOf(
+                    block.headers.size,
+                    block.rows.maxOfOrNull { it.size } ?: 0
+                ).coerceAtLeast(1)
+                val needsHorizontalScroll = colCount >= 4 || win.isCompact
+                val shape = RoundedCornerShape(Radius.r8)
 
-                        Column(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(vertical = 5.dp)
-                                .clip(shape)
-                                .background(p.cardBg)
-                                .border(LineWidth.hairline, p.border, shape)
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(vertical = 5.dp)
+                        .clip(shape)
+                        .background(p.cardBg)
+                        .border(LineWidth.hairline, p.border, shape)
+                ) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .background(p.sheetBg.copy(alpha = 0.7f))
+                            .padding(horizontal = Space.s10, vertical = Space.s4),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(5.dp)
                         ) {
+                            KissVectorIcon(
+                                icon = KissIcon.LAYOUT_GRID,
+                                tint = p.accent,
+                                size = IconSize.sm
+                            )
+                            BasicText(
+                                text = Strings.tableColsRows(colCount, block.rows.size),
+                                style = p.uiLabelStyle.copy(fontSize = 10.5.sp)
+                            )
+                        }
+                        SepiaButton(
+                            text = if (copiedTable) "✓" else "📋",
+                            compact = true,
+                            style = SepiaButtonStyle.GHOST,
+                            contentDescription = if (copiedTable) Strings.copied else Strings.copyTable,
+                            onClick = {
+                                val tsv = buildString {
+                                    if (block.headers.isNotEmpty()) {
+                                        appendLine(block.headers.joinToString("\t"))
+                                    }
+                                    block.rows.forEach { r ->
+                                        appendLine(r.joinToString("\t"))
+                                    }
+                                }.trim()
+                                clipboard.setText(AnnotatedString(tsv))
+                                copiedTable = true
+                            }
+                        )
+                    }
+                    SepiaDivider()
+
+                    val tableBodyMod = if (needsHorizontalScroll) {
+                        Modifier.fillMaxWidth().horizontalScroll(rememberScrollState())
+                    } else {
+                        Modifier.fillMaxWidth()
+                    }
+                    Column(modifier = tableBodyMod) {
+                        if (block.headers.isNotEmpty()) {
                             Row(
                                 modifier = Modifier
                                     .fillMaxWidth()
-                                    .background(p.sheetBg.copy(alpha = 0.7f))
-                                    .padding(horizontal = Space.s10, vertical = Space.s4),
-                                horizontalArrangement = Arrangement.SpaceBetween,
-                                verticalAlignment = Alignment.CenterVertically
+                                    .background(p.sheetBg)
+                                    .padding(horizontal = Space.s10, vertical = 7.dp),
+                                horizontalArrangement = Arrangement.spacedBy(Space.s10)
                             ) {
-                                Row(
-                                    verticalAlignment = Alignment.CenterVertically,
-                                    horizontalArrangement = Arrangement.spacedBy(5.dp)
-                                ) {
-                                    KissVectorIcon(
-                                        icon = KissIcon.LAYOUT_GRID,
-                                        tint = p.accent,
-                                        size = IconSize.sm
-                                    )
-                                    BasicText(
-                                        text = Strings.tableColsRows(colCount, block.rows.size),
-                                        style = p.uiLabelStyle.copy(fontSize = 10.5.sp)
-                                    )
-                                }
-                                SepiaButton(
-                                    text = if (copiedTable) "✓" else "📋",
-                                    compact = true,
-                                    style = SepiaButtonStyle.GHOST,
-                                    contentDescription = if (copiedTable) Strings.copied else Strings.copyTable,
-                                    onClick = {
-                                        val tsv = buildString {
-                                            if (block.headers.isNotEmpty()) {
-                                                appendLine(block.headers.joinToString("\t"))
-                                            }
-                                            block.rows.forEach { r ->
-                                                appendLine(r.joinToString("\t"))
-                                            }
-                                        }.trim()
-                                        clipboard.setText(AnnotatedString(tsv))
-                                        copiedTable = true
+                                for (cIdx in 0 until colCount) {
+                                    val h = block.headers.getOrElse(cIdx) { "" }
+                                    Box(
+                                        modifier = if (needsHorizontalScroll) Modifier.width(145.dp) else Modifier.weight(1f)
+                                    ) {
+                                        val styledHeader = remember(h, p, enableMath, enableInlineDollarMath) {
+                                            styleLiteraryParagraph(h, p, 0, enableMath, enableInlineDollarMath)
+                                        }
+                                        BasicText(
+                                            text = styledHeader,
+                                            style = p.uiBodyStyle.copy(fontWeight = FontWeight.SemiBold)
+                                        )
                                     }
-                                )
+                                }
                             }
                             SepiaDivider()
-
-                            val tableBodyMod = if (needsHorizontalScroll) {
-                                Modifier.fillMaxWidth().horizontalScroll(rememberScrollState())
-                            } else {
-                                Modifier.fillMaxWidth()
-                            }
-                            Column(modifier = tableBodyMod) {
-                                if (block.headers.isNotEmpty()) {
-                                    Row(
-                                        modifier = Modifier
-                                            .fillMaxWidth()
-                                            .background(p.sheetBg)
-                                            .padding(horizontal = Space.s10, vertical = 7.dp),
-                                        horizontalArrangement = Arrangement.spacedBy(Space.s10)
-                                    ) {
-                                        for (cIdx in 0 until colCount) {
-                                            val h = block.headers.getOrElse(cIdx) { "" }
-                                            Box(
-                                                modifier = if (needsHorizontalScroll) Modifier.width(145.dp) else Modifier.weight(1f)
-                                            ) {
-                                                val styledHeader = remember(h, p, enableMath, enableInlineDollarMath) {
-                                                    styleLiteraryParagraph(h, p, 0, enableMath, enableInlineDollarMath)
-                                                }
-                                                BasicText(
-                                                    text = styledHeader,
-                                                    style = p.uiBodyStyle.copy(fontWeight = FontWeight.SemiBold)
-                                                )
+                        }
+                        block.rows.forEachIndexed { rIdx, rowCells ->
+                            key(rIdx) {
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .background(if (rIdx % 2 == 1) p.elevatedBg.copy(alpha = 0.35f) else p.cardBg)
+                                        .padding(horizontal = Space.s10, vertical = Space.s6),
+                                    horizontalArrangement = Arrangement.spacedBy(Space.s10)
+                                ) {
+                                    for (cIdx in 0 until colCount) {
+                                        val cellText = rowCells.getOrElse(cIdx) { "" }
+                                        Box(
+                                            modifier = if (needsHorizontalScroll) Modifier.width(145.dp) else Modifier.weight(1f)
+                                        ) {
+                                            val styledCell = remember(cellText, p, enableMath, enableInlineDollarMath) {
+                                                styleLiteraryParagraph(cellText, p, 0, enableMath, enableInlineDollarMath)
                                             }
+                                            BasicText(
+                                                text = styledCell,
+                                                style = p.uiBodyStyle
+                                            )
                                         }
                                     }
+                                }
+                                if (rIdx < block.rows.lastIndex) {
                                     SepiaDivider()
                                 }
-                                block.rows.forEachIndexed { rIdx, rowCells ->
-                                    key(rIdx) {
-                                    Row(
-                                        modifier = Modifier
-                                            .fillMaxWidth()
-                                            .background(if (rIdx % 2 == 1) p.elevatedBg.copy(alpha = 0.35f) else p.cardBg)
-                                            .padding(horizontal = Space.s10, vertical = Space.s6),
-                                        horizontalArrangement = Arrangement.spacedBy(Space.s10)
-                                    ) {
-                                        for (cIdx in 0 until colCount) {
-                                            val cellText = rowCells.getOrElse(cIdx) { "" }
-                                            Box(
-                                                modifier = if (needsHorizontalScroll) Modifier.width(145.dp) else Modifier.weight(1f)
-                                            ) {
-                                                val styledCell = remember(cellText, p, enableMath, enableInlineDollarMath) {
-                                                    styleLiteraryParagraph(cellText, p, 0, enableMath, enableInlineDollarMath)
-                                                }
-                                                BasicText(
-                                                    text = styledCell,
-                                                    style = p.uiBodyStyle
-                                                )
-                                            }
-                                        }
-                                    }
-                                    if (rIdx < block.rows.lastIndex) {
-                                        SepiaDivider()
-                                    }
-                                    }
-                                }
                             }
                         }
-                    }
-
-                    is ProseBlock.Paragraph -> {
-                        val styled = remember(block.text, p, compactReasoningMode, enableMath, enableInlineDollarMath) {
-                            styleLiteraryParagraph(
-                                raw = block.text,
-                                palette = p,
-                                indentChars = if (compactReasoningMode) 0 else p.config.firstLineIndentChars,
-                                enableMath = enableMath,
-                                enableInlineDollarMath = enableInlineDollarMath
-                            )
-                        }
-                        val isHighlightedPara = remember(block.text, highlightedLineSubstring) {
-                            if (highlightedLineSubstring.isBlank()) {
-                                false
-                            } else if (block.text.contains(highlightedLineSubstring, ignoreCase = true)) {
-                                true
-                            } else {
-                                val plain = stripMarkdownToPlainText(block.text)
-                                plain.contains(highlightedLineSubstring, ignoreCase = true) ||
-                                    (block.text.length >= 24 && highlightedLineSubstring.contains(plain, ignoreCase = true))
-                            }
-                        }
-                        BasicText(
-                            text = styled,
-                            style = baseTextStyle,
-                            modifier = if (isHighlightedPara) {
-                                Modifier
-                                    .fillMaxWidth()
-                                    .background(p.accent.copy(alpha = 0.14f), RoundedCornerShape(Radius.r6))
-                                    .border(1.dp, p.accent.copy(alpha = 0.7f), RoundedCornerShape(Radius.r6))
-                                    .padding(horizontal = Space.s8, vertical = Space.s4)
-                            } else Modifier
-                        )
                     }
                 }
+            }
+
+            is ProseBlock.Paragraph -> {
+                val styled = remember(block.text, p, compactReasoningMode, enableMath, enableInlineDollarMath) {
+                    styleLiteraryParagraph(
+                        raw = block.text,
+                        palette = p,
+                        indentChars = if (compactReasoningMode) 0 else p.config.firstLineIndentChars,
+                        enableMath = enableMath,
+                        enableInlineDollarMath = enableInlineDollarMath
+                    )
+                }
+                val isHighlightedPara = remember(block.text, highlightedLineSubstring) {
+                    if (highlightedLineSubstring.isBlank()) {
+                        false
+                    } else if (block.text.contains(highlightedLineSubstring, ignoreCase = true)) {
+                        true
+                    } else {
+                        val plain = stripMarkdownToPlainText(block.text)
+                        plain.contains(highlightedLineSubstring, ignoreCase = true) ||
+                            (block.text.length >= 24 && highlightedLineSubstring.contains(plain, ignoreCase = true))
+                    }
+                }
+                BasicText(
+                    text = styled,
+                    style = baseTextStyle,
+                    modifier = if (isHighlightedPara) {
+                        Modifier
+                            .fillMaxWidth()
+                            .background(p.accent.copy(alpha = 0.14f), RoundedCornerShape(Radius.r6))
+                            .border(1.dp, p.accent.copy(alpha = 0.7f), RoundedCornerShape(Radius.r6))
+                            .padding(horizontal = Space.s8, vertical = Space.s4)
+                    } else Modifier
+                )
+            }
+        }
 
         if (!isLastBlock) {
             val bothAreListItems = block is ProseBlock.Paragraph && isListItemParagraph(block.text) && nextIsListItem
@@ -897,14 +909,11 @@ private fun trimEndIdx(s: String, start: Int, end: Int): Int {
     return idx
 }
 
-private fun startsWithRange(s: String, start: Int, end: Int, prefix: String, ignoreCase: Boolean = false): Boolean =
-    end - start >= prefix.length && s.regionMatches(start, prefix, 0, prefix.length, ignoreCase = ignoreCase)
+private fun startsWithRange(s: String, start: Int, end: Int, prefix: String, ignoreCase: Boolean = false): Boolean = end - start >= prefix.length && s.regionMatches(start, prefix, 0, prefix.length, ignoreCase = ignoreCase)
 
-private fun endsWithRange(s: String, start: Int, end: Int, suffix: String): Boolean =
-    end - start >= suffix.length && s.regionMatches(end - suffix.length, suffix, 0, suffix.length)
+private fun endsWithRange(s: String, start: Int, end: Int, suffix: String): Boolean = end - start >= suffix.length && s.regionMatches(end - suffix.length, suffix, 0, suffix.length)
 
-private fun equalsRange(s: String, start: Int, end: Int, target: String): Boolean =
-    end - start == target.length && s.regionMatches(start, target, 0, target.length)
+private fun equalsRange(s: String, start: Int, end: Int, target: String): Boolean = end - start == target.length && s.regionMatches(start, target, 0, target.length)
 
 private fun countCharInRange(s: String, start: Int, end: Int, ch: Char): Int {
     var count = 0
@@ -1167,8 +1176,13 @@ internal fun parseProseBlocks(
                 continue
             }
 
-            te - ts in 3..5 && (equalsRange(raw, ts, te, "---") || equalsRange(raw, ts, te, "***") ||
-                equalsRange(raw, ts, te, "* * *") || equalsRange(raw, ts, te, "___")) -> {
+            te - ts in 3..5 &&
+                (
+                    equalsRange(raw, ts, te, "---") ||
+                        equalsRange(raw, ts, te, "***") ||
+                        equalsRange(raw, ts, te, "* * *") ||
+                        equalsRange(raw, ts, te, "___")
+                    ) -> {
                 blocks.add(ProseBlock.SceneBreak(raw.substring(ts, te)))
             }
 
@@ -1239,56 +1253,56 @@ private const val MAX_INLINE_NESTING = 16
 private const val MAX_STYLED_PARAGRAPH_CHARS = 20_000
 
 private class ParagraphStyleSheet(private val palette: ParchmentPalette) {
-    private var _boldItalic: SpanStyle? = null
-    private var _bold: SpanStyle? = null
-    private var _strike: SpanStyle? = null
-    private var _link: SpanStyle? = null
-    private var _linkTextStyles: TextLinkStyles? = null
-    private var _italic: SpanStyle? = null
-    private var _dialogue: SpanStyle? = null
-    private var _code: SpanStyle? = null
+    private var cachedBoldItalic: SpanStyle? = null
+    private var cachedBold: SpanStyle? = null
+    private var cachedStrike: SpanStyle? = null
+    private var cachedLink: SpanStyle? = null
+    private var cachedLinkTextStyles: TextLinkStyles? = null
+    private var cachedItalic: SpanStyle? = null
+    private var cachedDialogue: SpanStyle? = null
+    private var cachedCode: SpanStyle? = null
 
-    fun boldItalic(): SpanStyle = _boldItalic ?: SpanStyle(
+    fun boldItalic(): SpanStyle = cachedBoldItalic ?: SpanStyle(
         color = palette.primaryInk,
         fontWeight = FontWeight.Bold,
         fontStyle = FontStyle.Italic
-    ).also { _boldItalic = it }
+    ).also { cachedBoldItalic = it }
 
-    fun bold(): SpanStyle = _bold ?: SpanStyle(
+    fun bold(): SpanStyle = cachedBold ?: SpanStyle(
         color = palette.primaryInk,
         fontWeight = FontWeight.SemiBold
-    ).also { _bold = it }
+    ).also { cachedBold = it }
 
-    fun strike(): SpanStyle = _strike ?: SpanStyle(
+    fun strike(): SpanStyle = cachedStrike ?: SpanStyle(
         color = palette.mutedInk,
         textDecoration = TextDecoration.LineThrough
-    ).also { _strike = it }
+    ).also { cachedStrike = it }
 
-    fun link(): SpanStyle = _link ?: SpanStyle(
+    fun link(): SpanStyle = cachedLink ?: SpanStyle(
         color = palette.accent,
         fontWeight = FontWeight.Medium,
         textDecoration = TextDecoration.Underline
-    ).also { _link = it }
+    ).also { cachedLink = it }
 
-    fun linkTextStyles(): TextLinkStyles = _linkTextStyles ?: TextLinkStyles(style = link()).also { _linkTextStyles = it }
+    fun linkTextStyles(): TextLinkStyles = cachedLinkTextStyles ?: TextLinkStyles(style = link()).also { cachedLinkTextStyles = it }
 
-    fun italic(): SpanStyle = _italic ?: SpanStyle(
+    fun italic(): SpanStyle = cachedItalic ?: SpanStyle(
         color = palette.narrationInk,
         fontStyle = FontStyle.Italic
-    ).also { _italic = it }
+    ).also { cachedItalic = it }
 
-    fun dialogue(): SpanStyle = _dialogue ?: SpanStyle(
+    fun dialogue(): SpanStyle = cachedDialogue ?: SpanStyle(
         color = palette.dialogueInk,
         fontWeight = FontWeight.Normal
-    ).also { _dialogue = it }
+    ).also { cachedDialogue = it }
 
-    fun code(): SpanStyle = _code ?: SpanStyle(
+    fun code(): SpanStyle = cachedCode ?: SpanStyle(
         fontFamily = palette.codeFontFamily,
         fontSize = (palette.config.proseFontSizeSp * 0.90f).coerceAtLeast(11f).sp,
         background = palette.accent.copy(alpha = 0.12f),
         color = palette.accent,
         fontWeight = FontWeight.Medium
-    ).also { _code = it }
+    ).also { cachedCode = it }
 }
 
 internal fun styleLiteraryParagraph(
@@ -1517,7 +1531,8 @@ private fun appendStyledRange(
             }
 
             // Spoken dialogue: "..." or “...”, with inner *italic*, **bold** and `code` spans parsed too.
-            (ch == '"' || ch == '“') && allowDialogue &&
+            (ch == '"' || ch == '“') &&
+                allowDialogue &&
                 (i == start || text[i - 1].isWhitespace() || text[i - 1] in "([*_—-") -> {
                 val closeChar = if (ch == '“') '”' else '"'
                 val endIdx = findClosingQuoteSkippingCode(text, i + 1, end, closeChar)
@@ -1882,4 +1897,3 @@ private fun inferCodeFenceExtension(language: String, isSvg: Boolean): String {
         else -> "txt"
     }
 }
-

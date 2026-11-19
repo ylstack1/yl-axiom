@@ -9,6 +9,7 @@ data class CrashReport(val text: String, val saved: Boolean)
 expect object PlatformRuntime {
     val platformName: String
     val isAndroid: Boolean
+
     /** Under 4 GB of RAM (or Android's low-RAM flag): caches shrink so the app stays responsive. */
     val isLowMemoryDevice: Boolean
     val backgroundExecutionNotice: kotlinx.coroutines.flow.StateFlow<String>
@@ -19,6 +20,7 @@ expect object PlatformRuntime {
 
     fun registerStateFlushCallback(callback: (blocking: Boolean) -> Unit)
     fun flushPendingStateNow()
+
     /** The report an uncaught error left in the previous run, once: reading it removes it. */
     fun takeCrashReport(): CrashReport?
     fun flushPendingStateAsync()

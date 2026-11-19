@@ -100,7 +100,7 @@ for line in sys.stdin:
         print(json.dumps({"jsonrpc": "2.0", "id": mid, "error": {"code": -32601, "message": "nope"}}), flush=True)
         continue
     print(json.dumps({"jsonrpc": "2.0", "id": mid, "result": result}), flush=True)
-""".trimIndent()
+    """.trimIndent()
 
     private fun python(): Boolean = runCatching {
         ProcessBuilder("python", "--version").redirectErrorStream(true).start().waitFor() == 0
@@ -241,8 +241,10 @@ for line in sys.stdin:
                 val body = buildJsonObject {
                     put("id", "r"); put("status", "completed"); put("model", "fixture-model")
                     putJsonArray("output") {
-                        add(if (first) buildJsonObject { put("type", "function_call"); put("call_id", "c1"); put("name", toolName); put("arguments", arguments) }
-                        else buildJsonObject { put("type", "message"); put("role", "assistant"); putJsonArray("content") { add(buildJsonObject { put("type", "output_text"); put("text", "Done.") }) } })
+                        add(
+                            if (first) buildJsonObject { put("type", "function_call"); put("call_id", "c1"); put("name", toolName); put("arguments", arguments) }
+                            else buildJsonObject { put("type", "message"); put("role", "assistant"); putJsonArray("content") { add(buildJsonObject { put("type", "output_text"); put("text", "Done.") }) } }
+                        )
                     }
                 }.toString().toByteArray()
                 exchange.responseHeaders.set("Content-Type", "application/json")
@@ -251,13 +253,22 @@ for line in sys.stdin:
             }
             start()
         }
-        val profile = ProviderProfile("fixture", "Fixture", ProviderProtocol.CUSTOM, customDialect = CUSTOM_DIALECT_OPENAI_RESPONSES,
-            baseUrl = "http://127.0.0.1:${server.address.port}", defaultModel = "fixture-model", thinkingEffort = "none",
-            customModelSpecs = mapOf("fixture-model" to ModelPricingSpec("fixture-model")))
+        val profile = ProviderProfile(
+            "fixture",
+            "Fixture",
+            ProviderProtocol.CUSTOM,
+            customDialect = CUSTOM_DIALECT_OPENAI_RESPONSES,
+            baseUrl = "http://127.0.0.1:${server.address.port}",
+            defaultModel = "fixture-model",
+            thinkingEffort = "none",
+            customModelSpecs = mapOf("fixture-model" to ModelPricingSpec("fixture-model"))
+        )
         override fun close() = server.stop(0)
-        fun run(policy: AgentPermissionPolicy) = AiProviderEngine.streamGeneration(profile = profile,
+        fun run(policy: AgentPermissionPolicy) = AiProviderEngine.streamGeneration(
+            profile = profile,
             session = ChatSession("chat", "Fixture", 1L, 1L, profile.id, workspacePath = policy.workspacePath, workspaceMode = policy.workspaceMode, permissionOverrides = policy.asOverrides()),
-            historyNodes = listOf(MessageNode("user", MessageRole.USER, listOf(MessageVariant("v", content = "Go")))))
+            historyNodes = listOf(MessageNode("user", MessageRole.USER, listOf(MessageVariant("v", content = "Go"))))
+        )
         fun advertised(index: Int) = requests[index].getValue("tools").jsonArray.map { it.jsonObject.getValue("name").jsonPrimitive.content }
     }
 
@@ -317,10 +328,14 @@ for line in sys.stdin:
     }
 
     @Test fun anImportCannotBringLocalCommandsOrLiveConnections() {
-        val imported = AppStateSnapshot(preferences = PreferencesConfig(mcpServers = listOf(
-            McpServerConfig("local", "Evil", command = "rm -rf /", enabled = true),
-            McpServerConfig("web", "Remote", url = "https://example.com/mcp", enabled = true)
-        ))).withImportedPermissions()
+        val imported = AppStateSnapshot(
+            preferences = PreferencesConfig(
+                mcpServers = listOf(
+                    McpServerConfig("local", "Evil", command = "rm -rf /", enabled = true),
+                    McpServerConfig("web", "Remote", url = "https://example.com/mcp", enabled = true)
+                )
+            )
+        ).withImportedPermissions()
         assertEquals(listOf("web"), imported.preferences.mcpServers.map { it.id })
         assertFalse(imported.preferences.mcpServers.single().enabled)
     }
@@ -506,11 +521,13 @@ for line in sys.stdin:
                         put("id", msg.getValue("id"))
                         putJsonObject("result") {
                             putJsonArray("tools") {
-                                add(buildJsonObject {
-                                    put("name", "ping")
-                                    put("description", "Ping")
-                                    putJsonObject("inputSchema") { put("type", "object") }
-                                })
+                                add(
+                                    buildJsonObject {
+                                        put("name", "ping")
+                                        put("description", "Ping")
+                                        putJsonObject("inputSchema") { put("type", "object") }
+                                    }
+                                )
                             }
                         }
                     }.toString().toByteArray()
@@ -559,20 +576,26 @@ for line in sys.stdin:
                             put("id", "r$idx"); put("status", "completed"); put("model", "fixture-model")
                             putJsonArray("output") {
                                 when (idx) {
-                                    0 -> add(buildJsonObject {
-                                        put("type", "function_call"); put("call_id", "c1")
-                                        put("name", WorkspaceHarness.MCP_SCHEMA_TOOL_NAME)
-                                        put("arguments", """{"names":["mcp__Bulk__tool_5"]}""")
-                                    })
-                                    1 -> add(buildJsonObject {
-                                        put("type", "function_call"); put("call_id", "c2")
-                                        put("name", "mcp__Bulk__tool_5")
-                                        put("arguments", """{}""")
-                                    })
-                                    else -> add(buildJsonObject {
-                                        put("type", "message"); put("role", "assistant")
-                                        putJsonArray("content") { add(buildJsonObject { put("type", "output_text"); put("text", "Expanded and ran.") }) }
-                                    })
+                                    0 -> add(
+                                        buildJsonObject {
+                                            put("type", "function_call"); put("call_id", "c1")
+                                            put("name", WorkspaceHarness.MCP_SCHEMA_TOOL_NAME)
+                                            put("arguments", """{"names":["mcp__Bulk__tool_5"]}""")
+                                        }
+                                    )
+                                    1 -> add(
+                                        buildJsonObject {
+                                            put("type", "function_call"); put("call_id", "c2")
+                                            put("name", "mcp__Bulk__tool_5")
+                                            put("arguments", """{}""")
+                                        }
+                                    )
+                                    else -> add(
+                                        buildJsonObject {
+                                            put("type", "message"); put("role", "assistant")
+                                            putJsonArray("content") { add(buildJsonObject { put("type", "output_text"); put("text", "Expanded and ran.") }) }
+                                        }
+                                    )
                                 }
                             }
                         }.toString().toByteArray()
@@ -584,15 +607,23 @@ for line in sys.stdin:
                 }
                 try {
                     val profile = ProviderProfile(
-                        "fixture-bulk", "Fixture", ProviderProtocol.CUSTOM,
+                        "fixture-bulk",
+                        "Fixture",
+                        ProviderProtocol.CUSTOM,
                         customDialect = CUSTOM_DIALECT_OPENAI_RESPONSES,
                         baseUrl = "http://127.0.0.1:${providerServer.address.port}",
-                        defaultModel = "fixture-model", thinkingEffort = "none",
+                        defaultModel = "fixture-model",
+                        thinkingEffort = "none",
                         customModelSpecs = mapOf("fixture-model" to ModelPricingSpec("fixture-model"))
                     )
                     val session = ChatSession(
-                        "chat-bulk", "Bulk", 1L, 1L, profile.id,
-                        workspacePath = "", workspaceMode = WorkspaceMode.OFF,
+                        "chat-bulk",
+                        "Bulk",
+                        1L,
+                        1L,
+                        profile.id,
+                        workspacePath = "",
+                        workspaceMode = WorkspaceMode.OFF,
                         permissionOverrides = noWorkspace.asOverrides()
                     )
                     val broker = ToolApprovalBroker("run-bulk", "chat-bulk", { ToolAccessScope(noWorkspace) })

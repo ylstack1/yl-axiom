@@ -74,7 +74,7 @@ The window uses the native caption, so minimize, maximize, Snap Layouts and roun
 
 ## Reviewing changes
 
-`python scripts/verify.py test UiGalleryTest` renders the real app at phone and desktop sizes, in light and dark and at 200% text (`*-text200-*`), plus an icon sheet, into `.parchment-local/verification/gallery/`, using sample chats in the test sandbox.
+`cargo xtask test UiGalleryTest` renders the real app at phone and desktop sizes, in light and dark and at 200% text (`*-text200-*`), plus an icon sheet, into `.parchment-local/verification/gallery/`, using sample chats in the test sandbox.
 
 ## Words on screen
 

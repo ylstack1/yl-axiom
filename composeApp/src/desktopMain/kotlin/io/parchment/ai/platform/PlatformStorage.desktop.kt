@@ -12,8 +12,7 @@ private val DESKTOP_EXECUTABLE_EXTENSIONS = setOf(
 )
 
 /** Attachments can come from imported archives, so opening one must never launch it. */
-internal fun isDesktopExecutableName(name: String): Boolean =
-    name.trimEnd('.', ' ').substringAfterLast('.', "").lowercase() in DESKTOP_EXECUTABLE_EXTENSIONS
+internal fun isDesktopExecutableName(name: String): Boolean = name.trimEnd('.', ' ').substringAfterLast('.', "").lowercase() in DESKTOP_EXECUTABLE_EXTENSIONS
 
 actual object PlatformStorage {
     private val imageCache = BoundedImageCache {
@@ -46,8 +45,7 @@ actual object PlatformStorage {
 
     actual fun getChatsStorageDirectoryPath(): String = chatsDir().absolutePath
 
-    private fun chatSessionFolder(sessionId: String): File =
-        snapshotStorage.chatDirectory(sessionId)
+    private fun chatSessionFolder(sessionId: String): File = snapshotStorage.chatDirectory(sessionId)
 
     actual fun loadAppStateJson(): String? = snapshotStorage.loadSettings()
     actual fun saveAppStateJson(json: String) = snapshotStorage.saveSettings(json)
@@ -61,9 +59,9 @@ actual object PlatformStorage {
     actual fun saveChatSessionJson(sessionId: String, json: String) = snapshotStorage.saveChat(sessionId, json)
     actual fun saveChatLiveTurnJson(sessionId: String, json: String) = snapshotStorage.saveLiveTurn(sessionId, json)
     actual fun deleteChatSessionFile(sessionId: String) = snapshotStorage.deleteChat(sessionId)
+    actual fun searchStoredChatIds(query: String, limit: Int): Set<String>? = null
 
-    actual fun wipeAllLocalData(): Boolean =
-        AppStorageInventory.wipeDirectory(DesktopPlatformHost.resolveStorageDir(), preserveRoot = false)
+    actual fun wipeAllLocalData(): Boolean = AppStorageInventory.wipeDirectory(DesktopPlatformHost.resolveStorageDir(), preserveRoot = false)
 
     actual fun pruneStaleTempFiles(maxAgeMs: Long): Int {
         val root = DesktopPlatformHost.resolveStorageDir()
@@ -74,36 +72,28 @@ actual object PlatformStorage {
         )
     }
 
-    actual fun listAppStorageFiles(): List<StoredAppFileItem> =
-        AppStorageInventory.listFiles(DesktopPlatformHost.resolveStorageDir(), extraOtaDir = DesktopPlatformHost.otaTempDir())
+    actual fun listAppStorageFiles(): List<StoredAppFileItem> = AppStorageInventory.listFiles(DesktopPlatformHost.resolveStorageDir(), extraOtaDir = DesktopPlatformHost.otaTempDir())
 
-    actual fun deleteAppStorageFile(fullPath: String): Boolean =
-        AppStorageInventory.deleteFile(
-            fullPath = fullPath,
-            storageRoot = DesktopPlatformHost.resolveStorageDir(),
-            extraAllowedDir = DesktopPlatformHost.otaTempDir(),
-            beforeDelete = imageCache::remove
-        )
+    actual fun deleteAppStorageFile(fullPath: String): Boolean = AppStorageInventory.deleteFile(
+        fullPath = fullPath,
+        storageRoot = DesktopPlatformHost.resolveStorageDir(),
+        extraAllowedDir = DesktopPlatformHost.otaTempDir(),
+        beforeDelete = imageCache::remove
+    )
 
-    actual fun writeSessionTodoMarkdown(sessionId: String, markdown: String, storageRootOverride: String): Result<String> =
-        AppAgentStorage.writeSessionTodo(DesktopPlatformHost::resolveStorageDir, sessionId, markdown, storageRootOverride)
+    actual fun writeSessionTodoMarkdown(sessionId: String, markdown: String, storageRootOverride: String): Result<String> = AppAgentStorage.writeSessionTodo(DesktopPlatformHost::resolveStorageDir, sessionId, markdown, storageRootOverride)
 
-    actual fun hasGlobalAgentMemory(storageRootOverride: String): Boolean =
-        AppAgentStorage.hasGlobalMemory(DesktopPlatformHost::resolveStorageDir, storageRootOverride)
+    actual fun hasGlobalAgentMemory(storageRootOverride: String): Boolean = AppAgentStorage.hasGlobalMemory(DesktopPlatformHost::resolveStorageDir, storageRootOverride)
 
-    actual fun readGlobalAgentMemory(maxLines: Int, storageRootOverride: String): Result<String> =
-        AppAgentStorage.readGlobalMemory(DesktopPlatformHost::resolveStorageDir, maxLines, storageRootOverride)
+    actual fun readGlobalAgentMemory(maxLines: Int, storageRootOverride: String): Result<String> = AppAgentStorage.readGlobalMemory(DesktopPlatformHost::resolveStorageDir, maxLines, storageRootOverride)
 
-    actual fun writeGlobalAgentMemory(content: String, storageRootOverride: String): Result<String> =
-        AppAgentStorage.writeGlobalMemory(DesktopPlatformHost::resolveStorageDir, content, storageRootOverride)
+    actual fun writeGlobalAgentMemory(content: String, storageRootOverride: String): Result<String> = AppAgentStorage.writeGlobalMemory(DesktopPlatformHost::resolveStorageDir, content, storageRootOverride)
 
     internal fun resolveLocalMediaFile(filePath: String): File? = mediaStore.resolve(filePath)
 
-    actual fun saveGeneratedMediaFile(fileName: String, bytes: ByteArray, sessionId: String): String =
-        mediaStore.save(fileName, bytes, sessionId)
+    actual fun saveGeneratedMediaFile(fileName: String, bytes: ByteArray, sessionId: String): String = mediaStore.save(fileName, bytes, sessionId)
 
-    actual fun relocateLegacyMediaToChatFolder(filePath: String, sessionId: String): String =
-        mediaStore.relocateToChatFolder(filePath, sessionId)
+    actual fun relocateLegacyMediaToChatFolder(filePath: String, sessionId: String): String = mediaStore.relocateToChatFolder(filePath, sessionId)
 
     actual fun localFileSizeBytes(filePath: String): Long = mediaStore.sizeOf(filePath)
 
@@ -117,8 +107,7 @@ actual object PlatformStorage {
         io.parchment.ai.network.ModelsDevClient.trimMemoryCache()
     }
 
-    actual fun loadImageBitmapFromFile(filePath: String): ImageBitmap? =
-        imageCache.getOrLoad(filePath, ::resolveLocalMediaFile, DesktopImageDecoder::decode)
+    actual fun loadImageBitmapFromFile(filePath: String): ImageBitmap? = imageCache.getOrLoad(filePath, ::resolveLocalMediaFile, DesktopImageDecoder::decode)
 
     actual fun openOrPlayMedia(localFilePathOrUrl: String) {
         runCatching {

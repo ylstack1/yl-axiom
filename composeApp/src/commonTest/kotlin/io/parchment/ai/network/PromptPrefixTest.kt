@@ -7,7 +7,12 @@ class PromptPrefixTest {
     private fun message(text: String) = MessageNode(text, MessageRole.USER, listOf(MessageVariant(text, content = text)))
 
     private fun chat(vararg messages: String) = ChatSession(
-        "c", "t", 1L, 1L, "p", messages = messages.map(::message),
+        "c",
+        "t",
+        1L,
+        1L,
+        "p",
+        messages = messages.map(::message),
         fragments = listOf(
             ContextFragment("1", "Dragons", "Dragons breathe frost.", keywords = listOf("dragon"), mode = FragmentActivationMode.KEYWORD),
             ContextFragment("2", "Setting", "It always rains.", mode = FragmentActivationMode.PINNED)

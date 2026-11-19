@@ -1,7 +1,6 @@
 package io.parchment.ai.ui
 
 import androidx.compose.foundation.background
-import io.parchment.ai.strings.Strings
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -24,6 +23,7 @@ import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import io.parchment.ai.strings.Strings
 
 // Full-window overlays shown over the app: dropping files, and the confirm dialogs people can turn off.
 
@@ -83,13 +83,20 @@ internal fun DeleteConfirmDialog(
     LaunchedEffect(request) { runCatching { cancelFocus.requestFocus() } }
     val (title, body, confirm) = when (request) {
         is DeleteConfirmRequest.SingleSession -> Triple(
-            Strings.deleteChat2, Strings.deleteYouCanUndoThisFor(request.title), Strings.delete)
+            Strings.deleteChat2,
+            Strings.deleteYouCanUndoThisFor(request.title),
+            Strings.delete
+        )
         is DeleteConfirmRequest.ClearAllSessions -> Triple(
             Strings.deleteAllChats,
             Strings.deleteAllChatsForAssistant(plural(request.count, "chat"), request.assistantName),
-            Strings.deleteAll)
+            Strings.deleteAll
+        )
         is DeleteConfirmRequest.ClearCurrentMessages -> Triple(
-            Strings.clearMessages, Strings.clearAllMessagesIn(request.title), Strings.clear)
+            Strings.clearMessages,
+            Strings.clearAllMessagesIn(request.title),
+            Strings.clear
+        )
     }
     ConfirmBackdrop(onDismiss) {
         SepiaConfirmationCard(

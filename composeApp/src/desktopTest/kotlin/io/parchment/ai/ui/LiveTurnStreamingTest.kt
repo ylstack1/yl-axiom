@@ -25,10 +25,17 @@ class LiveTurnStreamingTest {
     private fun variant(id: String, text: String) = MessageVariant(id, content = text)
 
     @Test fun liveTextReplacesOnlyItsOwnReplyAndEndsCleanly() {
-        val chat = ChatSession("live-chat", "Chat", 1, 1, "p", messages = listOf(
-            MessageNode("u", MessageRole.USER, listOf(variant("uv", "Question"))),
-            MessageNode("a", MessageRole.ASSISTANT, listOf(variant("old", "Older version"), variant("av", "Checkpoint")), activeVariantIndex = 1)
-        ))
+        val chat = ChatSession(
+            "live-chat",
+            "Chat",
+            1,
+            1,
+            "p",
+            messages = listOf(
+                MessageNode("u", MessageRole.USER, listOf(variant("uv", "Question"))),
+                MessageNode("a", MessageRole.ASSISTANT, listOf(variant("old", "Older version"), variant("av", "Checkpoint")), activeVariantIndex = 1)
+            )
+        )
         val live = LiveTurnOverlay("live-chat", "a", "av", "Checkpoint and more", "thinking", "", "sig", 1200, 42.0)
         try {
             LiveTurns.publish(live)
@@ -98,10 +105,14 @@ class LiveTurnStreamingTest {
             // Before: each frame copies the chat into a new app state (what patchVariantMemory did per frame).
             val oldPath = stream { text ->
                 val current = parchmentProcessState.snapshot.value
-                parchmentProcessState.snapshot.value = current.copy(sessions = current.sessions.map { session ->
-                    if (session.id != chat.id) session else session.copy(messages = session.messages.dropLast(1) +
-                        streaming.copy(variants = listOf(streaming.activeVariant.copy(content = text))))
-                })
+                parchmentProcessState.snapshot.value = current.copy(
+                    sessions = current.sessions.map { session ->
+                        if (session.id != chat.id) session else session.copy(
+                            messages = session.messages.dropLast(1) +
+                                streaming.copy(variants = listOf(streaming.activeVariant.copy(content = text)))
+                        )
+                    }
+                )
             }
             parchmentProcessState.snapshot.value = state
             repeat(10) { frame() }

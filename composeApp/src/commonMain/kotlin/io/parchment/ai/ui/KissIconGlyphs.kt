@@ -14,13 +14,11 @@ internal class KissGlyph(val stroke: Path, val fill: Path?)
 
 private fun n(value: Double): String = ((value * 100).roundToInt() / 100.0).toString()
 
-private fun circle(cx: Double, cy: Double, r: Double): String =
-    "M${n(cx - r)} ${n(cy)}a${n(r)} ${n(r)} 0 1 0 ${n(r * 2)} 0a${n(r)} ${n(r)} 0 1 0 ${n(-r * 2)} 0Z"
+private fun circle(cx: Double, cy: Double, r: Double): String = "M${n(cx - r)} ${n(cy)}a${n(r)} ${n(r)} 0 1 0 ${n(r * 2)} 0a${n(r)} ${n(r)} 0 1 0 ${n(-r * 2)} 0Z"
 
-private fun box(x: Double, y: Double, w: Double, h: Double, r: Double = 2.5): String =
-    "M${n(x + r)} ${n(y)}h${n(w - r * 2)}a${n(r)} ${n(r)} 0 0 1 ${n(r)} ${n(r)}v${n(h - r * 2)}" +
-        "a${n(r)} ${n(r)} 0 0 1 ${n(-r)} ${n(r)}h${n(-(w - r * 2))}a${n(r)} ${n(r)} 0 0 1 ${n(-r)} ${n(-r)}" +
-        "v${n(-(h - r * 2))}a${n(r)} ${n(r)} 0 0 1 ${n(r)} ${n(-r)}Z"
+private fun box(x: Double, y: Double, w: Double, h: Double, r: Double = 2.5): String = "M${n(x + r)} ${n(y)}h${n(w - r * 2)}a${n(r)} ${n(r)} 0 0 1 ${n(r)} ${n(r)}v${n(h - r * 2)}" +
+    "a${n(r)} ${n(r)} 0 0 1 ${n(-r)} ${n(r)}h${n(-(w - r * 2))}a${n(r)} ${n(r)} 0 0 1 ${n(-r)} ${n(-r)}" +
+    "v${n(-(h - r * 2))}a${n(r)} ${n(r)} 0 0 1 ${n(r)} ${n(-r)}Z"
 
 private fun gear(): String = buildString {
     fun point(degrees: Double, radius: Double): String {
