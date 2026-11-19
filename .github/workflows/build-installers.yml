@@ -173,7 +173,7 @@ jobs:
           Add-Content -Path "$gradleHome\gradle.properties" -Value "`norg.gradle.jvmargs=-Xmx5g -XX:+UseParallelGC -XX:MaxMetaspaceSize=1g -Dfile.encoding=UTF-8"
           $winTests = (python .github/scripts/shard_tests.py --windows-native) -split ' '
           python .github/scripts/run_gradle.py -- :composeApp:desktopTest @winTests `
-            -Pparchment.testForks=2 `
+            '-Pparchment.testForks=2' `
             --no-daemon --no-configuration-cache --max-workers=4 '-Pkotlin.compiler.execution.strategy=in-process'
           exit $LASTEXITCODE
 
