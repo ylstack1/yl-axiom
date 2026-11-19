@@ -2,6 +2,23 @@
 
 What changed in each release, newest first. From 2.1.7 on, release-please writes these entries from commit messages that follow [Conventional Commits](https://www.conventionalcommits.org/) (`feat:` and `fix:` appear here and set the next version); edit wording in its release PR before merging it.
 
+## [2.6.0](https://github.com/baros4294/parchment/compare/v2.5.2...v2.6.0) (2026-11-19)
+
+
+### New
+
+* add keyboard shortcuts, offline Skill/MCP import, /plan & /build modes, .docx extraction, privacy badges, and slash commands ([855b3c1](https://github.com/baros4294/parchment/commit/855b3c1de84033e1017550058607ba95f83b842b))
+
+
+### Fixes
+
+* restore locked hardware VSync SSE streaming and eliminate Shenandoah GC spin loop ([855b3c1](https://github.com/baros4294/parchment/commit/855b3c1de84033e1017550058607ba95f83b842b))
+
+
+### Faster and lighter
+
+* cap D3D12 GPU cache at 48 MiB, fast-open large active chats, and halve CI workflow runtimes ([855b3c1](https://github.com/baros4294/parchment/commit/855b3c1de84033e1017550058607ba95f83b842b))
+
 ## [2.5.2](https://github.com/baros4294/parchment/compare/v2.5.1...v2.5.2) (2026-11-18)
 
 
