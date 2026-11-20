@@ -11,11 +11,13 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use parchment_model::{
-    AppStateSnapshot, ChatSession, ChatStub, MessageNode, MessageRole, MessageVariant,
-    PinnedMessageStub,
+    AppStateSnapshot, ChatSession, ChatStub, DesktopWindowConfig, MessageNode, MessageRole,
+    MessageVariant, PinnedMessageStub,
 };
 #[cfg(feature = "network")]
-use parchment_protocol::{O200kTokenizer, ProtocolClient, ProtocolError};
+use parchment_protocol::{
+    O200kTokenizer, ProtocolClient, ProtocolError, RegistryCatalogClient, RegistryEndpoints,
+};
 use parchment_storage::{
     ChatArchiveLimits, ParchmentStore, SearchHit, StorageError, V2MigrationReport,
     export_chats_to_zip, import_chat_file_bytes, migrate_v2_directory,
@@ -75,6 +77,8 @@ pub struct ParchmentCore {
     #[cfg(feature = "network")]
     tokenizer: O200kTokenizer,
     #[cfg(feature = "network")]
+    registry: Arc<RegistryCatalogClient>,
+    #[cfg(feature = "network")]
     runtime: Arc<tokio::runtime::Runtime>,
 }
 
@@ -97,12 +101,20 @@ impl ParchmentCore {
             .build()
             .map_err(|e| CoreError::Network(e.to_string()))?;
 
+        #[cfg(feature = "network")]
+        let registry = Arc::new(RegistryCatalogClient::new(
+            http.clone(),
+            RegistryEndpoints::default(),
+        ));
+
         Ok(Arc::new(Self {
             store: Mutex::new(store),
             #[cfg(feature = "network")]
             http,
             #[cfg(feature = "network")]
             tokenizer: O200kTokenizer::new(),
+            #[cfg(feature = "network")]
+            registry,
             #[cfg(feature = "network")]
             runtime: Arc::new(runtime),
         }))
@@ -132,6 +144,67 @@ impl ParchmentCore {
     #[cfg(feature = "network")]
     pub fn count_tokens(&self, text: &str) -> u32 {
         self.tokenizer.count_tokens(text, true) as u32
+    }
+
+    #[cfg(feature = "network")]
+    pub fn registry(&self) -> &Arc<RegistryCatalogClient> {
+        &self.registry
+    }
+
+    #[cfg(feature = "network")]
+    pub fn tokenizer(&self) -> &O200kTokenizer {
+        &self.tokenizer
+    }
+
+    pub fn load_desktop_window(&self) -> Result<DesktopWindowConfig, CoreError> {
+        Ok(self.lock_store()?.load_desktop_window()?)
+    }
+
+    pub fn save_desktop_window(&self, cfg: &DesktopWindowConfig) -> Result<(), CoreError> {
+        Ok(self.lock_store()?.save_desktop_window(cfg)?)
+    }
+
+    pub fn wipe_all_data(&self) -> Result<(), CoreError> {
+        Ok(self.lock_store()?.wipe_all_data()?)
+    }
+
+    pub fn append_message_node(
+        &self,
+        chat_id: &str,
+        node: &MessageNode,
+        updated_at_ms: i64,
+    ) -> Result<(), CoreError> {
+        Ok(self
+            .lock_store()?
+            .append_message_node(chat_id, node, updated_at_ms)?)
+    }
+
+    pub fn upsert_streaming_variant(
+        &self,
+        chat_id: &str,
+        message_id: &str,
+        variant_index: usize,
+        variant: &MessageVariant,
+        updated_at_ms: i64,
+    ) -> Result<(), CoreError> {
+        Ok(self.lock_store()?.upsert_streaming_variant(
+            chat_id,
+            message_id,
+            variant_index,
+            variant,
+            updated_at_ms,
+        )?)
+    }
+
+    pub fn set_message_pinned(
+        &self,
+        chat_id: &str,
+        message_id: &str,
+        pinned: bool,
+    ) -> Result<(), CoreError> {
+        Ok(self
+            .lock_store()?
+            .set_message_pinned(chat_id, message_id, pinned)?)
     }
 
     pub fn load_settings_snapshot(&self) -> Result<AppStateSnapshot, CoreError> {

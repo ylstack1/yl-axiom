@@ -5,8 +5,9 @@
 //! - Native Win32 `ComputerUseBackend` (`SendInput` mouse/keyboard + screen dimensions)
 //! - Safe `open_web_link` (`http`/`https` only — never executes local paths/binaries).
 
-use std::path::PathBuf;
-use std::sync::{Arc, Condvar, Mutex};
+use std::path::{Path, PathBuf};
+use std::process::Child;
+use std::sync::{Arc, Condvar, Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
 use async_trait::async_trait;
@@ -14,6 +15,230 @@ use parchment_core::harness::{ComputerUseAction, ComputerUseBackend};
 use parchment_core::model::is_web_link;
 
 use crate::theme::ParchmentPalette;
+
+static APP_ICON_ICO: &[u8] = include_bytes!("../../../installer/parchment-icon.ico");
+static ACTIVE_TTS: OnceLock<Mutex<Option<Child>>> = OnceLock::new();
+static ACTIVE_STT: OnceLock<Mutex<Option<Child>>> = OnceLock::new();
+
+const BLOCKED_OPEN_EXTS: &[&str] = &[
+    "exe", "msi", "msp", "bat", "cmd", "com", "ps1", "psm1", "vbs", "vbe", "js", "jse", "wsf",
+    "wsh", "scr", "pif", "lnk", "hta", "jar", "dll", "cpl", "reg", "msc", "sh", "appimage",
+];
+
+/// Opens a local folder or safe non-executable file in the OS viewer (blocks executable extensions).
+pub fn open_local_file_or_folder(raw: &str) -> Result<(), String> {
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return Err("Empty path.".into());
+    }
+    if is_web_link(trimmed) {
+        return open_web_link(trimmed);
+    }
+    let path = Path::new(trimmed);
+    if !path.exists() {
+        return Err(format!("Path does not exist: {trimmed}"));
+    }
+    if path.is_file() {
+        let ext = path
+            .extension()
+            .and_then(|e| e.to_str())
+            .map(str::to_ascii_lowercase)
+            .unwrap_or_default();
+        if BLOCKED_OPEN_EXTS.contains(&ext.as_str()) {
+            return Err(format!("Blocked opening executable file type '.{ext}'."));
+        }
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        if path.is_dir() {
+            std::process::Command::new("explorer.exe")
+                .arg(path)
+                .spawn()
+                .map_err(|e| format!("Failed opening folder: {e}"))?;
+        } else {
+            std::process::Command::new("rundll32.exe")
+                .args(["url.dll,FileProtocolHandler", trimmed])
+                .creation_flags(CREATE_NO_WINDOW)
+                .spawn()
+                .map_err(|e| format!("Failed opening file: {e}"))?;
+        }
+        Ok(())
+    }
+    #[cfg(not(windows))]
+    {
+        Err("Opening local files is implemented on Windows.".into())
+    }
+}
+
+/// Speaks plain text aloud via Windows `System.Speech` on a background thread.
+pub fn speak_text_aloud(text: &str, on_done: impl FnOnce() + Send + 'static) {
+    stop_speaking_aloud();
+    let cleaned: String = text.trim().chars().take(6000).collect();
+    if cleaned.is_empty() {
+        on_done();
+        return;
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        std::thread::spawn(move || {
+            let stamp = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_millis())
+                .unwrap_or(0);
+            let tmp = std::env::temp_dir().join(format!("parchment-tts-{stamp}.txt"));
+            if std::fs::write(&tmp, &cleaned).is_ok() {
+                let escaped = tmp.to_string_lossy().replace('\'', "''");
+                let script = format!(
+                    "Add-Type -AssemblyName System.Speech; \
+                     $s = New-Object System.Speech.Synthesis.SpeechSynthesizer; \
+                     $t = Get-Content -LiteralPath '{escaped}' -Raw -Encoding UTF8; \
+                     $s.Speak($t); \
+                     Remove-Item -LiteralPath '{escaped}' -Force -ErrorAction SilentlyContinue"
+                );
+                if let Ok(child) = std::process::Command::new("powershell.exe")
+                    .args([
+                        "-NoProfile",
+                        "-NonInteractive",
+                        "-WindowStyle",
+                        "Hidden",
+                        "-Command",
+                        &script,
+                    ])
+                    .creation_flags(CREATE_NO_WINDOW)
+                    .spawn()
+                {
+                    let slot = ACTIVE_TTS.get_or_init(|| Mutex::new(None));
+                    let pid = child.id();
+                    if let Ok(mut guard) = slot.lock() {
+                        *guard = Some(child);
+                    }
+                    // Poll-free wait by taking the child only if still our handle, or waiting on a helper.
+                    loop {
+                        let done = slot
+                            .lock()
+                            .ok()
+                            .map(|mut g| match g.as_mut() {
+                                Some(c) if c.id() == pid => match c.try_wait() {
+                                    Ok(Some(_)) | Err(_) => {
+                                        *g = None;
+                                        true
+                                    }
+                                    Ok(None) => false,
+                                },
+                                _ => true,
+                            })
+                            .unwrap_or(true);
+                        if done {
+                            break;
+                        }
+                        std::thread::sleep(Duration::from_millis(80));
+                    }
+                    let _ = std::fs::remove_file(&tmp);
+                }
+            }
+            on_done();
+        });
+    }
+    #[cfg(not(windows))]
+    {
+        on_done();
+    }
+}
+
+pub fn stop_speaking_aloud() {
+    if let Some(slot) = ACTIVE_TTS.get()
+        && let Ok(mut guard) = slot.lock()
+        && let Some(mut child) = guard.take()
+    {
+        let _ = child.kill();
+        let _ = child.wait();
+    }
+}
+
+/// Captures a single spoken utterance via Windows `System.Speech.Recognition` on a background thread.
+pub fn start_voice_input(on_result: impl FnOnce(Result<String, String>) + Send + 'static) {
+    stop_voice_input();
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        use std::process::Stdio;
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        std::thread::spawn(move || {
+            let script = "[Console]::OutputEncoding = [System.Text.Encoding]::UTF8; \
+                Add-Type -AssemblyName System.Speech; \
+                $r = New-Object System.Speech.Recognition.SpeechRecognitionEngine; \
+                $r.LoadGrammar((New-Object System.Speech.Recognition.DictationGrammar)); \
+                $r.SetInputToDefaultAudioDevice(); \
+                $res = $r.Recognize([TimeSpan]::FromSeconds(10)); \
+                if ($res -ne $null -and $res.Text) { Write-Output $res.Text }";
+            let spawned = std::process::Command::new("powershell.exe")
+                .args([
+                    "-NoProfile",
+                    "-NonInteractive",
+                    "-WindowStyle",
+                    "Hidden",
+                    "-Command",
+                    script,
+                ])
+                .stdout(Stdio::piped())
+                .stderr(Stdio::piped())
+                .creation_flags(CREATE_NO_WINDOW)
+                .spawn();
+            let child = match spawned {
+                Ok(c) => c,
+                Err(e) => {
+                    on_result(Err(format!("Voice input unavailable: {e}")));
+                    return;
+                }
+            };
+            let pid = child.id();
+            let slot = ACTIVE_STT.get_or_init(|| Mutex::new(None));
+            if let Ok(mut g) = slot.lock() {
+                *g = Some(child);
+            }
+            let out = slot.lock().ok().and_then(|mut g| {
+                if g.as_ref().is_some_and(|c| c.id() == pid) {
+                    g.take()
+                } else {
+                    None
+                }
+            });
+            let Some(child) = out else {
+                on_result(Err("Voice input stopped.".into()));
+                return;
+            };
+            match child.wait_with_output() {
+                Ok(output) => {
+                    let text = String::from_utf8_lossy(&output.stdout).trim().to_string();
+                    if text.is_empty() {
+                        on_result(Err("No speech detected from microphone.".into()));
+                    } else {
+                        on_result(Ok(text));
+                    }
+                }
+                Err(e) => on_result(Err(format!("Voice input error: {e}"))),
+            }
+        });
+    }
+    #[cfg(not(windows))]
+    {
+        on_result(Err("Voice input is implemented on Windows.".into()));
+    }
+}
+
+pub fn stop_voice_input() {
+    if let Some(slot) = ACTIVE_STT.get()
+        && let Ok(mut guard) = slot.lock()
+        && let Some(mut child) = guard.take()
+    {
+        let _ = child.kill();
+        let _ = child.wait();
+    }
+}
 
 /// Opens a web URL in the system browser ONLY if it is `http://` or `https://`.
 pub fn open_web_link(url: &str) -> Result<(), String> {
@@ -69,9 +294,11 @@ pub fn apply_dwm_chrome_to_active_window(palette: &ParchmentPalette) {
     unsafe fn apply_dwm_attributes(hwnd: HWND, palette: &ParchmentPalette) {
         let dark: u32 = if palette.is_dark { 1 } else { 0 };
         let corners: u32 = 2; // DWMWCP_ROUND
-        let caption = palette.sheet_bg.to_colorref();
+        let caption = palette.canvas_bg.to_colorref();
         let text = palette.primary_ink.to_colorref();
         let border = palette.border.to_colorref();
+
+        unsafe { apply_embedded_window_icon(hwnd) };
 
         let _ = unsafe {
             DwmSetWindowAttribute(
@@ -113,6 +340,91 @@ pub fn apply_dwm_chrome_to_active_window(palette: &ParchmentPalette) {
                 std::mem::size_of::<u32>() as u32,
             )
         };
+    }
+
+    unsafe fn apply_embedded_window_icon(hwnd: HWND) {
+        use windows::Win32::Foundation::{LPARAM, WPARAM};
+        use windows::Win32::UI::WindowsAndMessaging::{
+            CreateIconFromResourceEx, ICON_BIG, ICON_SMALL, LR_DEFAULTCOLOR, SendMessageW,
+            WM_SETICON,
+        };
+
+        static ICON_APPLIED_HWND: OnceLock<Mutex<isize>> = OnceLock::new();
+        let slot = ICON_APPLIED_HWND.get_or_init(|| Mutex::new(0));
+        if let Ok(mut guard) = slot.lock() {
+            let cur = hwnd.0 as isize;
+            if *guard == cur {
+                return;
+            }
+            *guard = cur;
+        }
+
+        let pick_ico_entry = |target: i32| -> Option<&'static [u8]> {
+            if APP_ICON_ICO.len() < 6 {
+                return None;
+            }
+            let count = u16::from_le_bytes([APP_ICON_ICO[4], APP_ICON_ICO[5]]) as usize;
+            let mut best: Option<(i32, usize, usize)> = None;
+            for i in 0..count {
+                let off = 6 + i * 16;
+                if off + 16 > APP_ICON_ICO.len() {
+                    break;
+                }
+                let w = if APP_ICON_ICO[off] == 0 {
+                    256
+                } else {
+                    APP_ICON_ICO[off] as i32
+                };
+                let size = u32::from_le_bytes([
+                    APP_ICON_ICO[off + 8],
+                    APP_ICON_ICO[off + 9],
+                    APP_ICON_ICO[off + 10],
+                    APP_ICON_ICO[off + 11],
+                ]) as usize;
+                let img_off = u32::from_le_bytes([
+                    APP_ICON_ICO[off + 12],
+                    APP_ICON_ICO[off + 13],
+                    APP_ICON_ICO[off + 14],
+                    APP_ICON_ICO[off + 15],
+                ]) as usize;
+                if img_off + size <= APP_ICON_ICO.len() {
+                    let dist = (w - target).abs();
+                    if best.is_none_or(|(bd, _, _)| dist < bd) {
+                        best = Some((dist, img_off, size));
+                    }
+                }
+            }
+            best.map(|(_, img_off, size)| &APP_ICON_ICO[img_off..img_off + size])
+        };
+
+        if let Some(small_bytes) = pick_ico_entry(32)
+            && let Ok(hicon) = unsafe {
+                CreateIconFromResourceEx(small_bytes, true, 0x0003_0000, 32, 32, LR_DEFAULTCOLOR)
+            }
+        {
+            unsafe {
+                let _ = SendMessageW(
+                    hwnd,
+                    WM_SETICON,
+                    Some(WPARAM(ICON_SMALL as usize)),
+                    Some(LPARAM(hicon.0 as isize)),
+                );
+            }
+        }
+        if let Some(big_bytes) = pick_ico_entry(128)
+            && let Ok(hicon) = unsafe {
+                CreateIconFromResourceEx(big_bytes, true, 0x0003_0000, 64, 64, LR_DEFAULTCOLOR)
+            }
+        {
+            unsafe {
+                let _ = SendMessageW(
+                    hwnd,
+                    WM_SETICON,
+                    Some(WPARAM(ICON_BIG as usize)),
+                    Some(LPARAM(hicon.0 as isize)),
+                );
+            }
+        }
     }
 }
 
@@ -374,13 +686,18 @@ impl WindowsPowerLease {
                             && failed_at.elapsed() < Duration::from_secs(5)
                         {
                             let wait = Duration::from_secs(5).saturating_sub(failed_at.elapsed());
-                            let (guard, _) = cvar.wait_timeout(st, wait).unwrap();
-                            st = guard;
+                            st = match cvar.wait_timeout(st, wait) {
+                                Ok((guard, _)) => guard,
+                                Err(poisoned) => poisoned.into_inner().0,
+                            };
                             continue;
                         }
                         break (want, false);
                     }
-                    st = cvar.wait(st).unwrap();
+                    st = match cvar.wait(st) {
+                        Ok(guard) => guard,
+                        Err(poisoned) => poisoned.into_inner(),
+                    };
                 }
             };
 

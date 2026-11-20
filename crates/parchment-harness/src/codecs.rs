@@ -487,3 +487,158 @@ fn parse_card_json(json_text: &str) -> Result<CharacterOrScenarioCard, String> {
         source_data: String::new(),
     })
 }
+
+/// Exports a `CharacterOrScenarioCard` as a standard SillyTavern v2/v3 `.card.png` carrying
+/// base64-encoded `ccv3` and `chara` `tEXt` metadata chunks (zero external image dependencies).
+pub fn export_card_to_png_bytes(card: &CharacterOrScenarioCard) -> Vec<u8> {
+    let entries: Vec<Value> = card
+        .embedded_fragments
+        .iter()
+        .map(|f| {
+            serde_json::json!({
+                "name": f.title,
+                "content": f.content,
+                "keys": f.keywords,
+                "constant": f.mode == FragmentActivationMode::Pinned,
+                "enabled": f.mode != FragmentActivationMode::Muted,
+            })
+        })
+        .collect();
+    let payload = serde_json::json!({
+        "spec": "chara_card_v3",
+        "spec_version": "3.0",
+        "data": {
+            "name": card.name,
+            "description": card.description,
+            "personality": card.personality,
+            "scenario": card.scenario,
+            "first_mes": card.first_message,
+            "alternate_greetings": card.alternate_greetings,
+            "mes_example": card.example_dialogue,
+            "system_prompt": card.system_prompt,
+            "post_history_instructions": card.post_history_instructions,
+            "creator_notes": card.creator_notes,
+            "tags": card.tags,
+            "character_book": { "entries": entries },
+        }
+    });
+    let json_bytes = serde_json::to_vec(&payload).unwrap_or_default();
+    let b64 = base64::engine::general_purpose::STANDARD.encode(&json_bytes);
+
+    let mut out = Vec::with_capacity(b64.len() * 2 + 256);
+    out.extend_from_slice(&PNG_SIG);
+
+    // 1x1 RGB warm parchment pixel (#F4ECD8)
+    let ihdr: [u8; 13] = [0, 0, 0, 1, 0, 0, 0, 1, 8, 2, 0, 0, 0];
+    write_png_chunk(&mut out, b"IHDR", &ihdr);
+
+    // Uncompressed zlib stream for 1 scanline: [filter=0, R=0xF4, G=0xEC, B=0xD8]
+    let scanline: [u8; 4] = [0x00, 0xF4, 0xEC, 0xD8];
+    let adler = adler32(&scanline);
+    let mut idat = Vec::with_capacity(15);
+    idat.extend_from_slice(&[0x78, 0x01, 0x01, 0x04, 0x00, 0xFB, 0xFF]);
+    idat.extend_from_slice(&scanline);
+    idat.extend_from_slice(&adler.to_be_bytes());
+    write_png_chunk(&mut out, b"IDAT", &idat);
+
+    for kw in [b"ccv3".as_slice(), b"chara".as_slice()] {
+        let mut chunk = Vec::with_capacity(kw.len() + 1 + b64.len());
+        chunk.extend_from_slice(kw);
+        chunk.push(0);
+        chunk.extend_from_slice(b64.as_bytes());
+        write_png_chunk(&mut out, b"tEXt", &chunk);
+    }
+
+    write_png_chunk(&mut out, b"IEND", &[]);
+    out
+}
+
+fn write_png_chunk(out: &mut Vec<u8>, kind: &[u8; 4], data: &[u8]) {
+    out.extend_from_slice(&(data.len() as u32).to_be_bytes());
+    out.extend_from_slice(kind);
+    out.extend_from_slice(data);
+    let crc = crc32_png(kind, data);
+    out.extend_from_slice(&crc.to_be_bytes());
+}
+
+fn crc32_png(kind: &[u8; 4], data: &[u8]) -> u32 {
+    let mut crc: u32 = 0xFFFF_FFFF;
+    for &b in kind.iter().chain(data.iter()) {
+        crc ^= b as u32;
+        for _ in 0..8 {
+            if crc & 1 != 0 {
+                crc = (crc >> 1) ^ 0xEDB8_8320;
+            } else {
+                crc >>= 1;
+            }
+        }
+    }
+    !crc
+}
+
+fn adler32(data: &[u8]) -> u32 {
+    const MOD: u32 = 65521;
+    let mut a: u32 = 1;
+    let mut b: u32 = 0;
+    for &byte in data {
+        a = (a + byte as u32) % MOD;
+        b = (b + a) % MOD;
+    }
+    (b << 16) | a
+}
+
+/// Extracts bounded `.md` skill files from a ZIP archive (max 64 files, 512 KiB each).
+pub fn extract_md_skills_from_zip(zip_bytes: &[u8]) -> Result<Vec<(String, Vec<u8>)>, String> {
+    let mut archive = ZipArchive::new(Cursor::new(zip_bytes))
+        .map_err(|e| format!("Invalid skill ZIP archive: {e}"))?;
+    let mut out = Vec::new();
+    for idx in 0..archive.len().min(MAX_DOCX_ENTRIES) {
+        let entry = archive.by_index(idx).map_err(|e| e.to_string())?;
+        let name_str = entry.name().map_err(|e| e.to_string())?.into_owned();
+        if entry.is_dir() || !name_str.to_ascii_lowercase().ends_with(".md") {
+            continue;
+        }
+        let fname = std::path::Path::new(&name_str)
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("skill.md")
+            .to_string();
+        let mut buf = Vec::new();
+        entry
+            .take(512 * 1024 + 1)
+            .read_to_end(&mut buf)
+            .map_err(|e| e.to_string())?;
+        if buf.len() <= 512 * 1024 {
+            out.push((fname, buf));
+            if out.len() >= 64 {
+                break;
+            }
+        }
+    }
+    Ok(out)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn card_png_export_roundtrips_through_import() {
+        let card = CharacterOrScenarioCard {
+            name: "Librarian".into(),
+            description: "Keeps warm parchment archives.".into(),
+            first_message: "Welcome to the reading room.".into(),
+            ..Default::default()
+        };
+        let png = export_card_to_png_bytes(&card);
+        let imported = import_card_or_prompt_bytes(&png).expect("png roundtrip");
+        match imported {
+            CardImportResult::Card { card: c, .. } => {
+                assert_eq!(c.name, "Librarian");
+                assert_eq!(c.description, "Keeps warm parchment archives.");
+                assert_eq!(c.first_message, "Welcome to the reading room.");
+            }
+            other => panic!("expected Card, got {other:?}"),
+        }
+    }
+}

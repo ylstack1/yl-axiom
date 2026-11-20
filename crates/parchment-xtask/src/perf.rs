@@ -25,7 +25,7 @@ pub fn run_perf(repo: &Path, android_install: bool) -> Result<(), String> {
         ));
     }
 
-    let apk = repo.join("androidApp/build/outputs/apk/release/androidApp-release.apk");
+    let apk = repo.join("mobile/android-app/build/outputs/apk/release/androidApp-release.apk");
     if apk.is_file() {
         let bytes = std::fs::metadata(&apk).map_err(|e| e.to_string())?.len();
         lines.push(format!("android_apk_mb={:.2}", bytes as f64 / 1_048_576.0));
@@ -59,51 +59,49 @@ pub fn run_perf(repo: &Path, android_install: bool) -> Result<(), String> {
 
 #[cfg(windows)]
 fn measure_windows_desktop(exe: &Path, lines: &mut Vec<String>) -> Result<(), String> {
-    let work = make_temp_dir("parchment-perf")?;
-    let res = (|| -> Result<(), String> {
-        let seed_run = measure_desktop_run(exe, &work, true)?;
-        lines.push(format!(
-            "desktop_seed_first_launch_ms={}",
-            seed_run.title_ms.round() as i64
-        ));
+    let work = std::mem::DropGuard::new(make_temp_dir("parchment-perf")?, |dir| {
+        let _ = std::fs::remove_dir_all(dir);
+    });
+    let seed_run = measure_desktop_run(exe, &work, true)?;
+    lines.push(format!(
+        "desktop_seed_first_launch_ms={}",
+        seed_run.title_ms.round() as i64
+    ));
 
-        let mut win_ms = Vec::with_capacity(3);
-        let mut title_ms = Vec::with_capacity(3);
-        let mut idle_mb = Vec::with_capacity(3);
-        for _ in 0..3 {
-            let r = measure_desktop_run(exe, &work, false)?;
-            win_ms.push(r.window_ms);
-            title_ms.push(r.title_ms);
-            idle_mb.push(r.idle_private_mb);
-        }
-        lines.push(format!(
-            "desktop_window_ms={}",
-            median(&mut win_ms).round() as i64
-        ));
-        lines.push(format!(
-            "desktop_title_ms={}",
-            median(&mut title_ms).round() as i64
-        ));
-        lines.push(format!(
-            "desktop_idle_private_mb={:.1}",
-            median(&mut idle_mb)
-        ));
+    let mut win_ms = Vec::with_capacity(3);
+    let mut title_ms = Vec::with_capacity(3);
+    let mut idle_mb = Vec::with_capacity(3);
+    for _ in 0..3 {
+        let r = measure_desktop_run(exe, &work, false)?;
+        win_ms.push(r.window_ms);
+        title_ms.push(r.title_ms);
+        idle_mb.push(r.idle_private_mb);
+    }
+    lines.push(format!(
+        "desktop_window_ms={}",
+        median(&mut win_ms).round() as i64
+    ));
+    lines.push(format!(
+        "desktop_title_ms={}",
+        median(&mut title_ms).round() as i64
+    ));
+    lines.push(format!(
+        "desktop_idle_private_mb={:.1}",
+        median(&mut idle_mb)
+    ));
 
-        let bench_out = work.join("stream_bench.txt");
-        let _ = Command::new(exe)
-            .args(["--data-dir"])
-            .arg(&work)
-            .args(["--bench-stream", "--bench-out"])
-            .arg(&bench_out)
-            .status();
-        let bench = std::fs::read_to_string(&bench_out)
-            .map(|s| s.trim().to_string())
-            .unwrap_or_else(|_| "no output produced".into());
-        lines.push(format!("desktop_stream_bench={bench}"));
-        Ok(())
-    })();
-    let _ = std::fs::remove_dir_all(&work);
-    res
+    let bench_out = work.join("stream_bench.txt");
+    let _ = Command::new(exe)
+        .args(["--data-dir"])
+        .arg(&*work)
+        .args(["--bench-stream", "--bench-out"])
+        .arg(&bench_out)
+        .status();
+    let bench = std::fs::read_to_string(&bench_out)
+        .map(|s| s.trim().to_string())
+        .unwrap_or_else(|_| "no output produced".into());
+    lines.push(format!("desktop_stream_bench={bench}"));
+    Ok(())
 }
 
 #[cfg(not(windows))]

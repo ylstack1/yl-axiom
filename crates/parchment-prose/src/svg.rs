@@ -246,7 +246,8 @@ pub fn parse_svg_bounded(raw: &str) -> Option<SvgDocument> {
             {
                 height = h;
             }
-            let st = apply_style(style_stack.last().unwrap(), &attrs);
+            let default_style = SvgStyle::default();
+            let st = apply_style(style_stack.last().unwrap_or(&default_style), &attrs);
             if !self_closing && style_stack.len() < MAX_SVG_DEPTH {
                 style_stack.push(st);
                 transform_stack.push(Affine2D::IDENTITY);
@@ -259,11 +260,13 @@ pub fn parse_svg_bounded(raw: &str) -> Option<SvgDocument> {
                 truncated = true;
                 continue;
             }
-            let st = apply_style(style_stack.last().unwrap(), &attrs);
-            let tr = transform_stack
+            let default_style = SvgStyle::default();
+            let st = apply_style(style_stack.last().unwrap_or(&default_style), &attrs);
+            let base_tr = transform_stack
                 .last()
-                .unwrap()
-                .concat(parse_transform(attr(&attrs, "transform").unwrap_or("")));
+                .copied()
+                .unwrap_or(Affine2D::IDENTITY);
+            let tr = base_tr.concat(parse_transform(attr(&attrs, "transform").unwrap_or("")));
             if !self_closing {
                 style_stack.push(st);
                 transform_stack.push(tr);
@@ -315,11 +318,14 @@ pub fn parse_svg_bounded(raw: &str) -> Option<SvgDocument> {
         };
 
         if let Some(shape) = shape {
-            let style = apply_style(style_stack.last().unwrap(), &attrs);
-            let transform = transform_stack
+            let default_style = SvgStyle::default();
+            let style = apply_style(style_stack.last().unwrap_or(&default_style), &attrs);
+            let base_tr = transform_stack
                 .last()
-                .unwrap()
-                .concat(parse_transform(attr(&attrs, "transform").unwrap_or("")));
+                .copied()
+                .unwrap_or(Affine2D::IDENTITY);
+            let transform =
+                base_tr.concat(parse_transform(attr(&attrs, "transform").unwrap_or("")));
             items.push(SvgDrawItem {
                 shape,
                 style,

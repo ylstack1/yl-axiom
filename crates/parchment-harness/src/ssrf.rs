@@ -163,13 +163,23 @@ impl Resolve for PublicOnlyDnsResolver {
 }
 
 pub struct PublicWebTransport {
-    client: reqwest::Client,
+    client: Option<reqwest::Client>,
+    init_error: Option<String>,
     allow_loopback_for_tests: bool,
 }
 
 impl PublicWebTransport {
     pub fn new() -> Result<Self, WebTransportError> {
         Self::build(false)
+    }
+
+    /// Fail-closed transport used only if TLS/HTTP client initialization fails; rejects all requests.
+    pub fn fail_closed(reason: impl Into<String>) -> Self {
+        Self {
+            client: None,
+            init_error: Some(reason.into()),
+            allow_loopback_for_tests: false,
+        }
     }
 
     /// Only for localhost redirect/SSRF tests — still rejects non-loopback private ranges (e.g. `10.0.0.1`, `169.254.169.254`).
@@ -191,7 +201,8 @@ impl PublicWebTransport {
             .build()
             .map_err(|e| WebTransportError::Transport(e.to_string()))?;
         Ok(Self {
-            client,
+            client: Some(client),
+            init_error: None,
             allow_loopback_for_tests,
         })
     }
@@ -262,17 +273,22 @@ impl PublicWebTransport {
         accept: &str,
         max_bytes: usize,
     ) -> Result<(Vec<u8>, String), WebTransportError> {
+        let Some(client) = &self.client else {
+            return Err(WebTransportError::Transport(
+                self.init_error
+                    .clone()
+                    .unwrap_or_else(|| "Public web transport unavailable.".into()),
+            ));
+        };
         let mut target = self.validate_hop(url)?;
         for _ in 0..MAX_REDIRECT_HOPS {
-            let resp = self
-                .client
+            let resp = client
                 .get(target.as_str())
                 .header("User-Agent", "ParchmentAI/3.0")
                 .header("Accept", accept)
                 .send()
                 .await
                 .map_err(|e| WebTransportError::Transport(e.to_string()))?;
-
             let status = resp.status().as_u16();
             if matches!(status, 301 | 302 | 303 | 307 | 308) {
                 let loc = resp

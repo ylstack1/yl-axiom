@@ -187,12 +187,13 @@ fn scan_o200k_tokens(text: &str) -> usize {
     let n = bytes.len();
 
     while i < n {
-        let ch = text[i..].chars().next().unwrap();
+        let Some(ch) = text[i..].chars().next() else {
+            break;
+        };
         if ch.is_whitespace() {
             let start = i;
             let mut newlines = 0usize;
-            while i < n {
-                let c = text[i..].chars().next().unwrap();
+            while let Some(c) = text[i..].chars().next() {
                 if !c.is_whitespace() {
                     break;
                 }
@@ -209,8 +210,9 @@ fn scan_o200k_tokens(text: &str) -> usize {
         } else if ch.is_numeric() {
             // 1-to-3 digit chunks = 1 token in o200k_base.
             let mut digits = 0usize;
-            while i < n && digits < 3 {
-                let c = text[i..].chars().next().unwrap();
+            while digits < 3
+                && let Some(c) = text[i..].chars().next()
+            {
                 if !c.is_numeric() {
                     break;
                 }
@@ -219,11 +221,9 @@ fn scan_o200k_tokens(text: &str) -> usize {
             }
             total += 1;
         } else if ch.is_alphabetic() {
-            let start = i;
             let mut non_ascii = 0usize;
             let mut char_count = 0usize;
-            while i < n {
-                let c = text[i..].chars().next().unwrap();
+            while let Some(c) = text[i..].chars().next() {
                 if !c.is_alphabetic() {
                     break;
                 }
@@ -233,7 +233,6 @@ fn scan_o200k_tokens(text: &str) -> usize {
                 char_count += 1;
                 i += c.len_utf8();
             }
-            // Optional English contraction suffix ('s, 't, 're, 've, 'm, 'll, 'd).
             if i < n && bytes[i] == b'\'' {
                 let rest = &text[i + 1..];
                 let adv = if starts_with_ci(rest, "re")
@@ -251,7 +250,6 @@ fn scan_o200k_tokens(text: &str) -> usize {
                     char_count += adv;
                 }
             }
-            let _ = start;
             if non_ascii > 0 {
                 let ascii_part = char_count - non_ascii;
                 let ascii_toks = if ascii_part == 0 {
@@ -271,8 +269,7 @@ fn scan_o200k_tokens(text: &str) -> usize {
         } else {
             // Punctuation / operator cluster.
             let mut char_count = 0usize;
-            while i < n {
-                let c = text[i..].chars().next().unwrap();
+            while let Some(c) = text[i..].chars().next() {
                 if c.is_whitespace() || c.is_alphanumeric() {
                     break;
                 }

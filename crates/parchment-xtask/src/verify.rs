@@ -16,13 +16,16 @@ const APP_VERSION_CODE: &str = "300";
 const MAX_ANDROID_SO_BYTES: u64 = 2_621_440; // 2.50 MB raw budget (16 KB uncompressed mmap)
 const MAX_ANDROID_APK_BYTES: u64 = 7_864_320; // 7.50 MB signed Release APK budget
 const MAX_DESKTOP_EXE_BYTES: u64 = 36_700_160; // 35.0 MB standalone GPUI .exe budget
+const MAX_TARGET_CACHE_BYTES: u64 = 5 * 1024 * 1024 * 1024; // 5.0 GiB 3-profile warm Cargo budget
+const MAX_GRADLE_CACHE_BYTES: u64 = 1024 * 1024 * 1024; // 1.0 GiB Gradle cache budget
+const MAX_LOCAL_LOG_BYTES: u64 = 2 * 1024 * 1024; // 2.0 MiB single verification log retention
 const SIGNER_VARS: &[&str] = &[
     "ANDROID_KEYSTORE_PATH",
     "ANDROID_KEYSTORE_PASSWORD",
     "ANDROID_KEY_ALIAS",
 ];
 
-const KOTLIN_CODE_PREFIXES: &[&str] = &["composeApp/", "androidApp/", "gradle/"];
+const KOTLIN_CODE_PREFIXES: &[&str] = &["mobile/", "gradle/"];
 const KOTLIN_CODE_FILES: &[&str] = &[
     "build.gradle.kts",
     "settings.gradle.kts",
@@ -32,15 +35,15 @@ const KOTLIN_CODE_FILES: &[&str] = &[
     "gradlew.bat",
 ];
 const ANDROID_REACHABLE_PREFIXES: &[&str] = &[
-    "composeApp/src/androidMain/",
-    "composeApp/src/jvmShared/",
-    "composeApp/src/commonMain/kotlin/io/parchment/ai/platform/",
+    "mobile/compose-app/src/androidMain/",
+    "mobile/compose-app/src/jvmShared/",
+    "mobile/compose-app/src/commonMain/kotlin/io/parchment/ai/platform/",
     "gradle/",
-    "composeApp/build.gradle.kts",
-    "androidApp/",
+    "mobile/compose-app/build.gradle.kts",
+    "mobile/android-app/",
 ];
 const RUST_PREFIXES: &[&str] = &["crates/", ".cargo/"];
-const RUST_FILES: &[&str] = &["Cargo.toml", "Cargo.lock", "rustfmt.toml"];
+const RUST_FILES: &[&str] = &["Cargo.toml", "Cargo.lock", "rustfmt.toml", "clippy.toml"];
 
 fn state_dir(repo: &Path) -> PathBuf {
     repo.join(".parchment-local/verification")
@@ -208,6 +211,9 @@ pub fn cmd_status(repo: &Path) -> i32 {
         }
         Err(e) => eprintln!("Warning: could not fingerprint repo: {e}"),
     }
+    if let Some(notice) = storage_budget_notice(repo) {
+        println!("{notice}");
+    }
     println!();
     if let Ok(todo) = std::fs::read_to_string(repo.join("TODO.md")) {
         println!("{}", quality::status_block(&todo));
@@ -324,6 +330,7 @@ pub fn cmd_rust(repo: &Path, dry_run: bool) -> i32 {
         "PASS rust: {}",
         format_duration(started.elapsed().as_secs())
     );
+    auto_enforce_storage_budget(repo);
     0
 }
 
@@ -332,23 +339,41 @@ pub fn verify_elf64_16kb_alignment(bytes: &[u8]) -> Result<usize, String> {
     if bytes.len() < 64 || &bytes[0..4] != b"\x7fELF" || bytes[4] != 2 || bytes[5] != 1 {
         return Err("not a valid 64-bit little-endian ELF binary".into());
     }
-    let u16_le = |off: usize| u16::from_le_bytes([bytes[off], bytes[off + 1]]);
-    let u32_le = |off: usize| u32::from_le_bytes(bytes[off..off + 4].try_into().unwrap());
-    let u64_le = |off: usize| u64::from_le_bytes(bytes[off..off + 8].try_into().unwrap());
+    let u16_le = |off: usize| -> Result<u16, String> {
+        let arr: [u8; 2] = bytes
+            .get(off..off + 2)
+            .and_then(|s| s.try_into().ok())
+            .ok_or_else(|| "truncated ELF header".to_string())?;
+        Ok(u16::from_le_bytes(arr))
+    };
+    let u32_le = |off: usize| -> Result<u32, String> {
+        let arr: [u8; 4] = bytes
+            .get(off..off + 4)
+            .and_then(|s| s.try_into().ok())
+            .ok_or_else(|| "truncated ELF header".to_string())?;
+        Ok(u32::from_le_bytes(arr))
+    };
+    let u64_le = |off: usize| -> Result<u64, String> {
+        let arr: [u8; 8] = bytes
+            .get(off..off + 8)
+            .and_then(|s| s.try_into().ok())
+            .ok_or_else(|| "truncated ELF header".to_string())?;
+        Ok(u64::from_le_bytes(arr))
+    };
 
-    let e_phoff = u64_le(32) as usize;
-    let e_phentsize = u16_le(54) as usize;
-    let e_phnum = u16_le(56) as usize;
+    let e_phoff = u64_le(32)? as usize;
+    let e_phentsize = u16_le(54)? as usize;
+    let e_phnum = u16_le(56)? as usize;
     if e_phentsize < 56 || e_phoff + e_phentsize * e_phnum > bytes.len() {
         return Err("truncated ELF program header table".into());
     }
     let mut load_segments = 0usize;
     for i in 0..e_phnum {
         let base = e_phoff + i * e_phentsize;
-        let p_type = u32_le(base);
+        let p_type = u32_le(base)?;
         if p_type == 1 {
             // PT_LOAD
-            let p_align = u64_le(base + 48);
+            let p_align = u64_le(base + 48)?;
             if p_align < 0x4000 {
                 return Err(format!(
                     "PT_LOAD segment #{load_segments} has p_align=0x{p_align:x} (< 0x4000 16 KB)"
@@ -366,7 +391,7 @@ pub fn verify_elf64_16kb_alignment(bytes: &[u8]) -> Result<usize, String> {
 pub fn cmd_android_so(repo: &Path, dry_run: bool) -> i32 {
     if dry_run {
         println!(
-            "Android SO: cargo ndk -t arm64-v8a -P 26 -o androidApp/src/main/jniLibs build -p parchment-core --no-default-features --features android-jni --profile release-android"
+            "Android SO: cargo ndk -t arm64-v8a -P 26 -o mobile/android-app/src/main/jniLibs build -p parchment-core --no-default-features --features android-jni --profile release-android"
         );
         return 0;
     }
@@ -379,7 +404,7 @@ pub fn cmd_android_so(repo: &Path, dry_run: bool) -> i32 {
             "-P",
             "26",
             "-o",
-            "androidApp/src/main/jniLibs",
+            "mobile/android-app/src/main/jniLibs",
             "build",
             "-p",
             "parchment-core",
@@ -400,7 +425,7 @@ pub fn cmd_android_so(repo: &Path, dry_run: bool) -> i32 {
         eprintln!("FAIL android-so: cargo ndk build failed");
         return 1;
     }
-    let so_path = repo.join("androidApp/src/main/jniLibs/arm64-v8a/libparchment_core.so");
+    let so_path = repo.join("mobile/android-app/src/main/jniLibs/arm64-v8a/libparchment_core.so");
     let Ok(bytes) = std::fs::read(&so_path) else {
         eprintln!("FAIL android-so: missing {}", so_path.display());
         return 1;
@@ -421,6 +446,7 @@ pub fn cmd_android_so(repo: &Path, dry_run: bool) -> i32 {
                 size as f64 / 1_048_576.0,
                 format_duration(started.elapsed().as_secs())
             );
+            auto_enforce_storage_budget(repo);
             0
         }
         Err(e) => {
@@ -487,6 +513,7 @@ pub fn cmd_affected(repo: &Path, dry_run: bool) -> i32 {
         }
     }
     let _ = save_ledger(repo, "PASS affected", &cur);
+    auto_enforce_storage_budget(repo);
     println!("PASS affected");
     0
 }
@@ -585,7 +612,7 @@ pub fn cmd_final(repo: &Path, dry_run: bool) -> i32 {
     if run_gradle(repo, "final", &tasks, false, true) != 0 {
         return 1;
     }
-    let apk = repo.join("androidApp/build/outputs/apk/release/androidApp-release.apk");
+    let apk = repo.join("mobile/android-app/build/outputs/apk/release/androidApp-release.apk");
     let apk_bytes = std::fs::read(&apk).unwrap_or_default();
     if apk_bytes.is_empty() || apk_bytes.len() as u64 > MAX_ANDROID_APK_BYTES {
         eprintln!(
@@ -603,6 +630,7 @@ pub fn cmd_final(repo: &Path, dry_run: bool) -> i32 {
         apk_bytes.len() as f64 / 1_048_576.0
     );
     let _ = save_ledger(repo, "PASS final", &cur);
+    auto_enforce_storage_budget(repo);
     0
 }
 
@@ -768,11 +796,432 @@ fn format_duration(secs: u64) -> String {
         format!("{secs}s")
     }
 }
+fn dir_size_bytes(path: &Path) -> u64 {
+    if !path.exists() {
+        return 0;
+    }
+    if path.is_file() {
+        return std::fs::metadata(path).map_or(0, |m| m.len());
+    }
+    let mut total = 0u64;
+    let mut stack = vec![path.to_path_buf()];
+    while let Some(dir) = stack.pop() {
+        let Ok(rd) = std::fs::read_dir(&dir) else {
+            continue;
+        };
+        for entry in rd.flatten() {
+            let p = entry.path();
+            if let Ok(meta) = entry.metadata() {
+                if meta.is_dir() {
+                    stack.push(p);
+                } else {
+                    total = total.saturating_add(meta.len());
+                }
+            }
+        }
+    }
+    total
+}
+
+fn fmt_gib_or_mib(bytes: u64) -> String {
+    let mib = bytes as f64 / 1_048_576.0;
+    if mib >= 1024.0 {
+        format!("{:.2} GiB", mib / 1024.0)
+    } else {
+        format!("{mib:.1} MiB")
+    }
+}
+
+fn cache_totals(repo: &Path) -> (u64, u64) {
+    let target_b = dir_size_bytes(&repo.join("target"));
+    let gradle_b = dir_size_bytes(&repo.join("mobile/compose-app/build"))
+        + dir_size_bytes(&repo.join("mobile/android-app/build"))
+        + dir_size_bytes(&repo.join("build"))
+        + dir_size_bytes(&repo.join(".gradle"));
+    (target_b, gradle_b)
+}
+
+pub fn storage_budget_notice(repo: &Path) -> Option<String> {
+    let (target_b, gradle_b) = cache_totals(repo);
+    if target_b > MAX_TARGET_CACHE_BYTES || gradle_b > MAX_GRADLE_CACHE_BYTES {
+        Some(format!(
+            "Storage QC: build caches at {} (target {}, gradle {}; budgets 5.0 GiB / 1.0 GiB) — run `cargo xtask prune`",
+            fmt_gib_or_mib(target_b + gradle_b),
+            fmt_gib_or_mib(target_b),
+            fmt_gib_or_mib(gradle_b)
+        ))
+    } else {
+        None
+    }
+}
+
+/// Automatically prunes superseded build hashes, orphaned pre-1.100 `deps/`, and legacy v2
+/// folders whenever workspace build caches exceed the 5 GiB / 1 GiB storage budgets.
+fn auto_enforce_storage_budget(repo: &Path) {
+    let (target_b, gradle_b) = cache_totals(repo);
+    if target_b <= MAX_TARGET_CACHE_BYTES && gradle_b <= MAX_GRADLE_CACHE_BYTES {
+        return;
+    }
+    let (removed, reclaimed) = prune_workspace_caches(repo, false);
+    if removed > 0 {
+        let (after_target, after_gradle) = cache_totals(repo);
+        println!(
+            "Storage QC: auto-reclaimed {} across {removed} stale item(s) (now target {}, gradle {}).",
+            fmt_gib_or_mib(reclaimed),
+            fmt_gib_or_mib(after_target),
+            fmt_gib_or_mib(after_gradle)
+        );
+    }
+}
+pub fn cmd_disk(repo: &Path) -> i32 {
+    let buckets: &[(&str, u64)] = &[
+        ("target/", MAX_TARGET_CACHE_BYTES),
+        ("mobile/compose-app/build/", MAX_GRADLE_CACHE_BYTES),
+        ("mobile/android-app/build/", MAX_GRADLE_CACHE_BYTES),
+        ("build/", MAX_GRADLE_CACHE_BYTES),
+        (".gradle/", MAX_GRADLE_CACHE_BYTES),
+        (".parchment-local/", 128 * 1024 * 1024),
+    ];
+    let mut total_cache = 0u64;
+    let mut over_budget = false;
+    println!("Workspace build & cache storage report:");
+    for &(rel, budget) in buckets {
+        let bytes = dir_size_bytes(&repo.join(rel));
+        total_cache = total_cache.saturating_add(bytes);
+        let flag = if bytes > budget {
+            over_budget = true;
+            " [OVER BUDGET]"
+        } else {
+            ""
+        };
+        println!("  {:>10}  {rel}{flag}", fmt_gib_or_mib(bytes));
+    }
+    println!(
+        "  {:>10}  TOTAL build/cache artifacts",
+        fmt_gib_or_mib(total_cache)
+    );
+    if over_budget {
+        println!("Run `cargo xtask prune` to safely reclaim stale incremental/deps/log bloat.");
+    }
+    0
+}
+
+/// Extracts the crate stem before the trailing `-<16hex>` Cargo hash (e.g. `libfoo-0123456789abcdef.rlib` -> `libfoo`).
+fn cargo_hashed_stem(name: &str) -> Option<&str> {
+    let base = name.split('.').next()?;
+    let (stem, hash) = base.rsplit_once('-')?;
+    if stem.is_empty()
+        || hash.len() < 12
+        || !hash
+            .bytes()
+            .all(|b| b.is_ascii_hexdigit() || b.is_ascii_alphanumeric())
+    {
+        return None;
+    }
+    // Cargo incremental dirs use `<crate>-<base36>` and deps/build use `<crate>-<16hex>`.
+    if hash.bytes().any(|b| b.is_ascii_digit()) {
+        Some(stem)
+    } else {
+        None
+    }
+}
+
+/// Prunes stale hashed entries in `dir`, retaining the `keep_newest` most recently modified per crate stem.
+pub fn prune_stale_hashed_entries(dir: &Path, keep_newest: usize, dry_run: bool) -> (usize, u64) {
+    let Ok(rd) = std::fs::read_dir(dir) else {
+        return (0, 0);
+    };
+    let mut groups: BTreeMap<String, Vec<(std::time::SystemTime, PathBuf)>> = BTreeMap::new();
+    for entry in rd.flatten() {
+        let p = entry.path();
+        let Some(name) = p.file_name().and_then(|n| n.to_str()) else {
+            continue;
+        };
+        let Some(stem) = cargo_hashed_stem(name) else {
+            continue;
+        };
+        // Group by stem + extension so `.rlib`/`.rmeta`/`.d` for the same hash stay aligned or prune together by hash key.
+        let ext = p
+            .extension()
+            .and_then(|e| e.to_str())
+            .unwrap_or(if p.is_dir() { "<dir>" } else { "" });
+        let key = format!("{stem}\0{ext}");
+        let mtime = entry
+            .metadata()
+            .and_then(|m| m.modified())
+            .unwrap_or(std::time::UNIX_EPOCH);
+        groups.entry(key).or_default().push((mtime, p));
+    }
+    let mut removed = 0usize;
+    let mut reclaimed = 0u64;
+    for entries in groups.values_mut() {
+        if entries.len() <= keep_newest {
+            continue;
+        }
+        entries.sort_by_key(|a| std::cmp::Reverse(a.0));
+        for (_, stale) in entries.iter().skip(keep_newest) {
+            let sz = dir_size_bytes(stale);
+            if !dry_run {
+                let ok = if stale.is_dir() {
+                    std::fs::remove_dir_all(stale).is_ok()
+                } else {
+                    std::fs::remove_file(stale).is_ok()
+                };
+                if !ok {
+                    continue;
+                }
+            }
+            removed += 1;
+            reclaimed = reclaimed.saturating_add(sz);
+        }
+    }
+    (removed, reclaimed)
+}
+
+fn is_cargo_hash_dir_name(name: &str) -> bool {
+    name.len() == 16 && name.bytes().all(|b| b.is_ascii_hexdigit())
+}
+
+fn newest_mtime_in(dir: &Path) -> Option<std::time::SystemTime> {
+    let rd = std::fs::read_dir(dir).ok()?;
+    let mut newest: Option<std::time::SystemTime> = None;
+    for entry in rd.flatten() {
+        if let Ok(mt) = entry.metadata().and_then(|m| m.modified()) {
+            newest = Some(newest.map_or(mt, |cur| cur.max(mt)));
+        }
+    }
+    newest
+}
+
+/// Returns the Cargo unit kind key inside `build/<crate>/<hash>/fingerprint/` (e.g.
+/// `lib-foo.json`, `run-build-script-*.json`, `build-script-*.json`, `test-*.json`) so
+/// distinct unit kinds for the same crate never prune each other.
+fn cargo_unit_kind_key(hash_dir: &Path) -> String {
+    let mut names: Vec<String> = std::fs::read_dir(hash_dir.join("fingerprint"))
+        .ok()
+        .into_iter()
+        .flatten()
+        .flatten()
+        .filter_map(|e| {
+            let n = e.file_name().to_str()?.to_string();
+            n.ends_with(".json").then_some(n)
+        })
+        .collect();
+    names.sort();
+    if !names.is_empty() {
+        return names.join("+");
+    }
+    if hash_dir.join("run").is_dir() {
+        return "run-build-script".into();
+    }
+    "unit".into()
+}
+
+fn contains_proc_macro_dll(hash_dir: &Path) -> bool {
+    std::fs::read_dir(hash_dir.join("out"))
+        .ok()
+        .into_iter()
+        .flatten()
+        .flatten()
+        .any(|e| {
+            e.path()
+                .extension()
+                .and_then(|x| x.to_str())
+                .is_some_and(|x| x.eq_ignore_ascii_case("dll"))
+        })
+}
+
+/// Prunes Cargo 1.100 nested `target/<profile>/build/<crate>/<16hex>/` directories grouped by
+/// unit kind (preserving `build-script`, `run-build-script`, and active proc-macro DLLs) as well
+/// as legacy flat `<crate>-<hash>` build-script directories.
+pub fn prune_cargo_build_dir(build_dir: &Path, keep_newest: usize, dry_run: bool) -> (usize, u64) {
+    let (mut removed, mut reclaimed) = prune_stale_hashed_entries(build_dir, 1, dry_run);
+    let Ok(rd) = std::fs::read_dir(build_dir) else {
+        return (removed, reclaimed);
+    };
+    for crate_entry in rd.flatten() {
+        let crate_dir = crate_entry.path();
+        if !crate_dir.is_dir() {
+            continue;
+        }
+        let Ok(sub_rd) = std::fs::read_dir(&crate_dir) else {
+            continue;
+        };
+        let mut by_kind: BTreeMap<String, Vec<(std::time::SystemTime, PathBuf)>> = BTreeMap::new();
+        for sub in sub_rd.flatten() {
+            let p = sub.path();
+            let Some(name) = p.file_name().and_then(|n| n.to_str()) else {
+                continue;
+            };
+            if p.is_dir() && is_cargo_hash_dir_name(name) {
+                let kind = cargo_unit_kind_key(&p);
+                let mt = newest_mtime_in(&p.join("out"))
+                    .or_else(|| sub.metadata().and_then(|m| m.modified()).ok())
+                    .unwrap_or(std::time::UNIX_EPOCH);
+                by_kind.entry(kind).or_default().push((mt, p));
+            }
+        }
+        for hashes in by_kind.values_mut() {
+            if hashes.len() <= keep_newest {
+                continue;
+            }
+            hashes.sort_by_key(|a| std::cmp::Reverse(a.0));
+            for (_, stale) in hashes.iter().skip(keep_newest) {
+                // Windows IDEs (`rust-analyzer`) can map proc-macro DLLs; skip locked DLLs safely.
+                if contains_proc_macro_dll(stale) {
+                    continue;
+                }
+                let sz = dir_size_bytes(stale);
+                if !dry_run && std::fs::remove_dir_all(stale).is_err() {
+                    continue;
+                }
+                removed += 1;
+                reclaimed = reclaimed.saturating_add(sz);
+            }
+        }
+    }
+    (removed, reclaimed)
+}
+
+/// Removes an orphaned pre-Cargo-1.100 `deps/` directory when the profile has migrated to Cargo's
+/// nested `build/<crate>/<16hex>/out/` layout and every file in `deps/` is strictly older than
+/// the active `build/` outputs.
+pub fn prune_orphaned_legacy_deps(profile_dir: &Path, dry_run: bool) -> (usize, u64) {
+    let deps_dir = profile_dir.join("deps");
+    let build_dir = profile_dir.join("build");
+    if !deps_dir.is_dir() || !build_dir.is_dir() {
+        return (0, 0);
+    }
+    let Ok(rd) = std::fs::read_dir(&build_dir) else {
+        return (0, 0);
+    };
+    let mut nested_crates = 0usize;
+    let mut newest_build: Option<std::time::SystemTime> = None;
+    for entry in rd.flatten() {
+        let p = entry.path();
+        if !p.is_dir() {
+            continue;
+        }
+        let Ok(sub_rd) = std::fs::read_dir(&p) else {
+            continue;
+        };
+        for sub in sub_rd.flatten() {
+            let sp = sub.path();
+            if sp.is_dir()
+                && sp
+                    .file_name()
+                    .and_then(|n| n.to_str())
+                    .is_some_and(is_cargo_hash_dir_name)
+                && sp.join("out").is_dir()
+            {
+                nested_crates += 1;
+                if let Some(mt) = newest_mtime_in(&sp.join("out")) {
+                    newest_build = Some(newest_build.map_or(mt, |cur| cur.max(mt)));
+                }
+                break;
+            }
+        }
+    }
+    if nested_crates < 5 {
+        return (0, 0);
+    }
+    let (Some(build_mt), Some(deps_mt)) = (newest_build, newest_mtime_in(&deps_dir)) else {
+        return (0, 0);
+    };
+    if deps_mt >= build_mt {
+        return (0, 0);
+    }
+    let sz = dir_size_bytes(&deps_dir);
+    if !dry_run && std::fs::remove_dir_all(&deps_dir).is_err() {
+        return (0, 0);
+    }
+    (1, sz)
+}
+
+fn prune_workspace_caches(repo: &Path, dry_run: bool) -> (usize, u64) {
+    let mut total_removed = 0usize;
+    let mut total_reclaimed = 0u64;
+
+    // 1. Obsolete host-compiled release-android & dead legacy v2 JVM desktop packaging caches.
+    for rel in [
+        "target/release-android",
+        "build/wix311",
+        "mobile/compose-app/build/compose",
+        "mobile/compose-app/build/jdk-library-classes",
+    ] {
+        let p = repo.join(rel);
+        if p.is_dir() {
+            let sz = dir_size_bytes(&p);
+            if dry_run || std::fs::remove_dir_all(&p).is_ok() {
+                total_removed += 1;
+                total_reclaimed = total_reclaimed.saturating_add(sz);
+            }
+        }
+    }
+
+    // 2. Keep newest incremental session per crate; prune older sessions.
+    for rel in ["target/debug/incremental", "target/release/incremental"] {
+        let (n, b) = prune_stale_hashed_entries(&repo.join(rel), 1, dry_run);
+        total_removed += n;
+        total_reclaimed = total_reclaimed.saturating_add(b);
+    }
+
+    // 3. Remove orphaned pre-Cargo-1.100 `deps/` superseded by nested `build/<crate>/<hash>/out/`.
+    let profiles = [
+        ("target/debug", 2usize),
+        ("target/release", 1usize),
+        ("target/aarch64-linux-android/release-android", 1usize),
+    ];
+    for (prof, keep) in profiles {
+        let prof_dir = repo.join(prof);
+        let (n_orph, b_orph) = prune_orphaned_legacy_deps(&prof_dir, dry_run);
+        total_removed += n_orph;
+        total_reclaimed = total_reclaimed.saturating_add(b_orph);
+
+        let (n_build, b_build) = prune_cargo_build_dir(&prof_dir.join("build"), keep, dry_run);
+        total_removed += n_build;
+        total_reclaimed = total_reclaimed.saturating_add(b_build);
+
+        if n_orph == 0 {
+            let (n_deps, b_deps) = prune_stale_hashed_entries(&prof_dir.join("deps"), 1, dry_run);
+            total_removed += n_deps;
+            total_reclaimed = total_reclaimed.saturating_add(b_deps);
+        }
+    }
+    // 5. Prune oversized verification logs (> 2 MiB) while preserving ledger.txt and perf.txt.
+    let ver_dir = state_dir(repo);
+    if let Ok(rd) = std::fs::read_dir(&ver_dir) {
+        for entry in rd.flatten() {
+            let p = entry.path();
+            if p.extension().and_then(|e| e.to_str()) == Some("log") {
+                let sz = entry.metadata().map_or(0, |m| m.len());
+                if sz > MAX_LOCAL_LOG_BYTES && (dry_run || std::fs::remove_file(&p).is_ok()) {
+                    total_removed += 1;
+                    total_reclaimed = total_reclaimed.saturating_add(sz);
+                }
+            }
+        }
+    }
+    (total_removed, total_reclaimed)
+}
+
+pub fn cmd_prune(repo: &Path, dry_run: bool) -> i32 {
+    let (total_removed, total_reclaimed) = prune_workspace_caches(repo, dry_run);
+    let verb = if dry_run {
+        "Would reclaim"
+    } else {
+        "Reclaimed"
+    };
+    println!(
+        "{verb} {} across {total_removed} stale cache item(s).",
+        fmt_gib_or_mib(total_reclaimed)
+    );
+    cmd_disk(repo)
+}
 
 #[cfg(test)]
 mod tests {
     use super::*;
-
     #[test]
     fn elf64_alignment_checker_accepts_16kb_and_rejects_4kb() {
         let mut elf = vec![0u8; 128];
@@ -796,13 +1245,66 @@ mod tests {
         assert!(needs_rust(&rust_only));
         assert!(!needs_kotlin(&rust_only));
 
-        let kt_android =
-            vec!["composeApp/src/androidMain/kotlin/io/parchment/ai/MainActivity.kt".to_string()];
+        let kt_android = vec![
+            "mobile/compose-app/src/androidMain/kotlin/io/parchment/ai/MainActivity.kt".to_string(),
+        ];
         assert!(!needs_rust(&kt_android));
         assert!(needs_kotlin(&kt_android));
         assert!(needs_android(&kt_android));
 
         let docs_only = vec!["README.md".to_string()];
         assert_eq!(next_check_label(&docs_only), "quality gates only");
+    }
+
+    #[test]
+    fn prune_stale_hashed_entries_keeps_newest_and_removes_older() {
+        let dir = std::env::temp_dir().join(format!("parchment-prune-test-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        for (i, hash) in ["0000000000000001", "0000000000000002", "0000000000000003"]
+            .iter()
+            .enumerate()
+        {
+            let f = dir.join(format!("libfoo-{hash}.rlib"));
+            std::fs::write(&f, vec![0u8; 1024 * (i + 1)]).unwrap();
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        }
+        let (removed, reclaimed) = prune_stale_hashed_entries(&dir, 1, false);
+        assert_eq!(removed, 2);
+        assert!(reclaimed >= 3072);
+        assert!(dir.join("libfoo-0000000000000003.rlib").exists());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn prune_cargo_build_dir_and_orphaned_legacy_deps_reclaim_superseded_outputs() {
+        let root = std::env::temp_dir().join(format!("parchment-bdir-test-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let deps = root.join("deps");
+        std::fs::create_dir_all(&deps).unwrap();
+        std::fs::write(deps.join("libold-0000000000000001.rlib"), vec![0u8; 4096]).unwrap();
+        std::thread::sleep(std::time::Duration::from_millis(30));
+
+        let build = root.join("build");
+        for i in 0..6 {
+            let out_old = build.join(format!("crate{i}/00000000000000a{i}/out"));
+            std::fs::create_dir_all(&out_old).unwrap();
+            std::fs::write(out_old.join("lib.rlib"), vec![0u8; 2048]).unwrap();
+        }
+        std::thread::sleep(std::time::Duration::from_millis(30));
+        let out_new = build.join("crate0/00000000000000b0/out");
+        std::fs::create_dir_all(&out_new).unwrap();
+        std::fs::write(out_new.join("lib.rlib"), vec![0u8; 1024]).unwrap();
+
+        let (n_deps, b_deps) = prune_orphaned_legacy_deps(&root, false);
+        assert_eq!(n_deps, 1);
+        assert!(b_deps >= 4096);
+        assert!(!deps.exists());
+
+        let (n_build, b_build) = prune_cargo_build_dir(&build, 1, false);
+        assert_eq!(n_build, 1);
+        assert!(b_build >= 2048);
+        assert!(out_new.exists());
+        let _ = std::fs::remove_dir_all(&root);
     }
 }

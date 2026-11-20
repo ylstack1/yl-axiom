@@ -190,8 +190,10 @@ impl<'a> LatexParser<'a> {
             let with_scripts = self.parse_scripts(atom, depth);
             items.push(with_scripts);
         }
-        if items.len() == 1 {
-            items.pop().unwrap()
+        if items.len() == 1
+            && let Some(single) = items.pop()
+        {
+            single
         } else {
             LatexNode::Group(items)
         }

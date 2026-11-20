@@ -1,3 +1,4 @@
+#![allow(clippy::unwrap_used, clippy::expect_used, clippy::print_stdout)]
 //! Security & end-to-end integration tests for `parchment-harness`.
 //! Uses isolated temp dirs and local `127.0.0.1:0` HTTP fixtures — never live endpoints.
 

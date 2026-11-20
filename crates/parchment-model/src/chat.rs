@@ -392,7 +392,9 @@ fn replace_ascii_case_insensitive(haystack: &str, needle: &str, replacement: &st
             out.push_str(replacement);
             i += nlen;
         } else {
-            let ch = haystack[i..].chars().next().unwrap();
+            let Some(ch) = haystack[i..].chars().next() else {
+                break;
+            };
             out.push(ch);
             i += ch.len_utf8();
         }

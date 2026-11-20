@@ -152,7 +152,8 @@ impl HarnessExecutor {
             return ToolOutput::err("Tool arguments must be a valid JSON object.");
         };
 
-        let ws_root = claim_scope.policy.workspace_path.as_str();
+        let ws_roots = claim_scope.policy.all_workspace_paths();
+        let ws_root = ws_roots.first().map(String::as_str).unwrap_or("");
         match name {
             "fs_list" => {
                 let rel = str_arg(&args, "path").unwrap_or("");
@@ -160,7 +161,7 @@ impl HarnessExecutor {
                     .get("recursive")
                     .and_then(Value::as_bool)
                     .unwrap_or(false);
-                match WorkspacePathGuard::list_dir(ws_root, rel, recursive, 500) {
+                match WorkspacePathGuard::list_dir_multi(&ws_roots, rel, recursive, 500) {
                     Ok(s) => ToolOutput::ok(s),
                     Err(e) => ToolOutput::err(e.to_string()),
                 }
@@ -168,7 +169,11 @@ impl HarnessExecutor {
             "fs_glob" => {
                 let pat = str_arg(&args, "pattern").unwrap_or("");
                 let max = int_arg(&args, "max_results", 200) as usize;
-                match WorkspacePathGuard::glob_files(ws_root, pat, max) {
+                let (root, rel_pat) = match WorkspacePathGuard::resolve_in_roots(&ws_roots, pat) {
+                    Ok(v) => v,
+                    Err(e) => return ToolOutput::err(e.to_string()),
+                };
+                match WorkspacePathGuard::glob_files(&root, &rel_pat, max) {
                     Ok(s) => ToolOutput::ok(s),
                     Err(e) => ToolOutput::err(e.to_string()),
                 }
@@ -177,7 +182,11 @@ impl HarnessExecutor {
                 let rel = str_arg(&args, "path").unwrap_or("");
                 let start = int_arg(&args, "start_line", 1).max(1) as usize;
                 let max_lines = int_arg(&args, "max_lines", 250).max(1) as usize;
-                match WorkspacePathGuard::read_file_lines(ws_root, rel, start, max_lines) {
+                let (root, sub) = match WorkspacePathGuard::resolve_in_roots(&ws_roots, rel) {
+                    Ok(v) => v,
+                    Err(e) => return ToolOutput::err(e.to_string()),
+                };
+                match WorkspacePathGuard::read_file_lines(&root, &sub, start, max_lines) {
                     Ok(s) => ToolOutput::ok(s),
                     Err(e) => ToolOutput::err(e.to_string()),
                 }
@@ -187,7 +196,16 @@ impl HarnessExecutor {
                 let path = str_arg(&args, "path");
                 let glob = str_arg(&args, "file_glob");
                 let max = int_arg(&args, "max_results", 150) as usize;
-                match WorkspacePathGuard::search_files(ws_root, query, path, glob, max) {
+                let (root, sub_opt) = if let Some(p) = path {
+                    match WorkspacePathGuard::resolve_in_roots(&ws_roots, p) {
+                        Ok((r, s)) => (r, (!s.is_empty()).then_some(s)),
+                        Err(e) => return ToolOutput::err(e.to_string()),
+                    }
+                } else {
+                    (ws_root.to_string(), None)
+                };
+                match WorkspacePathGuard::search_files(&root, query, sub_opt.as_deref(), glob, max)
+                {
                     Ok(s) => ToolOutput::ok(s),
                     Err(e) => ToolOutput::err(e.to_string()),
                 }
@@ -195,7 +213,11 @@ impl HarnessExecutor {
             "fs_write" => {
                 let rel = str_arg(&args, "path").unwrap_or("");
                 let content = str_arg(&args, "content").unwrap_or("");
-                match WorkspacePathGuard::write_file_atomic(ws_root, rel, content) {
+                let (root, sub) = match WorkspacePathGuard::resolve_in_roots(&ws_roots, rel) {
+                    Ok(v) => v,
+                    Err(e) => return ToolOutput::err(e.to_string()),
+                };
+                match WorkspacePathGuard::write_file_atomic(&root, &sub, content) {
                     Ok(s) => ToolOutput::ok(s),
                     Err(e) => ToolOutput::err(e.to_string()),
                 }
@@ -208,9 +230,13 @@ impl HarnessExecutor {
                     .get("replace_all")
                     .and_then(Value::as_bool)
                     .unwrap_or(false);
+                let (root, sub) = match WorkspacePathGuard::resolve_in_roots(&ws_roots, rel) {
+                    Ok(v) => v,
+                    Err(e) => return ToolOutput::err(e.to_string()),
+                };
                 match WorkspacePathGuard::edit_file(
-                    ws_root,
-                    rel,
+                    &root,
+                    &sub,
                     &[(old_text, new_text, replace_all)],
                 ) {
                     Ok(s) => ToolOutput::ok(s),
@@ -247,7 +273,11 @@ impl HarnessExecutor {
                     .iter()
                     .map(|(o, n, a)| (o.as_str(), n.as_str(), *a))
                     .collect();
-                match WorkspacePathGuard::edit_file(ws_root, rel, &refs) {
+                let (root, sub) = match WorkspacePathGuard::resolve_in_roots(&ws_roots, rel) {
+                    Ok(v) => v,
+                    Err(e) => return ToolOutput::err(e.to_string()),
+                };
+                match WorkspacePathGuard::edit_file(&root, &sub, &refs) {
                     Ok(s) => ToolOutput::ok(s),
                     Err(e) => ToolOutput::err(e.to_string()),
                 }
@@ -255,14 +285,31 @@ impl HarnessExecutor {
             "fs_move" => {
                 let src = str_arg(&args, "source_path").unwrap_or("");
                 let dst = str_arg(&args, "dest_path").unwrap_or("");
-                match WorkspacePathGuard::move_path(ws_root, src, dst) {
+                let (root_s, sub_s) = match WorkspacePathGuard::resolve_in_roots(&ws_roots, src) {
+                    Ok(v) => v,
+                    Err(e) => return ToolOutput::err(e.to_string()),
+                };
+                let (root_d, sub_d) = match WorkspacePathGuard::resolve_in_roots(&ws_roots, dst) {
+                    Ok(v) => v,
+                    Err(e) => return ToolOutput::err(e.to_string()),
+                };
+                if root_s != root_d {
+                    return ToolOutput::err(
+                        "fs_move requires source and destination in the same mounted workspace folder.",
+                    );
+                }
+                match WorkspacePathGuard::move_path(&root_s, &sub_s, &sub_d) {
                     Ok(s) => ToolOutput::ok(s),
                     Err(e) => ToolOutput::err(e.to_string()),
                 }
             }
             "fs_delete" => {
                 let rel = str_arg(&args, "path").unwrap_or("");
-                match WorkspacePathGuard::delete_path(ws_root, rel) {
+                let (root, sub) = match WorkspacePathGuard::resolve_in_roots(&ws_roots, rel) {
+                    Ok(v) => v,
+                    Err(e) => return ToolOutput::err(e.to_string()),
+                };
+                match WorkspacePathGuard::delete_path(&root, &sub) {
                     Ok(s) => ToolOutput::ok(s),
                     Err(e) => ToolOutput::err(e.to_string()),
                 }
@@ -717,7 +764,7 @@ async fn capture_head_tail<R: AsyncReadExt + Unpin>(reader: Option<R>) -> String
 
     if total_bytes <= MAX_SHELL_OUTPUT_HALF_BYTES * 2 {
         head.extend_from_slice(&tail);
-        return String::from_utf8_lossy(&head).into_owned();
+        return String::from_utf8_lossy_owned(head);
     }
     let omitted = total_bytes.saturating_sub(head.len() + tail.len());
     format!(

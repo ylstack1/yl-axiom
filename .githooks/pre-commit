@@ -1,3 +1,11 @@
 #!/bin/sh
 set -eu
+case "$(uname -s 2>/dev/null || true)" in
+  MINGW*|MSYS*|CYGWIN*)
+    # Git for Windows prepends /usr/bin (GNU link.exe), shadowing MSVC link.exe for Cargo.
+    cleaned=$(printf '%s' "$PATH" | awk -v RS=: -v ORS=: '$0 != "/usr/bin" && $0 != "/mingw64/bin" && $0 != ""')
+    PATH="${cleaned}/mingw64/bin:/usr/bin"
+    export PATH
+    ;;
+esac
 exec cargo xtask pre-commit

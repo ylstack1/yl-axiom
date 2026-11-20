@@ -14,9 +14,10 @@ pub fn configure_and_migrate(conn: &Connection) -> StorageResult<()> {
          PRAGMA synchronous = NORMAL;
          PRAGMA foreign_keys = ON;
          PRAGMA busy_timeout = 5000;
-         PRAGMA temp_store = MEMORY;",
+         PRAGMA temp_store = MEMORY;
+         PRAGMA wal_autocheckpoint = 1000;
+         PRAGMA journal_size_limit = 8388608;",
     )?;
-
     let current_version: i32 = conn.query_row("PRAGMA user_version", [], |row| row.get(0))?;
     if current_version < 1 {
         conn.execute_batch(

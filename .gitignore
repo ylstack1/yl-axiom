@@ -1,9 +1,9 @@
 .gradle/
 .kotlin/
 build/
-composeApp/build/
-androidApp/build/
-androidApp/src/main/jniLibs/
+mobile/compose-app/build/
+mobile/android-app/build/
+mobile/android-app/src/main/jniLibs/
 local.properties
 .idea/
 *.iml

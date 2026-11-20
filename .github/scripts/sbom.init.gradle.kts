@@ -2,7 +2,7 @@
 // library in the app, without local builds downloading or configuring it.
 initscript {
     repositories { mavenCentral(); gradlePluginPortal() }
-    dependencies { classpath("org.cyclonedx:cyclonedx-gradle-plugin:3.5.1") }
+    dependencies { classpath("org.cyclonedx:cyclonedx-gradle-plugin:3.6.1") }
 }
 
 // Applied to the root only: that registers one Direct SBOM task per project and the Aggregate SBOM

@@ -1,6 +1,7 @@
 [versions]
-# Newest stable versions that work together (2026-11-17). Kotlin 2.4.21 supports AGP up to 9.3.x and
-# Gradle up to 9.7.x, so AGP 9.5 and Gradle 9.9 wait for a Kotlin release that covers them.
+# Newest compatible stable releases (verified 2026-11-20). Kotlin 2.4.21 (2.5.0-RC is pre-release)
+# officially supports AGP up to 9.3.x and Gradle up to 9.7.x (KT-89265); AGP 9.5.1 and Gradle 9.9.2
+# wait for stable Kotlin 2.5.0. Compose Multiplatform 1.13.0-rc01 and Hot Reload 1.3.0-rc01 are RCs.
 agp = "9.3.3"
 android-compileSdk = "37"
 android-minSdk = "26"

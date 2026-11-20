@@ -195,6 +195,17 @@ impl ToolApprovalBroker {
             .collect()
     }
 
+    pub fn try_pending_questions(&self) -> Option<Vec<UserQuestion>> {
+        let inner = self.inner.try_lock().ok()?;
+        Some(
+            inner
+                .pending_questions
+                .values()
+                .map(|p| p.question.clone())
+                .collect(),
+        )
+    }
+
     fn reconcile_locked(&self, inner: &mut BrokerInner) -> Option<ToolAccessScope> {
         let current = self.current_scope();
         let rev = self.revision.load(Ordering::SeqCst);

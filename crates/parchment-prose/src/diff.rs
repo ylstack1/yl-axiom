@@ -24,18 +24,12 @@ pub fn compute_unified_line_diff(old_text: &str, new_text: &str) -> Vec<DiffLine
     let old_lines: Vec<&str> = if old_text.is_empty() {
         Vec::new()
     } else {
-        old_text
-            .split('\n')
-            .map(|l| l.strip_suffix('\r').unwrap_or(l))
-            .collect()
+        old_text.split('\n').map(|l| l.trim_suffix('\r')).collect()
     };
     let new_lines: Vec<&str> = if new_text.is_empty() {
         Vec::new()
     } else {
-        new_text
-            .split('\n')
-            .map(|l| l.strip_suffix('\r').unwrap_or(l))
-            .collect()
+        new_text.split('\n').map(|l| l.trim_suffix('\r')).collect()
     };
 
     if old_lines.is_empty() && new_lines.is_empty() {
@@ -305,7 +299,7 @@ pub fn parse_diff_fence(raw: &str) -> Vec<DiffLine> {
                 kind: DiffLineKind::Context,
                 old_line: None,
                 new_line: None,
-                text: line.strip_prefix(' ').unwrap_or(line).to_string(),
+                text: line.trim_prefix(' ').to_string(),
             });
         }
     }

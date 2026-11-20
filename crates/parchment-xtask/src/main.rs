@@ -1,3 +1,4 @@
+#![allow(clippy::print_stdout)]
 //! Parchment unified developer & CI automation (`cargo xtask <command>`).
 //!
 //! Pure Rust `std` only — covers both Rust Desktop (GPUI + core crates) and Kotlin Mobile
@@ -12,12 +13,24 @@ use std::path::PathBuf;
 use std::process::ExitCode;
 
 fn repo_root() -> PathBuf {
+    if let Ok(ws) = std::env::var("GITHUB_WORKSPACE") {
+        let p = PathBuf::from(ws);
+        if p.join("Cargo.toml").is_file() && p.join("crates/parchment-xtask/Cargo.toml").is_file() {
+            return p;
+        }
+    }
+    if let Ok(cwd) = std::env::current_dir()
+        && cwd.join("Cargo.toml").is_file()
+        && cwd.join("crates/parchment-xtask/Cargo.toml").is_file()
+    {
+        return cwd;
+    }
     let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     manifest_dir
         .parent()
         .and_then(|p| p.parent())
         .map(PathBuf::from)
-        .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")))
+        .unwrap_or_else(|| PathBuf::from("."))
 }
 
 fn print_usage() {
@@ -38,6 +51,8 @@ Commands:
   android [--dry-run]     Compile Android Kotlin sources (:composeApp:compileAndroidMain)
   final [--dry-run]       Full release gate (review, rust, android-so, desktop .exe, signed APK)
   perf [--android-install] Measure desktop .exe startup/RAM/streaming + Android APK/phone
+  disk                    Report workspace build/cache disk usage against storage budgets
+  prune [--dry-run]       Safely reclaim stale incremental/deps/log bloat without cold rebuilds
   pre-commit              Fast git pre-commit hook (review + rustfmt + staged clippy/ktlint)
   install-hooks           Configure git core.hooksPath = .githooks
   ci <subcommand>         CI helpers (plan, run-gradle, shard-tests, check-sbom, stage-signing)"
@@ -117,6 +132,8 @@ fn main() -> ExitCode {
                 }
             }
         }
+        "disk" => verify::cmd_disk(&repo),
+        "prune" => verify::cmd_prune(&repo, dry_run),
         "pre-commit" => verify::cmd_pre_commit(&repo),
         "install-hooks" => verify::cmd_install_hooks(&repo),
         "ci" => ci::dispatch(&repo, rest),

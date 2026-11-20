@@ -23,8 +23,17 @@ const SHARED_GRADLE_FILES: &[&str] = &[
     ".editorconfig",
     "gradlew",
     "gradlew.bat",
-    "composeApp/build.gradle.kts",
+    "mobile/compose-app/build.gradle.kts",
+    "mobile/compose-app/stability-config.conf",
     ".github/workflows/build-installers.yml",
+];
+
+const RUST_ANDROID_PREFIXES: &[&str] = &[
+    "crates/parchment-model/",
+    "crates/parchment-storage/",
+    "crates/parchment-prose/",
+    "crates/parchment-harness/",
+    "crates/parchment-core/",
 ];
 
 const RUST_CORE_PREFIXES: &[&str] = &[
@@ -36,8 +45,7 @@ const RUST_CORE_PREFIXES: &[&str] = &[
     "crates/parchment-core/",
 ];
 
-const RUST_ALL_FILES: &[&str] = &["Cargo.toml", "Cargo.lock", "rustfmt.toml"];
-
+const RUST_ALL_FILES: &[&str] = &["Cargo.toml", "Cargo.lock", "rustfmt.toml", "clippy.toml"];
 const SIGNING_TRIGGERS: &[&str] = &[
     ".github/scripts/ValidateAndroidSigningKey.java",
     ".github/workflows/build-installers.yml",
@@ -142,17 +150,18 @@ pub fn classify_installers(
     let shared_gradle = any_p(&|p| {
         p.starts_with("gradle/")
             || SHARED_GRADLE_FILES.contains(&p)
-            || p.starts_with("composeApp/src/commonMain/")
-            || p.starts_with("composeApp/src/jvmShared/")
+            || p.starts_with("mobile/compose-app/src/commonMain/")
+            || p.starts_with("mobile/compose-app/src/jvmShared/")
     });
-    let rust_any = any_p(&|p| {
-        p.starts_with("crates/")
+    let rust_desktop_or_core = any_p(&|p| {
+        RUST_CORE_PREFIXES.iter().any(|pre| p.starts_with(pre))
+            || p.starts_with("crates/parchment-desktop/")
             || p.starts_with(".cargo/")
             || RUST_ALL_FILES.contains(&p)
             || p == ".github/workflows/build-installers.yml"
     });
     let rust_core_for_android = any_p(&|p| {
-        RUST_CORE_PREFIXES.iter().any(|pre| p.starts_with(pre))
+        RUST_ANDROID_PREFIXES.iter().any(|pre| p.starts_with(pre))
             || p.starts_with(".cargo/")
             || p == "Cargo.toml"
             || p == "Cargo.lock"
@@ -163,33 +172,35 @@ pub fn classify_installers(
             || RUST_ALL_FILES.contains(&p)
             || p == ".github/workflows/build-installers.yml"
     });
-    let rust_windows = rust_any || any_p(&|p| p.starts_with("installer/"));
+    let rust_windows = rust_desktop_or_core || any_p(&|p| p.starts_with("installer/"));
 
     let desktop_tests = shared_gradle
         || any_p(&|p| {
-            p.starts_with("composeApp/src/desktopMain/")
-                || p.starts_with("composeApp/src/commonTest/")
-                || p.starts_with("composeApp/src/desktopTest/")
+            p.starts_with("mobile/compose-app/src/desktopMain/")
+                || p.starts_with("mobile/compose-app/src/commonTest/")
+                || p.starts_with("mobile/compose-app/src/desktopTest/")
         });
     let windows_tests = shared_gradle
         || any_p(&|p| {
-            p.starts_with("composeApp/src/desktopMain/")
-                || p.starts_with("composeApp/src/desktopTest/kotlin/io/parchment/ai/platform/")
+            p.starts_with("mobile/compose-app/src/desktopMain/")
                 || p.starts_with(
-                    "composeApp/src/desktopTest/kotlin/io/parchment/ai/harness/OwnedShell",
+                    "mobile/compose-app/src/desktopTest/kotlin/io/parchment/ai/platform/",
                 )
                 || p.starts_with(
-                    "composeApp/src/commonTest/kotlin/io/parchment/ai/harness/OwnedShell",
+                    "mobile/compose-app/src/desktopTest/kotlin/io/parchment/ai/harness/OwnedShell",
                 )
-                || p == "composeApp/src/desktopTest/kotlin/io/parchment/ai/CdsWarmupWatchdogTest.kt"
-                || p == "composeApp/src/desktopTest/kotlin/io/parchment/ai/WindowCaptionTest.kt"
+                || p.starts_with(
+                    "mobile/compose-app/src/commonTest/kotlin/io/parchment/ai/harness/OwnedShell",
+                )
+                || p == "mobile/compose-app/src/desktopTest/kotlin/io/parchment/ai/CdsWarmupWatchdogTest.kt"
+                || p == "mobile/compose-app/src/desktopTest/kotlin/io/parchment/ai/WindowCaptionTest.kt"
         });
     let android = !reuse_android_run
         && (shared_gradle
             || rust_core_for_android
             || any_p(&|p| {
-                p.starts_with("androidApp/")
-                    || p.starts_with("composeApp/src/androidMain/")
+                p.starts_with("mobile/android-app/")
+                    || p.starts_with("mobile/compose-app/src/androidMain/")
                     || p == ".github/scripts/ValidateAndroidSigningKey.java"
                     || p == ".github/scripts/sbom.init.gradle.kts"
             }));
@@ -223,32 +234,37 @@ pub fn classify_quality_signals(paths: Option<&HashSet<String>>) -> BTreeMap<&'s
                     | "gradle.properties"
                     | "gradlew"
                     | "gradlew.bat"
-                    | "composeApp/build.gradle.kts"
+                    | "mobile/compose-app/build.gradle.kts"
             )
     });
     let coverage = shared_gradle
         || any_p(&|p| {
-            p.starts_with("composeApp/src/commonMain/")
-                || p.starts_with("composeApp/src/jvmShared/")
-                || p.starts_with("composeApp/src/desktopMain/")
-                || p.starts_with("composeApp/src/commonTest/")
-                || p.starts_with("composeApp/src/desktopTest/")
+            p.starts_with("mobile/compose-app/src/commonMain/")
+                || p.starts_with("mobile/compose-app/src/jvmShared/")
+                || p.starts_with("mobile/compose-app/src/desktopMain/")
+                || p.starts_with("mobile/compose-app/src/commonTest/")
+                || p.starts_with("mobile/compose-app/src/desktopTest/")
+                || p == "mobile/compose-app/stability-config.conf"
                 || p == ".github/scripts/kover.init.gradle.kts"
                 || p == ".github/workflows/quality-signals.yml"
         });
     let gallery = shared_gradle
         || any_p(&|p| {
-            p.starts_with("composeApp/src/commonMain/kotlin/io/parchment/ai/ui/")
-                || p.starts_with("composeApp/src/commonMain/kotlin/io/parchment/ai/model/")
-                || p.starts_with("composeApp/src/commonMain/resources/")
-                || p.starts_with("composeApp/src/jvmShared/")
-                || p.starts_with("composeApp/src/desktopMain/")
-                || p == "composeApp/src/desktopTest/kotlin/io/parchment/ai/ui/UiGalleryTest.kt"
+            p.starts_with("mobile/compose-app/src/commonMain/kotlin/io/parchment/ai/ui/")
+                || p.starts_with("mobile/compose-app/src/commonMain/kotlin/io/parchment/ai/model/")
+                || p.starts_with(
+                    "mobile/compose-app/src/commonMain/kotlin/io/parchment/ai/strings/",
+                )
+                || p.starts_with("mobile/compose-app/src/commonMain/resources/")
+                || p.starts_with("mobile/compose-app/src/jvmShared/")
+                || p.starts_with("mobile/compose-app/src/desktopMain/")
+                || p == "mobile/compose-app/stability-config.conf"
+                || p == "mobile/compose-app/src/desktopTest/kotlin/io/parchment/ai/ui/UiGalleryTest.kt"
                 || p == ".github/workflows/quality-signals.yml"
         });
     let sbom = shared_gradle
         || any_p(&|p| {
-            p == "androidApp/build.gradle.kts"
+            p == "mobile/android-app/build.gradle.kts"
                 || p == ".github/scripts/sbom.init.gradle.kts"
                 || p == ".github/workflows/quality-signals.yml"
         });
@@ -273,8 +289,8 @@ pub fn classify_codeql(paths: Option<&HashSet<String>>) -> BTreeMap<&'static str
         return out;
     }
     let has_jvm = paths.iter().any(|p| {
-        !p.starts_with("composeApp/src/commonTest/")
-            && !p.starts_with("composeApp/src/desktopTest/")
+        !p.starts_with("mobile/compose-app/src/commonTest/")
+            && !p.starts_with("mobile/compose-app/src/desktopTest/")
             && (p.ends_with(".kt")
                 || p.ends_with(".java")
                 || p.ends_with(".kts")
@@ -359,7 +375,7 @@ fn changed_files_from_git(
             .output()
         && api.status.success()
     {
-        let set = String::from_utf8_lossy(&api.stdout)
+        let set = String::from_utf8_lossy_owned(api.stdout)
             .lines()
             .map(str::trim)
             .filter(|l| !l.is_empty())
@@ -574,9 +590,10 @@ fn cmd_run_gradle(repo: &Path, args: &[String]) -> i32 {
             eprintln!("Failed to spawn Gradle wrapper at {}", wrapper.display());
             return 1;
         };
-
-        let stdout = child.stdout.take().unwrap();
-        let stderr = child.stderr.take().unwrap();
+        let (Some(stdout), Some(stderr)) = (child.stdout.take(), child.stderr.take()) else {
+            eprintln!("Failed to capture Gradle stdout/stderr pipes");
+            return 1;
+        };
         let err_handle = std::thread::spawn(move || {
             let mut tail = VecDeque::new();
             let mut len = 0usize;
@@ -628,8 +645,8 @@ fn push_tail(tail: &mut VecDeque<String>, len: &mut usize, line: String) {
 pub fn discover_test_classes(repo: &Path) -> Result<Vec<(usize, String)>, String> {
     let mut by_name: BTreeMap<String, usize> = BTreeMap::new();
     for rel in [
-        "composeApp/src/commonTest/kotlin",
-        "composeApp/src/desktopTest/kotlin",
+        "mobile/compose-app/src/commonTest/kotlin",
+        "mobile/compose-app/src/desktopTest/kotlin",
     ] {
         let root = repo.join(rel);
         if !root.is_dir() {
@@ -746,6 +763,11 @@ fn estimate_test_weight(raw_len: usize, code: &str, cls: &str) -> usize {
     } else {
         0
     };
+    let probe_bonus = if cls.ends_with("ProbeTest") || cls.ends_with("BaselineTest") {
+        25_000
+    } else {
+        0
+    };
     let count = |needle: &str| code.matches(needle).count();
     let http_hits = count("HttpServer.create")
         + count("ServerSocket")
@@ -758,8 +780,9 @@ fn estimate_test_weight(raw_len: usize, code: &str, cls: &str) -> usize {
     let test_hits = count("@Test");
     raw_len
         + http_bonus
+        + probe_bonus
         + http_hits * 22_000
-        + scene_hits * 8_000
+        + scene_hits * 14_000
         + delay_hits * 3_500
         + disk_hits * 4_000
         + test_hits * 1_200
@@ -768,6 +791,7 @@ fn estimate_test_weight(raw_len: usize, code: &str, cls: &str) -> usize {
 pub fn assign_shards(
     weighted: &[(usize, String)],
     total: usize,
+    lead_overhead: usize,
 ) -> Result<Vec<Vec<String>>, String> {
     if total < 1 {
         return Err("total shards must be >= 1".into());
@@ -780,8 +804,11 @@ pub fn assign_shards(
     }
     let mut shards = vec![Vec::new(); total];
     let mut loads = vec![0usize; total];
+    loads[0] = lead_overhead;
     for (w, fqcn) in weighted {
-        let target = (0..total).min_by_key(|&i| (loads[i], i)).unwrap();
+        let Some(target) = (0..total).min_by_key(|&i| (loads[i], i)) else {
+            return Err("shard count must be at least 1".into());
+        };
         shards[target].push(fqcn.clone());
         loads[target] += *w;
     }
@@ -795,6 +822,7 @@ fn cmd_shard_tests(repo: &Path, args: &[String]) -> Result<(), String> {
     let mut windows_native = false;
     let mut index: Option<usize> = None;
     let mut total = 2usize;
+    let mut lead_overhead = 0usize;
     let mut i = 0;
     while i < args.len() {
         match args[i].as_str() {
@@ -810,6 +838,10 @@ fn cmd_shard_tests(repo: &Path, args: &[String]) -> Result<(), String> {
                 total = args[i + 1].parse().map_err(|_| "invalid --total")?;
                 i += 2;
             }
+            "--lead-overhead" if i + 1 < args.len() => {
+                lead_overhead = args[i + 1].parse().map_err(|_| "invalid --lead-overhead")?;
+                i += 2;
+            }
             other => return Err(format!("unknown argument: {other}")),
         }
     }
@@ -820,7 +852,7 @@ fn cmd_shard_tests(repo: &Path, args: &[String]) -> Result<(), String> {
             .collect()
     } else {
         let idx = index.ok_or("pass --windows-native or --index <I>")?;
-        let shards = assign_shards(&discover_test_classes(repo)?, total)?;
+        let shards = assign_shards(&discover_test_classes(repo)?, total, lead_overhead)?;
         shards
             .get(idx)
             .cloned()
@@ -975,77 +1007,68 @@ fn cmd_stage_signing(repo: &Path) -> Result<(), String> {
     std::fs::create_dir_all(&folder).map_err(|e| e.to_string())?;
     let target = folder.join("release.p12");
 
-    let stage_res = (|| -> Result<String, String> {
-        std::fs::write(&target, &data).map_err(|e| e.to_string())?;
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            let _ = std::fs::set_permissions(&target, std::fs::Permissions::from_mode(0o600));
-        }
-        let alias = std::env::var("ANDROID_KEY_ALIAS").unwrap_or_default();
-        let kt = Command::new("keytool")
-            .args([
-                "-J-Duser.language=en",
-                "-J-Duser.country=US",
-                "-list",
-                "-v",
-                "-keystore",
-            ])
-            .arg(&target)
-            .args([
-                "-storepass:env",
-                "ANDROID_KEYSTORE_PASSWORD",
-                "-alias",
-                &alias,
-            ])
-            .output()
-            .map_err(|e| format!("failed to run keytool: {e}"))?;
-        let kt_out = String::from_utf8_lossy(&kt.stdout);
-        if !kt.status.success() || !kt_out.contains("Entry type: PrivateKeyEntry") {
-            return Err("Private release signer validation failed".into());
-        }
-        let fingerprint = extract_cert_sha256(&kt_out)?;
-
-        let mut java_cmd = Command::new("java");
-        java_cmd.arg(repo.join(".github/scripts/ValidateAndroidSigningKey.java"));
-        java_cmd.env("ANDROID_KEYSTORE_PATH", &target);
-        let key_pw = std::env::var("ANDROID_KEY_PASSWORD").unwrap_or_default();
-        if key_pw.trim().is_empty() {
-            java_cmd.env(
-                "ANDROID_KEY_PASSWORD",
-                std::env::var("ANDROID_KEYSTORE_PASSWORD").unwrap_or_default(),
-            );
-        }
-        let jv = java_cmd
-            .output()
-            .map_err(|e| format!("failed to run java key check: {e}"))?;
-        if !jv.status.success() {
-            return Err(
-                "Private release key could not be decrypted; check the key password and alias"
-                    .into(),
-            );
-        }
-        let gh_env = std::env::var("GITHUB_ENV").map_err(|_| "GITHUB_ENV not set")?;
-        let mut f = std::fs::OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(&gh_env)
-            .map_err(|e| e.to_string())?;
-        writeln!(f, "ANDROID_KEYSTORE_PATH={}", target.display()).map_err(|e| e.to_string())?;
-        Ok(fingerprint)
-    })();
-
-    match stage_res {
-        Ok(fp) => {
-            println!("Private release signer verified: SHA-256 {fp}");
-            Ok(())
-        }
-        Err(e) => {
-            let _ = std::fs::remove_file(&target);
-            let _ = std::fs::remove_dir(&folder);
-            Err(e)
-        }
+    let cleanup_guard = std::mem::DropGuard::new((target.clone(), folder), |(file, dir)| {
+        let _ = std::fs::remove_file(file);
+        let _ = std::fs::remove_dir(dir);
+    });
+    std::fs::write(&target, &data).map_err(|e| e.to_string())?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let _ = std::fs::set_permissions(&target, std::fs::Permissions::from_mode(0o600));
     }
+    let alias = std::env::var("ANDROID_KEY_ALIAS").unwrap_or_default();
+    let kt = Command::new("keytool")
+        .args([
+            "-J-Duser.language=en",
+            "-J-Duser.country=US",
+            "-list",
+            "-v",
+            "-keystore",
+        ])
+        .arg(&target)
+        .args([
+            "-storepass:env",
+            "ANDROID_KEYSTORE_PASSWORD",
+            "-alias",
+            &alias,
+        ])
+        .output()
+        .map_err(|e| format!("failed to run keytool: {e}"))?;
+    let kt_out = String::from_utf8_lossy_owned(kt.stdout);
+    if !kt.status.success() || !kt_out.contains("Entry type: PrivateKeyEntry") {
+        return Err("Private release signer validation failed".into());
+    }
+    let fingerprint = extract_cert_sha256(&kt_out)?;
+
+    let mut java_cmd = Command::new("java");
+    java_cmd.arg(repo.join(".github/scripts/ValidateAndroidSigningKey.java"));
+    java_cmd.env("ANDROID_KEYSTORE_PATH", &target);
+    let key_pw = std::env::var("ANDROID_KEY_PASSWORD").unwrap_or_default();
+    if key_pw.trim().is_empty() {
+        java_cmd.env(
+            "ANDROID_KEY_PASSWORD",
+            std::env::var("ANDROID_KEYSTORE_PASSWORD").unwrap_or_default(),
+        );
+    }
+    let jv = java_cmd
+        .output()
+        .map_err(|e| format!("failed to run java key check: {e}"))?;
+    if !jv.status.success() {
+        return Err(
+            "Private release key could not be decrypted; check the key password and alias".into(),
+        );
+    }
+    let gh_env = std::env::var("GITHUB_ENV").map_err(|_| "GITHUB_ENV not set")?;
+    let mut f = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&gh_env)
+        .map_err(|e| e.to_string())?;
+    writeln!(f, "ANDROID_KEYSTORE_PATH={}", target.display()).map_err(|e| e.to_string())?;
+    std::mem::DropGuard::dismiss(cleanup_guard);
+    println!("Private release signer verified: SHA-256 {fingerprint}");
+    Ok(())
 }
 
 #[cfg(test)]
@@ -1065,19 +1088,79 @@ mod tests {
 
     #[test]
     fn classifies_rust_and_kotlin_paths_precisely() {
-        let rust_desktop: HashSet<String> = ["crates/parchment-desktop/src/app.rs".into()].into();
+        let docs_only: HashSet<String> = ["docs/performance.md".into(), "README.md".into()].into();
+        let plan_docs = classify_installers(Some(&docs_only), false);
+        assert_eq!(plan_docs["rust_core"], "false");
+        assert_eq!(plan_docs["rust_windows"], "false");
+        assert_eq!(plan_docs["android"], "false");
+        assert_eq!(plan_docs["desktop_tests"], "false");
+        assert_eq!(plan_docs["windows_tests"], "false");
+
+        let rust_desktop: HashSet<String> =
+            ["crates/parchment-desktop/src/app/mod.rs".into()].into();
         let plan = classify_installers(Some(&rust_desktop), false);
         assert_eq!(plan["rust_windows"], "true");
         assert_eq!(plan["rust_core"], "false");
         assert_eq!(plan["android"], "false");
         assert_eq!(plan["desktop_tests"], "false");
 
-        let rust_core: HashSet<String> = ["crates/parchment-storage/src/store.rs".into()].into();
+        let rust_protocol: HashSet<String> = ["crates/parchment-protocol/src/sse.rs".into()].into();
+        let plan_proto = classify_installers(Some(&rust_protocol), false);
+        assert_eq!(plan_proto["rust_core"], "true");
+        assert_eq!(plan_proto["rust_windows"], "true");
+        assert_eq!(plan_proto["android"], "false");
+        assert_eq!(plan_proto["desktop_tests"], "false");
+
+        let rust_core: HashSet<String> =
+            ["crates/parchment-storage/src/store/mod.rs".into()].into();
         let plan2 = classify_installers(Some(&rust_core), false);
         assert_eq!(plan2["rust_core"], "true");
         assert_eq!(plan2["rust_windows"], "true");
         assert_eq!(plan2["android"], "true");
         assert_eq!(plan2["desktop_tests"], "false");
+
+        let xtask_only: HashSet<String> = ["crates/parchment-xtask/src/perf.rs".into()].into();
+        let plan_xtask = classify_installers(Some(&xtask_only), false);
+        assert_eq!(plan_xtask["rust_core"], "true");
+        assert_eq!(plan_xtask["rust_windows"], "false");
+        assert_eq!(plan_xtask["android"], "false");
+
+        let clippy_cfg: HashSet<String> = ["clippy.toml".into()].into();
+        let plan_clippy = classify_installers(Some(&clippy_cfg), false);
+        assert_eq!(plan_clippy["rust_core"], "true");
+        assert_eq!(plan_clippy["rust_windows"], "true");
+        assert_eq!(plan_clippy["android"], "false");
+
+        let stability_cfg: HashSet<String> =
+            ["mobile/compose-app/stability-config.conf".into()].into();
+        let plan_stab = classify_installers(Some(&stability_cfg), false);
+        assert_eq!(plan_stab["desktop_tests"], "true");
+        assert_eq!(plan_stab["android"], "true");
+        assert_eq!(plan_stab["rust_core"], "false");
+        let q_stab = classify_quality_signals(Some(&stability_cfg));
+        assert_eq!(q_stab["coverage"], "true");
+        assert_eq!(q_stab["gallery"], "true");
+
+        let strings_only: HashSet<String> = [
+            "mobile/compose-app/src/commonMain/kotlin/io/parchment/ai/strings/Strings.kt".into(),
+        ]
+        .into();
+        let q_strings = classify_quality_signals(Some(&strings_only));
+        assert_eq!(q_strings["gallery"], "true");
+    }
+
+    #[test]
+    fn balances_shards_with_lead_overhead() {
+        let items = vec![
+            (100_000, "a.HeavyA".into()),
+            (90_000, "a.HeavyB".into()),
+            (80_000, "a.HeavyC".into()),
+            (70_000, "a.HeavyD".into()),
+        ];
+        let shards = assign_shards(&items, 2, 80_000).unwrap();
+        // With 80k overhead on shard 0 (ktlintCheck), shard 1 takes HeavyA first so total loads stay even.
+        assert!(shards[1].contains(&"a.HeavyA".to_string()));
+        assert_eq!(shards[0].len() + shards[1].len(), 4);
     }
 
     #[test]

@@ -6,11 +6,11 @@
 //! - Enforces `chat_spend_limit_usd` before every tool round (including live `external_run_spend_usd`).
 //! - Runs parallel read-only tool batches and parallel `agent_delegate` batches (max 4).
 
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use parchment_model::{
     ApiUsageRecord, ChatSession, MessageNode, MessageRole, MessageVariant, ModelPricingSpec,
-    ProviderProfile, TokenMetrics, ToolCallRecord,
+    ProviderProfile, TokenMetrics, ToolCallRecord, WebSourceCitation,
 };
 use parchment_protocol::usage::spend_toward_limit;
 use parchment_protocol::{ProtocolClient, ProtocolError, StreamCallbacks, WireDialect};
@@ -136,13 +136,13 @@ impl AgentTurnRunner {
         let mut owned_history: Option<Vec<MessageNode>> = None;
         let mut all_usage: Vec<ApiUsageRecord> = Vec::new();
         let mut all_tool_calls: Vec<ToolCallRecord> = Vec::new();
+        let mut all_citations: Vec<WebSourceCitation> = Vec::new();
         let mut accumulated_thinking = String::new();
         let mut last_signature = String::new();
         let mut last_interaction_id = String::new();
         let mut final_content = String::new();
         let mut final_dialect = WireDialect::OpenAiResponses;
         let mut last_metrics = TokenMetrics::default();
-
         for round_idx in 0..MAX_TOOL_ROUNDS {
             activity.tick();
             let live_spend = prior_chat_spend_usd + spend_toward_limit(&all_usage);
@@ -207,7 +207,24 @@ impl AgentTurnRunner {
             }
             last_metrics = round.token_metrics;
             all_usage.extend(round.usage_records);
-
+            for c in round.citations {
+                if !c.url.is_empty() && !all_citations.iter().any(|e| e.url == c.url) {
+                    let domain = url::Url::parse(&c.url)
+                        .ok()
+                        .and_then(|u| u.host_str().map(str::to_string))
+                        .unwrap_or_default();
+                    let next_idx = (all_citations.len() + 1) as i32;
+                    all_citations.push(WebSourceCitation {
+                        index: next_idx,
+                        url: c.url,
+                        title: c.title,
+                        domain,
+                        grounded_line_numbers: Vec::new(),
+                        grounded_lines: Vec::new(),
+                        snippet: c.snippet,
+                    });
+                }
+            }
             if round.tool_calls.is_empty() {
                 final_content = round.content;
                 break;
@@ -317,21 +334,30 @@ impl AgentTurnRunner {
         for tc in &mut all_tool_calls {
             tc.screenshot_jpeg_base64.clear();
         }
+        let final_goal = harness_ctx.goal_state.lock().await.clone();
+        let goal_tracker = (!final_goal.todos.is_empty() || !final_goal.goal_objective.is_empty())
+            .then_some(final_goal);
+        let now_ms = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|d| d.as_millis() as i64)
+            .unwrap_or(0);
         let variant = MessageVariant {
             id: format!("v-{owner_run_id}"),
             content: final_content,
             thinking_summary: accumulated_thinking,
             thinking_signature: last_signature,
             model_used: model.to_string(),
+            created_at: now_ms,
             provider_protocol: Some(profile.protocol),
             provider_wire_dialect: final_dialect.wire_name().to_string(),
             provider_interaction_id: last_interaction_id,
             token_metrics: last_metrics,
             tool_calls: all_tool_calls,
+            goal_tracker,
+            web_sources: all_citations,
             api_usage_records: all_usage.clone(),
             ..Default::default()
         };
-
         Ok(TurnRunOutcome {
             dialect_used: final_dialect,
             variant,

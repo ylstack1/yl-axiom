@@ -10,10 +10,12 @@ bytes.workspace = true
 futures-util.workspace = true
 parchment-model = { path = "../parchment-model" }
 reqwest.workspace = true
-serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
 tokio.workspace = true
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["net"] }
+
+[lints]
+workspace = true

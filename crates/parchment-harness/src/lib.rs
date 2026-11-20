@@ -22,7 +22,10 @@ pub use approval::{
     ToolApprovalBroker, ToolApprovalDecision, ToolApprovalRequest, ToolAuthorization,
     ToolExecutionPermit, UserQuestion,
 };
-pub use codecs::{CardImportResult, extract_docx_text, import_card_or_prompt_bytes};
+pub use codecs::{
+    CardImportResult, export_card_to_png_bytes, extract_docx_text, extract_md_skills_from_zip,
+    import_card_or_prompt_bytes,
+};
 pub use math_dice::{eval_math_expression, roll_dice_expression};
 #[cfg(feature = "network")]
 pub use mcp::{

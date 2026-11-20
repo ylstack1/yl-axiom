@@ -1,3 +1,5 @@
+#![allow(clippy::unwrap_used, clippy::expect_used, clippy::print_stdout)]
+
 use std::fs;
 use std::io::Write;
 use std::path::PathBuf;
@@ -508,4 +510,20 @@ fn archive_roundtrip_and_hostile_zip_rejections() {
         ..ChatArchiveLimits::default()
     };
     assert!(import_chat_file_bytes("bomb.zip", &zip_bytes, &dst_root, tiny_limits).is_err());
+}
+
+#[test]
+fn wal_journal_size_limit_and_reclaim_storage_keep_disk_bounded() {
+    let dir = temp_dir("wal-reclaim");
+    let db_path = dir.join("parchment.db");
+    let mut store = ParchmentStore::open(&db_path).unwrap();
+    store.seed_benchmark_dataset(10, 4, 10).unwrap();
+    store.reclaim_storage().unwrap();
+    let wal_path = dir.join("parchment.db-wal");
+    let wal_len = fs::metadata(&wal_path).map_or(0, |m| m.len());
+    assert!(
+        wal_len <= 8 * 1024 * 1024,
+        "WAL file should stay bounded after reclaim_storage (got {wal_len} B)"
+    );
+    let _ = fs::remove_dir_all(&dir);
 }

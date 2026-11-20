@@ -15,12 +15,26 @@ members = [
 version = "3.0.0"
 edition = "2024"
 license = "MIT"
-repository = "https://github.com/baros4294/parchment"
+
+[workspace.lints.clippy]
+todo = "deny"
+unimplemented = "deny"
+dbg_macro = "deny"
+print_stdout = "deny"
+unwrap_used = "warn"
+expect_used = "warn"
+
+[workspace.lints.cargo]
+unused_dependencies = "deny"
+unused_workspace_dependencies = "deny"
+unused_workspace_package_fields = "deny"
+missing_lints_inheritance = "deny"
+redundant_homepage = "deny"
 
 [workspace.dependencies]
 anyhow = "1"
 async-trait = "0.1"
-base64 = "0.23"
+base64 = "0.23.1"
 bytes = "1"
 futures-util = "0.3"
 globset = "0.4"
@@ -34,7 +48,7 @@ serde_json = { version = "1", features = ["preserve_order"] }
 thiserror = "2"
 tokio = { version = "1.54.1", features = ["rt-multi-thread", "macros", "sync", "time", "io-util", "net", "process"] }
 url = "2"
-zip = { version = "9.7.1", default-features = false, features = ["deflate-flate2-zlib-rs"] }
+zip = { version = "9.6.1", default-features = false, features = ["deflate-flate2-zlib-rs"] }
 
 # Keep GPUI and dependencies fast in dev builds without heavy debuginfo RAM bloat.
 [profile.dev]
@@ -50,6 +64,9 @@ lto = "thin"
 panic = "abort"
 strip = "symbols"
 
+# Slim cold desktop UI glue without sacrificing hot-path core speed (`parchment-prose`/`parchment-protocol` stay opt-level 3).
+[profile.release.package.parchment-desktop]
+opt-level = "z"
 # Size-optimized profile for Android arm64-v8a cdylib (.so) builds.
 [profile.release-android]
 inherits = "release"

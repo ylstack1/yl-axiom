@@ -146,8 +146,7 @@ pub fn sanitize_gemini_thought_signature(raw_sig: &str, for_function_call: bool)
 }
 
 pub fn normalize_reasoning_model_id(name: &str) -> &str {
-    let trimmed = name.trim();
-    trimmed.strip_prefix("models/").unwrap_or(trimmed)
+    name.trim().trim_prefix("models/")
 }
 
 pub fn is_same_reasoning_model(saved_model: &str, current_model: &str, allow_blank: bool) -> bool {

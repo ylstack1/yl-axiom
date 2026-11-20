@@ -7,3 +7,6 @@ publish = false
 
 # Pure Rust std only — compiles in ~1.5 s with zero external dependencies.
 [dependencies]
+
+[lints]
+workspace = true

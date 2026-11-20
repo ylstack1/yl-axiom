@@ -24,8 +24,8 @@ updates:
       kotlin-and-compose:
         patterns: ["org.jetbrains.kotlin*", "org.jetbrains.compose*", "org.jetbrains.kotlinx*"]
     ignore:
-      # Kotlin 2.4.21 supports the Android Gradle Plugin up to 9.3 and Gradle up to 9.7 (checked 2026-11). Raise
-      # these limits together with a Kotlin release that supports newer ones.
+      # Kotlin 2.4.21 (latest stable) supports AGP up to 9.3.x and Gradle up to 9.7.x (KT-89265, checked 2026-11-20).
+      # Raise these limits together with stable Kotlin 2.5.0.
       - dependency-name: "com.android*"
         versions: [">= 9.4"]
       - dependency-name: "gradle-wrapper"

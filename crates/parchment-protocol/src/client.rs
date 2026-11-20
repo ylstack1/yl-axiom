@@ -1,12 +1,14 @@
 //! Async streaming request executor combining all 5 wire dialects, HTTP 400 reasoning self-healing,
 //! `Retry-After`/backoff retry scheduling, and primary->legacy fallback (never for `CUSTOM`).
 
-use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
-
 use parchment_model::{
-    ApiUsageRecord, ChatSession, GoalTrackerState, MessageNode, ModelPricingSpec, ProviderProfile,
-    TokenMetrics, ToolCallRecord,
+    ApiUsageRecord, AuthHeaderMode, ChatSession, GoalTrackerState, MessageNode, MessageRole,
+    MessageVariant, ModelPricingSpec, ProviderProfile, TokenMetrics, ToolCallRecord,
 };
+use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use tokio::sync::Notify;
 
 use crate::error_policy::{
     ProtocolError, ProviderHttpError, is_transient_or_proxy_timeout_error, parse_retry_after_ms,
@@ -20,12 +22,12 @@ use crate::sse::{
 use crate::usage::ProviderUsageLedger;
 use crate::wire::{
     RawWebCitation, StreamEvent, ToolDefinition, WireAdaptOptions, WireDialect, WireStreamParser,
-    build_wire_request, resolve_primary_dialect,
+    build_auth_headers, build_wire_request, resolve_primary_dialect,
 };
 
 const MAX_TRANSIENT_RETRIES: usize = 3;
 const MAX_HTTP_400_HEALS: usize = 5;
-
+static API_KEY_RR: AtomicUsize = AtomicUsize::new(0);
 #[derive(Debug, Clone)]
 pub struct RoundExecutionResult {
     pub dialect_used: WireDialect,
@@ -55,6 +57,7 @@ pub struct ProtocolClient {
     initial_line_timeout: Duration,
     streaming_line_timeout: Duration,
     max_retry_wait_override_ms: Option<u64>,
+    retry_now: Option<Arc<Notify>>,
 }
 
 impl ProtocolClient {
@@ -64,7 +67,14 @@ impl ProtocolClient {
             initial_line_timeout: INITIAL_LINE_TIMEOUT,
             streaming_line_timeout: STREAMING_LINE_TIMEOUT,
             max_retry_wait_override_ms: None,
+            retry_now: None,
         }
+    }
+
+    /// Attaches a `Notify` handle that wakes an active retry backoff immediately (`Retry now`).
+    pub fn with_retry_notify(mut self, notify: Arc<Notify>) -> Self {
+        self.retry_now = Some(notify);
+        self
     }
 
     /// Used by deterministic local fixture tests so retries run in milliseconds instead of minutes.
@@ -78,9 +88,192 @@ impl ProtocolClient {
             initial_line_timeout: line_timeout,
             streaming_line_timeout: line_timeout,
             max_retry_wait_override_ms: Some(max_retry_wait_ms),
+            retry_now: None,
         }
     }
 
+    async fn sleep_retry(&self, wait_ms: u64) {
+        let dur = Duration::from_millis(wait_ms);
+        if let Some(notify) = &self.retry_now {
+            tokio::select! {
+                _ = tokio::time::sleep(dur) => {}
+                _ = notify.notified() => {}
+            }
+        } else {
+            tokio::time::sleep(dur).await;
+        }
+    }
+
+    /// Dynamically fetches available model IDs from the provider or custom proxy endpoint.
+    /// Supports OpenAI `/v1/models`, Google `/v1beta/models`, and Anthropic `/v1/models`.
+    pub async fn fetch_available_models(
+        &self,
+        profile: &ProviderProfile,
+    ) -> Result<Vec<String>, ProtocolError> {
+        let dialect = resolve_primary_dialect(profile).unwrap_or(WireDialect::OpenAiResponses);
+        let base = profile
+            .effective_base_url()
+            .trim()
+            .trim_end_matches('#')
+            .trim_end_matches('/')
+            .to_string();
+        if base.is_empty() {
+            return Err(ProtocolError::NoRetry(
+                "Provider Server URL is empty.".into(),
+            ));
+        }
+        let lower = base.to_ascii_lowercase();
+        let candidates: Vec<String> = if lower.ends_with("/models") {
+            vec![base.clone()]
+        } else if lower.ends_with("/v1")
+            || lower.ends_with("/v1beta")
+            || lower.ends_with("/api/v3")
+            || lower.ends_with("/api/v1")
+        {
+            vec![format!("{base}/models")]
+        } else {
+            match dialect {
+                WireDialect::GeminiInteractions | WireDialect::GeminiGenerateContent => vec![
+                    format!("{base}/v1beta/models?pageSize=200"),
+                    format!("{base}/v1/models"),
+                    format!("{base}/models"),
+                ],
+                WireDialect::AnthropicMessages => vec![
+                    format!("{base}/v1/models?limit=100"),
+                    format!("{base}/v1/models"),
+                    format!("{base}/models"),
+                ],
+                _ => vec![
+                    format!("{base}/v1/models"),
+                    format!("{base}/api/v3/models"),
+                    format!("{base}/models"),
+                ],
+            }
+        };
+
+        let keys = {
+            let k = profile.all_api_keys();
+            if k.is_empty() { vec![String::new()] } else { k }
+        };
+        let mut last_err = String::new();
+
+        for key in &keys {
+            let active_prof = profile.with_api_key(key);
+            let headers = build_auth_headers(&active_prof, dialect);
+            let mut key_auth_or_rate_limited = false;
+            for base_url in &candidates {
+                let mut url = base_url.clone();
+                if active_prof.auth_header_mode == AuthHeaderMode::QueryParam
+                    && !active_prof.api_key.trim().is_empty()
+                {
+                    let sep = if url.contains('?') { '&' } else { '?' };
+                    url.push(sep);
+                    url.push_str("key=");
+                    url.push_str(active_prof.api_key.trim());
+                }
+                let mut req = self.http.get(&url);
+                for (k, v) in &headers {
+                    if !k.eq_ignore_ascii_case("content-type") && !k.eq_ignore_ascii_case("accept")
+                    {
+                        req = req.header(k.as_str(), v.as_str());
+                    }
+                }
+                req = req.header("Accept", "application/json");
+                match req.send().await {
+                    Ok(resp) => {
+                        let status = resp.status().as_u16();
+                        let body = resp.text().await.unwrap_or_default();
+                        if !(200..300).contains(&status) {
+                            last_err = format!(
+                                "HTTP {status}: {}",
+                                body.chars().take(240).collect::<String>()
+                            );
+                            if matches!(status, 401 | 403 | 429) {
+                                key_auth_or_rate_limited = true;
+                                break;
+                            }
+                            continue;
+                        }
+                        let parsed = parse_models_list_json(&body);
+                        if !parsed.is_empty() {
+                            return Ok(parsed);
+                        }
+                    }
+                    Err(e) => {
+                        last_err = e.to_string();
+                    }
+                }
+            }
+            if !key_auth_or_rate_limited {
+                break;
+            }
+        }
+        if last_err.is_empty() {
+            Err(ProtocolError::NoRetry(
+                "Endpoint returned an empty model list.".into(),
+            ))
+        } else {
+            Err(ProtocolError::Transport(last_err))
+        }
+    }
+
+    /// Executes a single-shot utility completion (title, summary, translation) with tools and goals disabled.
+    pub async fn run_utility_prompt(
+        &self,
+        profile: &ProviderProfile,
+        model: &str,
+        system_prompt: &str,
+        user_prompt: &str,
+        purpose: &str,
+    ) -> Result<(String, Vec<ApiUsageRecord>), ProtocolError> {
+        let mut util_profile = profile.clone();
+        util_profile.enable_web_search = false;
+        util_profile.enable_code_execution = false;
+        util_profile.enable_url_context = false;
+        util_profile.use_stateful_chaining = false;
+        util_profile.store_server_side = false;
+        util_profile.thinking_effort = "none".into();
+
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|d| d.as_millis() as i64)
+            .unwrap_or(0);
+        let mut session = ChatSession::new(format!("util-{purpose}-{now}"), purpose, now);
+        session.system_prompt = system_prompt.to_string();
+        let nodes = vec![MessageNode {
+            id: format!("util-u-{now}"),
+            role: MessageRole::User,
+            variants: vec![MessageVariant {
+                id: format!("util-u-{now}-v0"),
+                content: user_prompt.to_string(),
+                created_at: now,
+                ..Default::default()
+            }],
+            active_variant_index: 0,
+            included_in_context: true,
+            pinned: false,
+        }];
+        let mut cb = NoopCallbacks;
+        let res = self
+            .execute_round(
+                &util_profile,
+                model,
+                &session,
+                &nodes,
+                &[],
+                None,
+                "",
+                &format!("util-{purpose}-{now}"),
+                None,
+                &mut cb,
+            )
+            .await?;
+        let mut usage = res.usage_records;
+        for u in &mut usage {
+            u.purpose = purpose.to_string();
+        }
+        Ok((res.content.trim().to_string(), usage))
+    }
     #[allow(clippy::too_many_arguments)]
     pub async fn execute_round<C: StreamCallbacks>(
         &self,
@@ -172,11 +365,22 @@ impl ProtocolClient {
         let mut adapt = WireAdaptOptions::default();
         let mut transient_attempts = 0usize;
         let mut heal_attempts = 0usize;
+        let keys = {
+            let k = profile.all_api_keys();
+            if k.is_empty() { vec![String::new()] } else { k }
+        };
+        let mut key_idx = if keys.len() > 1 {
+            API_KEY_RR.fetch_add(1, Ordering::Relaxed) % keys.len()
+        } else {
+            0
+        };
+        let mut key_failovers = 0usize;
         let started = Instant::now();
 
         loop {
+            let active_profile = profile.with_api_key(&keys[key_idx]);
             let wire_req = build_wire_request(
-                profile,
+                &active_profile,
                 dialect,
                 model,
                 session,
@@ -186,7 +390,6 @@ impl ProtocolClient {
                 continue_prefix,
                 &adapt,
             )?;
-
             let usage_req_id = ledger.begin(dialect.usage_dialect());
             let mut req_builder = self.http.post(&wire_req.url).body(wire_req.body_json);
             for (k, v) in &wire_req.headers {
@@ -204,7 +407,7 @@ impl ProtocolClient {
                         let wait_ms =
                             self.capped_wait(retry_delay_ms(transient_attempts, &err, 0.5, None));
                         callbacks.on_retry_wait(transient_attempts, wait_ms, &err.to_string());
-                        tokio::time::sleep(Duration::from_millis(wait_ms)).await;
+                        self.sleep_retry(wait_ms).await;
                         continue;
                     }
                     return Err(err);
@@ -241,6 +444,21 @@ impl ProtocolClient {
                     retry_after_ms,
                 });
 
+                if matches!(status, 401 | 403 | 429)
+                    && keys.len() > 1
+                    && key_failovers < keys.len() - 1
+                {
+                    let prev_num = key_idx + 1;
+                    key_idx = (key_idx + 1) % keys.len();
+                    let next_num = key_idx + 1;
+                    key_failovers += 1;
+                    callbacks.on_status(&format!(
+                        "API key #{prev_num} hit HTTP {status} — switching to key #{next_num} of {}...",
+                        keys.len()
+                    ));
+                    continue;
+                }
+
                 if is_transient_or_proxy_timeout_error(&http_err)
                     && transient_attempts < MAX_TRANSIENT_RETRIES
                 {
@@ -248,7 +466,7 @@ impl ProtocolClient {
                     let wait_ms =
                         self.capped_wait(retry_delay_ms(transient_attempts, &http_err, 0.5, None));
                     callbacks.on_retry_wait(transient_attempts, wait_ms, &http_err.to_string());
-                    tokio::time::sleep(Duration::from_millis(wait_ms)).await;
+                    self.sleep_retry(wait_ms).await;
                     continue;
                 }
 
@@ -322,7 +540,7 @@ impl ProtocolClient {
                         let wait_ms =
                             self.capped_wait(retry_delay_ms(transient_attempts, &err, 0.5, None));
                         callbacks.on_retry_wait(transient_attempts, wait_ms, &err.to_string());
-                        tokio::time::sleep(Duration::from_millis(wait_ms)).await;
+                        self.sleep_retry(wait_ms).await;
                         continue;
                     }
                     return Err(err);
@@ -484,4 +702,46 @@ impl<C: StreamCallbacks> SseStreamConsumer for RoundStreamConsumer<'_, C> {
         self.drain_events();
         Ok(())
     }
+}
+
+/// Parses OpenAI (`data[].id`), Gemini (`models[].name`), Anthropic (`data[].id`), or plain array JSON.
+pub fn parse_models_list_json(body: &str) -> Vec<String> {
+    let Ok(val) = serde_json::from_str::<serde_json::Value>(body) else {
+        return Vec::new();
+    };
+    let mut out = Vec::new();
+    let mut push_id = |raw: &str| {
+        let clean = raw.trim().trim_prefix("models/");
+        if !clean.is_empty() && !out.iter().any(|existing: &String| existing == clean) {
+            out.push(clean.to_string());
+        }
+    };
+    if let Some(arr) = val.get("data").and_then(|v| v.as_array()) {
+        for item in arr {
+            if let Some(id) = item.get("id").and_then(|v| v.as_str()) {
+                push_id(id);
+            } else if let Some(name) = item.get("name").and_then(|v| v.as_str()) {
+                push_id(name);
+            }
+        }
+    }
+    if let Some(arr) = val.get("models").and_then(|v| v.as_array()) {
+        for item in arr {
+            if let Some(name) = item.get("name").and_then(|v| v.as_str()) {
+                push_id(name);
+            } else if let Some(id) = item.get("id").and_then(|v| v.as_str()) {
+                push_id(id);
+            }
+        }
+    }
+    if let Some(arr) = val.as_array() {
+        for item in arr {
+            if let Some(s) = item.as_str() {
+                push_id(s);
+            } else if let Some(id) = item.get("id").and_then(|v| v.as_str()) {
+                push_id(id);
+            }
+        }
+    }
+    out
 }

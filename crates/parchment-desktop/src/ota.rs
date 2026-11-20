@@ -26,6 +26,8 @@ pub struct OtaStagedFile {
     pub sha256_hex: String,
 }
 
+const MAX_OTA_STAGED_BYTES: u64 = 256 * 1024 * 1024;
+
 impl OtaStagedFile {
     /// Verifies exact file size and SHA-256 digest of a downloaded update artifact.
     pub fn verify_staged(
@@ -33,6 +35,21 @@ impl OtaStagedFile {
         expected_size: Option<u64>,
         expected_sha256_hex: &str,
     ) -> Result<Self, String> {
+        let meta_size = fs::metadata(path)
+            .map_err(|e| format!("Could not read staged update: {e}"))?
+            .len();
+        if meta_size > MAX_OTA_STAGED_BYTES {
+            return Err(format!(
+                "Staged update ({meta_size} bytes) exceeds maximum allowed size ({MAX_OTA_STAGED_BYTES} bytes)."
+            ));
+        }
+        if let Some(exp) = expected_size
+            && meta_size != exp
+        {
+            return Err(format!(
+                "Update size mismatch: expected {exp} bytes, got {meta_size} bytes."
+            ));
+        }
         let bytes = fs::read(path).map_err(|e| format!("Could not read staged update: {e}"))?;
         let actual_size = bytes.len() as u64;
         if let Some(exp) = expected_size
@@ -98,7 +115,7 @@ pub async fn check_latest_github_release(
         .and_then(Value::as_str)
         .unwrap_or("")
         .trim();
-    if tag.is_empty() || tag.trim_start_matches('v') == current_version.trim_start_matches('v') {
+    if tag.is_empty() || !is_newer_semver(tag, current_version) {
         return Ok(None);
     }
     let release_url = body
@@ -140,7 +157,34 @@ pub async fn check_latest_github_release(
     }))
 }
 
-/// FIPS 180-4 SHA-256 hex digest (zero external dependencies).
+/// Returns true iff `candidate` is strictly newer than `current` (e.g. `v3.0.1` > `3.0.0`,
+/// while `v2.9.9` and `v3.0.0` return false).
+pub fn is_newer_semver(candidate: &str, current: &str) -> bool {
+    fn parse_triplet(raw: &str) -> Option<(u64, u64, u64, bool)> {
+        let s = raw.trim().trim_start_matches(['v', 'V']);
+        let (core, pre) = match s.split_once('-') {
+            Some((c, p)) => (c, !p.is_empty()),
+            None => (s, false),
+        };
+        let mut parts = core.split('.');
+        let major = parts.next()?.parse::<u64>().ok()?;
+        let minor = parts.next().unwrap_or("0").parse::<u64>().ok()?;
+        let patch = parts.next().unwrap_or("0").parse::<u64>().ok()?;
+        Some((major, minor, patch, pre))
+    }
+    let (Some((cmaj, cmin, cpat, cpre)), Some((maj, min, pat, pre))) =
+        (parse_triplet(candidate), parse_triplet(current))
+    else {
+        return false;
+    };
+    match (cmaj, cmin, cpat).cmp(&(maj, min, pat)) {
+        std::cmp::Ordering::Greater => true,
+        std::cmp::Ordering::Less => false,
+        std::cmp::Ordering::Equal => !cpre && pre,
+    }
+}
+
+/// Zero-copy streaming FIPS 180-4 SHA-256 hex digest (zero extra heap buffer beyond 64-char output).
 pub fn sha256_hex(data: &[u8]) -> String {
     const K: [u32; 64] = [
         0x428a2f98, 0x71374491, 0xb5c0fbcf, 0xe9b5dba5, 0x3956c25b, 0x59f111f1, 0x923f82a4,
@@ -158,17 +202,7 @@ pub fn sha256_hex(data: &[u8]) -> String {
         0x6a09e667, 0xbb67ae85, 0x3c6ef372, 0xa54ff53a, 0x510e527f, 0x9b05688c, 0x1f83d9ab,
         0x5be0cd19,
     ];
-
-    let bit_len = (data.len() as u64).wrapping_mul(8);
-    let mut padded = Vec::with_capacity(data.len() + 72);
-    padded.extend_from_slice(data);
-    padded.push(0x80);
-    while (padded.len() % 64) != 56 {
-        padded.push(0);
-    }
-    padded.extend_from_slice(&bit_len.to_be_bytes());
-
-    for block in padded.as_chunks::<64>().0 {
+    let compress = |h: &mut [u32; 8], block: &[u8; 64]| {
         let mut w = [0u32; 64];
         for (i, chunk) in block.as_chunks::<4>().0.iter().enumerate() {
             w[i] = u32::from_be_bytes(*chunk);
@@ -181,8 +215,7 @@ pub fn sha256_hex(data: &[u8]) -> String {
                 .wrapping_add(w[i - 7])
                 .wrapping_add(s1);
         }
-
-        let [mut a, mut b, mut c, mut d, mut e, mut f, mut g, mut hh] = h;
+        let [mut a, mut b, mut c, mut d, mut e, mut f, mut g, mut hh] = *h;
         for i in 0..64 {
             let s1 = e.rotate_right(6) ^ e.rotate_right(11) ^ e.rotate_right(25);
             let ch = (e & f) ^ ((!e) & g);
@@ -194,7 +227,6 @@ pub fn sha256_hex(data: &[u8]) -> String {
             let s0 = a.rotate_right(2) ^ a.rotate_right(13) ^ a.rotate_right(22);
             let maj = (a & b) ^ (a & c) ^ (b & c);
             let t2 = s0.wrapping_add(maj);
-
             hh = g;
             g = f;
             f = e;
@@ -207,11 +239,27 @@ pub fn sha256_hex(data: &[u8]) -> String {
         for (slot, delta) in h.iter_mut().zip([a, b, c, d, e, f, g, hh]) {
             *slot = slot.wrapping_add(delta);
         }
-    }
+    };
 
+    let (full_blocks, rem) = data.as_chunks::<64>();
+    for block in full_blocks {
+        compress(&mut h, block);
+    }
+    let mut tail = [0u8; 64];
+    tail[..rem.len()].copy_from_slice(rem);
+    tail[rem.len()] = 0x80;
+    if rem.len() >= 56 {
+        compress(&mut h, &tail);
+        tail.fill(0);
+    }
+    let bit_len = (data.len() as u64).wrapping_mul(8);
+    tail[56..64].copy_from_slice(&bit_len.to_be_bytes());
+    compress(&mut h, &tail);
+
+    use std::fmt::Write as _;
     let mut out = String::with_capacity(64);
     for word in h {
-        out.push_str(&format!("{word:08x}"));
+        let _ = write!(&mut out, "{word:08x}");
     }
     out
 }
@@ -221,7 +269,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn sha256_matches_nist_vectors_and_ota_blocks_active_runs() {
+    fn sha256_matches_nist_vectors_boundaries_and_ota_blocks_active_runs() {
         assert_eq!(
             sha256_hex(b""),
             "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
@@ -229,6 +277,11 @@ mod tests {
         assert_eq!(
             sha256_hex(b"abc"),
             "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
+        );
+        // Exact 56-byte NIST two-block boundary vector:
+        assert_eq!(
+            sha256_hex(b"abcdbcdecdefdefgefghfghighijhijkijkljklmklmnlmnomnopnopq"),
+            "248d6a61d20638b8e5c026930c3e6039a33ce45964ff2167f6ecedd419db06c1"
         );
 
         let tmp = std::env::temp_dir().join("parchment_ota_test_artifact.bin");
@@ -239,5 +292,15 @@ mod tests {
         assert!(staged.ensure_safe_to_install(0).is_ok());
         assert!(OtaStagedFile::verify_staged(&tmp, Some(25), &"0".repeat(64)).is_err());
         let _ = fs::remove_file(&tmp);
+    }
+
+    #[test]
+    fn semver_comparison_rejects_downgrades_and_equal_versions() {
+        assert!(is_newer_semver("v3.0.1", "3.0.0"));
+        assert!(is_newer_semver("v3.1.0", "3.0.9"));
+        assert!(is_newer_semver("3.0.0", "3.0.0-beta.1"));
+        assert!(!is_newer_semver("v3.0.0", "3.0.0"));
+        assert!(!is_newer_semver("v2.9.9", "3.0.0"));
+        assert!(!is_newer_semver("not-a-version", "3.0.0"));
     }
 }

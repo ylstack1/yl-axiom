@@ -193,6 +193,8 @@ pub struct ProviderProfile {
     #[serde(default)]
     pub api_key: String,
     #[serde(default)]
+    pub extra_api_keys: Vec<String>,
+    #[serde(default)]
     pub auth_header_mode: AuthHeaderMode,
     #[serde(default)]
     pub custom_headers_raw: String,
@@ -284,6 +286,7 @@ impl ProviderProfile {
             endpoint_path_override: String::new(),
             custom_dialect: String::new(),
             api_key: String::new(),
+            extra_api_keys: Vec::new(),
             auth_header_mode: AuthHeaderMode::Native,
             custom_headers_raw: String::new(),
             default_model: String::new(),
@@ -325,11 +328,70 @@ impl ProviderProfile {
         }
     }
 
+    /// Returns all unique non-empty API keys configured on this provider (primary first, then extras).
+    pub fn all_api_keys(&self) -> Vec<String> {
+        let mut out = Vec::new();
+        let primary = self.api_key.trim();
+        if !primary.is_empty() {
+            out.push(primary.to_string());
+        }
+        for extra in &self.extra_api_keys {
+            let t = extra.trim();
+            if !t.is_empty() && !out.iter().any(|k| k == t) {
+                out.push(t.to_string());
+            }
+        }
+        out
+    }
+
+    pub fn has_any_api_key(&self) -> bool {
+        !self.api_key.trim().is_empty() || self.extra_api_keys.iter().any(|k| !k.trim().is_empty())
+    }
+
+    pub fn add_api_key(&mut self, key: String) -> bool {
+        let t = key.trim();
+        if t.is_empty() {
+            return false;
+        }
+        if self.api_key.trim().is_empty() {
+            self.api_key = t.to_string();
+            return true;
+        }
+        if self.api_key.trim() == t || self.extra_api_keys.iter().any(|k| k.trim() == t) {
+            return false;
+        }
+        self.extra_api_keys.push(t.to_string());
+        true
+    }
+
+    pub fn remove_extra_api_key(&mut self, extra_idx: usize) {
+        if extra_idx < self.extra_api_keys.len() {
+            self.extra_api_keys.remove(extra_idx);
+        }
+    }
+
+    pub fn promote_extra_api_key(&mut self, extra_idx: usize) {
+        if extra_idx >= self.extra_api_keys.len() {
+            return;
+        }
+        let promoted = self.extra_api_keys.remove(extra_idx);
+        let old_primary = self.api_key.trim().to_string();
+        self.api_key = promoted;
+        if !old_primary.is_empty() {
+            self.extra_api_keys.insert(0, old_primary);
+        }
+    }
+
+    pub fn with_api_key(&self, key: &str) -> Self {
+        let mut cloned = self.clone();
+        cloned.api_key = key.to_string();
+        cloned
+    }
+
     /// Chaining depends on stored responses, so it implies storage; storage alone does not chain.
     pub fn keeps_provider_state(&self) -> bool {
         self.store_server_side || self.use_stateful_chaining
     }
-
     pub fn effective_base_url(&self) -> &str {
         if self.base_url.trim().is_empty() {
             self.protocol.default_base_url()

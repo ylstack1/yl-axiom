@@ -4405,7 +4405,6 @@ dependencies = [
 name = "parchment-core"
 version = "3.0.0"
 dependencies = [
- "futures-util",
  "jni",
  "parchment-harness",
  "parchment-model",
@@ -4413,7 +4412,6 @@ dependencies = [
  "parchment-protocol",
  "parchment-storage",
  "reqwest",
- "serde",
  "serde_json",
  "tokio",
 ]
@@ -4430,7 +4428,6 @@ dependencies = [
  "gpui-pre-platform",
  "parchment-core",
  "reqwest",
- "serde",
  "serde_json",
  "tokio",
  "windows 0.62.2",
@@ -4449,9 +4446,7 @@ dependencies = [
  "ignore",
  "parchment-model",
  "parchment-protocol",
- "parchment-storage",
  "reqwest",
- "serde",
  "serde_json",
  "thiserror 2.0.21",
  "tokio",
@@ -4483,7 +4478,6 @@ dependencies = [
  "futures-util",
  "parchment-model",
  "reqwest",
- "serde",
  "serde_json",
  "thiserror 2.0.21",
  "tokio",
@@ -8355,9 +8349,9 @@ dependencies = [
 
 [[package]]
 name = "zip"
-version = "9.7.2"
+version = "9.8.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "18d355ef4ea6fc9eaad04cae82d07c1329f643a5f94d10f35fc55b265f577829"
+checksum = "a9534624d547e3f516ecde0ed9a70d37788f01d340efcfdd03bf3ea8e163c1d0"
 dependencies = [
  "constant_time_eq",
  "crc32fast",

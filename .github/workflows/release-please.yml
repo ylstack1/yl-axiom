@@ -11,6 +11,8 @@ on:
 permissions:
   contents: read
 
+cache-mode: none
+
 # Queue rapid pushes to main without cancelling an in-flight tag creation or release build dispatch.
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}

@@ -11,7 +11,6 @@ crate-type = ["cdylib", "rlib"]
 [features]
 default = ["network"]
 network = [
-    "dep:futures-util",
     "dep:parchment-protocol",
     "dep:reqwest",
     "dep:tokio",
@@ -21,7 +20,6 @@ network = [
 android-jni = ["dep:jni"]
 
 [dependencies]
-futures-util = { workspace = true, optional = true }
 jni = { version = "0.22", optional = true }
 parchment-harness = { path = "../parchment-harness", default-features = false }
 parchment-model = { path = "../parchment-model" }
@@ -29,6 +27,8 @@ parchment-prose = { path = "../parchment-prose" }
 parchment-protocol = { path = "../parchment-protocol", optional = true }
 parchment-storage = { path = "../parchment-storage" }
 reqwest = { workspace = true, optional = true }
-serde.workspace = true
 serde_json.workspace = true
 tokio = { workspace = true, optional = true }
+
+[lints]
+workspace = true

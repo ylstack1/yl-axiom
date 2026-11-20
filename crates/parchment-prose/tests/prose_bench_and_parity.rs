@@ -1,3 +1,4 @@
+#![allow(clippy::unwrap_used, clippy::expect_used, clippy::print_stdout)]
 //! Parity, security bounds, and streaming allocation/latency gate tests for `parchment-prose`.
 
 use std::alloc::{GlobalAlloc, Layout, System};

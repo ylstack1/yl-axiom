@@ -100,6 +100,7 @@ impl ChatSession {
         out.permission_overrides = Some(AgentPermissionOverrides {
             approval_mode: Some(ToolApprovalMode::AskEveryTool),
             workspace_path: Some(String::new()),
+            extra_workspace_paths: Some(Vec::new()),
             workspace_mode: Some(WorkspaceMode::Off),
             tools_enabled: Some(false),
             tool_overrides: Some(BTreeMap::new()),

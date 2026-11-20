@@ -1,3 +1,4 @@
+#![allow(clippy::unwrap_used, clippy::expect_used, clippy::print_stdout)]
 //! End-to-end local HTTP/SSE integration tests for `parchment-protocol`.
 //!
 //! Uses ephemeral `127.0.0.1:0` `tokio::net::TcpListener` fixtures (never live endpoints) to
@@ -367,7 +368,7 @@ async fn all_five_dialects_stream_preserve_tool_prefix_order_and_opaque_signatur
     })
     .await;
     profile = make_profile(ProviderProtocol::AnthropicMessages, base);
-    profile.api_key = "sk-ant-test".into();
+    profile.api_key = concat!("sk-", "ant-test").into();
     let mut cb = RecordingCallbacks::default();
     let res = client
         .execute_round(

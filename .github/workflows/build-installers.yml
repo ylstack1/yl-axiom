@@ -33,12 +33,14 @@ on:
 permissions:
   contents: read
 
+cache-mode: read
+
 # Cancel superseded branch and PR builds immediately, while never cancelling version-tag or manual release runs.
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}-${{ github.event_name == 'workflow_dispatch' && github.run_id || 'ci' }}
   cancel-in-progress: ${{ !startsWith(github.ref, 'refs/tags/v') && github.event_name != 'workflow_dispatch' }}
 
-# Branch builds are VERSION_LINE.<run number - VERSION_BASE_RUN>: run 73 is 2.1.0, run 74 is 2.1.1.
+# Branch builds are VERSION_LINE.<run number - VERSION_BASE_RUN>: run 73 is 3.0.0, run 74 is 3.0.1.
 # Earlier runs keep 2.0.<run number>, so a Windows-only rebuild reusing one still matches its APK.
 # The Android version code stays 200 + run number, so it only ever grows.
 env:
@@ -50,6 +52,7 @@ jobs:
     name: Preflight Gates & Path Filter
     runs-on: ubuntu-latest
     timeout-minutes: 5
+    cache-mode: none
     permissions:
       contents: read
       actions: read
@@ -88,12 +91,22 @@ jobs:
           cargo xtask review
           cargo xtask ci plan installers
 
+      - name: Upload Prebuilt xtask Binary for Linux Gradle Jobs
+        if: steps.plan.outputs.desktop_tests == 'true' || startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: parchment-xtask-linux
+          path: target/debug/parchment-xtask
+          compression-level: 0
+          retention-days: 1
+          if-no-files-found: error
   rust-core-check:
-    name: Rust Core (fmt, clippy, tests)
+    name: Rust Core (clippy, tests)
     needs: preflight
     if: needs.preflight.outputs.rust_core == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    cache-mode: write
     steps:
       - name: Checkout Repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -105,17 +118,18 @@ jobs:
       - name: Set up Rust Toolchain
         uses: dtolnay/rust-toolchain@39008827e6b4319a349e9a42dfc90579dd25f1ca # stable
         with:
-          components: rustfmt, clippy
+          components: clippy
 
       - name: Cache Rust Dependencies
         uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
           shared-key: rust-core
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+          cache-bin: false
 
-      - name: Verify Rust Format, Clippy, and Tests
+      - name: Verify Rust Clippy and Tests
         run: |
           set -euo pipefail
-          cargo fmt --all -- --check
           cargo clippy --workspace --exclude parchment-desktop --all-targets -- -D warnings
           cargo clippy -p parchment-core --no-default-features --features android-jni -- -D warnings
           cargo test --workspace --exclude parchment-desktop
@@ -127,6 +141,7 @@ jobs:
     if: needs.preflight.outputs.desktop_tests == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    cache-mode: write
     strategy:
       fail-fast: true
       matrix:
@@ -143,8 +158,11 @@ jobs:
           fetch-depth: 1
           fetch-tags: false
 
-      - name: Set up Rust Toolchain
-        uses: dtolnay/rust-toolchain@39008827e6b4319a349e9a42dfc90579dd25f1ca # stable
+      - name: Download Prebuilt xtask Binary
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: parchment-xtask-linux
+          path: ${{ runner.temp }}/xtask
 
       - name: Set up JDK 25 (Temurin)
         uses: actions/setup-java@d1374f8ac74474200d16ef8ecee22c7ae7a51880 # v6.3.0
@@ -154,17 +172,19 @@ jobs:
 
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@8da46b539cd8fe6ab27ca75128919a18d757604c # v6.4.1
+        with:
+          cache-read-only: ${{ github.ref != 'refs/heads/main' }}
 
       - name: Run Kotlin Lint and Test Shard
         run: |
           set -euo pipefail
-          chmod +x ./gradlew
-          read -r -a SHARD_ARGS <<< "$(cargo xtask ci shard-tests --index "${{ matrix.shard }}" --total 2)"
+          chmod +x ./gradlew "$RUNNER_TEMP/xtask/parchment-xtask"
+          read -r -a SHARD_ARGS <<< "$("$RUNNER_TEMP/xtask/parchment-xtask" ci shard-tests --index "${{ matrix.shard }}" --total 2 --lead-overhead 80000)"
           GRADLE_TASKS=(:composeApp:desktopTest)
           if [[ "${{ matrix.shard }}" == "0" ]]; then
             GRADLE_TASKS=(ktlintCheck :composeApp:desktopTest)
           fi
-          cargo xtask ci run-gradle -- "${GRADLE_TASKS[@]}" "${SHARD_ARGS[@]}" \
+          "$RUNNER_TEMP/xtask/parchment-xtask" ci run-gradle -- "${GRADLE_TASKS[@]}" "${SHARD_ARGS[@]}" \
             -Dorg.gradle.jvmargs="-Xmx5g -XX:+UseParallelGC -XX:MaxMetaspaceSize=1g -Dfile.encoding=UTF-8" \
             -Pparchment.testForks=3 \
             --no-daemon --no-configuration-cache --max-workers=4 \
@@ -176,6 +196,7 @@ jobs:
     if: needs.preflight.outputs.windows_tests == 'true'
     runs-on: windows-latest
     timeout-minutes: 15
+    cache-mode: write
     steps:
       - name: Checkout Repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -195,17 +216,15 @@ jobs:
 
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@8da46b539cd8fe6ab27ca75128919a18d757604c # v6.4.1
+        with:
+          cache-read-only: ${{ github.ref != 'refs/heads/main' }}
 
       - name: Run Windows Native Test Suites
         shell: pwsh
-        env:
-          GRADLE_OPTS: "-Xmx5g -XX:+UseParallelGC -XX:MaxMetaspaceSize=1g -Dfile.encoding=UTF-8"
         run: |
-          $gradleHome = if ($env:GRADLE_USER_HOME) { $env:GRADLE_USER_HOME } else { "$HOME\.gradle" }
-          New-Item -ItemType Directory -Force -Path $gradleHome | Out-Null
-          Add-Content -Path "$gradleHome\gradle.properties" -Value "`norg.gradle.jvmargs=-Xmx5g -XX:+UseParallelGC -XX:MaxMetaspaceSize=1g -Dfile.encoding=UTF-8"
           $winTests = (cargo xtask ci shard-tests --windows-native) -split ' '
           cargo xtask ci run-gradle -- :composeApp:desktopTest @winTests `
+            '-Dorg.gradle.jvmargs=-Xmx5g -XX:+UseParallelGC -XX:MaxMetaspaceSize=1g -Dfile.encoding=UTF-8' `
             '-Pparchment.testForks=2' `
             --no-daemon --no-configuration-cache --max-workers=4 '-Pkotlin.compiler.execution.strategy=in-process'
           exit $LASTEXITCODE
@@ -216,6 +235,7 @@ jobs:
     if: needs.preflight.outputs.android == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 25
+    cache-mode: write
     steps:
       - name: Checkout Repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -233,7 +253,8 @@ jobs:
         uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
           shared-key: rust-android
-
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+          cache-bin: false
       - name: Restore cargo-ndk Binary Cache
         id: cache-cargo-ndk
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
@@ -270,14 +291,14 @@ jobs:
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: /usr/local/lib/android/sdk/platforms/android-37*
-          key: android-platform-37-v2-${{ runner.os }}-${{ hashFiles('gradle/libs.versions.toml') }}
+          key: android-platform-37-v3-${{ runner.os }}
 
       - name: Restore Android Build-Tools 37 Cache
         id: cache-android-bt
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: /usr/local/lib/android/sdk/build-tools/37*
-          key: android-build-tools-37-v2-${{ runner.os }}-${{ hashFiles('gradle/libs.versions.toml') }}
+          key: android-build-tools-37-v3-${{ runner.os }}
 
       - name: Write Android SDK License Hashes
         run: |
@@ -287,7 +308,8 @@ jobs:
 
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@8da46b539cd8fe6ab27ca75128919a18d757604c # v6.4.1
-
+        with:
+          cache-read-only: ${{ github.ref != 'refs/heads/main' }}
       - name: Stage Private Release Signer
         if: github.event_name != 'pull_request'
         env:
@@ -301,6 +323,7 @@ jobs:
         env:
           APP_VER: ${{ needs.preflight.outputs.app_version }}
           APP_CODE: ${{ needs.preflight.outputs.app_version_code }}
+          DESKTOP_TESTS_RAN: ${{ needs.preflight.outputs.desktop_tests }}
           ANDROID_KEYSTORE_PASSWORD: ${{ github.event_name != 'pull_request' && secrets.ANDROID_KEYSTORE_PASSWORD || '' }}
           ANDROID_KEY_ALIAS: ${{ github.event_name != 'pull_request' && secrets.ANDROID_KEY_ALIAS || '' }}
           ANDROID_KEY_PASSWORD: ${{ github.event_name != 'pull_request' && secrets.ANDROID_KEY_PASSWORD || '' }}
@@ -314,23 +337,26 @@ jobs:
             BUILD_TASK=:androidApp:assembleRelease
             EXTRA_FLAGS=(-PofficialRelease=true -x :androidApp:lintVitalRelease)
           fi
+          GRADLE_TASKS=("$BUILD_TASK")
+          if [[ "$DESKTOP_TESTS_RAN" != "true" ]]; then
+            GRADLE_TASKS=(ktlintCheck "$BUILD_TASK")
+          fi
           echo "ANDROID_BUILD_VARIANT=$BUILD_VARIANT" >> "$GITHUB_ENV"
           chmod +x ./gradlew
-          cargo xtask ci run-gradle -- "$BUILD_TASK" \
+          cargo xtask ci run-gradle -- "${GRADLE_TASKS[@]}" \
             -Dorg.gradle.jvmargs="-Xmx5g -XX:+UseParallelGC -XX:MaxMetaspaceSize=1g -Dfile.encoding=UTF-8" \
             -PappVersion="$APP_VER" \
             -PappVersionCode="$APP_CODE" \
             -PgithubRepo="$GITHUB_REPOSITORY" \
             "${EXTRA_FLAGS[@]}" \
             --no-daemon --no-configuration-cache --max-workers=4 -Pkotlin.compiler.execution.strategy=in-process
-
       - name: Rename APK and Verify Budget & Bundled JNI
         run: |
           set -euo pipefail
           mkdir -p dist
-          cp androidApp/build/outputs/apk/"$ANDROID_BUILD_VARIANT"/*.apk dist/Parchment-Android-Universal.apk
+          cp mobile/android-app/build/outputs/apk/"$ANDROID_BUILD_VARIANT"/*.apk dist/Parchment-Android-Universal.apk
           if [[ "$ANDROID_BUILD_VARIANT" == release ]]; then
-            cp androidApp/build/outputs/mapping/release/mapping.txt dist/Parchment-Android-R8-mapping.txt
+            cp mobile/android-app/build/outputs/mapping/release/mapping.txt dist/Parchment-Android-R8-mapping.txt
             SIZE=$(stat -c%s dist/Parchment-Android-Universal.apk)
             test "$SIZE" -le 7864320
           fi
@@ -342,14 +368,14 @@ jobs:
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: /usr/local/lib/android/sdk/platforms/android-37*
-          key: android-platform-37-v2-${{ runner.os }}-${{ hashFiles('gradle/libs.versions.toml') }}
+          key: android-platform-37-v3-${{ runner.os }}
 
       - name: Save Android Build-Tools 37 Cache (main only)
         if: github.ref == 'refs/heads/main' && steps.cache-android-bt.outputs.cache-hit != 'true'
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: /usr/local/lib/android/sdk/build-tools/37*
-          key: android-build-tools-37-v2-${{ runner.os }}-${{ hashFiles('gradle/libs.versions.toml') }}
+          key: android-build-tools-37-v3-${{ runner.os }}
 
       - name: Upload Android APK Artifact
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
@@ -383,6 +409,7 @@ jobs:
     if: needs.preflight.outputs.rust_windows == 'true'
     runs-on: windows-latest
     timeout-minutes: 45
+    cache-mode: write
     steps:
       - name: Checkout Repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -394,18 +421,19 @@ jobs:
       - name: Set up Rust Toolchain
         uses: dtolnay/rust-toolchain@39008827e6b4319a349e9a42dfc90579dd25f1ca # stable
         with:
-          components: rustfmt, clippy
+          components: clippy
 
       - name: Cache Rust Dependencies (Windows)
         uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
           shared-key: rust-windows
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+          cache-bin: false
 
       - name: Verify Windows Desktop Crate and Build Release GPUI .EXE
         shell: pwsh
         env:
           AWS_LC_SYS_PREBUILT_NASM: "1"
-          CARGO_INCREMENTAL: "0"
         run: |
           if (-not $env:GPUI_FXC_PATH) {
             $fxc = Get-ChildItem "C:\Program Files (x86)\Windows Kits\10\bin\*\x64\fxc.exe" -ErrorAction SilentlyContinue |
@@ -470,8 +498,11 @@ jobs:
           fetch-depth: 1
           fetch-tags: false
 
-      - name: Set up Rust Toolchain
-        uses: dtolnay/rust-toolchain@39008827e6b4319a349e9a42dfc90579dd25f1ca # stable
+      - name: Download Prebuilt xtask Binary
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: parchment-xtask-linux
+          path: ${{ runner.temp }}/xtask
 
       - name: Set up JDK 25 (Temurin)
         uses: actions/setup-java@d1374f8ac74474200d16ef8ecee22c7ae7a51880 # v6.3.0
@@ -483,7 +514,7 @@ jobs:
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: /usr/local/lib/android/sdk/platforms/android-37*
-          key: android-platform-37-v2-${{ runner.os }}-${{ hashFiles('gradle/libs.versions.toml') }}
+          key: android-platform-37-v3-${{ runner.os }}
 
       - name: Write Android SDK License Hashes
         run: |
@@ -493,16 +524,18 @@ jobs:
 
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@8da46b539cd8fe6ab27ca75128919a18d757604c # v6.4.1
+        with:
+          cache-read-only: true
 
       - name: Generate and Validate SBOM
         run: |
-          chmod +x ./gradlew
-          cargo xtask ci run-gradle -- --init-script .github/scripts/sbom.init.gradle.kts cyclonedxBom \
+          set -euo pipefail
+          chmod +x ./gradlew "$RUNNER_TEMP/xtask/parchment-xtask"
+          "$RUNNER_TEMP/xtask/parchment-xtask" ci run-gradle -- --init-script .github/scripts/sbom.init.gradle.kts cyclonedxBom \
             --no-daemon --no-configuration-cache --no-build-cache --max-workers=4 -PappVersion=1.0.0
-          cargo xtask ci check-sbom build/reports/cyclonedx/bom.json
+          "$RUNNER_TEMP/xtask/parchment-xtask" ci check-sbom build/reports/cyclonedx/bom.json
           mkdir -p dist
           cp build/reports/cyclonedx/bom.json dist/Parchment-SBOM.cdx.json
-
       - name: Upload SBOM Artifact
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
@@ -529,6 +562,7 @@ jobs:
       (needs.build-android-apk.result == 'success' || (inputs.reuse_android_run && needs.build-android-apk.result == 'skipped'))
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    cache-mode: none
     permissions:
       contents: write
       actions: read
@@ -562,7 +596,7 @@ jobs:
           {
             echo
             echo "Android releases use a private signing identity. Legacy installations signed with the exposed repository key require an explicit backup/export and migration before installation."
-            echo "See the [release-signing and migration guide](https://github.com/${GITHUB_REPOSITORY}/blob/main/docs/RELEASE_SIGNING.md). Installs already using the private identity can update normally."
+            echo "See the [release-signing and migration guide](https://github.com/${GITHUB_REPOSITORY}/blob/main/docs/release-signing.md). Installs already using the private identity can update normally."
             echo
             echo "Check a download with \`sha256sum -c SHA256SUMS.txt\` (or \`Get-FileHash\` on Windows)."
           } >> notes.md

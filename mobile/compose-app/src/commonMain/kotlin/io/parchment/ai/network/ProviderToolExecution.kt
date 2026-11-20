@@ -1,0 +1,593 @@
+package io.parchment.ai.network
+
+import io.ktor.client.request.get
+import io.parchment.ai.harness.AgentPermissionGate
+import io.parchment.ai.harness.AgentToolRunContext
+import io.parchment.ai.harness.ComputerUse
+import io.parchment.ai.harness.ToolAccessScope
+import io.parchment.ai.harness.ToolApprovalBroker
+import io.parchment.ai.harness.ToolAuthorization
+import io.parchment.ai.harness.ToolExecutionPermit
+import io.parchment.ai.harness.WorkspaceHarness
+import io.parchment.ai.model.AgentPermissionResolver
+import io.parchment.ai.model.ChatSession
+import io.parchment.ai.model.GoalTrackerState
+import io.parchment.ai.model.ProviderProfile
+import io.parchment.ai.model.ToolCallRecord
+import io.parchment.ai.network.AiProviderEngine.ToolStepBatch
+import io.parchment.ai.platform.PlatformRuntime
+import io.parchment.ai.runtime.RunActivityContext
+import io.parchment.ai.strings.Strings
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.channels.SendChannel
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.isActive
+import kotlinx.coroutines.selects.select
+import kotlinx.coroutines.sync.Semaphore
+import kotlinx.coroutines.sync.withPermit
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.yield
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.contentOrNull
+import kotlinx.serialization.json.jsonObject
+import kotlin.coroutines.AbstractCoroutineContextElement
+import kotlin.coroutines.CoroutineContext
+import kotlin.coroutines.EmptyCoroutineContext
+
+// Workspace tool authorization and execution for the agent loops.
+
+internal suspend fun currentExpandedMcpTools(): Set<String> = currentCoroutineContext()[AgentToolRunContext]?.expandedMcpToolsSnapshot() ?: emptySet()
+
+private suspend fun AiProviderEngine.authorizeWorkspaceTool(
+    scope: ToolAccessScope,
+    callId: String,
+    name: String,
+    arguments: String,
+    activityContext: RunActivityContext? = null
+): ToolAuthorization {
+    currentCoroutineContext().ensureActive()
+    AgentPermissionGate.denial(scope, name, arguments)?.let { return ToolAuthorization.Denied(it) }
+    val broker = currentCoroutineContext()[AgentToolRunContext]?.broker
+    if (broker == null && AgentPermissionGate.effect(scope, name, arguments).requiresApproval) {
+        return ToolAuthorization.Denied("Tool approval is required, but this run has no approval interface.")
+    }
+    val activeScope = broker?.currentScope()
+    if (broker != null && (activeScope == null || activeScope.policy.workspacePath != scope.policy.workspacePath)) {
+        return ToolAuthorization.Denied("The workspace changed. Resume with the current workspace before using tools.")
+    }
+    val activity = activityContext ?: currentCoroutineContext()[RunActivityContext]
+    return withContext(activity ?: EmptyCoroutineContext) {
+        (broker ?: ToolApprovalBroker("headless", "", { scope })).authorize(callId, name, arguments)
+    }
+}
+
+/** Loads full JSON parameter schemas for deferred MCP tools and enables them in the active run. */
+private suspend fun runMcpSchemaTool(
+    scope: ToolAccessScope,
+    callId: String,
+    argumentsJson: String
+): ToolCallRecord {
+    fun record(text: String, isError: Boolean) = ToolCallRecord(
+        id = callId,
+        name = WorkspaceHarness.MCP_SCHEMA_TOOL_NAME,
+        argumentsJson = argumentsJson,
+        resultText = text,
+        isError = isError
+    )
+    val allowed = WorkspaceHarness.allowedMcpTools(scope.policy)
+    if (allowed.isEmpty()) return record("No MCP tools are currently enabled for this chat.", false)
+    val argsObj = runCatching { Json.parseToJsonElement(argumentsJson.ifBlank { "{}" }).jsonObject }.getOrNull()
+        ?: return record("Error: Tool arguments must be a valid JSON object.", true)
+    val rawQueries = when (val namesEl = argsObj["names"]) {
+        is JsonArray -> namesEl.mapNotNull { (it as? JsonPrimitive)?.contentOrNull?.trim() }.filter { it.isNotEmpty() }
+        is JsonPrimitive -> listOfNotNull(namesEl.contentOrNull?.trim()).filter { it.isNotEmpty() }
+        else -> emptyList()
+    }
+    if (rawQueries.isEmpty()) {
+        return record("Error: Provide one or more MCP tool names or keywords in 'names'.", true)
+    }
+    val matched = linkedSetOf<WorkspaceHarness.ToolDefinition>()
+    for (q in rawQueries) {
+        val exact = allowed.firstOrNull { it.name.equals(q, ignoreCase = true) }
+        if (exact != null) {
+            matched += exact
+        } else {
+            val low = q.lowercase()
+            allowed.filter { it.name.lowercase().contains(low) || it.description.lowercase().contains(low) }
+                .take(12)
+                .forEach { matched += it }
+        }
+        if (matched.size >= 12) break
+    }
+    if (matched.isEmpty()) {
+        val sample = allowed.take(20).joinToString(", ") { it.name }
+        return record("No matching MCP tools found for ${rawQueries.joinToString(", ")}. Available: $sample", false)
+    }
+    val selected = matched.take(12)
+    currentCoroutineContext()[AgentToolRunContext]?.expandMcpTools(selected.map { it.name })
+    val body = buildString {
+        appendLine("Loaded and enabled ${selected.size} MCP tool schema(s). You can now call these tools directly:")
+        selected.forEach { tool ->
+            appendLine()
+            appendLine("### ${tool.name}")
+            if (tool.description.isNotBlank()) appendLine(tool.description)
+            appendLine("Parameters JSON Schema: ${tool.parametersSchemaString}")
+        }
+    }.trim()
+    return record(body, false)
+}
+
+/** The permit is claimed here because this call does not go through the workspace executor. */
+private suspend fun runMcpTool(permit: ToolExecutionPermit, callId: String, name: String, argumentsJson: String): ToolCallRecord {
+    permit.claim(permit.scope, name, argumentsJson)?.let {
+        return ToolCallRecord(id = callId, name = name, argumentsJson = argumentsJson, resultText = "Error: $it", isError = true)
+    }
+    val result = McpRegistry.call(name, argumentsJson)
+    currentCoroutineContext().ensureActive()
+    return ToolCallRecord(
+        id = callId,
+        name = name,
+        argumentsJson = argumentsJson,
+        resultText = if (result.isError) "Error: ${result.text}" else result.text,
+        isError = result.isError
+    )
+}
+
+private suspend fun runComputerTool(permit: ToolExecutionPermit, callId: String, name: String, argumentsJson: String): ToolCallRecord {
+    fun record(text: String, isError: Boolean, image: String = "") = ToolCallRecord(id = callId, name = name, argumentsJson = argumentsJson, resultText = text, isError = isError, screenshotJpegBase64 = image)
+    permit.claim(permit.scope, name, argumentsJson)?.let { return record("Error: $it", true) }
+    val job = currentCoroutineContext()[kotlinx.coroutines.Job]
+    // Yield the UI coroutine once so Compose begins removing the approval card before the settle timer starts.
+    yield()
+    val outcome = ComputerUse.perform(argumentsJson) { job?.isActive == false || permit.isRevoked() }
+    currentCoroutineContext().ensureActive()
+    return record(outcome.text, outcome.isError, outcome.screenshot?.jpegBase64.orEmpty())
+}
+
+private suspend fun runHelper(callId: String, argumentsJson: String, intent: String, onStatus: suspend (String) -> Unit): ToolCallRecord {
+    fun record(text: String, isError: Boolean) = ToolCallRecord(id = callId, name = "agent_delegate", argumentsJson = argumentsJson, resultText = text, isError = isError)
+    val task = (runCatching { Json.parseToJsonElement(argumentsJson).jsonObject }.getOrNull()?.get("task") as? JsonPrimitive)?.contentOrNull?.trim().orEmpty()
+    if (task.isEmpty()) return record("Error: A task is required.", true)
+    val runner = currentCoroutineContext()[AgentToolRunContext]?.broker?.subagentRunner
+        ?: return record("Error: Helpers are not available in this run.", true)
+    val result = runner(task) { progress -> onStatus("$intent\n$progress") }
+    currentCoroutineContext().ensureActive()
+    return result.fold({ record(it, false) }, { record("Error: ${it.message ?: "The helper failed."}", true) })
+}
+
+private const val MAX_QUESTION_CHARS = 2_000
+private const val MAX_QUESTION_OPTIONS = 8
+private const val MAX_OPTION_CHARS = 200
+
+/** Waits for the person running this chat; the answer goes back to the model as the tool result. */
+private suspend fun answerFromUser(callId: String, argumentsJson: String): ToolCallRecord {
+    fun failed(reason: String) = ToolCallRecord(id = callId, name = "ask_user", argumentsJson = argumentsJson, resultText = "Error: $reason", isError = true)
+    val arguments = runCatching { Json.parseToJsonElement(argumentsJson.ifBlank { "{}" }).jsonObject }.getOrNull()
+        ?: return failed("Tool arguments must be a valid JSON object.")
+    val question = (arguments["question"] as? JsonPrimitive)?.contentOrNull?.trim()?.take(MAX_QUESTION_CHARS).orEmpty()
+    if (question.isEmpty()) return failed("A question is required.")
+    val options = (arguments["options"] as? JsonArray).orEmpty()
+        .mapNotNull { (it as? JsonPrimitive)?.contentOrNull?.trim()?.take(MAX_OPTION_CHARS) }
+        .filter { it.isNotEmpty() }.distinct().take(MAX_QUESTION_OPTIONS)
+    val broker = currentCoroutineContext()[AgentToolRunContext]?.broker
+        ?: return failed("No one is available to answer in this run. Decide yourself and state your assumption.")
+    val answer = broker.askUser(callId, question, options)
+    currentCoroutineContext().ensureActive()
+    return if (answer == null) failed("The question was withdrawn because this run's permissions changed.")
+    else ToolCallRecord(id = callId, name = "ask_user", argumentsJson = argumentsJson, resultText = "The user answered: $answer")
+}
+
+internal suspend fun AiProviderEngine.ensureAgentPolicyCurrent(session: ChatSession, profile: ProviderProfile) {
+    currentCoroutineContext().ensureActive()
+    val broker = currentCoroutineContext()[AgentToolRunContext]?.broker ?: return
+    val expected = AgentPermissionResolver.resolve(session, profile = profile)
+    if (broker.currentScope()?.policy != expected) {
+        throw kotlinx.coroutines.CancellationException("Agent permissions changed. Resume this turn with the current permissions.")
+    }
+}
+
+private suspend fun AiProviderEngine.executeWorkspaceToolWithLiveProgress(
+    workspaceRoot: String,
+    mode: io.parchment.ai.model.WorkspaceMode,
+    allowShell: Boolean,
+    accessScope: ToolAccessScope,
+    callId: String,
+    toolName: String,
+    argumentsJson: String,
+    thoughtSignature: String = "",
+    precedingThinking: String = "",
+    onStatus: suspend (String) -> Unit,
+    onToolCall: suspend (ToolCallRecord) -> Unit,
+    activityContext: RunActivityContext?
+): ToolCallRecord {
+    val intent = WorkspaceHarness.describeToolCallIntent(toolName, argumentsJson)
+    if (AgentPermissionGate.effect(accessScope, toolName, argumentsJson).requiresApproval) onStatus(Strings.awaitingApproval(intent))
+    val authorization = authorizeWorkspaceTool(accessScope, callId, toolName, argumentsJson, activityContext)
+    if (authorization is ToolAuthorization.Denied) return ToolCallRecord(
+        id = callId,
+        name = toolName,
+        argumentsJson = argumentsJson,
+        resultText = "Error: ${authorization.reason}",
+        isError = true,
+        thoughtSignature = thoughtSignature,
+        precedingThinking = precedingThinking
+    )
+    val permit = (authorization as ToolAuthorization.Allowed).permit
+    onStatus("$intent…")
+    val initialRunningRecord = ToolCallRecord(
+        id = callId,
+        name = toolName,
+        argumentsJson = argumentsJson,
+        resultText = if (toolName.equals("shell_exec", ignoreCase = true)) "Running shell command…" else "Running $toolName…",
+        isRunning = true,
+        thoughtSignature = thoughtSignature,
+        precedingThinking = precedingThinking
+    )
+    onToolCall(initialRunningRecord)
+
+    val liveChannel = kotlinx.coroutines.channels.Channel<String>(kotlinx.coroutines.channels.Channel.CONFLATED)
+    val clock = activityContext?.activity?.let { activity -> { activity.elapsedMs } } ?: PlatformRuntime::monotonicTimeMillis
+    val startMs = clock()
+    if (toolName == "ask_user" ||
+        toolName == "agent_delegate" ||
+        toolName == ComputerUse.TOOL_NAME ||
+        toolName == WorkspaceHarness.MCP_SCHEMA_TOOL_NAME ||
+        McpRegistry.isMcpTool(toolName)
+    ) {
+        val record = when {
+            toolName == ComputerUse.TOOL_NAME -> runComputerTool(permit, callId, toolName, argumentsJson)
+            toolName == "ask_user" -> answerFromUser(callId, argumentsJson)
+            toolName == "agent_delegate" -> runHelper(callId, argumentsJson, intent, onStatus)
+            toolName == WorkspaceHarness.MCP_SCHEMA_TOOL_NAME -> runMcpSchemaTool(permit.scope, callId, argumentsJson)
+            else -> runMcpTool(permit, callId, toolName, argumentsJson)
+        }
+        return record.copy(
+            isRunning = false,
+            durationMs = (clock() - startMs).coerceAtLeast(1L),
+            thoughtSignature = thoughtSignature,
+            precedingThinking = precedingThinking
+        )
+    }
+    val runCtx = currentCoroutineContext()[AgentToolRunContext]
+    val chatSessionId = runCtx?.broker?.chatId.orEmpty()
+    val runFileRevisions = runCtx?.fileRevisions
+    // The blocking tool runs in `async(Dispatchers.IO)`, which never calls `emit()`; `liveChannel` is read on the
+    // caller's coroutine. Emitting from another context would break Flow's context rule and throw.
+    return kotlinx.coroutines.coroutineScope {
+        val workerDeferred = async(Dispatchers.IO) {
+            try {
+                currentCoroutineContext().ensureActive()
+                val workerJob = checkNotNull(currentCoroutineContext()[kotlinx.coroutines.Job])
+                WorkspaceHarness.executeToolCall(
+                    workspaceRoot = workspaceRoot,
+                    mode = mode,
+                    allowShell = allowShell,
+                    callId = callId,
+                    toolName = toolName,
+                    argumentsJson = argumentsJson,
+                    accessScope = permit.scope,
+                    permit = permit,
+                    sessionId = chatSessionId,
+                    isCancelled = { !workerJob.isActive || permit.isRevoked() },
+                    fileRevisions = runFileRevisions,
+                    onOutputDelta = { partial ->
+                        liveChannel.trySend(partial)
+                    }
+                )
+            } finally {
+                liveChannel.close()
+            }
+        }
+        try {
+            for (partialOut in liveChannel) {
+                val elapsedSec = ((clock() - startMs) / 100L) / 10.0
+                val lastNonEmptyLine = partialOut.lineSequence().map { it.trim() }.lastOrNull { it.isNotEmpty() }.orEmpty()
+                val statusHeader = intent.lineSequence().firstOrNull().orEmpty()
+                val liveStatus = if (lastNonEmptyLine.isNotEmpty()) {
+                    "$statusHeader (${elapsedSec}s)\n$lastNonEmptyLine"
+                } else {
+                    "$intent (${elapsedSec}s)…"
+                }
+                onStatus(liveStatus)
+                onToolCall(
+                    initialRunningRecord.copy(
+                        resultText = "[Running ${elapsedSec}s]\n$partialOut",
+                        isRunning = true
+                    )
+                )
+            }
+            val rawRecord = workerDeferred.await()
+            rawRecord.copy(
+                isRunning = false,
+                durationMs = (clock() - startMs).coerceAtLeast(1L),
+                thoughtSignature = thoughtSignature.ifBlank { rawRecord.thoughtSignature },
+                precedingThinking = precedingThinking.ifBlank { rawRecord.precedingThinking }
+            )
+        } finally {
+            liveChannel.close()
+            workerDeferred.cancel()
+        }
+    }
+}
+
+/** At most this many helpers run at once; more in one step wait for a free slot. */
+private const val MAX_PARALLEL_HELPERS = 4
+
+/**
+ * Marks coroutines that run beside the generation flow's own coroutine. Flow forbids emitting from another
+ * coroutine, and the stream accumulator's usage ledger is not thread-safe, so such coroutines hand every update
+ * to the owner through [channel] instead (see [onFlowCoroutine]). Only parallel helper batches install it;
+ * helpers cannot delegate further, so a nested flow never meets a relay it does not own.
+ */
+internal class ParentFlowRelay(val channel: SendChannel<suspend () -> Unit>) : AbstractCoroutineContextElement(Key) {
+    companion object Key : CoroutineContext.Key<ParentFlowRelay>
+}
+
+/** Runs [block] on the generation flow's own coroutine: directly when already there, queued from a parallel helper. */
+internal suspend fun onFlowCoroutine(block: suspend () -> Unit) {
+    val relay = currentCoroutineContext()[ParentFlowRelay]
+    if (relay == null) block() else relay.channel.send(block)
+}
+
+/**
+ * Runs [count] tasks concurrently (at most [MAX_PARALLEL_HELPERS] at a time) while this coroutine executes the
+ * updates they relay, then returns their results in task order. Cancelling the caller cancels every task.
+ */
+internal suspend fun <T> runConcurrentlyRelayingToFlow(count: Int, task: suspend (Int) -> T): List<T> = coroutineScope {
+    val relay = Channel<suspend () -> Unit>(Channel.UNLIMITED)
+    val slots = Semaphore(MAX_PARALLEL_HELPERS)
+    val tasks = (0 until count).map { idx -> async(ParentFlowRelay(relay)) { slots.withPermit { task(idx) } } }
+    val all = async { tasks.awaitAll() }
+    while (!all.isCompleted) {
+        select<Unit> {
+            relay.onReceive { it() }
+            all.onAwait { }
+        }
+    }
+    relay.close()
+    for (pending in relay) pending()
+    all.await()
+}
+
+internal suspend fun AiProviderEngine.executeWorkspaceToolBatchWithLiveProgress(
+    workspaceRoot: String,
+    mode: io.parchment.ai.model.WorkspaceMode,
+    allowShell: Boolean,
+    accessScope: ToolAccessScope,
+    calls: List<Triple<String, String, String>>, // (callId, toolName, argumentsJson)
+    firstThoughtSignature: String = "",
+    firstPrecedingThinking: String = "",
+    circuitBreaker: WorkspaceHarness.LoopCircuitBreaker,
+    onStatus: suspend (String) -> Unit,
+    onToolCall: suspend (ToolCallRecord) -> Unit,
+    onGoalProgress: suspend (GoalTrackerState) -> Unit
+): List<ToolCallRecord> {
+    if (calls.isEmpty()) return emptyList()
+    val firstCallId = calls.first().first
+    val onStepToolCall: suspend (ToolCallRecord) -> Unit = { rec ->
+        onToolCall(if (rec.id == firstCallId) rec.copy(startsToolStep = true) else rec)
+    }
+    // Helpers only read (subagentPolicy), so several asked for in one step can work side by side.
+    val canRunHelpersInParallel = calls.size > 1 && calls.all { (_, fnName, _) -> fnName == "agent_delegate" }
+    val activity = currentCoroutineContext()[RunActivityContext]?.activity
+    if (canRunHelpersInParallel) {
+        val batch = activity?.beginTools(calls.size)
+        try {
+            onStatus(Strings.runningHelpersInParallel(calls.size))
+            val rawCompleted = runConcurrentlyRelayingToFlow(calls.size) { idx ->
+                val (callId, fnName, argsJson) = calls[idx]
+                val work = activity?.let { RunActivityContext(it, requireNotNull(batch).branches[idx]) }
+                try {
+                    executeWorkspaceToolWithLiveProgress(
+                        workspaceRoot = workspaceRoot,
+                        mode = mode,
+                        allowShell = allowShell,
+                        accessScope = accessScope,
+                        callId = callId,
+                        toolName = fnName,
+                        argumentsJson = argsJson,
+                        thoughtSignature = if (idx == 0) firstThoughtSignature else "",
+                        precedingThinking = if (idx == 0) firstPrecedingThinking else "",
+                        onStatus = { message -> onFlowCoroutine { onStatus(message) } },
+                        onToolCall = { record -> onFlowCoroutine { onStepToolCall(record) } },
+                        activityContext = work
+                    )
+                } finally { work?.let { it.activity.completeBranch(it.branch) } }
+            }
+            return rawCompleted.map { rawRec ->
+                val rec = circuitBreaker.onToolExecuted(rawRec)
+                circuitBreaker.goalState?.let { onGoalProgress(it) }
+                onStepToolCall(rec)
+                rec
+            }
+        } finally {
+            batch?.close()
+        }
+    }
+
+    suspend fun runParallelReadSegment(segment: List<IndexedValue<Triple<String, String, String>>>): List<ToolCallRecord> {
+        val segBatch = activity?.beginTools(segment.size)
+        try {
+            val summaryNames = segment.map { it.value.second }.distinct().joinToString(", ")
+            onStatus(Strings.executingReadSearchToolsInParallel(segment.size, summaryNames))
+            for ((globalIdx, triple) in segment) {
+                val (callId, fnName, argsJson) = triple
+                onStepToolCall(
+                    ToolCallRecord(
+                        id = callId,
+                        name = fnName,
+                        argumentsJson = argsJson,
+                        resultText = "Running $fnName in parallel…",
+                        isRunning = true,
+                        thoughtSignature = if (globalIdx == 0) firstThoughtSignature else "",
+                        precedingThinking = if (globalIdx == 0) firstPrecedingThinking else ""
+                    )
+                )
+            }
+            val chatSessionId = currentCoroutineContext()[AgentToolRunContext]?.broker?.chatId.orEmpty()
+            val rawCompleted = kotlinx.coroutines.coroutineScope {
+                segment.mapIndexed { segIdx, (globalIdx, triple) ->
+                    val (callId, fnName, argsJson) = triple
+                    val work = activity?.let { RunActivityContext(it, requireNotNull(segBatch).branches[segIdx]) }
+                    async(Dispatchers.IO + (work ?: EmptyCoroutineContext)) {
+                        try {
+                            val authorization = authorizeWorkspaceTool(accessScope, callId, fnName, argsJson)
+                            currentCoroutineContext().ensureActive()
+                            val workerJob = checkNotNull(currentCoroutineContext()[kotlinx.coroutines.Job])
+                            val startedAt = activity?.elapsedMs ?: 0L
+                            val raw = if (authorization is ToolAuthorization.Denied) ToolCallRecord(
+                                id = callId,
+                                name = fnName,
+                                argumentsJson = argsJson,
+                                resultText = "Error: ${authorization.reason}",
+                                isError = true
+                            ) else WorkspaceHarness.executeToolCall(
+                                workspaceRoot = workspaceRoot,
+                                mode = mode,
+                                allowShell = allowShell,
+                                callId = callId,
+                                toolName = fnName,
+                                argumentsJson = argsJson,
+                                accessScope = (authorization as ToolAuthorization.Allowed).permit.scope,
+                                permit = authorization.permit,
+                                sessionId = chatSessionId,
+                                isCancelled = { !workerJob.isActive || authorization.permit.isRevoked() }
+                            )
+                            raw.copy(
+                                isRunning = false,
+                                durationMs = if (authorization is ToolAuthorization.Allowed && activity != null)
+                                    (activity.elapsedMs - startedAt).coerceAtLeast(1L) else raw.durationMs,
+                                thoughtSignature = if (globalIdx == 0) firstThoughtSignature.ifBlank { raw.thoughtSignature } else raw.thoughtSignature,
+                                precedingThinking = if (globalIdx == 0) firstPrecedingThinking.ifBlank { raw.precedingThinking } else raw.precedingThinking
+                            )
+                        } finally { work?.let { it.activity.completeBranch(it.branch) } }
+                    }
+                }.map { it.await() }
+            }
+            val finalResults = ArrayList<ToolCallRecord>(rawCompleted.size)
+            for (rawRec in rawCompleted) {
+                val rec = circuitBreaker.onToolExecuted(rawRec)
+                circuitBreaker.goalState?.let { onGoalProgress(it) }
+                onStepToolCall(rec)
+                finalResults.add(rec)
+            }
+            return finalResults
+        } finally {
+            segBatch?.close()
+        }
+    }
+
+    // Partition into contiguous parallel-safe read-only sub-runs vs sequential calls so e.g. [todo_write, fs_read x3]
+    // still executes the 3 reads concurrently while preserving exact causal order around writes and shell steps.
+    val results = ArrayList<ToolCallRecord>(calls.size)
+    var cursor = 0
+    while (cursor < calls.size) {
+        val (_, fnName, _) = calls[cursor]
+        if (WorkspaceHarness.isParallelSafeReadOnlyTool(fnName)) {
+            var end = cursor + 1
+            while (end < calls.size && WorkspaceHarness.isParallelSafeReadOnlyTool(calls[end].second)) {
+                end++
+            }
+            if (end - cursor >= 2) {
+                val segment = (cursor until end).map { idx -> IndexedValue(idx, calls[idx]) }
+                results.addAll(runParallelReadSegment(segment))
+                cursor = end
+                continue
+            }
+        }
+        val (callId, seqName, argsJson) = calls[cursor]
+        val seqBatch = activity?.beginTools(1)
+        try {
+            val signedRec = executeWorkspaceToolWithLiveProgress(
+                workspaceRoot = workspaceRoot,
+                mode = mode,
+                allowShell = allowShell,
+                accessScope = accessScope,
+                callId = callId,
+                toolName = seqName,
+                argumentsJson = argsJson,
+                thoughtSignature = if (cursor == 0) firstThoughtSignature else "",
+                precedingThinking = if (cursor == 0) firstPrecedingThinking else "",
+                onStatus = onStatus,
+                onToolCall = onStepToolCall,
+                activityContext = activity?.let { RunActivityContext(it, requireNotNull(seqBatch).branches.single()) }
+            )
+            val rec = circuitBreaker.onToolExecuted(signedRec)
+            circuitBreaker.goalState?.let { onGoalProgress(it) }
+            onStepToolCall(rec)
+            results.add(rec)
+        } finally {
+            seqBatch?.close()
+        }
+        cursor++
+    }
+    return results
+}
+
+internal fun AiProviderEngine.groupToolCallsIntoStepBatches(
+    toolCalls: List<ToolCallRecord>,
+    fallbackTurnSignature: String,
+    fallbackTurnThinking: String,
+    beforeTool: List<String> = emptyList()
+): List<ToolStepBatch> {
+    if (toolCalls.isEmpty()) return emptyList()
+    val batches = mutableListOf<ToolStepBatch>()
+    val hasAnyPrecedingThinking = toolCalls.any { it.precedingThinking.isNotBlank() }
+    var currentCalls = mutableListOf<ToolCallRecord>()
+    var currentSig = ""
+    var currentThink = ""
+    var currentText = ""
+
+    for ((idx, tc) in toolCalls.withIndex()) {
+        val tcText = beforeTool.getOrElse(idx) { "" }
+        val tcSig = tc.thoughtSignature.ifBlank { if (idx == 0) fallbackTurnSignature else "" }
+        val tcThink = tc.precedingThinking.ifBlank { if (idx == 0 && !hasAnyPrecedingThinking) fallbackTurnThinking else "" }
+        val startsNewBatch = idx == 0 || tc.startsToolStep || tc.thoughtSignature.isNotBlank() || tc.precedingThinking.isNotBlank() || tcText.isNotEmpty()
+        if (startsNewBatch) {
+            if (currentCalls.isNotEmpty()) {
+                batches.add(ToolStepBatch(currentSig, currentThink, currentCalls.toList(), currentText))
+            }
+            currentCalls = mutableListOf(tc)
+            currentSig = tcSig
+            currentThink = tcThink
+            currentText = tcText
+        } else {
+            currentCalls.add(tc)
+        }
+    }
+    if (currentCalls.isNotEmpty()) {
+        batches.add(ToolStepBatch(currentSig, currentThink, currentCalls.toList(), currentText))
+    }
+    return batches
+}
+
+/**
+ * Tool-call IDs that any wire accepts, stable across requests and paired between call and result.
+ * Other providers' IDs can break a format's character or length rules, and history may repeat or lack IDs.
+ */
+internal class ReplayToolCallIds(private val maxLength: Int = 64) {
+    private val used = HashSet<String>()
+
+    private fun isPortable(id: String) = id.length <= maxLength &&
+        id.all { it in 'a'..'z' || it in 'A'..'Z' || it in '0'..'9' || it == '_' || it == '-' }
+
+    fun assign(calls: List<ToolCallRecord>): List<String> = calls.map { tc ->
+        val raw = tc.id.trim().ifEmpty { "call_${tc.name}" }
+        val base = if (isPortable(raw)) raw else "call_${raw.hashCode().toUInt().toString(16)}"
+        var candidate = base
+        var suffix = 1
+        while (!used.add(candidate)) {
+            suffix++
+            val suffixStr = "_$suffix"
+            candidate = "${base.take((maxLength - suffixStr.length).coerceAtLeast(1))}$suffixStr"
+        }
+        candidate
+    }
+}

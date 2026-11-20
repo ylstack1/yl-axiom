@@ -45,11 +45,45 @@ const BINARY_SUFFIXES: &[&str] = &[
 const SECRET_SUFFIXES: &[&str] = &[".jks", ".keystore", ".p12", ".pfx"];
 const SECRET_NAMES: &[&str] = &["local.properties", ".env"];
 const MAX_KOTLIN_LINES: usize = 3000;
+pub const MAX_RUST_LINES: usize = 1500;
 const MAX_REPORTED_PER_RULE: usize = 15;
 pub const DOC_BUDGET_CHARS: usize = 10_000;
 pub const MAX_STATUS_CHARS: usize = 1400;
+const MAX_DOC_BACKTICKS: usize = 16;
+
+const BANNED_MODEL_REFS: &[&str] = &[
+    "gpt-4o",
+    "gpt-4.1",
+    "gpt-4-turbo",
+    "gpt-5",
+    "claude-3-5",
+    "claude-3-7",
+    "claude-sonnet-4",
+    "claude-opus-4",
+    "gemini-1.5",
+    "gemini-2.0",
+    "gemini-2.5",
+    "o3-mini",
+    "o4-mini",
+    "deepseek-r1",
+    "deepseek-v3",
+];
+
+const BANNED_DEVICE_REFS: &[&str] = &[
+    "OnePlus", "Xiaomi", "MIUI", "HyperOS", "Samsung", "Huawei", "OPPO", "Vivo", "Realme",
+];
+
+const SECRET_TOKEN_PREFIXES: &[(&str, &str)] = &[
+    ("sk-", "proj-"),
+    ("sk-", "ant-"),
+    ("AIza", "Sy"),
+    ("ghp", "_"),
+    ("github_", "pat_"),
+    ("-----BEGIN ", "PRIVATE KEY-----"),
+    ("-----BEGIN ", "RSA PRIVATE KEY-----"),
+];
 const STATUS_HEADING: &str = "## Current status";
-const STATUS_FIELDS: &[&str] = &["**Source:**", "**Last verified", "**Next action:**"];
+const STATUS_FIELDS: &[&str] = &["Source:", "Last verified", "Next action:"];
 
 const IMPLICIT_IMPORTS: &[&str] = &[
     "getValue",
@@ -215,9 +249,12 @@ pub fn check_files(files: &BTreeMap<String, Vec<u8>>) -> Vec<Problem> {
     check_dead_code(&kotlin_texts, &stripped, &mut problems);
     check_file_sizes(&kotlin_texts, &mut problems);
     check_banned(&kotlin_texts, &stripped, &mut problems);
+    check_rust_quality(files, &mut problems);
+    check_hardcoded_refs(files, &mut problems);
     check_docs(files, &mut problems);
     check_links(files, &mut problems);
     check_secrets(files, &mut problems);
+    check_tracked_size_and_artifacts(files, &mut problems);
     problems
 }
 
@@ -234,7 +271,7 @@ fn has_suffix_ci(path: &str, suffixes: &[&str]) -> bool {
 }
 
 fn source_set(path: &str) -> &str {
-    let Some(rest) = path.strip_prefix("composeApp/src/") else {
+    let Some(rest) = path.strip_prefix("mobile/compose-app/src/") else {
         return "";
     };
     rest.split('/').next().unwrap_or("")
@@ -346,7 +383,9 @@ pub fn strip_kotlin_comments(text: &str) -> String {
             }
             i = (i + 2).min(n);
         } else {
-            let ch = text[i..].chars().next().unwrap();
+            let Some(ch) = text[i..].chars().next() else {
+                break;
+            };
             out.push(ch);
             i += ch.len_utf8();
         }
@@ -775,6 +814,7 @@ fn check_docs(files: &BTreeMap<String, Vec<u8>>, out: &mut Vec<Problem>) {
                         ),
                     });
                 }
+                check_doc_style(path, &text, out);
             }
         }
     }
@@ -842,10 +882,65 @@ fn check_docs(files: &BTreeMap<String, Vec<u8>>, out: &mut Vec<Problem>) {
     }
 }
 
+fn check_doc_style(path: &str, text: &str, out: &mut Vec<Problem>) {
+    for (idx, line) in text.lines().enumerate() {
+        let line_no = idx + 1;
+        let trimmed = line.trim_start();
+        let checks = [
+            (
+                line.contains('\u{2014}'),
+                "Avoid em dashes in workflow docs; use plain punctuation or ASCII hyphens.",
+            ),
+            (
+                line.contains("**"),
+                "Avoid bold markdown (**) in workflow docs; keep them plain.",
+            ),
+            (
+                trimmed.starts_with("###"),
+                "Avoid deep headings (###+) in workflow docs; use ## or plain labels.",
+            ),
+            (
+                trimmed.starts_with("```") || trimmed.starts_with("~~~"),
+                "Avoid fenced code blocks in workflow docs.",
+            ),
+            (
+                trimmed.starts_with('|'),
+                "Avoid markdown tables in workflow docs.",
+            ),
+            (
+                line.contains("]("),
+                "Avoid markdown links ([text](url)) in workflow docs; write plain paths or URLs.",
+            ),
+        ];
+        for (hit, message) in checks {
+            if hit {
+                out.push(Problem {
+                    rule: "docs",
+                    path: path.into(),
+                    line: line_no,
+                    message: message.into(),
+                });
+            }
+        }
+    }
+    let backticks = text.bytes().filter(|&b| b == b'`').count();
+    if backticks > MAX_DOC_BACKTICKS {
+        out.push(Problem {
+            rule: "docs",
+            path: path.into(),
+            line: 0,
+            message: format!(
+                "{backticks} backticks exceeds the {MAX_DOC_BACKTICKS}-backtick cap; keep workflow docs plain."
+            ),
+        });
+    }
+}
+
 fn parse_task_id(line: &str) -> Option<&str> {
     let rest = line
-        .strip_prefix("- [ ] **")
-        .or_else(|| line.strip_prefix("- [x] **"))?;
+        .strip_prefix("- [ ] ")
+        .or_else(|| line.strip_prefix("- [x] "))?;
+    let rest = rest.trim_prefix("**");
     let b = rest.as_bytes();
     let mut i = 0usize;
     while i < b.len() && b[i].is_ascii_digit() {
@@ -871,8 +966,126 @@ fn parse_task_id(line: &str) -> Option<&str> {
     Some(&rest[..i])
 }
 
+fn is_rust_prod_file(path: &str) -> bool {
+    path.starts_with("crates/") && path.contains("/src/") && path.ends_with(".rs")
+}
+
+fn is_hardcoded_ref_scope(path: &str) -> bool {
+    if path == "README.md" {
+        return true;
+    }
+    if path == "crates/parchment-xtask/src/quality.rs" {
+        return false;
+    }
+    if is_rust_prod_file(path) {
+        return true;
+    }
+    is_kotlin(path) && MAIN_SETS.contains(&source_set(path))
+}
+
+fn is_model_char(b: u8) -> bool {
+    b.is_ascii_alphanumeric() || matches!(b, b'_' | b'-' | b'.')
+}
+
+fn contains_token_ci(line_lower: &str, token: &str) -> bool {
+    let b = line_lower.as_bytes();
+    let mut from = 0usize;
+    while let Some(rel) = line_lower[from..].find(token) {
+        let pos = from + rel;
+        let end = pos + token.len();
+        let left_ok = pos == 0 || !is_model_char(b[pos - 1]);
+        let right_ok = end == b.len()
+            || !is_model_char(b[end])
+            || (b[end] == b'.' && !b.get(end + 1).is_some_and(u8::is_ascii_alphanumeric));
+        if left_ok && right_ok {
+            return true;
+        }
+        from = end;
+    }
+    false
+}
+
+fn check_rust_quality(files: &BTreeMap<String, Vec<u8>>, out: &mut Vec<Problem>) {
+    for (path, data) in files {
+        if !is_rust_prod_file(path) {
+            continue;
+        }
+        let text = String::from_utf8_lossy(data);
+        let lines = text.bytes().filter(|&b| b == b'\n').count();
+        if lines > MAX_RUST_LINES {
+            out.push(Problem {
+                rule: "file-size",
+                path: path.clone(),
+                line: 0,
+                message: format!(
+                    "{lines} lines exceeds the Rust limit of {MAX_RUST_LINES}. Split by responsibility; do not raise the limit."
+                ),
+            });
+        }
+        if path == "crates/parchment-xtask/src/quality.rs" {
+            continue;
+        }
+        for (idx, line) in text.lines().enumerate() {
+            if line.trim_start().starts_with("#[cfg(test)]") {
+                break;
+            }
+            if contains_word(line, "FIXME") || contains_unqualified_call(line, "TODO(") {
+                out.push(Problem {
+                    rule: "banned",
+                    path: path.clone(),
+                    line: idx + 1,
+                    message:
+                        "Track unfinished work in TODO.md, not FIXME/TODO( markers in Rust source."
+                            .into(),
+                });
+            }
+        }
+    }
+}
+
+fn check_hardcoded_refs(files: &BTreeMap<String, Vec<u8>>, out: &mut Vec<Problem>) {
+    for (path, data) in files {
+        if !is_hardcoded_ref_scope(path) {
+            continue;
+        }
+        let text = String::from_utf8_lossy(data);
+        for (idx, line) in text.lines().enumerate() {
+            if is_rust_prod_file(path) && line.trim_start().starts_with("#[cfg(test)]") {
+                break;
+            }
+            let lower = line.to_ascii_lowercase();
+            for &model in BANNED_MODEL_REFS {
+                if contains_token_ci(&lower, model) {
+                    out.push(Problem {
+                        rule: "hardcoded-ref",
+                        path: path.clone(),
+                        line: idx + 1,
+                        message: format!(
+                            "Remove hardcoded model reference '{model}'; derive dynamically or document in docs/."
+                        ),
+                    });
+                    break;
+                }
+            }
+            for &device in BANNED_DEVICE_REFS {
+                if contains_word(line, device) {
+                    out.push(Problem {
+                        rule: "hardcoded-ref",
+                        path: path.clone(),
+                        line: idx + 1,
+                        message: format!(
+                            "Remove device/brand reference '{device}'; fix quirks generically and document profiles in docs/."
+                        ),
+                    });
+                    break;
+                }
+            }
+        }
+    }
+}
+
 fn check_secrets(files: &BTreeMap<String, Vec<u8>>, out: &mut Vec<Problem>) {
-    for path in files.keys() {
+    for (path, data) in files {
         let name = path.rsplit('/').next().unwrap_or(path.as_str());
         if has_suffix_ci(path, SECRET_SUFFIXES) || SECRET_NAMES.contains(&name) {
             out.push(Problem {
@@ -880,6 +1093,65 @@ fn check_secrets(files: &BTreeMap<String, Vec<u8>>, out: &mut Vec<Problem>) {
                 path: path.clone(),
                 line: 0,
                 message: "Private signing or credential files must never be tracked.".into(),
+            });
+            continue;
+        }
+        if path == "crates/parchment-xtask/src/quality.rs"
+            || has_suffix_ci(path, BINARY_SUFFIXES)
+            || data.iter().take(8000).any(|&b| b == 0)
+        {
+            continue;
+        }
+        let text = String::from_utf8_lossy(data);
+        for (idx, line) in text.lines().enumerate() {
+            for &(a, b) in SECRET_TOKEN_PREFIXES {
+                let pat = format!("{a}{b}");
+                if line.contains(&pat) {
+                    out.push(Problem {
+                        rule: "secrets",
+                        path: path.clone(),
+                        line: idx + 1,
+                        message:
+                            "Possible credential or private key literal detected in tracked file."
+                                .into(),
+                    });
+                    break;
+                }
+            }
+        }
+    }
+}
+
+const MAX_TRACKED_FILE_BYTES: usize = 1_048_576; // 1.0 MiB cap for any tracked file
+const BANNED_ARTIFACT_SUFFIXES: &[&str] = &[
+    ".rlib", ".rmeta", ".pdb", ".exe", ".dll", ".so", ".apk", ".aab", ".jar", ".aot", ".jsa",
+    ".msi", ".o", ".a", ".lib",
+];
+
+fn check_tracked_size_and_artifacts(files: &BTreeMap<String, Vec<u8>>, out: &mut Vec<Problem>) {
+    for (path, data) in files {
+        if path == "gradle/wrapper/gradle-wrapper.jar" {
+            continue;
+        }
+        if has_suffix_ci(path, BANNED_ARTIFACT_SUFFIXES) {
+            out.push(Problem {
+                rule: "repo-size",
+                path: path.clone(),
+                line: 1,
+                message: "Compiled build artifact must not be tracked in git.".into(),
+            });
+            continue;
+        }
+        if data.len() > MAX_TRACKED_FILE_BYTES {
+            out.push(Problem {
+                rule: "repo-size",
+                path: path.clone(),
+                line: 1,
+                message: format!(
+                    "Tracked file is {} KiB (limit {} KiB); keep build outputs and large binaries out of git.",
+                    data.len() / 1024,
+                    MAX_TRACKED_FILE_BYTES / 1024
+                ),
             });
         }
     }
@@ -1045,7 +1317,7 @@ mod tests {
         m.insert("AGENTS.md".into(), b"Run cargo xtask affected.\n".to_vec());
         m.insert(
             "TODO.md".into(),
-            b"## Current status\n- **Source:** a\n- **Last verified:** b\n- **Next action:** c\n\n## Open\n- [ ] **1.1 First:** ok\n".to_vec(),
+            b"## Current status\n- Source: a\n- Last verified: b\n- Next action: c\n\n## Open\n- [ ] 1.1 First: ok\n".to_vec(),
         );
         m
     }
@@ -1065,7 +1337,7 @@ mod tests {
     fn enforces_10k_char_doc_budgets_and_unique_tasks() {
         let mut files = base_docs();
         let prefix = "cargo xtask\n";
-        let exact = format!("{prefix}{}", "—".repeat(DOC_BUDGET_CHARS - prefix.len()));
+        let exact = format!("{prefix}{}", "é".repeat(DOC_BUDGET_CHARS - prefix.len()));
         files.insert("AGENTS.md".into(), exact.as_bytes().to_vec());
         assert!(check_files(&files).is_empty());
 
@@ -1076,7 +1348,7 @@ mod tests {
         let mut dup = base_docs();
         dup.get_mut("TODO.md")
             .unwrap()
-            .extend_from_slice(b"- [x] **1.1 Again:** dup\n");
+            .extend_from_slice(b"- [x] 1.1 Again: dup\n");
         assert!(
             check_files(&dup)
                 .iter()
@@ -1085,10 +1357,42 @@ mod tests {
     }
 
     #[test]
+    fn enforces_plain_workflow_docs_without_em_dashes() {
+        let mut files = base_docs();
+        files.insert(
+            "AGENTS.md".into(),
+            format!(
+                "cargo xtask \u{2014} **bad**\n### deep\n[link](TODO.md)\n| a | b |\n```\n{}\n",
+                "`x` ".repeat(9)
+            )
+            .into_bytes(),
+        );
+        let msgs: Vec<String> = check_files(&files)
+            .into_iter()
+            .filter(|p| p.rule == "docs" && p.path == "AGENTS.md")
+            .map(|p| p.message)
+            .collect();
+        for needle in [
+            "em dashes",
+            "bold",
+            "deep headings",
+            "markdown links",
+            "tables",
+            "fenced",
+            "backticks",
+        ] {
+            assert!(
+                msgs.iter().any(|m| m.contains(needle)),
+                "missing '{needle}' in {msgs:?}"
+            );
+        }
+    }
+
+    #[test]
     fn enforces_kotlin_imports_banned_and_dead_code() {
         let mut files = base_docs();
         files.insert(
-            "composeApp/src/commonMain/kotlin/io/parchment/ai/A.kt".into(),
+            "mobile/compose-app/src/commonMain/kotlin/io/parchment/ai/A.kt".into(),
             b"package a\nimport x.Unused\nval v = b(providerProtocol = profile.protocol)\nfun main() { println(v) }\n".to_vec(),
         );
         let probs = check_files(&files);
@@ -1118,9 +1422,72 @@ mod tests {
     }
 
     #[test]
-    fn rejects_tracked_signing_keys() {
+    fn rejects_tracked_signing_keys_and_leaked_secret_tokens() {
         let mut files = base_docs();
         files.insert("release.p12".into(), Vec::new());
-        assert!(check_files(&files).iter().any(|p| p.rule == "secrets"));
+        files.insert(
+            "crates/parchment-model/src/leak.rs".into(),
+            format!(
+                "const K: &str = \"{}{}{}\";\n",
+                "sk-", "proj-", "1234567890"
+            )
+            .into_bytes(),
+        );
+        let probs = check_files(&files);
+        assert_eq!(probs.iter().filter(|p| p.rule == "secrets").count(), 2);
+    }
+
+    #[test]
+    fn enforces_rust_file_size_and_banned_markers() {
+        let mut files = base_docs();
+        let big = "fn ok() {}\n".repeat(MAX_RUST_LINES + 1);
+        files.insert("crates/parchment-model/src/big.rs".into(), big.into_bytes());
+        files.insert(
+            "crates/parchment-model/src/wip.rs".into(),
+            b"// FIXME: broken\nfn x() {}\n#[cfg(test)]\nmod tests { /* FIXME: ignored in test */ }\n".to_vec(),
+        );
+        let probs = check_files(&files);
+        assert!(
+            probs
+                .iter()
+                .any(|p| p.rule == "file-size" && p.path.ends_with("big.rs"))
+        );
+        assert_eq!(
+            probs
+                .iter()
+                .filter(|p| p.rule == "banned" && p.path.ends_with("wip.rs"))
+                .count(),
+            1
+        );
+    }
+
+    #[test]
+    fn enforces_hardcoded_model_and_device_ban() {
+        let mut files = base_docs();
+        files.insert(
+            "crates/parchment-protocol/src/m.rs".into(),
+            b"const D: &str = \"gpt-4.1\";\nconst B: &str = \"OnePlus workaround\";\n".to_vec(),
+        );
+        files.insert(
+            "README.md".into(),
+            b"Works great with claude-sonnet-4.\n".to_vec(),
+        );
+        let probs = check_files(&files);
+        let refs: Vec<_> = probs.iter().filter(|p| p.rule == "hardcoded-ref").collect();
+        assert_eq!(refs.len(), 3);
+    }
+
+    #[test]
+    fn rejects_bloated_files_and_compiled_artifacts() {
+        let mut files = base_docs();
+        files.insert("target_leak/app.exe".into(), vec![0u8; 64]);
+        files.insert(
+            "docs/images/huge.png".into(),
+            vec![0u8; MAX_TRACKED_FILE_BYTES + 1],
+        );
+        files.insert("gradle/wrapper/gradle-wrapper.jar".into(), vec![0u8; 128]);
+        let probs = check_files(&files);
+        let sz: Vec<_> = probs.iter().filter(|p| p.rule == "repo-size").collect();
+        assert_eq!(sz.len(), 2);
     }
 }

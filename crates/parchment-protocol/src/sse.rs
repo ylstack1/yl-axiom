@@ -115,7 +115,7 @@ impl SseFramer {
     pub fn finish(&mut self, out: &mut Vec<SseFrame>) -> Result<Option<String>, ProtocolError> {
         if !self.buf.is_empty() {
             let tail = self.buf.split();
-            let slice = tail.strip_suffix(b"\r").unwrap_or(&tail);
+            let slice = tail.trim_suffix(b"\r");
             self.process_line(slice, out)?;
         }
         self.flush_pending(out);
@@ -237,7 +237,7 @@ impl SseFramer {
 
 /// SSE spec strips at most one leading ASCII space after the colon (and trims trailing whitespace).
 fn strip_sse_field_space(rest: &str) -> &str {
-    rest.strip_prefix(' ').unwrap_or(rest).trim_end()
+    rest.trim_prefix(' ').trim_end()
 }
 
 /// Fast structural scan verifying whether `s` is a single complete JSON object `{...}`

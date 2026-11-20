@@ -32,6 +32,8 @@ on:
 permissions:
   contents: read
 
+cache-mode: read
+
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: ${{ github.event_name != 'schedule' }}
@@ -41,6 +43,7 @@ jobs:
     name: Select Languages
     runs-on: ubuntu-latest
     timeout-minutes: 5
+    cache-mode: none
     outputs:
       has_targets: ${{ steps.select.outputs.has_targets }}
       matrix: ${{ steps.select.outputs.matrix }}
@@ -61,6 +64,16 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           BASE_SHA: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event.before }}
         run: cargo xtask ci plan codeql
+
+      - name: Upload Prebuilt xtask Binary for Java/Kotlin Build
+        if: contains(steps.select.outputs.matrix, '"java-kotlin"')
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: parchment-xtask-linux
+          path: target/debug/parchment-xtask
+          compression-level: 0
+          retention-days: 1
+          if-no-files-found: error
 
   analyze:
     name: Analyze (${{ matrix.language }})
@@ -83,9 +96,12 @@ jobs:
           fetch-depth: 1
           fetch-tags: false
 
-      - name: Set up Rust Toolchain
+      - name: Download Prebuilt xtask Binary
         if: matrix.build-mode == 'manual'
-        uses: dtolnay/rust-toolchain@39008827e6b4319a349e9a42dfc90579dd25f1ca # stable
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: parchment-xtask-linux
+          path: ${{ runner.temp }}/xtask
 
       - name: Set up JDK 25 (Temurin)
         if: matrix.build-mode == 'manual'
@@ -99,7 +115,7 @@ jobs:
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: /usr/local/lib/android/sdk/platforms/android-37*
-          key: android-platform-37-v2-${{ runner.os }}-${{ hashFiles('gradle/libs.versions.toml') }}
+          key: android-platform-37-v3-${{ runner.os }}
 
       - name: Write Android SDK License Hashes
         if: matrix.build-mode == 'manual'
@@ -111,7 +127,8 @@ jobs:
       - name: Set up Gradle
         if: matrix.build-mode == 'manual'
         uses: gradle/actions/setup-gradle@8da46b539cd8fe6ab27ca75128919a18d757604c # v6.4.1
-
+        with:
+          cache-read-only: true
       - name: Initialize CodeQL
         uses: github/codeql-action/init@33d7b85da1a04171e211befe2c739303b9a4c066 # v4.39.3
         with:
@@ -123,8 +140,9 @@ jobs:
       - name: Compile
         if: matrix.build-mode == 'manual'
         run: |
-          chmod +x ./gradlew
-          cargo xtask ci run-gradle -- :composeApp:compileKotlinDesktop :composeApp:compileAndroidMain \
+          set -euo pipefail
+          chmod +x ./gradlew "$RUNNER_TEMP/xtask/parchment-xtask"
+          "$RUNNER_TEMP/xtask/parchment-xtask" ci run-gradle -- :composeApp:compileKotlinDesktop :composeApp:compileAndroidMain \
             -Dorg.gradle.jvmargs="-Xmx5g -XX:+UseParallelGC -XX:MaxMetaspaceSize=1g -Dfile.encoding=UTF-8" \
             -Pkotlin.parallel.tasks.in.project=true \
             --no-daemon --no-build-cache --no-configuration-cache --max-workers=4 \

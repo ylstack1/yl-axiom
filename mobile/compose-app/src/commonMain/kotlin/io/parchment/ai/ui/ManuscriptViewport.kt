@@ -1,0 +1,2381 @@
+package io.parchment.ai.ui
+
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.foundation.Image
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsDraggedAsState
+import androidx.compose.foundation.interaction.collectIsHoveredAsState
+import androidx.compose.foundation.interaction.collectIsPressedAsState
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.FlowRow
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyListState
+import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.BasicText
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.derivedStateOf
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
+import androidx.compose.runtime.withFrameNanos
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.isAltPressed
+import androidx.compose.ui.input.key.isCtrlPressed
+import androidx.compose.ui.input.key.isMetaPressed
+import androidx.compose.ui.input.key.isShiftPressed
+import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.onPreviewKeyEvent
+import androidx.compose.ui.input.key.type
+import androidx.compose.ui.input.pointer.PointerEventType
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.layout.layout
+import androidx.compose.ui.layout.onPlaced
+import androidx.compose.ui.layout.positionInParent
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import io.parchment.ai.harness.WorkspaceHarness
+import io.parchment.ai.model.AgentPermissionOverrides
+import io.parchment.ai.model.AgentPermissionResolver
+import io.parchment.ai.model.AppStateSnapshot
+import io.parchment.ai.model.AssistantAgent
+import io.parchment.ai.model.ChatSession
+import io.parchment.ai.model.GeneratedMediaItem
+import io.parchment.ai.model.MessageNavVisibility
+import io.parchment.ai.model.MessageRole
+import io.parchment.ai.model.PreferencesConfig
+import io.parchment.ai.model.PromptAttachment
+import io.parchment.ai.model.ProviderProfile
+import io.parchment.ai.model.ProviderProtocol
+import io.parchment.ai.model.QueuedPromptItem
+import io.parchment.ai.model.SendShortcutMode
+import io.parchment.ai.model.ViewMode
+import io.parchment.ai.model.WorkspaceMode
+import io.parchment.ai.network.AiProviderEngine
+import io.parchment.ai.network.RetryWait
+import io.parchment.ai.network.resolveModelModalityProfile
+import io.parchment.ai.platform.PlatformPickers
+import io.parchment.ai.platform.PlatformRuntime
+import io.parchment.ai.platform.PlatformVoice
+import io.parchment.ai.platform.PlatformWorkspace
+import io.parchment.ai.protocol.O200kTokenizer
+import io.parchment.ai.strings.Strings
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.IO
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+
+// ============================================================================================
+// The chat page: messages, the floating message navigator and the composer with steer and queue.
+// ============================================================================================
+@Composable
+internal fun ManuscriptViewport(
+    appState: AppStateSnapshot,
+    activeSession: ChatSession,
+    activeAssistant: AssistantAgent,
+    activeProfile: ProviderProfile,
+    preferences: PreferencesConfig,
+    showSessionInspector: Boolean,
+    onToggleSessionInspector: () -> Unit,
+    isStreaming: Boolean,
+    isCurrentlyThinkingPhase: Boolean,
+    streamingTargetNodeId: String,
+    streamingStatus: String,
+    streamingInteractionId: String,
+    /** Set while the run waits to send its request again; [onRetryNow] ends the wait. */
+    retryWait: RetryWait? = null,
+    onRetryNow: () -> Unit = {},
+    queuedPrompts: List<QueuedPromptItem>,
+    onRemoveQueuedPrompt: (String) -> Unit,
+    onSteerQueuedPromptNow: (QueuedPromptItem) -> Unit,
+    /** Read inside this composable, so typing recomposes the viewport and not the app root that calls it. */
+    readUserPromptInput: () -> String,
+    onUserPromptChange: (String) -> Unit,
+    readAssistantPrefillInput: () -> String,
+    onAssistantPrefillChange: (String) -> Unit,
+    showPrefillBox: Boolean,
+    onTogglePrefillBox: () -> Unit,
+    showComposerToolsDrawer: Boolean,
+    onComposerToolsDrawerChange: (Boolean) -> Unit,
+    isGoalModeEnabled: Boolean,
+    onToggleGoalMode: () -> Unit,
+    isLiveVoiceMode: Boolean,
+    isVoiceListening: Boolean,
+    onToggleLiveVoiceMode: () -> Unit,
+    onTriggerVoiceInput: () -> Unit,
+    pendingAttachments: List<PromptAttachment>,
+    onAddAttachment: () -> Unit,
+    onAttachWorkspaceFile: (String) -> Unit = {},
+    onReattachExistingAttachment: (PromptAttachment) -> Unit = {},
+    onPasteClipboardMedia: () -> Boolean,
+    onRequestClearCurrentChat: () -> Unit,
+    onRemoveAttachment: (String) -> Unit,
+    onInspectAttachment: (PromptAttachment) -> Unit,
+    onInspectGeneratedImage: (GeneratedMediaItem) -> Unit,
+    onExportChatMarkdown: () -> Unit,
+    onExportChatJson: () -> Unit = {},
+    onOpenProviderSettings: () -> Unit,
+    onSend: () -> Unit,
+    onSendGuidedDirection: () -> Unit,
+    onSteerNow: () -> Unit,
+    onQueuePrompt: () -> Unit,
+    onImpersonateDraft: () -> Unit,
+    onAutoSummarizeStory: () -> Unit,
+    onCompactContext: () -> Unit,
+    onSwitchWorkspaceMode: (WorkspaceMode) -> Unit = {},
+    onSaveReplyAsSkill: ((titleHint: String, content: String) -> Unit)? = null,
+    onRewindToNode: (Int) -> Unit,
+    onForkSessionFromNode: (Int) -> Unit,
+    onStopStream: () -> Unit,
+    onUpdateSession: ((ChatSession) -> ChatSession) -> Unit,
+    onUpdateProfile: ((ProviderProfile) -> ProviderProfile) -> Unit,
+    onRegenerateNode: (Int) -> Unit,
+    onTranslateNode: (Int) -> Unit = {},
+    onContinueAssistantNode: (Int) -> Unit,
+    jumpToNodeId: String = "",
+    onJumpHandled: () -> Unit = {},
+    onTogglePinnedReply: (nodeId: String) -> Unit = {}
+) {
+    val userPromptInput = readUserPromptInput()
+    val assistantPrefillInput = readAssistantPrefillInput()
+    val p = LocalParchmentPalette.current
+    val scope = rememberCoroutineScope()
+    val listState = remember(activeSession.id) {
+        val startAtBottom = preferences.autoScrollToBottomOnOpen && activeSession.messages.isNotEmpty() && jumpToNodeId.isBlank()
+        LazyListState(
+            firstVisibleItemIndex = if (startAtBottom) activeSession.messages.size else 0,
+            firstVisibleItemScrollOffset = if (startAtBottom) 100_000 else 0
+        )
+    }
+    val reduceMotion = LocalReduceMotion.current
+    var showMinimapTreeModal by remember { mutableStateOf(false) }
+    var showContextBreakdownPopover by remember { mutableStateOf(false) }
+
+    // Following the newest text:
+    // 1. Scrolls to the bottom spacer with a large offset, so a long reply keeps its bottom edge in view
+    //    instead of jumping to its top.
+    // 2. Stops following the instant the user drags or scrolls away, and resumes only when they scroll
+    //    back within the bottom threshold or tap Latest.
+    val isListDragged by listState.interactionSource.collectIsDraggedAsState()
+    var isPointerInteracting by remember(activeSession.id) { mutableStateOf(false) }
+    var userDisengagedAutoFollow by remember(activeSession.id) { mutableStateOf(false) }
+    var wasScrolledUpSincePause by remember(activeSession.id) { mutableStateOf(false) }
+    var isProgrammaticAutoFollow by remember { mutableStateOf(false) }
+    var wasStreamingFollow by remember(activeSession.id) { mutableStateOf(false) }
+
+    val isScrolledUpFromBottom by remember(activeSession.id, activeSession.messages.size) {
+        derivedStateOf {
+            if (activeSession.messages.isEmpty()) {
+                false
+            } else {
+                val layout = listState.layoutInfo
+                val lastVisible = layout.visibleItemsInfo.lastOrNull()
+                val total = layout.totalItemsCount
+                if (lastVisible == null || total <= 0) {
+                    false
+                } else {
+                    val overhangPx = (lastVisible.offset + lastVisible.size) - layout.viewportEndOffset
+                    lastVisible.index < total - 1 || overhangPx > 24
+                }
+            }
+        }
+    }
+
+    suspend fun jumpToBottomEdge() {
+        isProgrammaticAutoFollow = true
+        try {
+            val totalItems = listState.layoutInfo.totalItemsCount
+            val bottomSpacerIdx = (totalItems - 1).coerceAtLeast(activeSession.messages.size)
+            listState.scrollToItem(bottomSpacerIdx, scrollOffset = 100_000)
+        } finally {
+            isProgrammaticAutoFollow = false
+        }
+    }
+
+    fun resumeAutoFollowAndJumpToBottom() {
+        userDisengagedAutoFollow = false
+        wasScrolledUpSincePause = false
+        isPointerInteracting = false
+        scope.launch {
+            jumpToBottomEdge()
+        }
+    }
+
+    // Auto-scroll to bottom when opening, switching to, or finishing hydration of a large chat
+    LaunchedEffect(activeSession.id, activeSession.isCompactStub, preferences.autoScrollToBottomOnOpen) {
+        userDisengagedAutoFollow = false
+        wasScrolledUpSincePause = false
+        isPointerInteracting = false
+        wasStreamingFollow = false
+        if (activeSession.messages.isNotEmpty() && jumpToNodeId.isBlank()) {
+            snapshotFlow { listState.layoutInfo.totalItemsCount }.first { it > 0 }
+            if (preferences.autoScrollToBottomOnOpen) {
+                if (!userDisengagedAutoFollow && !isListDragged && !isPointerInteracting) {
+                    jumpToBottomEdge()
+                }
+                withFrameNanos { }
+                if (!userDisengagedAutoFollow && !isListDragged && !isPointerInteracting) {
+                    jumpToBottomEdge()
+                }
+            } else {
+                listState.scrollToItem(0)
+            }
+        }
+    }
+
+    // Opening a pinned reply: wait for the full chat (stubs hold only previews), then put that message at the top.
+    LaunchedEffect(activeSession.id, jumpToNodeId, activeSession.isCompactStub) {
+        if (jumpToNodeId.isBlank() || activeSession.isCompactStub) return@LaunchedEffect
+        val index = activeSession.messages.indexOfFirst { it.id == jumpToNodeId }
+        if (index >= 0) {
+            userDisengagedAutoFollow = true
+            wasScrolledUpSincePause = true
+            snapshotFlow { listState.layoutInfo.totalItemsCount }.first { it > index + 1 }
+            listState.scrollToItem(index + 1) // Item 0 is the top spacer.
+        }
+        onJumpHandled()
+    }
+
+    LaunchedEffect(isStreaming) {
+        if (isStreaming && !isScrolledUpFromBottom) {
+            userDisengagedAutoFollow = false
+            wasScrolledUpSincePause = false
+        }
+    }
+
+    LaunchedEffect(isListDragged, isPointerInteracting, listState.isScrollInProgress, isScrolledUpFromBottom) {
+        val userMoving = isListDragged || isPointerInteracting || (!isProgrammaticAutoFollow && listState.isScrollInProgress)
+        if (userMoving) {
+            if (isScrolledUpFromBottom) {
+                userDisengagedAutoFollow = true
+                wasScrolledUpSincePause = true
+            }
+        } else if (userDisengagedAutoFollow) {
+            if (isScrolledUpFromBottom) {
+                wasScrolledUpSincePause = true
+            } else if (wasScrolledUpSincePause) {
+                userDisengagedAutoFollow = false
+                wasScrolledUpSincePause = false
+            }
+        }
+    }
+
+    // The last reply's length, including its live text while it streams. It changes every streamed frame, so it is
+    // read in snapshotFlow and derived buckets below, never directly here: the viewport must not recompose per frame.
+    val lastVariant = activeSession.messages.lastOrNull()?.activeVariant
+    val lastLive = lastVariant?.let { LiveTurns.stateOf(it.id) }
+    val lastMsgLenState = remember(lastVariant, lastLive) {
+        derivedStateOf {
+            val v = lastVariant?.withLiveTurn(lastLive?.value)
+            if (v == null) 0 else v.content.length + v.thinkingSummary.length + v.trailingThinking.length + v.toolCalls.size
+        }
+    }
+    val lastAutoFollowMs = remember { longArrayOf(0L) }
+    val currentPreferences by rememberUpdatedState(preferences)
+    val currentSession by rememberUpdatedState(activeSession)
+
+    LaunchedEffect(isStreaming, activeSession.id) {
+        snapshotFlow { lastMsgLenState.value }.collectLatest { lastMsgContentLen ->
+            val preferences = currentPreferences
+            val activeSession = currentSession
+            if (!preferences.autoFollowBottom || activeSession.messages.isEmpty()) {
+                if (!isStreaming) {
+                    lastAutoFollowMs[0] = 0L
+                    wasStreamingFollow = false
+                }
+                return@collectLatest
+            }
+            val canFollowNow = !listState.isScrollInProgress &&
+                !isListDragged &&
+                !isPointerInteracting &&
+                !userDisengagedAutoFollow
+            if (!isStreaming) {
+                val streamJustFinished = wasStreamingFollow
+                wasStreamingFollow = false
+                lastAutoFollowMs[0] = 0L
+                if (streamJustFinished && canFollowNow && listState.canScrollForward) {
+                    withFrameNanos { }
+                    if (!isListDragged && !isPointerInteracting && !userDisengagedAutoFollow) {
+                        jumpToBottomEdge()
+                    }
+                }
+                return@collectLatest
+            }
+            wasStreamingFollow = true
+            if (!canFollowNow) return@collectLatest
+            val now = PlatformRuntime.currentTimeMillis()
+            val elapsed = now - lastAutoFollowMs[0]
+            if (lastAutoFollowMs[0] != 0L && elapsed in 0L until 48L) {
+                kotlinx.coroutines.delay(48L - elapsed)
+            }
+            if (preferences.autoFollowBottom &&
+                activeSession.messages.isNotEmpty() &&
+                !listState.isScrollInProgress &&
+                !isListDragged &&
+                !isPointerInteracting &&
+                !userDisengagedAutoFollow &&
+                listState.canScrollForward
+            ) {
+                lastAutoFollowMs[0] = PlatformRuntime.currentTimeMillis()
+                jumpToBottomEdge()
+            }
+        }
+    }
+
+    // While streaming, recount the context breakdown every 128 characters rather than on every frame:
+    // counting the whole history is too costly to repeat per character.
+    val throttledBreakdownTrigger by remember(isStreaming, lastMsgLenState, lastVariant) {
+        derivedStateOf {
+            val len = lastMsgLenState.value
+            if (isStreaming) (len / 128) * 128 + (lastVariant?.toolCalls?.size ?: 0) else len
+        }
+    }
+    val ownedUtilityRecords = remember(activeSession.id, activeSession.utilityUsageRecords) {
+        activeSession.utilityUsageRecords.filter { it.ownerSessionId.isBlank() || it.ownerSessionId == activeSession.id }
+    }
+    val sessionSpend = remember(
+        activeSession.messages.takeUnless { isStreaming }, activeSession.id, activeSession.modelOverride,
+        activeSession.messages.size, activeSession.messages.sumOf { it.variants.size }, throttledBreakdownTrigger,
+        isStreaming, activeProfile, ownedUtilityRecords
+    ) {
+        sessionSpendSummary(activeSession, activeProfile)
+    }
+    val sessionTotalCostUsd = sessionSpend.estimateUsd
+    val streamingPrefixSignature = if (isStreaming) {
+        var acc = activeSession.messages.size.toLong()
+        for (i in 0 until (activeSession.messages.size - 1).coerceAtLeast(0)) {
+            val node = activeSession.messages[i]
+            acc = acc * 31L + node.id.hashCode()
+            acc = acc * 31L + node.activeVariantIndex
+            acc = acc * 31L + node.activeVariant.id.hashCode()
+            if (node.includedInContext) acc += 17L
+        }
+        acc
+    } else 0L
+    // Counting the whole chat (and reading AGENTS.md on a cache miss) is too slow for the UI thread, so the exact
+    // count runs on Dispatchers.Default. Until it lands, a chat shows a length-based estimate, never another chat's.
+    val baseContextPrefixState = remember(activeSession.id) {
+        mutableStateOf(O200kTokenizer.estimateBaseContextPrefixBreakdown(activeSession, activeAssistant, activeProfile))
+    }
+    LaunchedEffect(
+        activeSession.messages.takeUnless { isStreaming },
+        streamingPrefixSignature,
+        activeSession.id,
+        activeSession.modelOverride,
+        activeSession.storySummary,
+        activeSession.systemPrompt,
+        activeSession.authorsNote,
+        activeSession.authorsNoteDepth,
+        activeSession.fragments,
+        activeSession.activeCard,
+        activeSession.workspaceMode,
+        activeSession.workspacePath,
+        activeAssistant,
+        activeProfile,
+        appState.globalWorldBook,
+        activeSession.messages.size,
+        isGoalModeEnabled,
+        isStreaming
+    ) {
+        val session = activeSession
+        val assistant = activeAssistant
+        val profile = activeProfile
+        val goalMode = isGoalModeEnabled
+        val worldBook = appState.globalWorldBook
+        val excludeLast = isStreaming
+        baseContextPrefixState.value = withContext(Dispatchers.Default) {
+            O200kTokenizer.computeBaseContextPrefixBreakdown(
+                session = session,
+                assistant = assistant,
+                profile = profile,
+                goalModeActive = goalMode,
+                globalWorldBook = worldBook,
+                excludeLastFromKeywords = excludeLast
+            )
+        }
+    }
+    val baseContextPrefix = baseContextPrefixState.value
+    val baseContextBreakdown = remember(baseContextPrefix, throttledBreakdownTrigger, isStreaming) {
+        // The live text is read unobserved: the trigger above already limits this to every 128 characters.
+        val lastNode = activeSession.messages.lastOrNull()?.let { node ->
+            val live = androidx.compose.runtime.snapshots.Snapshot.withoutReadObservation { lastLive?.value }
+            if (live == null) node else node.copy(variants = node.variants.map { it.withLiveTurn(live) })
+        }
+        O200kTokenizer.applyLastTurnToBreakdown(baseContextPrefix, lastNode)
+    }
+    val pendingAttachmentsTokens = remember(pendingAttachments) {
+        O200kTokenizer.countAttachmentsTokens(pendingAttachments)
+    }
+    var exactDraftReady by remember(activeSession.id) { mutableStateOf(true) }
+    val firstDraftComposition = remember(activeSession.id) { booleanArrayOf(true) }
+    LaunchedEffect(activeSession.id, userPromptInput, assistantPrefillInput) {
+        if (firstDraftComposition[0]) {
+            firstDraftComposition[0] = false
+            exactDraftReady = true
+        } else if (userPromptInput.isEmpty() && assistantPrefillInput.isEmpty()) {
+            exactDraftReady = true
+        } else {
+            exactDraftReady = false
+            kotlinx.coroutines.delay(180L)
+            exactDraftReady = true
+        }
+    }
+    val contextBreakdown = remember(
+        baseContextBreakdown,
+        userPromptInput,
+        assistantPrefillInput,
+        pendingAttachments.size,
+        pendingAttachmentsTokens,
+        exactDraftReady
+    ) {
+        O200kTokenizer.applyComposerDraftToBreakdown(
+            baseBreakdown = baseContextBreakdown,
+            draftPrompt = userPromptInput,
+            draftPrefill = assistantPrefillInput,
+            pendingAttachments = pendingAttachments,
+            estimateDraft = !exactDraftReady,
+            precomputedAttachmentsTokens = pendingAttachmentsTokens
+        )
+    }
+    val liveContextTokens = contextBreakdown.totalUsedTokens
+
+    // The navigator stays visible for 5 seconds after scrolling stops or after one of its buttons is used.
+    var isMinimapScrollLingering by remember { mutableStateOf(false) }
+    var minimapInteractionTick by remember { mutableStateOf(0) }
+
+    LaunchedEffect(listState.isScrollInProgress, minimapInteractionTick, showMinimapTreeModal) {
+        if (listState.isScrollInProgress || showMinimapTreeModal || minimapInteractionTick > 0) {
+            isMinimapScrollLingering = true
+            if (!listState.isScrollInProgress && !showMinimapTreeModal) {
+                delay(5000L)
+                isMinimapScrollLingering = false
+            }
+        }
+    }
+
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .onPreviewKeyEvent { event ->
+                if (event.type == KeyEventType.KeyDown && event.key == Key.Escape) {
+                    when {
+                        showContextBreakdownPopover -> {
+                            showContextBreakdownPopover = false
+                            true
+                        }
+                        showMinimapTreeModal -> {
+                            showMinimapTreeModal = false
+                            true
+                        }
+                        else -> false
+                    }
+                } else {
+                    false
+                }
+            },
+        horizontalAlignment = Alignment.CenterHorizontally
+    ) {
+        // Chat notes and memory, opened from Notes in the top bar.
+        AnimatedVisibility(
+            visible = showSessionInspector,
+            enter = motionExpandEnter(),
+            exit = motionShrinkExit()
+        ) {
+            ChatNotesPanel(
+                activeSession = activeSession,
+                isStreaming = isStreaming,
+                onUpdateSession = onUpdateSession,
+                onExportChatMarkdown = onExportChatMarkdown,
+                onRequestClearCurrentChat = onRequestClearCurrentChat,
+                onToggleSessionInspector = onToggleSessionInspector,
+                onAutoSummarizeStory = onAutoSummarizeStory,
+                onCompactContext = onCompactContext
+            )
+        }
+
+        // The message list and the floating message navigator.
+        val win = LocalParchmentWindowSize.current
+        val userPicture = rememberFileImage(preferences.profilePicturePath).bitmap
+        BoxWithConstraints(
+            modifier = Modifier
+                .weight(1f)
+                .fillMaxWidth(),
+            contentAlignment = Alignment.TopCenter
+        ) {
+            val pageGutter = if (win.isCompact) 12.dp else 18.dp
+            val resolvedUserName = remember(activeSession.userName, preferences.profileName) {
+                activeSession.withProfileName(preferences).userName
+            }
+            val resolvedCharacterName = remember(activeSession.activeCard?.name, activeAssistant.id, activeAssistant.name) {
+                activeSession.activeCard?.name?.takeIf { it.isNotBlank() }
+                    ?: activeAssistant.name.takeIf { activeAssistant.id.isNotBlank() }.orEmpty()
+            }
+            LazyColumn(
+                state = listState,
+                contentPadding = PaddingValues(horizontal = maxOf(pageGutter, (maxWidth - p.maxReadingWidth) / 2 + pageGutter)),
+                modifier = Modifier
+                    .fillMaxHeight()
+                    .fillMaxWidth()
+                    .pointerInput(activeSession.id) {
+                        awaitPointerEventScope {
+                            while (true) {
+                                val ev = awaitPointerEvent()
+                                isPointerInteracting = ev.type != PointerEventType.Exit && ev.changes.any { it.pressed }
+                                if (ev.type == PointerEventType.Scroll) {
+                                    val dy = ev.changes.firstOrNull()?.scrollDelta?.y ?: 0f
+                                    if (dy < 0f) {
+                                        // Scrolling up via wheel/trackpad pauses auto-follow immediately.
+                                        userDisengagedAutoFollow = true
+                                    } else if (dy > 0f && userDisengagedAutoFollow && !isScrolledUpFromBottom) {
+                                        userDisengagedAutoFollow = false
+                                        wasScrolledUpSincePause = false
+                                    }
+                                }
+                            }
+                        }
+                    },
+                verticalArrangement = Arrangement.spacedBy(
+                    if (preferences.defaultViewMode == ViewMode.MANUSCRIPT) 16.dp else if (win.isCompact) 20.dp else 12.dp
+                )
+            ) {
+                item(key = "top-spacer", contentType = "spacer") { Spacer(Modifier.height(Space.s10)) }
+
+                if (activeSession.messages.isEmpty() && !(activeSession.isCompactStub && activeSession.displayMessageCount > 0)) {
+                    item(key = "empty-intro", contentType = "intro") {
+                        EmptyChatIntro(activeSession, activeAssistant, activeProfile, preferences, onUpdateSession, onOpenProviderSettings)
+                    }
+                }
+
+                itemsIndexed(
+                    items = activeSession.messages,
+                    key = { _, node -> node.id },
+                    contentType = { _, node -> node.role }
+                ) { index, node ->
+                    val latestIndex = rememberUpdatedState(index)
+                    val itemOnTogglePin = remember(node.id, onTogglePinnedReply) {
+                        { onTogglePinnedReply(node.id) }
+                    }
+                    val itemOnSelectVariant = remember(node.id, onUpdateSession) {
+                        { newIdx: Int ->
+                            val targetIdx = latestIndex.value
+                            onUpdateSession { sess ->
+                                sess.copy(
+                                    messages = sess.messages.mapIndexed { i, n ->
+                                        if (i == targetIdx && n.variants.isNotEmpty()) {
+                                            n.copy(activeVariantIndex = newIdx.coerceIn(0, n.variants.lastIndex))
+                                        } else {
+                                            n
+                                        }
+                                    }
+                                )
+                            }
+                        }
+                    }
+                    val itemOnSaveEditedText = remember(node.id, onUpdateSession, onRegenerateNode) {
+                        { newText: String, asNewBranch: Boolean, alsoRegenerate: Boolean ->
+                            val targetIdx = latestIndex.value
+                            val now = PlatformRuntime.currentTimeMillis()
+                            onUpdateSession { sess ->
+                                sess.copy(
+                                    messages = sess.messages.mapIndexed { i, n ->
+                                        if (i != targetIdx) n
+                                        else if (asNewBranch) {
+                                            val branched = n.activeVariant.copy(
+                                                id = "var-$now-branch",
+                                                content = newText,
+                                                providerInteractionId = "",
+                                                tokenMetrics = io.parchment.ai.model.TokenMetrics(),
+                                                apiUsageRecords = emptyList(),
+                                                createdAt = now
+                                            )
+                                            val updatedList = n.variants + branched
+                                            n.copy(variants = updatedList, activeVariantIndex = updatedList.lastIndex)
+                                        } else {
+                                            val updatedList = n.variants.mapIndexed { vIdx, v ->
+                                                if (vIdx == n.activeVariantIndex) v.copy(content = newText) else v
+                                            }
+                                            n.copy(variants = updatedList)
+                                        }
+                                    }
+                                )
+                            }
+                            if (alsoRegenerate) {
+                                onRegenerateNode(targetIdx)
+                            }
+                        }
+                    }
+                    val itemOnToggleContextMute = remember(node.id, onUpdateSession) {
+                        {
+                            val targetIdx = latestIndex.value
+                            onUpdateSession { sess ->
+                                sess.copy(
+                                    messages = sess.messages.mapIndexed { i, n ->
+                                        if (i == targetIdx) n.copy(includedInContext = !n.includedInContext) else n
+                                    }
+                                )
+                            }
+                        }
+                    }
+                    val itemOnDeleteCurrentVariant = remember(node.id, onUpdateSession) {
+                        {
+                            val targetIdx = latestIndex.value
+                            onUpdateSession { sess ->
+                                val target = sess.messages.getOrNull(targetIdx) ?: return@onUpdateSession sess
+                                if (target.variants.size <= 1) {
+                                    sess.copy(messages = sess.messages.filterIndexed { i, _ -> i != targetIdx })
+                                } else {
+                                    val curVarIdx = target.activeVariantIndex.coerceIn(0, target.variants.lastIndex)
+                                    val remainingVars = target.variants.filterIndexed { vIdx, _ -> vIdx != curVarIdx }
+                                    val nextVarIdx = curVarIdx.coerceAtMost(remainingVars.lastIndex)
+                                    sess.copy(
+                                        messages = sess.messages.mapIndexed { i, n ->
+                                            if (i == targetIdx) n.copy(variants = remainingVars, activeVariantIndex = nextVarIdx) else n
+                                        }
+                                    )
+                                }
+                            }
+                        }
+                    }
+                    val itemOnDeleteNode = remember(node.id, onUpdateSession) {
+                        {
+                            val targetIdx = latestIndex.value
+                            onUpdateSession { sess ->
+                                sess.copy(messages = sess.messages.filterIndexed { i, _ -> i != targetIdx })
+                            }
+                        }
+                    }
+                    val itemOnForkHere = remember(node.id, onForkSessionFromNode) { { onForkSessionFromNode(latestIndex.value) } }
+                    val itemOnRewindHere = remember(node.id, onRewindToNode) { { onRewindToNode(latestIndex.value) } }
+                    val itemOnRegenerate = remember(node.id, onRegenerateNode) { { onRegenerateNode(latestIndex.value) } }
+                    val itemOnTranslate = remember(node.id, onTranslateNode) { { onTranslateNode(latestIndex.value) } }
+                    val itemOnContinue = remember(node.id, onContinueAssistantNode) { { onContinueAssistantNode(latestIndex.value) } }
+                    val itemOnSaveAsSkill: (() -> Unit)? = if (onSaveReplyAsSkill != null && node.role == MessageRole.ASSISTANT) {
+                        remember(node.id, activeSession.title, node.activeVariant.content, onSaveReplyAsSkill) {
+                            { onSaveReplyAsSkill(activeSession.title, node.activeVariant.content) }
+                        }
+                    } else null
+                    MessageTurnItem(
+                        node = node,
+                        nodeIndex = index,
+                        isLatestTurn = index >= activeSession.messages.lastIndex - 1,
+                        userPicture = userPicture,
+                        viewMode = preferences.defaultViewMode,
+                        preferences = preferences,
+                        userName = resolvedUserName,
+                        characterName = resolvedCharacterName,
+                        assistantIconEmoji = activeAssistant.iconEmoji,
+                        providerName = activeProfile.name,
+                        inputPricePerM = activeProfile.inputPricePerM,
+                        outputPricePerM = activeProfile.outputPricePerM,
+                        isActivelyThinkingThisNode = isStreaming && isCurrentlyThinkingPhase && streamingTargetNodeId == node.id,
+                        onTogglePin = itemOnTogglePin,
+                        onSelectVariant = itemOnSelectVariant,
+                        onSaveEditedText = itemOnSaveEditedText,
+                        onToggleContextMute = itemOnToggleContextMute,
+                        onDeleteCurrentVariant = itemOnDeleteCurrentVariant,
+                        onDeleteNode = itemOnDeleteNode,
+                        onForkHere = itemOnForkHere,
+                        onRewindHere = itemOnRewindHere,
+                        onRegenerate = itemOnRegenerate,
+                        onTranslate = itemOnTranslate,
+                        onContinue = itemOnContinue,
+                        onSaveAsSkill = itemOnSaveAsSkill,
+                        onInspectAttachment = onInspectAttachment,
+                        onInspectGeneratedImage = onInspectGeneratedImage
+                    )
+                }
+
+                item { Spacer(Modifier.height(Space.s16)) }
+            }
+
+            val activeEffectiveModelId = activeSession.modelOverride
+                .ifBlank { activeProfile.defaultModel }
+            val activeModalityProfile = remember(
+                activeEffectiveModelId,
+                activeProfile.endpointPathOverride,
+                activeProfile.customModelSpecs
+            ) {
+                AiProviderEngine.resolveModelModalityProfile(activeProfile, activeEffectiveModelId)
+            }
+            val showFloatingAudioPill = isLiveVoiceMode ||
+                isVoiceListening ||
+                activeModalityProfile.isLiveRealtimeAudio
+
+            // Unified Bottom-Center Floating Stack:
+            // Stacked with 8 dp between them so the live audio pill never covers the Latest pill.
+            Column(
+                modifier = Modifier
+                    .align(Alignment.BottomCenter)
+                    .padding(bottom = Space.s12),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(Space.s8)
+            ) {
+                AnimatedVisibility(
+                    visible = showFloatingAudioPill,
+                    enter = motionPopEnter(),
+                    exit = motionPopExit()
+                ) {
+                    val audioPillShape = RoundedCornerShape(Radius.pill)
+                    Box(
+                        modifier = Modifier
+                            .clip(audioPillShape)
+                            .background(p.canvasBg.copy(alpha = 0.96f))
+                            .border(1.dp, p.accent, audioPillShape)
+                            .padding(horizontal = Space.s10, vertical = 5.dp)
+                    ) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(Space.s8)
+                        ) {
+                            if (isVoiceListening || isStreaming || isLiveVoiceMode) {
+                                KissStreamingPulseDot(color = p.accent)
+                            } else {
+                                KissVectorIcon(icon = KissIcon.VOLUME_ON, tint = p.accent, size = IconSize.md)
+                            }
+                            val liveStatusLabel = when {
+                                isVoiceListening -> Strings.listening
+                                isStreaming -> Strings.liveAudioActive
+                                isLiveVoiceMode -> Strings.liveAudioOn
+                                else -> Strings.liveAudioReady
+                            }
+                            BasicText(
+                                text = liveStatusLabel,
+                                style = p.uiLabelStyle.copy(
+                                    color = p.primaryInk,
+                                    fontWeight = FontWeight.SemiBold,
+                                    fontSize = 12.sp
+                                )
+                            )
+                            // Mic listen / pause toggle
+                            Box(
+                                modifier = Modifier
+                                    .clip(RoundedCornerShape(Radius.pill))
+                                    .background(if (isVoiceListening) p.accent else p.sheetBg)
+                                    .border(LineWidth.hairline, p.border, RoundedCornerShape(Radius.pill))
+                                    .kissClickable { onTriggerVoiceInput() }
+                                    .padding(horizontal = Space.s8, vertical = 3.dp)
+                            ) {
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(Space.s4)
+                                ) {
+                                    KissVectorIcon(
+                                        icon = KissIcon.MIC,
+                                        tint = if (isVoiceListening) onFillInk(p.accent) else p.primaryInk,
+                                        size = IconSize.sm
+                                    )
+                                    BasicText(
+                                        text = if (isVoiceListening) Strings.pauseMic else Strings.speak,
+                                        style = p.uiLabelStyle.copy(
+                                            color = if (isVoiceListening) onFillInk(p.accent) else p.primaryInk,
+                                            fontWeight = FontWeight.SemiBold,
+                                            fontSize = 11.sp
+                                        )
+                                    )
+                                }
+                            }
+                            // Replay / Continue latest assistant audio
+                            val latestAssistantText = activeSession.messages
+                                .lastOrNull { it.role == MessageRole.ASSISTANT }
+                                ?.activeVariant?.content.orEmpty()
+                            if (latestAssistantText.isNotBlank()) {
+                                Box(
+                                    modifier = Modifier
+                                        .clip(RoundedCornerShape(Radius.pill))
+                                        .background(p.sheetBg)
+                                        .border(LineWidth.hairline, p.border, RoundedCornerShape(Radius.pill))
+                                        .kissClickable {
+                                            PlatformVoice.speakTextAloud(latestAssistantText)
+                                        }
+                                        .padding(horizontal = Space.s8, vertical = 3.dp)
+                                ) {
+                                    Row(
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.spacedBy(Space.s4)
+                                    ) {
+                                        KissVectorIcon(icon = KissIcon.PLAY, tint = p.accent, size = IconSize.sm)
+                                        BasicText(
+                                            text = Strings.continueLabel,
+                                            style = p.uiLabelStyle.copy(color = p.primaryInk, fontWeight = FontWeight.Medium, fontSize = 11.sp)
+                                        )
+                                    }
+                                }
+                            }
+                            // Stop audio output / stream
+                            Box(
+                                modifier = Modifier
+                                    .clip(RoundedCornerShape(Radius.pill))
+                                    .background(p.sheetBg)
+                                    .border(LineWidth.hairline, p.border, RoundedCornerShape(Radius.pill))
+                                    .kissClickable {
+                                        PlatformVoice.stopSpeakingAloud()
+                                        if (isStreaming) onStopStream()
+                                    }
+                                    .padding(horizontal = Space.s8, vertical = 3.dp)
+                            ) {
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(Space.s4)
+                                ) {
+                                    KissVectorIcon(icon = KissIcon.STOP, tint = p.danger, size = IconSize.sm)
+                                    BasicText(
+                                        text = Strings.stop2,
+                                        style = p.uiLabelStyle.copy(color = p.danger, fontWeight = FontWeight.SemiBold, fontSize = 11.sp)
+                                    )
+                                }
+                            }
+                            // Toggle Live Voice session on/off
+                            Box(
+                                modifier = Modifier
+                                    .clip(RoundedCornerShape(Radius.pill))
+                                    .background(if (isLiveVoiceMode) p.accent.copy(alpha = 0.16f) else p.sheetBg)
+                                    .border(LineWidth.hairline, if (isLiveVoiceMode) p.accent else p.border, RoundedCornerShape(Radius.pill))
+                                    .kissClickable {
+                                        if (isLiveVoiceMode) PlatformVoice.stopSpeakingAloud()
+                                        onToggleLiveVoiceMode()
+                                    }
+                                    .padding(horizontal = 7.dp, vertical = 3.dp)
+                            ) {
+                                BasicText(
+                                    text = if (isLiveVoiceMode) Strings.endLive else Strings.startLive,
+                                    style = p.uiLabelStyle.copy(
+                                        color = if (isLiveVoiceMode) p.accent else p.mutedInk,
+                                        fontWeight = FontWeight.SemiBold,
+                                        fontSize = 11.sp
+                                    )
+                                )
+                            }
+                        }
+                    }
+                }
+
+                // The Latest pill, shown when scrolled up; opaque so text behind it doesn't show through.
+                AnimatedVisibility(
+                    visible = isScrolledUpFromBottom,
+                    enter = motionPopEnter(),
+                    exit = motionPopExit()
+                ) {
+                    val pillShape = RoundedCornerShape(Radius.pill)
+                    Row(
+                        modifier = Modifier
+                            .overlayShadow(pillShape)
+                            .clip(pillShape)
+                            .background(p.accent)
+                            .kissClickable {
+                                resumeAutoFollowAndJumpToBottom()
+                            }
+                            .padding(horizontal = 14.dp, vertical = Space.s6),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(Space.s6)
+                    ) {
+                        if (isStreaming) {
+                            KissStreamingPulseDot(color = onFillInk(p.accent))
+                        }
+                        KissVectorIcon(
+                            icon = KissIcon.ARROW_DOWN,
+                            tint = onFillInk(p.accent),
+                            size = IconSize.sm
+                        )
+                        BasicText(
+                            text = Strings.latest,
+                            style = p.uiLabelStyle.copy(
+                                color = onFillInk(p.accent),
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 12.sp
+                            )
+                        )
+                    }
+                }
+            }
+            // Message navigator: first, previous, branches, next and last.
+            val showNavButtons = when (preferences.messageNavButtons) {
+                MessageNavVisibility.ALWAYS -> activeSession.messages.isNotEmpty()
+                MessageNavVisibility.WHILE_SCROLLING -> activeSession.messages.isNotEmpty() && isMinimapScrollLingering
+                MessageNavVisibility.HIDDEN -> false
+            }
+
+            Row(
+                modifier = Modifier
+                    .align(Alignment.CenterEnd)
+                    .padding(end = Space.s8)
+            ) {
+                AnimatedVisibility(
+                    visible = showNavButtons || showMinimapTreeModal,
+                    enter = motionFadeEnter(Motion.STANDARD),
+                    exit = motionFadeExit(Motion.SLOW)
+                ) {
+                    Row(
+                        horizontalArrangement = Arrangement.spacedBy(Space.s6),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        // Expandable Interactive Tree & Swipe Minimap Modal with In-Chat Turn Filter
+                        AnimatedVisibility(
+                            visible = showMinimapTreeModal,
+                            enter = motionExpandEnter(),
+                            exit = motionShrinkExit()
+                        ) {
+                            var mapFilterQuery by remember { mutableStateOf("") }
+                            var mapPromptsOnly by remember { mutableStateOf(false) }
+                            val filteredMapItems = remember(activeSession.messages, mapFilterQuery, mapPromptsOnly) {
+                                filterMessageMapTurns(activeSession.messages, mapFilterQuery, mapPromptsOnly)
+                            }
+                            // Arrow keys in the filter field move this highlight; Enter jumps to it.
+                            var selectedMapRow by remember(filteredMapItems) { mutableStateOf(0) }
+                            fun jumpToMapRow(row: Int) {
+                                val (idx, _) = filteredMapItems.getOrNull(row) ?: return
+                                minimapInteractionTick++
+                                scope.launch { listState.scrollToItemWithMotion(idx + 1, reduceMotion) }
+                            }
+                            Column(
+                                modifier = Modifier
+                                    .width(if (win.isCompact) 255.dp else 290.dp)
+                                    .heightIn(max = 410.dp)
+                                    .clip(RoundedCornerShape(Radius.r12))
+                                    .background(p.cardBg)
+                                    .border(1.dp, p.accent, RoundedCornerShape(Radius.r12))
+                                    .padding(Space.s10),
+                                verticalArrangement = Arrangement.spacedBy(Space.s6)
+                            ) {
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Row(
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.spacedBy(Space.s6)
+                                    ) {
+                                        KissVectorIcon(icon = KissIcon.MAP_TREE, tint = p.accent, size = IconSize.md)
+                                        BasicText(
+                                            text = Strings.messageMap(filteredMapItems.size, activeSession.messages.size),
+                                            style = p.uiLabelStyle.copy(color = p.accent, fontWeight = FontWeight.Bold)
+                                        )
+                                    }
+                                    SepiaButton(
+                                        text = "×",
+                                        contentDescription = Strings.closeConversationMap,
+                                        compact = true,
+                                        style = SepiaButtonStyle.GHOST,
+                                        onClick = { showMinimapTreeModal = false }
+                                    )
+                                }
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.spacedBy(Space.s6),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    SepiaTextField(
+                                        value = mapFilterQuery,
+                                        onValueChange = { mapFilterQuery = it },
+                                        placeholder = Strings.filterTurns,
+                                        singleLine = true,
+                                        minHeight = 30.dp,
+                                        onEnterKeySend = { _, _ -> jumpToMapRow(selectedMapRow); true },
+                                        onKeyNavigation = { event ->
+                                            val count = filteredMapItems.size
+                                            when {
+                                                event.type != KeyEventType.KeyDown || count == 0 -> false
+                                                event.key == Key.DirectionDown -> { selectedMapRow = (selectedMapRow + 1) % count; true }
+                                                event.key == Key.DirectionUp -> { selectedMapRow = (selectedMapRow - 1 + count) % count; true }
+                                                else -> false
+                                            }
+                                        },
+                                        modifier = Modifier.weight(1f)
+                                    )
+                                    SepiaButton(
+                                        text = Strings.promptsFilter,
+                                        contentDescription = Strings.showOnlyYourPrompts,
+                                        compact = true,
+                                        style = if (mapPromptsOnly) SepiaButtonStyle.PRIMARY else SepiaButtonStyle.GHOST,
+                                        onClick = { mapPromptsOnly = !mapPromptsOnly }
+                                    )
+                                }
+                                SepiaDivider()
+                                Column(
+                                    modifier = Modifier.verticalScroll(rememberScrollState()),
+                                    verticalArrangement = Arrangement.spacedBy(Space.s6)
+                                ) {
+                                    filteredMapItems.forEachIndexed { row, (idx, mNode) ->
+                                        val isAsst = mNode.role == MessageRole.ASSISTANT
+                                        val roleBadge = if (isAsst) "AI" else Strings.you
+                                        val isSelectedRow = row == selectedMapRow
+                                        Column(
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .clip(RoundedCornerShape(Radius.r8))
+                                                .background(if (isAsst) p.sheetBg.copy(alpha = 0.65f) else p.elevatedBg.copy(alpha = 0.45f))
+                                                .then(
+                                                    if (isSelectedRow) Modifier.border(1.dp, p.accent, RoundedCornerShape(Radius.r8)) else Modifier
+                                                )
+                                                .kissClickable(pressScale = 0.98f, selected = isSelectedRow) {
+                                                    selectedMapRow = row
+                                                    minimapInteractionTick++
+                                                    scope.launch {
+                                                        listState.scrollToItemWithMotion(idx + 1, reduceMotion)
+                                                    }
+                                                }
+                                                .padding(7.dp),
+                                            verticalArrangement = Arrangement.spacedBy(Space.s4)
+                                        ) {
+                                            Row(
+                                                modifier = Modifier.fillMaxWidth(),
+                                                horizontalArrangement = Arrangement.SpaceBetween,
+                                                verticalAlignment = Alignment.CenterVertically
+                                            ) {
+                                                BasicText(
+                                                    text = "#${idx + 1} $roleBadge",
+                                                    style = p.uiLabelStyle.copy(
+                                                        color = if (isAsst) p.accent else p.primaryInk,
+                                                        fontWeight = FontWeight.Bold,
+                                                        fontSize = 11.sp
+                                                    )
+                                                )
+                                                if (mNode.variants.size > 1) {
+                                                    Row(horizontalArrangement = Arrangement.spacedBy(3.dp)) {
+                                                        mNode.variants.forEachIndexed { vIdx, _ ->
+                                                            val vSel = vIdx == mNode.activeVariantIndex
+                                                            Box(
+                                                                modifier = Modifier
+                                                                    .clip(RoundedCornerShape(Radius.r4))
+                                                                    .background(if (vSel) p.accent else p.cardBg)
+                                                                    .kissClickable {
+                                                                        minimapInteractionTick++
+                                                                        onUpdateSession { sess ->
+                                                                            sess.copy(
+                                                                                messages = sess.messages.mapIndexed { i, n ->
+                                                                                    if (i == idx) n.copy(activeVariantIndex = vIdx) else n
+                                                                                }
+                                                                            )
+                                                                        }
+                                                                        scope.launch { listState.scrollToItemWithMotion(idx + 1, reduceMotion) }
+                                                                    }
+                                                                    .padding(horizontal = 5.dp, vertical = 1.dp)
+                                                            ) {
+                                                                BasicText(
+                                                                    text = "v${vIdx + 1}",
+                                                                    style = p.uiLabelStyle.copy(
+                                                                        fontSize = 11.sp,
+                                                                        color = if (vSel) onFillInk(p.accent) else p.narrationInk,
+                                                                        fontWeight = FontWeight.Bold
+                                                                    )
+                                                                )
+                                                            }
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                            BasicText(
+                                                text = stripMarkdownToPlainText(mNode.activeVariant.content).ifBlank { Strings.mediaEmpty },
+                                                maxLines = 1,
+                                                overflow = TextOverflow.Ellipsis,
+                                                style = p.uiLabelStyle.copy(fontSize = 11.sp, color = p.narrationInk)
+                                            )
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        // Compact Vertical Minimap Rail (`⤒`, `↑`, `🗺`, `↓`, `⤓`)
+                        Column(
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(Radius.pill))
+                                .background(p.cardBg.copy(alpha = 0.94f))
+                                .border(LineWidth.hairline, p.border, RoundedCornerShape(Radius.pill))
+                                .padding(vertical = Space.s4, horizontal = 3.dp),
+                            verticalArrangement = Arrangement.spacedBy(Space.s2),
+                            horizontalAlignment = Alignment.CenterHorizontally
+                        ) {
+                            // Extreme Jump Top
+                            SepiaButton(
+                                text = "⤒",
+                                contentDescription = Strings.jumpToFirstMessage,
+                                compact = true,
+                                style = SepiaButtonStyle.GHOST,
+                                onClick = {
+                                    minimapInteractionTick++
+                                    scope.launch { listState.scrollToItemWithMotion(0, reduceMotion) }
+                                }
+                            )
+                            // Jump Previous Message
+                            SepiaButton(
+                                text = "↑",
+                                contentDescription = Strings.previousMessage,
+                                compact = true,
+                                style = SepiaButtonStyle.GHOST,
+                                onClick = {
+                                    minimapInteractionTick++
+                                    scope.launch {
+                                        val cur = (listState.firstVisibleItemIndex - 1).coerceAtLeast(0)
+                                        listState.scrollToItemWithMotion(cur, reduceMotion)
+                                    }
+                                }
+                            )
+                            // Toggle Tree & Swipe Map
+                            SepiaButton(
+                                text = "🗺",
+                                contentDescription = Strings.conversationMap,
+                                compact = true,
+                                style = if (showMinimapTreeModal) SepiaButtonStyle.PRIMARY else SepiaButtonStyle.GHOST,
+                                onClick = {
+                                    minimapInteractionTick++
+                                    showMinimapTreeModal = !showMinimapTreeModal
+                                }
+                            )
+                            // Jump Next Message
+                            SepiaButton(
+                                text = "↓",
+                                contentDescription = Strings.nextMessage,
+                                compact = true,
+                                style = SepiaButtonStyle.GHOST,
+                                onClick = {
+                                    minimapInteractionTick++
+                                    scope.launch {
+                                        val next = (listState.firstVisibleItemIndex + 1).coerceAtMost(activeSession.messages.size)
+                                        listState.scrollToItemWithMotion(next, reduceMotion)
+                                    }
+                                }
+                            )
+                            // Extreme Jump Bottom
+                            SepiaButton(
+                                text = "⤓",
+                                contentDescription = Strings.jumpToLatestMessage,
+                                compact = true,
+                                style = SepiaButtonStyle.GHOST,
+                                onClick = {
+                                    minimapInteractionTick++
+                                    resumeAutoFollowAndJumpToBottom()
+                                }
+                            )
+                        }
+                    }
+                }
+            }
+        }
+
+        // ========================================================================================
+        // The composer: Enter sends on desktop; while a reply runs, steer or queue the next message.
+        // ========================================================================================
+        val hasTypedInput = userPromptInput.isNotBlank() || assistantPrefillInput.isNotBlank() || pendingAttachments.isNotEmpty()
+
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .background(p.canvasBg)
+                .padding(horizontal = if (win.isCompact) 10.dp else 14.dp, vertical = 7.dp),
+            horizontalAlignment = Alignment.CenterHorizontally
+        ) {
+            val deckShape = RoundedCornerShape(Radius.r12)
+            Column(
+                modifier = Modifier
+                    .widthIn(max = p.maxReadingWidth)
+                    .fillMaxWidth()
+                    .clip(deckShape)
+                    .background(p.cardBg)
+                    .border(
+                        width = if (isStreaming) 1.dp else LineWidth.hairline,
+                        color = if (isStreaming) p.accent else p.border.copy(alpha = 0.85f),
+                        shape = deckShape
+                    )
+                    .padding(horizontal = Space.s12, vertical = 9.dp),
+                verticalArrangement = Arrangement.spacedBy(7.dp)
+            ) {
+                // 1. Live status while streaming: the headline and its detail on separate lines.
+                var statusExpanded by remember { mutableStateOf(false) }
+                AnimatedVisibility(
+                    visible = isStreaming,
+                    enter = motionExpandEnter(),
+                    exit = motionShrinkExit()
+                ) {
+                    val rawStatus = streamingStatus.ifBlank { Strings.generatingReply }
+                    val (statusHeadline, statusDetail) = remember(rawStatus) {
+                        when {
+                            rawStatus.contains('\n') -> {
+                                val first = rawStatus.substringBefore('\n').trim()
+                                val rest = rawStatus.substringAfter('\n').trim()
+                                first to rest
+                            }
+                            rawStatus.contains(" — ") && rawStatus.length > 56 -> {
+                                val first = rawStatus.substringBefore(" — ").trim()
+                                val rest = rawStatus.substringAfter(" — ").trim()
+                                first to rest
+                            }
+                            else -> rawStatus to ""
+                        }
+                    }
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(Radius.r8))
+                            .background(p.sheetBg.copy(alpha = 0.78f))
+                            .border(LineWidth.hairline, p.border.copy(alpha = 0.65f), RoundedCornerShape(Radius.r8))
+                            .kissClickable(pressScale = 0.99f, hoverScale = 1.004f, role = Role.Button, onClickLabel = if (statusExpanded) Strings.collapseStatus else Strings.expandStatus) { statusExpanded = !statusExpanded }
+                            .padding(horizontal = Space.s10, vertical = Space.s6),
+                        verticalArrangement = Arrangement.spacedBy(3.dp)
+                    ) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Row(
+                                modifier = Modifier.weight(1f).padding(end = Space.s8),
+                                horizontalArrangement = Arrangement.spacedBy(Space.s8),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                KissStreamingPulseDot(color = p.accent)
+                                BasicText(
+                                    text = statusHeadline,
+                                    maxLines = if (statusDetail.isEmpty() && statusExpanded) 6 else 2,
+                                    overflow = TextOverflow.Ellipsis,
+                                    style = p.uiBodyStyle.copy(
+                                        color = p.accent,
+                                        fontSize = 12.sp,
+                                        fontWeight = FontWeight.SemiBold
+                                    )
+                                )
+                            }
+                            Row(
+                                horizontalArrangement = Arrangement.spacedBy(Space.s8),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                // Keep Retry now inline on the trailing side of the status bar instead of hanging beneath on the left.
+                                if (retryWait != null) {
+                                    SepiaButton(
+                                        text = "↻ ${Strings.retryNow}",
+                                        onClick = onRetryNow,
+                                        compact = true,
+                                        style = SepiaButtonStyle.OUTLINE,
+                                        hint = Strings.retryNowHint,
+                                        modifier = Modifier.heightIn(min = Space.s48)
+                                    )
+                                }
+                                if (statusDetail.isNotEmpty() || statusHeadline.length > 72) {
+                                    KissVectorIcon(
+                                        icon = if (statusExpanded) KissIcon.CHEVRON_UP else KissIcon.CHEVRON_DOWN,
+                                        tint = p.mutedInk,
+                                        size = IconSize.sm
+                                    )
+                                }
+                            }
+                        }
+                        if (statusDetail.isNotEmpty()) {
+                            BasicText(
+                                text = statusDetail,
+                                maxLines = if (statusExpanded) 12 else 3,
+                                overflow = TextOverflow.Ellipsis,
+                                style = p.monoStyle.copy(
+                                    color = p.narrationInk,
+                                    fontSize = 11.sp,
+                                    lineHeight = 16.sp
+                                ),
+                                modifier = Modifier.padding(start = Space.s16)
+                            )
+                        }
+                    }
+                }
+
+                // 2. Queued Prompts Bar (`⏳ Queue` mode)
+                AnimatedVisibility(
+                    visible = queuedPrompts.isNotEmpty(),
+                    enter = motionExpandEnter(),
+                    exit = motionShrinkExit()
+                ) {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(Radius.r8))
+                            .background(p.elevatedBg.copy(alpha = 0.7f))
+                            .border(LineWidth.hairline, p.accentSecondary, RoundedCornerShape(Radius.r8))
+                            .padding(Space.s8),
+                        verticalArrangement = Arrangement.spacedBy(Space.s4)
+                    ) {
+                        BasicText(
+                            text = Strings.queuedNextAutoSendsAfterReply(queuedPrompts.size),
+                            style = p.uiLabelStyle.copy(color = p.accentSecondary, fontWeight = FontWeight.SemiBold)
+                        )
+                        queuedPrompts.forEach { qItem ->
+                            FlowRow(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalArrangement = Arrangement.spacedBy(Space.s4)
+                            ) {
+                                BasicText(
+                                    text = "• ${qItem.text}",
+                                    maxLines = 2,
+                                    overflow = TextOverflow.Ellipsis,
+                                    style = p.uiBodyStyle.copy(fontSize = 12.sp),
+                                    modifier = Modifier.weight(1f, fill = false).padding(end = Space.s6)
+                                )
+                                Row(horizontalArrangement = Arrangement.spacedBy(Space.s4)) {
+                                    SepiaButton(
+                                        text = Strings.sendNow2,
+                                        compact = true,
+                                        style = SepiaButtonStyle.SECONDARY,
+                                        onClick = { onSteerQueuedPromptNow(qItem) }
+                                    )
+                                    SepiaButton(
+                                        text = "×",
+                                        contentDescription = Strings.removeQueuedPrompt,
+                                        compact = true,
+                                        style = SepiaButtonStyle.GHOST,
+                                        onClick = { onRemoveQueuedPrompt(qItem.id) }
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // 3. Collapsible Capabilities, Workspace Mount & 16-Tool Harness Tray (`⚙ Tools`)
+                var showAllHarnessToolsInComposer by remember { mutableStateOf(false) }
+                val (composerPermissionDefaults, composerPermissionOverrides, composerToolPolicy) = remember(
+                    activeAssistant,
+                    activeSession.permissionOverrides,
+                    activeSession.workspacePath,
+                    activeSession.workspaceMode,
+                    activeProfile
+                ) {
+                    val defaults = AgentPermissionResolver.defaults(activeAssistant)
+                    val overrides = activeSession.permissionOverrides ?: AgentPermissionResolver.legacyOverrides(activeSession, activeProfile)
+                    Triple(defaults, overrides, overrides.applyTo(defaults))
+                }
+                val effectiveComposerWsPath = composerToolPolicy.workspacePath
+                val effectiveComposerWsMode = composerToolPolicy.workspaceMode
+                val allHarnessTools = remember { WorkspaceHarness.allTools() }
+                val activeHarnessToolNames = remember(composerToolPolicy, isGoalModeEnabled) {
+                    WorkspaceHarness.activeToolsForMode(
+                        effectiveComposerWsMode,
+                        effectiveComposerWsPath,
+                        composerToolPolicy.allowShell,
+                        goalModeActive = isGoalModeEnabled,
+                        enableWebTools = composerToolPolicy.webAccess,
+                        policy = composerToolPolicy
+                    ).map { it.name }.toSet()
+                }
+
+                AnimatedVisibility(
+                    visible = showComposerToolsDrawer,
+                    enter = motionExpandEnter(Motion.POP_STIFFNESS, Motion.QUICK),
+                    exit = motionShrinkExit(Motion.POP_STIFFNESS, Motion.QUICK)
+                ) {
+                    BoxWithConstraints {
+                        val drawerMaxHeight = (maxHeight * 0.5f).coerceAtMost(420.dp)
+                        Column(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .heightIn(max = drawerMaxHeight)
+                                .verticalScroll(rememberScrollState())
+                                .clip(RoundedCornerShape(Radius.r8))
+                                .background(p.sheetBg.copy(alpha = 0.65f))
+                                .border(LineWidth.hairline, p.border.copy(alpha = 0.75f), RoundedCornerShape(Radius.r8))
+                                .padding(Space.s10),
+                            verticalArrangement = Arrangement.spacedBy(Space.s8)
+                        ) {
+                            AgentPermissionEditor(
+                                defaults = composerPermissionDefaults,
+                                overrides = composerPermissionOverrides,
+                                onChange = { value -> onUpdateSession { it.copy(permissionOverrides = value) } },
+                                onReset = { onUpdateSession { it.copy(permissionOverrides = AgentPermissionOverrides()) } }
+                            )
+                            SepiaDivider()
+                            FlowRow(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.spacedBy(Space.s6),
+                                verticalArrangement = Arrangement.spacedBy(Space.s6)
+                            ) {
+                                SepiaChip(
+                                    label = if (isGoalModeEnabled) Strings.goalModeOn else Strings.goalMode,
+                                    selected = isGoalModeEnabled,
+                                    onClick = onToggleGoalMode
+                                )
+                                SepiaChip(
+                                    label = if (isLiveVoiceMode) Strings.liveVoiceOn else Strings.liveVoice,
+                                    selected = isLiveVoiceMode,
+                                    onClick = onToggleLiveVoiceMode
+                                )
+                                if (activeProfile.protocol == ProviderProtocol.GEMINI_INTERACTIONS) {
+                                    SepiaChip(
+                                        label = Strings.codeExec,
+                                        selected = activeProfile.enableCodeExecution,
+                                        onClick = { onUpdateProfile { it.copy(enableCodeExecution = !it.enableCodeExecution) } }
+                                    )
+                                    SepiaChip(
+                                        label = Strings.urlContext,
+                                        selected = activeProfile.enableUrlContext,
+                                        onClick = { onUpdateProfile { it.copy(enableUrlContext = !it.enableUrlContext) } }
+                                    )
+                                }
+                                SepiaChip(
+                                    label = if (showAllHarnessToolsInComposer) {
+                                        Strings.tools2(activeHarnessToolNames.size, allHarnessTools.size)
+                                    } else {
+                                        Strings.tools3(activeHarnessToolNames.size, allHarnessTools.size)
+                                    },
+                                    selected = showAllHarnessToolsInComposer || activeHarnessToolNames.isNotEmpty(),
+                                    onClick = { showAllHarnessToolsInComposer = !showAllHarnessToolsInComposer }
+                                )
+                                SepiaChip(
+                                    label = if (showPrefillBox) Strings.startTheReplyWithOn else Strings.startTheReplyWith,
+                                    selected = showPrefillBox || assistantPrefillInput.isNotBlank(),
+                                    onClick = onTogglePrefillBox
+                                )
+                            }
+                            AnimatedVisibility(
+                                visible = showAllHarnessToolsInComposer,
+                                enter = motionExpandEnter(),
+                                exit = motionShrinkExit()
+                            ) {
+                                AgentToolRegistry(
+                                    policy = composerToolPolicy,
+                                    overrides = composerPermissionOverrides,
+                                    onChange = { value -> onUpdateSession { it.copy(permissionOverrides = value) } },
+                                    goalModeActive = isGoalModeEnabled
+                                )
+                            }
+                            SepiaDivider()
+                            FlowRow(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.spacedBy(Space.s6),
+                                verticalArrangement = Arrangement.spacedBy(Space.s6)
+                            ) {
+                                BasicText(
+                                    text = Strings.coWritingHelpers,
+                                    style = p.uiLabelStyle.copy(fontWeight = FontWeight.SemiBold),
+                                    modifier = Modifier.padding(top = 5.dp, end = Space.s4)
+                                )
+                                SepiaButton(
+                                    text = Strings.draftMyReply,
+                                    compact = true,
+                                    style = SepiaButtonStyle.OUTLINE,
+                                    onClick = {
+                                        onComposerToolsDrawerChange(false)
+                                        onImpersonateDraft()
+                                    }
+                                )
+                                SepiaButton(
+                                    text = Strings.guideNextReply,
+                                    compact = true,
+                                    enabled = hasTypedInput,
+                                    style = SepiaButtonStyle.SECONDARY,
+                                    onClick = {
+                                        onComposerToolsDrawerChange(false)
+                                        onSendGuidedDirection()
+                                    }
+                                )
+                            }
+                        }
+                    }
+                }
+
+                val hasMountedComposerWorkspace = effectiveComposerWsMode != WorkspaceMode.OFF && effectiveComposerWsPath.isNotBlank()
+                var missingWorkspaceFolder by remember(effectiveComposerWsPath, effectiveComposerWsMode) { mutableStateOf(false) }
+                LaunchedEffect(effectiveComposerWsPath, effectiveComposerWsMode) {
+                    missingWorkspaceFolder = if (hasMountedComposerWorkspace) {
+                        withContext(Dispatchers.IO) { !PlatformWorkspace.workspaceDirectoryExists(effectiveComposerWsPath) }
+                    } else {
+                        false
+                    }
+                }
+                if (missingWorkspaceFolder) {
+                    val recoveryShape = RoundedCornerShape(Radius.r10)
+                    FlowRow(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(recoveryShape)
+                            .background(p.danger.copy(alpha = 0.10f))
+                            .border(LineWidth.emphasis, p.danger.copy(alpha = 0.55f), recoveryShape)
+                            .padding(horizontal = Space.s12, vertical = Space.s8),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalArrangement = Arrangement.spacedBy(Space.s8),
+                        itemVerticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Row(
+                            modifier = Modifier.weight(1f, fill = false).padding(end = Space.s8),
+                            horizontalArrangement = Arrangement.spacedBy(Space.s8),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            KissVectorIcon(icon = KissIcon.FOLDER, tint = p.danger, size = IconSize.md)
+                            Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                                BasicText(
+                                    text = Strings.missingWorkspaceFolderTitle(effectiveComposerWsPath),
+                                    style = p.uiLabelStyle.copy(color = p.primaryInk, fontWeight = FontWeight.SemiBold),
+                                    maxLines = 2,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                                BasicText(
+                                    text = Strings.missingWorkspaceFolderSubtitle,
+                                    style = p.uiLabelStyle.copy(color = p.mutedInk)
+                                )
+                            }
+                        }
+                        Row(
+                            horizontalArrangement = Arrangement.spacedBy(Space.s6),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            SepiaButton(
+                                text = Strings.chooseFolder,
+                                compact = true,
+                                style = SepiaButtonStyle.PRIMARY,
+                                onClick = {
+                                    scope.launch {
+                                        val picked = PlatformPickers.pickWorkspaceDirectory("")
+                                        if (!picked.isNullOrBlank()) {
+                                            onUpdateSession { sess ->
+                                                val base = sess.permissionOverrides ?: AgentPermissionResolver.legacyOverrides(sess, activeProfile)
+                                                sess.copy(
+                                                    workspacePath = picked,
+                                                    workspaceMode = if (effectiveComposerWsMode == WorkspaceMode.OFF) WorkspaceMode.READ_ONLY else effectiveComposerWsMode,
+                                                    permissionOverrides = base.copy(
+                                                        workspacePath = picked,
+                                                        workspaceMode = if (effectiveComposerWsMode == WorkspaceMode.OFF) WorkspaceMode.READ_ONLY else base.workspaceMode
+                                                    )
+                                                )
+                                            }
+                                        }
+                                    }
+                                }
+                            )
+                            SepiaButton(
+                                text = Strings.clearFolder,
+                                compact = true,
+                                style = SepiaButtonStyle.OUTLINE,
+                                onClick = {
+                                    onUpdateSession { sess ->
+                                        val base = sess.permissionOverrides ?: AgentPermissionResolver.legacyOverrides(sess, activeProfile)
+                                        sess.copy(
+                                            workspacePath = "",
+                                            workspaceMode = WorkspaceMode.OFF,
+                                            permissionOverrides = base.copy(
+                                                workspacePath = "",
+                                                workspaceMode = WorkspaceMode.OFF
+                                            )
+                                        )
+                                    }
+                                }
+                            )
+                        }
+                    }
+                }
+
+                if (pendingAttachments.isNotEmpty()) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+                        horizontalArrangement = Arrangement.spacedBy(Space.s8),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        pendingAttachments.forEach { att ->
+                            val mime = att.mimeType.lowercase()
+                            val lowerName = att.fileName.lowercase()
+                            val isImg = mime.startsWith("image/")
+                            val attKissIcon = when {
+                                isImg -> KissIcon.IMAGE
+                                mime.startsWith("video/") -> KissIcon.VIDEO
+                                mime.startsWith("audio/") -> KissIcon.AUDIO
+                                mime == "application/pdf" || lowerName.endsWith(".pdf") -> KissIcon.FILE_TEXT
+                                else -> KissIcon.PAPERCLIP
+                            }
+                            val thumbBmp = rememberFileImage(if (isImg) att.localFilePath else "").bitmap
+
+                            Row(
+                                modifier = Modifier
+                                    .clip(RoundedCornerShape(Radius.r8))
+                                    .background(p.cardBg)
+                                    .border(LineWidth.hairline, p.accent.copy(alpha = 0.7f), RoundedCornerShape(Radius.r8))
+                                    .kissClickable(pressScale = 0.99f, hoverScale = 1.004f, role = Role.Button, onClickLabel = Strings.openAttachment) { onInspectAttachment(att) }
+                                    .padding(horizontal = Space.s6, vertical = Space.s4),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(Space.s6)
+                            ) {
+                                if (thumbBmp != null) {
+                                    Image(
+                                        bitmap = thumbBmp,
+                                        contentDescription = null,
+                                        contentScale = ContentScale.Crop,
+                                        modifier = Modifier
+                                            .size(34.dp)
+                                            .clip(RoundedCornerShape(Radius.r6))
+                                            .border(LineWidth.hairline, p.border, RoundedCornerShape(Radius.r6))
+                                    )
+                                } else {
+                                    KissVectorIcon(
+                                        icon = attKissIcon,
+                                        tint = p.accent,
+                                        size = IconSize.md
+                                    )
+                                }
+                                BasicText(
+                                    text = att.fileName,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                    style = p.uiLabelStyle.copy(color = p.primaryInk, fontWeight = FontWeight.SemiBold),
+                                    modifier = Modifier.widthIn(max = 180.dp)
+                                )
+                                SepiaButton(
+                                    text = "×",
+                                    contentDescription = Strings.removeAttachment,
+                                    compact = true,
+                                    style = SepiaButtonStyle.GHOST,
+                                    onClick = { onRemoveAttachment(att.id) }
+                                )
+                            }
+                        }
+                    }
+                }
+
+                AnimatedVisibility(
+                    visible = showPrefillBox,
+                    enter = motionExpandEnter(),
+                    exit = motionShrinkExit()
+                ) {
+                    SepiaTextField(
+                        value = assistantPrefillInput,
+                        onValueChange = onAssistantPrefillChange,
+                        placeholder = Strings.startTheAiSReply,
+                        singleLine = false,
+                        maxLines = 3,
+                        minHeight = 36.dp,
+                        maxHeight = 84.dp,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                }
+                // Slash-command suggestions while typing `/`. Built-in commands come first; custom
+                // `.parchment/commands/*.md` entries load off-UI and merge below them.
+                val trimmedSlashPrefix = userPromptInput.trimStart()
+                val showSlashSuggestions = trimmedSlashPrefix.startsWith("/") &&
+                    !trimmedSlashPrefix.contains('\n') &&
+                    !trimmedSlashPrefix.contains(' ')
+                var workspaceSlashSpecs by remember(effectiveComposerWsPath, effectiveComposerWsMode) {
+                    mutableStateOf<List<SlashCommandSpec>>(emptyList())
+                }
+                LaunchedEffect(effectiveComposerWsPath, effectiveComposerWsMode, showSlashSuggestions) {
+                    if (hasMountedComposerWorkspace && showSlashSuggestions) {
+                        workspaceSlashSpecs = withContext(Dispatchers.IO) {
+                            WorkspaceHarness.discoverWorkspaceCommands(effectiveComposerWsPath).map { cmd ->
+                                SlashCommandSpec(
+                                    command = cmd.command,
+                                    label = "✦ ${cmd.command}",
+                                    description = cmd.description.ifBlank { Strings.workspaceCommandDefaultDesc },
+                                    takesArgument = cmd.takesArgument
+                                )
+                            }
+                        }
+                    } else if (!hasMountedComposerWorkspace) {
+                        workspaceSlashSpecs = emptyList()
+                    }
+                }
+                val matchingSlashCommands = remember(trimmedSlashPrefix, showSlashSuggestions, workspaceSlashSpecs) {
+                    if (!showSlashSuggestions) emptyList()
+                    else {
+                        val cmdToken = trimmedSlashPrefix.lowercase()
+                        (BUILTIN_SLASH_COMMANDS + workspaceSlashSpecs).filter { spec ->
+                            spec.command.lowercase().startsWith(cmdToken)
+                        }
+                    }
+                }
+                var dismissedSlashInput by remember { mutableStateOf<String?>(null) }
+                var selectedSlashIndex by remember { mutableStateOf(0) }
+                val slashPopupVisible = matchingSlashCommands.isNotEmpty() && dismissedSlashInput != userPromptInput
+                val activeSlashIndex = if (matchingSlashCommands.isEmpty()) 0 else selectedSlashIndex.coerceIn(0, matchingSlashCommands.lastIndex)
+                LaunchedEffect(trimmedSlashPrefix, slashPopupVisible) {
+                    if (!slashPopupVisible) {
+                        selectedSlashIndex = 0
+                    } else if (selectedSlashIndex >= matchingSlashCommands.size) {
+                        selectedSlashIndex = 0
+                    }
+                }
+                fun executeSlashSpec(spec: SlashCommandSpec) {
+                    dismissedSlashInput = null
+                    if (spec.takesArgument) {
+                        onUserPromptChange("${spec.command} ")
+                    } else {
+                        // Commands without an argument run on a single tap.
+                        onUserPromptChange("")
+                        when (spec.command) {
+                            "/plan" -> onSwitchWorkspaceMode(WorkspaceMode.READ_ONLY)
+                            "/build" -> onSwitchWorkspaceMode(WorkspaceMode.READ_WRITE)
+                            "/compact" -> onCompactContext()
+                            "/summarize" -> onAutoSummarizeStory()
+                            "/clear" -> onRequestClearCurrentChat()
+                            "/continue" -> {
+                                val lastAsst = activeSession.messages.indexOfLast { it.role == MessageRole.ASSISTANT }
+                                if (lastAsst >= 0) onContinueAssistantNode(lastAsst)
+                            }
+                            "/rewind" -> {
+                                if (activeSession.messages.isNotEmpty()) {
+                                    onRewindToNode(activeSession.messages.lastIndex)
+                                }
+                            }
+                            else -> {
+                                // Custom workspace command from `.parchment/commands/*.md`
+                                onUserPromptChange(spec.command)
+                                onSend()
+                            }
+                        }
+                    }
+                }
+                val slashScrollState = rememberScrollState()
+                val slashRowBounds = remember { mutableMapOf<Int, Pair<Int, Int>>() }
+                LaunchedEffect(slashPopupVisible, activeSlashIndex) {
+                    if (slashPopupVisible) {
+                        val (top, height) = slashRowBounds[activeSlashIndex] ?: return@LaunchedEffect
+                        val viewport = slashScrollState.viewportSize
+                        if (viewport > 0) {
+                            if (activeSlashIndex == 0 || top < slashScrollState.value) {
+                                slashScrollState.scrollTo(if (activeSlashIndex == 0) 0 else top)
+                            } else if (top + height > slashScrollState.value + viewport) {
+                                slashScrollState.scrollTo((top + height - viewport).coerceAtLeast(0))
+                            }
+                        }
+                    }
+                }
+                AnimatedVisibility(
+                    visible = slashPopupVisible,
+                    enter = motionExpandEnter(),
+                    exit = motionShrinkExit()
+                ) {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .heightIn(max = 224.dp)
+                            .clip(RoundedCornerShape(Radius.r10))
+                            .background(p.sheetBg.copy(alpha = 0.82f))
+                            .border(LineWidth.hairline, p.border.copy(alpha = 0.55f), RoundedCornerShape(Radius.r10))
+                            .verticalScroll(slashScrollState)
+                            .padding(Space.s6),
+                        verticalArrangement = Arrangement.spacedBy(3.dp)
+                    ) {
+                        matchingSlashCommands.forEachIndexed { idx, spec ->
+                            key(spec.command) {
+                                val isExact = trimmedSlashPrefix.equals(spec.command, ignoreCase = true)
+                                val isKeyboardSelected = idx == activeSlashIndex
+                                val rowInteraction = remember { MutableInteractionSource() }
+                                val isHovered by rowInteraction.collectIsHoveredAsState()
+                                val isPressed by rowInteraction.collectIsPressedAsState()
+                                val parsedCmdIcon = remember(spec.label) {
+                                    parseKissLabelIcons(spec.label).leadingIcon ?: KissIcon.SPARKLES
+                                }
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .onPlaced { coords ->
+                                            slashRowBounds[idx] = coords.positionInParent().y.toInt() to coords.size.height
+                                        }
+                                        .clip(RoundedCornerShape(Radius.r8))
+                                        .background(
+                                            when {
+                                                isExact || isKeyboardSelected || isPressed -> p.accent.copy(alpha = 0.14f)
+                                                isHovered -> p.accent.copy(alpha = 0.08f)
+                                                else -> p.cardBg.copy(alpha = 0.72f)
+                                            }
+                                        )
+                                        .border(
+                                            width = LineWidth.hairline,
+                                            color = if (isExact || isKeyboardSelected || isHovered) p.accent.copy(alpha = 0.55f) else Color.Transparent,
+                                            shape = RoundedCornerShape(Radius.r8)
+                                        )
+                                        .kissClickable(
+                                            pressScale = 0.99f,
+                                            hoverScale = 1.004f,
+                                            interactionSource = rowInteraction,
+                                            selected = isKeyboardSelected,
+                                            onClick = { executeSlashSpec(spec) }
+                                        )
+                                        .padding(horizontal = Space.s10, vertical = 7.dp),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Row(
+                                        modifier = Modifier.weight(1f).padding(end = Space.s8),
+                                        horizontalArrangement = Arrangement.spacedBy(Space.s8),
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        KissVectorIcon(
+                                            icon = parsedCmdIcon,
+                                            tint = p.accent,
+                                            size = IconSize.md
+                                        )
+                                        if (win.isCompact) {
+                                            Column(
+                                                modifier = Modifier.weight(1f),
+                                                verticalArrangement = Arrangement.spacedBy(1.dp)
+                                            ) {
+                                                BasicText(
+                                                    text = spec.command,
+                                                    style = p.monoStyle.copy(
+                                                        color = p.accent,
+                                                        fontWeight = FontWeight.Bold,
+                                                        fontSize = 12.sp
+                                                    )
+                                                )
+                                                BasicText(
+                                                    text = spec.description,
+                                                    maxLines = 2,
+                                                    overflow = TextOverflow.Ellipsis,
+                                                    style = p.uiBodyStyle.copy(
+                                                        color = p.primaryInk,
+                                                        fontSize = 12.sp
+                                                    )
+                                                )
+                                            }
+                                        } else {
+                                            BasicText(
+                                                text = spec.command,
+                                                style = p.monoStyle.copy(
+                                                    color = p.accent,
+                                                    fontWeight = FontWeight.Bold,
+                                                    fontSize = 12.sp
+                                                )
+                                            )
+                                            BasicText(
+                                                text = spec.description,
+                                                maxLines = 1,
+                                                overflow = TextOverflow.Ellipsis,
+                                                style = p.uiBodyStyle.copy(
+                                                    color = p.primaryInk,
+                                                    fontSize = 12.sp
+                                                )
+                                            )
+                                        }
+                                    }
+                                    Box(
+                                        modifier = Modifier
+                                            .clip(RoundedCornerShape(Radius.r6))
+                                            .background(p.elevatedBg.copy(alpha = 0.7f))
+                                            .padding(horizontal = Space.s6, vertical = Space.s2)
+                                    ) {
+                                        Row(
+                                            verticalAlignment = Alignment.CenterVertically,
+                                            horizontalArrangement = Arrangement.spacedBy(Space.s4)
+                                        ) {
+                                            KissVectorIcon(
+                                                icon = if (spec.takesArgument) KissIcon.ARROW_RIGHT else KissIcon.SEND_ENTER,
+                                                tint = p.narrationInk,
+                                                size = 10.dp
+                                            )
+                                            BasicText(
+                                                text = if (spec.takesArgument) "arg" else Strings.run,
+                                                style = p.monoStyle.copy(
+                                                    fontSize = 11.sp,
+                                                    color = p.narrationInk,
+                                                    fontWeight = FontWeight.Medium
+                                                )
+                                            )
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // `@` suggestions: workspace files, attachments and lore entries.
+                val activeAtQuery: String? = remember(userPromptInput) {
+                    val lastAt = userPromptInput.lastIndexOf('@')
+                    if (lastAt == -1) null
+                    else if (lastAt > 0 && !userPromptInput[lastAt - 1].isWhitespace()) null
+                    else {
+                        val afterAt = userPromptInput.substring(lastAt + 1)
+                        if (afterAt.contains(' ') || afterAt.contains('\n')) null else afterAt
+                    }
+                }
+                val effectiveWorkspacePath = AgentPermissionResolver.resolve(activeSession, activeAssistant, activeProfile).workspacePath
+                var workspaceFiles by remember(effectiveWorkspacePath) { mutableStateOf<List<String>>(emptyList()) }
+                LaunchedEffect(effectiveWorkspacePath, activeAtQuery != null) {
+                    if (activeAtQuery != null && effectiveWorkspacePath.isNotBlank() && workspaceFiles.isEmpty()) {
+                        workspaceFiles = withContext(Dispatchers.Default) {
+                            PlatformWorkspace.workspaceGlob(effectiveWorkspacePath, "*", maxResults = 160)
+                                .getOrDefault("")
+                                .lines()
+                                .map { it.trim() }
+                                .filter { it.isNotEmpty() && !it.startsWith("No files") && !it.endsWith("/") }
+                                .map { it.substringBefore(" (").trim() }
+                        }
+                    }
+                }
+                // Only the @ popup lists earlier attachments, so they are gathered while it is open.
+                val atPopupOpen = activeAtQuery != null
+                val historyAttachments = remember(activeSession.id, activeSession.messages.size, atPopupOpen) {
+                    if (!atPopupOpen) emptyList() else activeSession.messages.flatMap { it.activeVariant.attachments }
+                        .distinctBy { it.fileName }
+                }
+                val allLoreFragments = remember(appState.globalWorldBook, activeAssistant.fragments, activeSession.fragments) {
+                    (appState.globalWorldBook + activeAssistant.fragments + activeSession.fragments).distinctBy { it.id }
+                }
+                val matchingAtItems = remember(
+                    activeAtQuery,
+                    workspaceFiles,
+                    historyAttachments,
+                    allLoreFragments,
+                    userPromptInput,
+                    effectiveWorkspacePath
+                ) {
+                    val q = activeAtQuery?.lowercase() ?: return@remember emptyList<Triple<String, String, () -> Unit>>()
+                    val list = mutableListOf<Triple<String, String, () -> Unit>>()
+                    fun replaceTrailingAt(replacement: String) {
+                        val idx = userPromptInput.lastIndexOf('@')
+                        if (idx >= 0) {
+                            val nextInput = userPromptInput.substring(0, idx) + replacement
+                            onUserPromptChange(nextInput)
+                        }
+                    }
+                    if (q.isEmpty() || "file".contains(q) || "attach".contains(q) || "upload".contains(q)) {
+                        list.add(
+                            Triple(
+                                "📎 @file",
+                                Strings.pickAttachALocalFileImage,
+                                {
+                                    replaceTrailingAt("")
+                                    onAddAttachment()
+                                }
+                            )
+                        )
+                    }
+                    if (q.isEmpty() || "mount".contains(q) || "workspace".contains(q) || "folder".contains(q)) {
+                        list.add(
+                            Triple(
+                                "📂 @mount",
+                                if (effectiveWorkspacePath.isBlank()) {
+                                    Strings.chooseAFolderForTheAgent
+                                } else {
+                                    Strings.changeTheAgentSFolder(effectiveWorkspacePath)
+                                },
+                                {
+                                    replaceTrailingAt("")
+                                    scope.launch {
+                                        val picked = PlatformPickers.pickWorkspaceDirectory(effectiveWorkspacePath)
+                                        if (!picked.isNullOrBlank()) {
+                                            onUpdateSession {
+                                                it.copy(
+                                                    workspacePath = picked,
+                                                    workspaceMode = if (it.workspaceMode == WorkspaceMode.OFF) WorkspaceMode.READ_ONLY else it.workspaceMode
+                                                )
+                                            }
+                                        }
+                                    }
+                                }
+                            )
+                        )
+                    }
+                    workspaceFiles
+                        .filter { q.isEmpty() || it.lowercase().contains(q) }
+                        .take(18)
+                        .forEach { relPath ->
+                            val shortName = relPath.substringAfterLast('/')
+                            list.add(
+                                Triple(
+                                    "📄 @$shortName",
+                                    relPath,
+                                    {
+                                        onAttachWorkspaceFile(relPath)
+                                        replaceTrailingAt("@$relPath ")
+                                    }
+                                )
+                            )
+                        }
+                    historyAttachments
+                        .filter { it.fileName.isNotBlank() && (q.isEmpty() || it.fileName.lowercase().contains(q)) }
+                        .take(8)
+                        .forEach { att ->
+                            list.add(
+                                Triple(
+                                    "📎 @${att.fileName}",
+                                    Strings.reAttachFromThisConversation(att.mimeType),
+                                    {
+                                        onReattachExistingAttachment(att)
+                                        replaceTrailingAt("@${att.fileName} ")
+                                    }
+                                )
+                            )
+                        }
+                    allLoreFragments
+                        .filter { it.title.isNotBlank() && (q.isEmpty() || it.title.lowercase().contains(q)) }
+                        .take(8)
+                        .forEach { frag ->
+                            list.add(
+                                Triple(
+                                    "📖 @${frag.title}",
+                                    frag.content.take(72).replace('\n', ' '),
+                                    {
+                                        replaceTrailingAt("@${frag.title} ")
+                                    }
+                                )
+                            )
+                        }
+                    list
+                }
+                var dismissedAtInput by remember { mutableStateOf<String?>(null) }
+                var selectedAtIndex by remember { mutableStateOf(0) }
+                val atPopupVisible = matchingAtItems.isNotEmpty() && dismissedAtInput != userPromptInput
+                val activeAtIndex = if (matchingAtItems.isEmpty()) 0 else selectedAtIndex.coerceIn(0, matchingAtItems.lastIndex)
+                LaunchedEffect(activeAtQuery, atPopupVisible) {
+                    if (!atPopupVisible) {
+                        selectedAtIndex = 0
+                    } else if (selectedAtIndex >= matchingAtItems.size) {
+                        selectedAtIndex = 0
+                    }
+                }
+                val atScrollState = rememberScrollState()
+                val atRowBounds = remember { mutableMapOf<Int, Pair<Int, Int>>() }
+                LaunchedEffect(atPopupVisible, activeAtIndex) {
+                    if (atPopupVisible) {
+                        val (top, height) = atRowBounds[activeAtIndex] ?: return@LaunchedEffect
+                        val viewport = atScrollState.viewportSize
+                        if (viewport > 0) {
+                            if (activeAtIndex == 0 || top < atScrollState.value) {
+                                atScrollState.scrollTo(if (activeAtIndex == 0) 0 else top)
+                            } else if (top + height > atScrollState.value + viewport) {
+                                atScrollState.scrollTo((top + height - viewport).coerceAtLeast(0))
+                            }
+                        }
+                    }
+                }
+                AnimatedVisibility(
+                    visible = atPopupVisible,
+                    enter = motionExpandEnter(),
+                    exit = motionShrinkExit()
+                ) {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .heightIn(max = 224.dp)
+                            .clip(RoundedCornerShape(Radius.r10))
+                            .background(p.sheetBg.copy(alpha = 0.82f))
+                            .border(LineWidth.hairline, p.border.copy(alpha = 0.55f), RoundedCornerShape(Radius.r10))
+                            .verticalScroll(atScrollState)
+                            .padding(Space.s6),
+                        verticalArrangement = Arrangement.spacedBy(3.dp)
+                    ) {
+                        matchingAtItems.forEachIndexed { idx, (badgeLabel, descText, action) ->
+                            key(badgeLabel, descText) {
+                                val isKeyboardSelected = idx == activeAtIndex
+                                val rowInteraction = remember { MutableInteractionSource() }
+                                val isHovered by rowInteraction.collectIsHoveredAsState()
+                                val isPressed by rowInteraction.collectIsPressedAsState()
+                                val parsedIcon = remember(badgeLabel) {
+                                    parseKissLabelIcons(badgeLabel).leadingIcon ?: KissIcon.FILE_TEXT
+                                }
+                                val cleanBadge = remember(badgeLabel) {
+                                    parseKissLabelIcons(badgeLabel).cleanText
+                                }
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .onPlaced { coords ->
+                                            atRowBounds[idx] = coords.positionInParent().y.toInt() to coords.size.height
+                                        }
+                                        .clip(RoundedCornerShape(Radius.r8))
+                                        .background(
+                                            when {
+                                                isKeyboardSelected || isPressed -> p.accent.copy(alpha = 0.14f)
+                                                isHovered -> p.accent.copy(alpha = 0.08f)
+                                                else -> p.cardBg.copy(alpha = 0.72f)
+                                            }
+                                        )
+                                        .border(
+                                            width = LineWidth.hairline,
+                                            color = if (isKeyboardSelected || isHovered) p.accent.copy(alpha = 0.55f) else Color.Transparent,
+                                            shape = RoundedCornerShape(Radius.r8)
+                                        )
+                                        .kissClickable(
+                                            pressScale = 0.99f,
+                                            hoverScale = 1.004f,
+                                            interactionSource = rowInteraction,
+                                            selected = isKeyboardSelected,
+                                            onClick = {
+                                                dismissedAtInput = null
+                                                action()
+                                            }
+                                        )
+                                        .padding(horizontal = Space.s10, vertical = 7.dp),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Row(
+                                        modifier = Modifier.weight(1f).padding(end = Space.s8),
+                                        horizontalArrangement = Arrangement.spacedBy(Space.s8),
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        KissVectorIcon(
+                                            icon = parsedIcon,
+                                            tint = p.accent,
+                                            size = IconSize.md
+                                        )
+                                        if (win.isCompact) {
+                                            Column(
+                                                modifier = Modifier.weight(1f),
+                                                verticalArrangement = Arrangement.spacedBy(1.dp)
+                                            ) {
+                                                BasicText(
+                                                    text = cleanBadge,
+                                                    maxLines = 1,
+                                                    overflow = TextOverflow.Ellipsis,
+                                                    style = p.monoStyle.copy(
+                                                        color = p.accent,
+                                                        fontWeight = FontWeight.Bold,
+                                                        fontSize = 12.sp
+                                                    )
+                                                )
+                                                BasicText(
+                                                    text = descText,
+                                                    maxLines = 2,
+                                                    overflow = TextOverflow.Ellipsis,
+                                                    style = p.uiBodyStyle.copy(
+                                                        color = p.narrationInk,
+                                                        fontSize = 11.sp
+                                                    )
+                                                )
+                                            }
+                                        } else {
+                                            BasicText(
+                                                text = cleanBadge,
+                                                maxLines = 1,
+                                                overflow = TextOverflow.Ellipsis,
+                                                style = p.monoStyle.copy(
+                                                    color = p.accent,
+                                                    fontWeight = FontWeight.Bold,
+                                                    fontSize = 12.sp
+                                                )
+                                            )
+                                            BasicText(
+                                                text = descText,
+                                                maxLines = 1,
+                                                overflow = TextOverflow.Ellipsis,
+                                                style = p.uiBodyStyle.copy(
+                                                    color = p.narrationInk,
+                                                    fontSize = 12.sp
+                                                )
+                                            )
+                                        }
+                                    }
+                                    KissVectorIcon(
+                                        icon = KissIcon.PLUS,
+                                        tint = p.mutedInk,
+                                        size = IconSize.sm
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // 4. The text field: on desktop Enter sends and Shift+Enter adds a line.
+                val targetName = activeSession.activeCard?.name?.takeIf { it.isNotBlank() }
+                    ?: activeAssistant.name.takeIf { it.isNotBlank() }
+                    ?: activeSession.modelOverride.ifBlank { activeProfile.defaultModel }.ifBlank { "AI" }
+                SepiaTextField(
+                    value = userPromptInput,
+                    onValueChange = onUserPromptChange,
+                    placeholder = if (isStreaming) {
+                        Strings.typeAFollowUpToSend
+                    } else {
+                        Strings.message(targetName)
+                    },
+                    singleLine = false,
+                    borderless = true,
+                    maxLines = 6,
+                    minHeight = 40.dp,
+                    maxHeight = 148.dp,
+                    modifier = Modifier.fillMaxWidth(),
+                    onKeyNavigation = { keyEvent ->
+                        if (keyEvent.type != KeyEventType.KeyDown || keyEvent.isAltPressed) {
+                            false
+                        } else {
+                            val hasModifier = keyEvent.isCtrlPressed || keyEvent.isMetaPressed || keyEvent.isShiftPressed
+                            when {
+                                slashPopupVisible && !hasModifier -> when (keyEvent.key) {
+                                    Key.DirectionDown -> {
+                                        selectedSlashIndex = (activeSlashIndex + 1) % matchingSlashCommands.size
+                                        true
+                                    }
+                                    Key.DirectionUp -> {
+                                        selectedSlashIndex = (activeSlashIndex - 1 + matchingSlashCommands.size) % matchingSlashCommands.size
+                                        true
+                                    }
+                                    Key.Tab, Key.Enter, Key.NumPadEnter -> {
+                                        executeSlashSpec(matchingSlashCommands[activeSlashIndex])
+                                        true
+                                    }
+                                    Key.Escape -> {
+                                        dismissedSlashInput = userPromptInput
+                                        true
+                                    }
+                                    else -> false
+                                }
+                                atPopupVisible && !hasModifier -> when (keyEvent.key) {
+                                    Key.DirectionDown -> {
+                                        selectedAtIndex = (activeAtIndex + 1) % matchingAtItems.size
+                                        true
+                                    }
+                                    Key.DirectionUp -> {
+                                        selectedAtIndex = (activeAtIndex - 1 + matchingAtItems.size) % matchingAtItems.size
+                                        true
+                                    }
+                                    Key.Tab, Key.Enter, Key.NumPadEnter -> {
+                                        dismissedAtInput = null
+                                        matchingAtItems[activeAtIndex].third.invoke()
+                                        true
+                                    }
+                                    Key.Escape -> {
+                                        dismissedAtInput = userPromptInput
+                                        true
+                                    }
+                                    else -> false
+                                }
+                                else -> false
+                            }
+                        }
+                    },
+                    onEnterKeySend = if (!PlatformRuntime.isAndroid) {
+                        { isCtrlOrMeta, isShift ->
+                            val shouldTrigger = when (preferences.sendShortcut) {
+                                SendShortcutMode.ENTER -> !isShift && !isCtrlOrMeta
+                                SendShortcutMode.CTRL_ENTER -> isCtrlOrMeta && !isShift
+                                SendShortcutMode.SHIFT_ENTER -> isShift && !isCtrlOrMeta
+                            }
+                            if (shouldTrigger) {
+                                if (hasTypedInput) {
+                                    if (isStreaming) onSteerNow() else onSend()
+                                }
+                                true
+                            } else {
+                                false
+                            }
+                        }
+                    } else null,
+                    onClipboardPaste = onPasteClipboardMedia
+                )
+
+                // Interactive Context Window Breakdown Popover (Opened by clicking the Circular Context Ring)
+                AnimatedVisibility(
+                    visible = showContextBreakdownPopover,
+                    enter = motionExpandEnter(),
+                    exit = motionShrinkExit()
+                ) {
+                    val canCompactNow = activeSession.messages.count { it.includedInContext } > 1 ||
+                        activeSession.messages.any { it.includedInContext && it.activeVariant.toolCalls.isNotEmpty() }
+                    ContextWindowBreakdownPopover(
+                        breakdown = contextBreakdown,
+                        sessionTotalCostUsd = sessionTotalCostUsd,
+                        utilityUsageRecords = ownedUtilityRecords,
+                        sessionCostLabel = sessionSpend.label,
+                        isStreaming = isStreaming,
+                        canCompact = canCompactNow,
+                        canSummarize = activeSession.messages.isNotEmpty(),
+                        onCompactContext = onCompactContext,
+                        onSummarizeStory = onAutoSummarizeStory,
+                        onOpenPricingSettings = onOpenProviderSettings,
+                        onClose = { showContextBreakdownPopover = false }
+                    )
+                }
+                SepiaDivider()
+
+                // 5. Composer footer, sized for phone and desktop widths.
+                val hasActiveTools = activeProfile.enableWebSearch ||
+                    activeProfile.enableCodeExecution ||
+                    activeProfile.enableUrlContext ||
+                    activeSession.workspaceMode != WorkspaceMode.OFF ||
+                    isGoalModeEnabled ||
+                    isLiveVoiceMode ||
+                    showPrefillBox
+
+                val rawEffort = activeProfile.thinkingEffort.ifBlank { "default" }.lowercase()
+                val thinkingLabel = if (preferences.showReasoningLevelOnButton) {
+                    "🧠 ${rawEffort.replaceFirstChar { it.uppercase() }}"
+                } else {
+                    "🧠"
+                }
+
+                val toolsChipLabel = if (win.isCompact) {
+                    if (hasActiveTools) "🔧 •" else "🔧"
+                } else {
+                    if (hasActiveTools) Strings.tools4 else Strings.tools5
+                }
+
+                val activeComposerModelId = activeSession.modelOverride
+                    .ifBlank { activeProfile.defaultModel }
+                val activeModalityProfile = remember(
+                    activeComposerModelId,
+                    activeProfile.endpointPathOverride,
+                    activeProfile.customModelSpecs
+                ) {
+                    AiProviderEngine.resolveModelModalityProfile(activeProfile, activeComposerModelId)
+                }
+                ComposerToolbar(
+                    activeProfile = activeProfile,
+                    activeModalityProfile = activeModalityProfile,
+                    preferences = preferences,
+                    pendingAttachments = pendingAttachments,
+                    isVoiceListening = isVoiceListening,
+                    isLiveVoiceMode = isLiveVoiceMode,
+                    isStreaming = isStreaming,
+                    hasTypedInput = hasTypedInput,
+                    hasActiveTools = hasActiveTools,
+                    showComposerToolsDrawer = showComposerToolsDrawer,
+                    thinkingLabel = thinkingLabel,
+                    toolsChipLabel = toolsChipLabel,
+                    liveContextTokens = liveContextTokens,
+                    contextLimitTokens = contextBreakdown.contextLimitTokens,
+                    sessionTotalCostUsd = sessionTotalCostUsd,
+                    sessionCostLabel = sessionSpend.label,
+                    onAddAttachment = onAddAttachment,
+                    onTriggerVoiceInput = onTriggerVoiceInput,
+                    onUpdateProfile = onUpdateProfile,
+                    onComposerToolsDrawerChange = onComposerToolsDrawerChange,
+                    onToggleContextBreakdown = stableAction { showContextBreakdownPopover = !showContextBreakdownPopover },
+                    onStopStream = onStopStream,
+                    onQueuePrompt = onQueuePrompt,
+                    onSteerNow = onSteerNow,
+                    onSend = onSend
+                )
+            }
+        }
+    }
+}
+
+/** True when the provider needs a key and has none. A server on this computer (Ollama, LM Studio) needs no key. */
+internal fun needsApiKey(profile: ProviderProfile): Boolean {
+    if (profile.hasAnyApiKey) return false
+    val authority = profile.baseUrl.trim().substringAfter("://").substringBefore('/').lowercase()
+    val host = if (authority.startsWith("[")) authority.substringBefore(']') + "]" else authority.substringBefore(':')
+    return host !in setOf("localhost", "127.0.0.1", "[::1]", "0.0.0.0")
+}

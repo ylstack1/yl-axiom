@@ -660,8 +660,81 @@ impl WorkspacePathGuard {
         }
         Ok(format!("Deleted '{relative_path}'."))
     }
-}
 
+    /// Resolves a tool path across one or more mounted workspace folders.
+    /// Supports `<folder_name>/sub/path` prefixes and canonicalized paths inside any mounted root,
+    /// defaulting to the primary root (`roots[0]`) for bare relative paths.
+    pub fn resolve_in_roots(
+        roots: &[String],
+        input_path: &str,
+    ) -> Result<(String, String), WorkspaceError> {
+        let primary = roots
+            .first()
+            .ok_or_else(|| WorkspaceError::Denied("No workspace directory is mounted.".into()))?;
+        let trimmed = input_path.trim();
+        if trimmed.is_empty() || roots.len() == 1 {
+            return Ok((primary.clone(), trimmed.to_string()));
+        }
+        let norm = trimmed.replace('\\', "/");
+        let stripped = norm.trim_prefix('@');
+        for root_str in roots {
+            if let Some(base) = Path::new(root_str).file_name().and_then(|n| n.to_str()) {
+                if stripped.eq_ignore_ascii_case(base) {
+                    return Ok((root_str.clone(), String::new()));
+                }
+                if let Some(rest) = stripped.strip_prefix(base)
+                    && let Some(sub) = rest.strip_prefix('/')
+                {
+                    return Ok((root_str.clone(), sub.to_string()));
+                }
+            }
+        }
+        let candidate = Path::new(trimmed);
+        if candidate.is_absolute() {
+            let real_cand = real_path_with_missing_suffix(&make_absolute_normalized(candidate)?)?;
+            for root_str in roots {
+                if let Ok(real_root) = Self::root(root_str)
+                    && let Ok(rel) = real_cand.strip_prefix(&real_root)
+                {
+                    return Ok((root_str.clone(), rel.to_string_lossy().replace('\\', "/")));
+                }
+            }
+            return Err(WorkspaceError::Denied(
+                "Access denied: Path is outside all mounted workspace folders.".into(),
+            ));
+        }
+        Ok((primary.clone(), trimmed.to_string()))
+    }
+
+    /// Lists one or multiple mounted workspace roots cleanly.
+    pub fn list_dir_multi(
+        roots: &[String],
+        relative_path: &str,
+        recursive: bool,
+        max_entries: usize,
+    ) -> Result<String, WorkspaceError> {
+        if roots.is_empty() {
+            return Err(WorkspaceError::Denied(
+                "No workspace directory is mounted.".into(),
+            ));
+        }
+        if roots.len() == 1 || !relative_path.trim().is_empty() {
+            let (root, rel) = Self::resolve_in_roots(roots, relative_path)?;
+            return Self::list_dir(&root, &rel, recursive, max_entries);
+        }
+        let per_root = (max_entries / roots.len().max(1)).max(20);
+        let mut sections = Vec::with_capacity(roots.len());
+        for root in roots {
+            let label = Path::new(root)
+                .file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or(root.as_str());
+            let body = Self::list_dir(root, "", recursive, per_root)?;
+            sections.push(format!("[{label}/]\n{body}"));
+        }
+        Ok(sections.join("\n\n"))
+    }
+}
 fn make_absolute_normalized(path: &Path) -> Result<PathBuf, WorkspaceError> {
     let joined = if path.is_absolute() {
         path.to_path_buf()
@@ -712,7 +785,7 @@ fn real_path_with_missing_suffix(target: &Path) -> Result<PathBuf, WorkspaceErro
 
 fn strip_win_verbatim(p: &Path) -> String {
     let s = p.to_string_lossy();
-    s.strip_prefix(r"\\?\").unwrap_or(&s).to_string()
+    s.trim_prefix(r"\\?\").to_string()
 }
 
 #[cfg(not(feature = "ripgrep"))]

@@ -30,12 +30,13 @@ Built with a native Rust core (SQLite WAL + FTS5), a native Windows GPUI desktop
 
 **Providers**
 - OpenAI Responses and Chat Completions, Anthropic Messages, and Gemini Interactions and generateContent, plus any compatible service through a custom provider.
+- Multiple API keys per provider with round-robin selection and automatic failover on rate limits or auth errors.
 - Models and their limits come from the provider and public registries; no model names are hardcoded.
 - Recovers from dropped streams, empty answers and context overflow without losing reasoning or tool results; interrupted runs and accepted video jobs resume on Continue.
 - Per-request token and cost records, with an optional spend limit per chat.
 
 **Agent tools**
-- File tools in a folder you choose, keyless web search and fetch, a calculator, a todo list and goals.
+- File tools across one or more folders you choose, keyless web search and fetch, a calculator, a todo list and goals.
 - Ask-the-user questions, read-only helper agents (several work side by side), and on-demand skills you can install from a GitHub link.
 - Runs of file reads and searches fold into one quiet row; compound shell commands are broken down step by step before you approve them.
 - MCP servers, browsable from the official registry.
@@ -45,9 +46,8 @@ Built with a native Rust core (SQLite WAL + FTS5), a native Windows GPUI desktop
 **Everyday reliability**
 - Atomic saves with backups, so a crash never leaves a half-written chat.
 - Long runs keep going while the app is in the background, within what the system allows.
-- Built for low-end hardware: a 22.6 MB standalone Windows `.exe` (`~260 ms` start), a 6.3 MB Android APK (including native Rust SQLite WAL + FTS5 core), and a lighter mode on devices with under 4 GB of memory.
+- Built for low-end hardware: a standalone native Windows `.exe` and a lean Android APK with a shared Rust SQLite WAL + FTS5 core, plus a lighter mode on low-memory devices; see [measured budgets and benchmarks](docs/performance.md).
 - In-app updates check size and SHA-256 before installing.
-
 ## Privacy
 
 There are no accounts, analytics or telemetry. Your chats, settings and keys stay on your device. Parchment connects to:
@@ -60,18 +60,19 @@ There are no accounts, analytics or telemetry. Your chats, settings and keys sta
 
 ## Build from source
 
-Run `cargo xtask status` (or `cargo xtask affected`) to verify both the Rust desktop and Kotlin Android targets; install local pre-commit checks once with `cargo xtask install-hooks`. [CONTRIBUTING.md](CONTRIBUTING.md) covers toolchain setup and every command. Android releases require a private signing key outside the repository; see [release signing](docs/RELEASE_SIGNING.md).
+Run `cargo xtask status` (or `cargo xtask affected`) to verify both the Rust desktop and Kotlin Android targets; install local pre-commit checks once with `cargo xtask install-hooks`. [CONTRIBUTING.md](.github/CONTRIBUTING.md) covers toolchain setup and every command. Android releases require a private signing key outside the repository; see [release signing](docs/release-signing.md).
 
 ## Documentation
 
 | Read | For |
 |---|---|
-| [CONTRIBUTING.md](CONTRIBUTING.md) | Principles, setup, build commands and how to submit a change |
+| [.github/CONTRIBUTING.md](.github/CONTRIBUTING.md) | Principles, setup, build commands and how to submit a change |
 | [AGENTS.md](AGENTS.md) | Working rules, engineering rigor and stable contracts for people and AI agents |
-| [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | How the code is laid out and where to change what |
-| [docs/DESIGN.md](docs/DESIGN.md) | The visual design, tokens, icons and wording |
-| [docs/PERFORMANCE.md](docs/PERFORMANCE.md) | Speed, memory and size budgets, and how to measure them |
-| [docs/RELEASE_SIGNING.md](docs/RELEASE_SIGNING.md) | Private release keystore setup and CI signing secrets |
+| [docs/architecture.md](docs/architecture.md) | How the code is laid out and where to change what |
+| [docs/design.md](docs/design.md) | The visual design, tokens, icons and wording |
+| [docs/performance.md](docs/performance.md) | Speed, memory and size budgets, and how to measure them |
+| [docs/release-signing.md](docs/release-signing.md) | Private release keystore setup and CI signing secrets |
+| [docs/third-party-notices.md](docs/third-party-notices.md) | Third-party font and library licence notices |
 | [TODO.md](TODO.md) | Current status, open work and known gaps |
 
 ## Acknowledgements

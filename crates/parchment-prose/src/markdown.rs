@@ -632,8 +632,7 @@ fn is_scene_break(trimmed: &str) -> bool {
 }
 
 fn strip_blockquote_prefix(trimmed: &str) -> &str {
-    let rest = trimmed.strip_prefix('>').unwrap_or(trimmed);
-    rest.strip_prefix(' ').unwrap_or(rest)
+    trimmed.trim_prefix('>').trim_prefix(' ')
 }
 
 fn is_table_separator(line: &str) -> bool {
@@ -648,11 +647,7 @@ fn is_table_separator(line: &str) -> bool {
 
 fn split_table_cells(line: &str) -> Vec<String> {
     let trimmed = line.trim();
-    let stripped = trimmed
-        .strip_prefix('|')
-        .unwrap_or(trimmed)
-        .strip_suffix('|')
-        .unwrap_or(trimmed.strip_prefix('|').unwrap_or(trimmed));
+    let stripped = trimmed.trim_prefix('|').trim_suffix('|');
     stripped.split('|').map(|c| c.trim().to_string()).collect()
 }
 
