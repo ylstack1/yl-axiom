@@ -2,6 +2,13 @@
 
 What changed in each release, newest first. From 2.1.7 on, release-please writes these entries from commit messages that follow [Conventional Commits](https://www.conventionalcommits.org/) (`feat:` and `fix:` appear here and set the next version); edit wording in its release PR before merging it.
 
+## [3.1.1](https://github.com/baros4294/parchment/compare/v3.1.0...v3.1.1) (2026-11-20)
+
+
+### Fixes
+
+* protocol wire parity, v2 auto-migration, version sync, and desktop polish ([a14affa](https://github.com/baros4294/parchment/commit/a14affa47abfa75d6f846f9a7bed3229b1a1d9ed))
+
 ## [3.1.0](https://github.com/baros4294/parchment/compare/v3.0.0...v3.1.0) (2026-11-20)
 
 
