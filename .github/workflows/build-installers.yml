@@ -11,7 +11,6 @@ on:
       - "**/*.md"
       - "docs/**"
       - "LICENSE"
-      - ".release-please-manifest.json"
       - "release-please-config.json"
       - ".github/ISSUE_TEMPLATE/**"
       - ".github/pull_request_template.md"
@@ -21,7 +20,6 @@ on:
       - master
     paths-ignore:
       - "CHANGELOG.md"
-      - ".release-please-manifest.json"
       - "release-please-config.json"
   workflow_dispatch:
     inputs:
@@ -40,13 +38,11 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}-${{ github.event_name == 'workflow_dispatch' && github.run_id || 'ci' }}
   cancel-in-progress: ${{ !startsWith(github.ref, 'refs/tags/v') && github.event_name != 'workflow_dispatch' }}
 
-# Branch builds are VERSION_LINE.<run number - VERSION_BASE_RUN>: run 73 is 3.0.0, run 74 is 3.0.1.
+# Branch builds are <manifest major.minor>.<run number - VERSION_BASE_RUN>: run 73 is 3.0.0, etc.
 # Earlier runs keep 2.0.<run number>, so a Windows-only rebuild reusing one still matches its APK.
 # The Android version code stays 200 + run number, so it only ever grows.
 env:
-  VERSION_LINE: "3.0"
   VERSION_BASE_RUN: "73"
-
 jobs:
   preflight:
     name: Preflight Gates & Path Filter
@@ -434,6 +430,7 @@ jobs:
         shell: pwsh
         env:
           AWS_LC_SYS_PREBUILT_NASM: "1"
+          PARCHMENT_APP_VERSION: ${{ needs.preflight.outputs.app_version }}
         run: |
           if (-not $env:GPUI_FXC_PATH) {
             $fxc = Get-ChildItem "C:\Program Files (x86)\Windows Kits\10\bin\*\x64\fxc.exe" -ErrorAction SilentlyContinue |
@@ -460,6 +457,8 @@ jobs:
 
       - name: Verify Silent Inno Setup Install Lands Standalone Parchment.exe
         shell: pwsh
+        env:
+          APP_VER: ${{ needs.preflight.outputs.app_version }}
         run: |
           $testDir = Join-Path ([System.IO.Path]::GetTempPath()) "parchment-inno-smoke"
           Remove-Item -Recurse -Force $testDir -ErrorAction SilentlyContinue
@@ -470,10 +469,18 @@ jobs:
             if ($proc.ExitCode -ne 0) { throw "Silent installer exited with $($proc.ExitCode)" }
             $installed = Get-Item "$testDir\Parchment.exe" -ErrorAction Stop
             if ($installed.Length -lt 1048576) { throw "Installed Parchment.exe is unexpectedly small: $($installed.Length) B" }
+            $prodVer = $installed.VersionInfo.ProductVersion
+            if ($prodVer -ne $env:APP_VER) {
+              throw "Installed Parchment.exe ProductVersion '$prodVer' != expected '$($env:APP_VER)'"
+            }
+            Add-Type -Namespace Win32Check -Name Native -MemberDefinition '[DllImport("shell32.dll", CharSet = CharSet.Unicode)] public static extern uint ExtractIconExW(string lpszFile, int nIconIndex, IntPtr[] phiconLarge, IntPtr[] phiconSmall, uint nIcons);'
+            $iconCount = [Win32Check.Native]::ExtractIconExW($installed.FullName, -1, $null, $null, 0)
+            if ($iconCount -lt 1) {
+              throw "Installed Parchment.exe has no embedded Win32 icon resource (ExtractIconExW=$iconCount)"
+            }
           } finally {
             Remove-Item -Recurse -Force $testDir -ErrorAction SilentlyContinue
           }
-
       - name: Upload Windows EXE Installer Artifact
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:

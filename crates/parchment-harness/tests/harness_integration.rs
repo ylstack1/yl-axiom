@@ -577,6 +577,7 @@ async fn agent_turn_runner_completes_multi_step_tool_loop_against_local_sse() {
         "gpt-5.4",
         &session,
         &history,
+        "",
         &ctx,
         "run-loop",
         0.0,
@@ -593,6 +594,148 @@ async fn agent_turn_runner_completes_multi_step_tool_loop_against_local_sse() {
     assert_eq!(outcome.variant.tool_calls[0].result_text, "42");
     assert!(outcome.variant.tool_calls[0].starts_tool_step);
     assert_eq!(round_counter.load(Ordering::SeqCst), 2);
+
+    let _ = fs::remove_dir_all(&ws);
+    let _ = fs::remove_dir_all(&storage);
+}
+
+#[tokio::test]
+async fn agent_turn_runner_accumulates_metrics_passes_prefix_and_excludes_approval_wait() {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    use tokio::net::TcpListener;
+
+    let ws = temp_dir("runner-metrics-ws");
+    let storage = temp_dir("runner-metrics-store");
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let captured = Arc::new(std::sync::Mutex::new(Vec::<String>::new()));
+    let captured_bg = captured.clone();
+
+    tokio::spawn(async move {
+        let mut round = 0usize;
+        while let Ok((mut socket, _)) = listener.accept().await {
+            round += 1;
+            let mut buf = vec![0u8; 16384];
+            let n = socket.read(&mut buf).await.unwrap_or(0);
+            let req_str = String::from_utf8_lossy(&buf[..n]).to_string();
+            captured_bg.lock().unwrap().push(req_str);
+            let body = if round == 1 {
+                concat!(
+                    "data: {\"id\":\"c1\",\"choices\":[{\"delta\":{\"reasoning_content\":\"think-1\"},\"index\":0}]}\n\n",
+                    "data: {\"id\":\"c1\",\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"call_w\",\"type\":\"function\",\"function\":{\"name\":\"fs_write\",\"arguments\":\"{\\\"path\\\":\\\"note.txt\\\",\\\"content\\\":\\\"hi\\\"}\"}}]},\"finish_reason\":\"tool_calls\"}],\"usage\":{\"prompt_tokens\":100,\"completion_tokens\":20}}\n\n",
+                    "data: [DONE]\n\n"
+                )
+            } else {
+                concat!(
+                    "data: {\"id\":\"c2\",\"choices\":[{\"delta\":{\"content\":\"Wrote file.\"},\"finish_reason\":\"stop\"}],\"usage\":{\"prompt_tokens\":150,\"completion_tokens\":30}}\n\n",
+                    "data: [DONE]\n\n"
+                )
+            };
+            let resp = format!(
+                "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                body.len(),
+                body
+            );
+            let _ = socket.write_all(resp.as_bytes()).await;
+            let _ = socket.shutdown().await;
+        }
+    });
+
+    let http = reqwest::Client::builder().no_proxy().build().unwrap();
+    let protocol = ProtocolClient::with_test_timings(http, Duration::from_secs(5), 20);
+    let mut profile: ProviderProfile = serde_json::from_value(json!({
+        "id": "p-runner-2",
+        "name": "Local Chat",
+        "protocol": "CUSTOM",
+        "customDialect": "openai_chat",
+    }))
+    .unwrap();
+    profile.base_url = format!("http://127.0.0.1:{}/v1/chat/completions", addr.port());
+
+    let session: ChatSession = serde_json::from_value(json!({
+        "id": "chat-runner-2",
+        "title": "Runner Metrics Test",
+    }))
+    .unwrap();
+    let history = vec![MessageNode {
+        id: "u1".into(),
+        role: MessageRole::User,
+        variants: vec![MessageVariant {
+            id: "uv1".into(),
+            content: "Write note.txt".into(),
+            ..Default::default()
+        }],
+        active_variant_index: 0,
+        included_in_context: true,
+        pinned: false,
+    }];
+    let policy = AgentPermissionPolicy {
+        approval_mode: ToolApprovalMode::AskForChanges,
+        workspace_path: ws.to_string_lossy().into_owned(),
+        workspace_mode: WorkspaceMode::ReadWrite,
+        tools_enabled: true,
+        ..Default::default()
+    };
+    let broker = ToolApprovalBroker::new("run-metrics", &session.id, ToolAccessScope::new(policy));
+    let broker_approver = broker.clone();
+    tokio::spawn(async move {
+        loop {
+            let reqs = broker_approver.pending_requests().await;
+            if let Some(first) = reqs.first() {
+                tokio::time::sleep(Duration::from_millis(120)).await;
+                broker_approver
+                    .respond(&first.request_id, ToolApprovalDecision::AllowOnce)
+                    .await;
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    });
+
+    let ctx = HarnessContext {
+        chat_id: session.id.clone(),
+        storage_root: storage.clone(),
+        broker: broker.clone(),
+        web: Arc::new(PublicWebTransport::new_for_local_tests().unwrap()),
+        mcp: None,
+        computer_use: None,
+        subagent_delegate: None,
+        goal_state: Arc::new(Mutex::new(GoalTrackerState::default())),
+        expanded_mcp_tools: Arc::new(Mutex::new(HashSet::new())),
+        computer_use_settle_ms: 0,
+    };
+
+    let outcome = AgentTurnRunner::run_turn(
+        &protocol,
+        &profile,
+        "test-chat-model",
+        &session,
+        &history,
+        "Sure, I will ",
+        &ctx,
+        "run-metrics",
+        0.0,
+        0.0,
+        None,
+        |_| {},
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(outcome.variant.content, "Wrote file.");
+    assert_eq!(outcome.variant.token_metrics.output_tokens, 50);
+    assert_eq!(outcome.variant.token_metrics.input_tokens, 150);
+    assert!(!outcome.variant.raw_request_preview.is_empty());
+    assert!(!outcome.variant.raw_response_preview.is_empty());
+    assert!(broker.total_wait_ms() >= 100);
+    assert!(
+        outcome.elapsed_ms < 110,
+        "approval wait should be excluded from elapsed_ms (got {}ms)",
+        outcome.elapsed_ms
+    );
+    let reqs = captured.lock().unwrap();
+    assert!(reqs[0].contains("Sure, I will "));
+    assert!(!reqs[1].contains("Sure, I will "));
 
     let _ = fs::remove_dir_all(&ws);
     let _ = fs::remove_dir_all(&storage);

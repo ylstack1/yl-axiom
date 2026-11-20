@@ -706,7 +706,7 @@ pub(super) fn render_turn_footer(
     }
 
     let on_action = ctx.on_action;
-    let mut actions = h_flex().flex_wrap().items_center().gap(px(3.0));
+    let mut actions = h_flex().flex_wrap().items_center().gap(px(2.0));
     if is_sent_bubble {
         actions = actions.justify_end();
     }
@@ -715,79 +715,93 @@ pub(super) fn render_turn_footer(
     {
         let h = on_action.clone();
         let copied = ctx.ui_state.copied_kind == Some("plain");
-        actions = actions.child(icon_button(
-            ("act-copy", ix),
-            if copied {
-                KissIcon::Check
-            } else {
-                KissIcon::Copy
-            },
-            copied,
-            p,
-            move |_, w, cx| h(MessageAction::CopyPlain(ix), w, cx),
-        ));
+        actions = actions.child(
+            icon_button(
+                ("act-copy", ix),
+                if copied {
+                    KissIcon::Check
+                } else {
+                    KissIcon::Copy
+                },
+                copied,
+                p,
+                move |_, w, cx| h(MessageAction::CopyPlain(ix), w, cx),
+            )
+            .h(px(28.0)),
+        );
     }
 
     // 2. Read aloud (`PlatformVoice.speakTextAloud` parity)
     if !msg.content.trim().is_empty() {
         let h = on_action.clone();
-        actions = actions.child(icon_button(
-            ("act-speak", ix),
-            if ctx.is_speaking_this_turn {
-                KissIcon::VolumeOff
-            } else {
-                KissIcon::VolumeOn
-            },
-            ctx.is_speaking_this_turn,
-            p,
-            move |_, w, cx| h(MessageAction::ToggleSpeak(ix), w, cx),
-        ));
+        actions = actions.child(
+            icon_button(
+                ("act-speak", ix),
+                if ctx.is_speaking_this_turn {
+                    KissIcon::VolumeOff
+                } else {
+                    KissIcon::VolumeOn
+                },
+                ctx.is_speaking_this_turn,
+                p,
+                move |_, w, cx| h(MessageAction::ToggleSpeak(ix), w, cx),
+            )
+            .h(px(28.0)),
+        );
     }
 
     // 3. Regenerate
     {
         let h = on_action.clone();
-        actions = actions.child(sepia_button(
-            ("act-regen", ix),
-            "",
-            Some(KissIcon::Refresh),
-            SepiaButtonStyle::Ghost,
-            true,
-            msg.is_streaming,
-            p,
-            move |_, w, cx| h(MessageAction::Regenerate(ix), w, cx),
-        ));
+        actions = actions.child(
+            sepia_button(
+                ("act-regen", ix),
+                "",
+                Some(KissIcon::Refresh),
+                SepiaButtonStyle::Ghost,
+                true,
+                msg.is_streaming,
+                p,
+                move |_, w, cx| h(MessageAction::Regenerate(ix), w, cx),
+            )
+            .h(px(28.0)),
+        );
     }
 
     // 4. Pin / Unpin (assistant turns)
     if !msg.is_user {
         let h = on_action.clone();
-        actions = actions.child(icon_button(
-            ("act-pin", ix),
-            KissIcon::Pin,
-            msg.pinned,
-            p,
-            move |_, w, cx| h(MessageAction::TogglePin(ix), w, cx),
-        ));
+        actions = actions.child(
+            icon_button(
+                ("act-pin", ix),
+                KissIcon::Pin,
+                msg.pinned,
+                p,
+                move |_, w, cx| h(MessageAction::TogglePin(ix), w, cx),
+            )
+            .h(px(28.0)),
+        );
     }
 
     // 5. More actions toggle
     {
         let h = on_action.clone();
         let nid = msg.node_id.clone();
-        actions = actions.child(icon_button(
-            ("act-more", ix),
-            if ctx.ui_state.show_more_actions {
-                KissIcon::ChevronUp
-            } else {
-                KissIcon::MoreHorizontal
-            },
-            ctx.ui_state.show_more_actions,
-            p,
-            move |_, w, cx| h(MessageAction::ToggleMoreActions(nid.clone()), w, cx),
-        ));
+        actions = actions.child(
+            icon_button(
+                ("act-more", ix),
+                if ctx.ui_state.show_more_actions {
+                    KissIcon::ChevronUp
+                } else {
+                    KissIcon::MoreHorizontal
+                },
+                ctx.ui_state.show_more_actions,
+                p,
+                move |_, w, cx| h(MessageAction::ToggleMoreActions(nid.clone()), w, cx),
+            )
+            .h(px(28.0)),
+        );
     }
-
     // 6. Web sources pill (when citations present)
     if !msg.is_user && !msg.web_sources.is_empty() {
         let h = on_action.clone();
@@ -973,14 +987,15 @@ pub(super) fn render_turn_footer(
     // Token & Cost Stats Row + Clickable Usage Details Popover
     let stats_el = render_usage_stats_row(ix, msg, ctx, is_sent_bubble, muted, accent);
 
-    let always_visible = msg.is_streaming
+    let always_visible = (ctx.is_latest_turn && !msg.is_user)
+        || msg.is_streaming
         || ctx.ui_state.show_more_actions
         || ctx.ui_state.show_usage_details
         || ctx.is_speaking_this_turn;
 
     let mut wrap = v_flex()
         .w_full()
-        .gap(px(3.0))
+        .gap(px(2.0))
         .child(actions)
         .children(stats_el);
     if is_sent_bubble {

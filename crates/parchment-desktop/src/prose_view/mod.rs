@@ -337,8 +337,19 @@ impl DisplayMessageRow {
         }
     }
 
+    pub fn set_streaming_content(&mut self, text: &str, refresh_blocks: bool) {
+        self.content = SharedString::from(text.to_string());
+        if refresh_blocks {
+            self.prose_blocks = precompute_prose_blocks(text, true);
+        }
+    }
+
     pub fn set_streaming_thinking(&mut self, thinking: &str) {
         self.thinking_summary = SharedString::from(thinking.to_string());
+    }
+
+    pub fn set_streaming_tools(&mut self, tools: &[ToolCallRecord]) {
+        self.tool_cards = precompute_tool_cards(tools);
     }
 
     pub fn recompute_extras_for_completed(&mut self) {
@@ -679,6 +690,7 @@ pub struct TurnRenderContext<'a> {
     pub user_picture_path: &'a str,
     pub assistant_name: &'a str,
     pub provider_name: &'a str,
+    pub is_latest_turn: bool,
     pub is_speaking_this_turn: bool,
     pub highlight_dialogue_and_narration: bool,
     pub ui_state: &'a TurnUiState,
@@ -1187,6 +1199,15 @@ pub fn render_message_row(
             div().w_full().px(px(16.0)).child(col).into_any_element()
         }
         ViewMode::EditorialTurns => {
+            let shrink_bubble = !msg.is_user
+                && !ctx.is_editing
+                && !msg.is_streaming
+                && msg.attachments.is_empty()
+                && msg.media_items.is_empty()
+                && msg.content.chars().count() < 72
+                && !msg.content.contains("```")
+                && !msg.content.contains('\n');
+
             let bubble_box = if msg.is_user {
                 div()
                     .px(px(13.0))
@@ -1198,8 +1219,7 @@ pub fn render_message_row(
                     .bg(p.user_bubble_bg())
                     .child(main_body)
             } else {
-                div()
-                    .w_full()
+                let mut b = div()
                     .px(px(13.0))
                     .py(px(9.0))
                     .rounded_tl(px(16.0))
@@ -1209,7 +1229,11 @@ pub fn render_message_row(
                     .bg(card)
                     .border_1()
                     .border_color(border)
-                    .child(main_body)
+                    .child(main_body);
+                if !shrink_bubble {
+                    b = b.w_full();
+                }
+                b
             };
 
             let max_bubble_w = if msg.is_user {
@@ -1220,7 +1244,7 @@ pub fn render_message_row(
 
             let mut turn_col = v_flex()
                 .max_w(max_bubble_w)
-                .gap(px(5.0))
+                .gap(px(4.0))
                 .children(header_el)
                 .children(reasoning_drawer)
                 .children(goal_card)
@@ -1231,10 +1255,11 @@ pub fn render_message_row(
 
             if is_sent_bubble {
                 turn_col = turn_col.items_end();
+            } else if shrink_bubble {
+                turn_col = turn_col.items_start();
             } else {
                 turn_col = turn_col.w_full().items_start();
             }
-
             if !msg.included_in_context {
                 turn_col = turn_col.opacity(0.60);
             }

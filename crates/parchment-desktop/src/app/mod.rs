@@ -28,7 +28,7 @@ use gpui_component::scroll::ScrollableElement as _;
 use gpui_component::{StyledExt as _, h_flex, v_flex};
 use parchment_core::harness::{
     AgentTurnRunner, CardImportResult, HarnessContext, McpRegistry, McpServerStatus,
-    PublicWebTransport, RunProgressEvent, ToolAccessScope, ToolApprovalBroker,
+    PublicWebTransport, RunProgressEvent, SubagentDelegate, ToolAccessScope, ToolApprovalBroker,
     ToolApprovalDecision, ToolApprovalRequest, UserQuestion, WorkspacePathGuard,
     export_card_to_png_bytes, extract_md_skills_from_zip, format_elapsed_whole_seconds,
     import_card_or_prompt_bytes,
@@ -39,7 +39,7 @@ use parchment_core::model::{
     DesktopWindowConfig, FragmentActivationMode, GoalTrackerState, McpServerConfig,
     MessageNavVisibility, MessageNode, MessageRole, MessageVariant, ModelPricingSpec,
     PinnedMessageStub, PromptAttachment, ProviderProfile, ProviderProtocol, SendShortcutMode,
-    ShellAccess, SystemPromptPreset, TokenPricing, ViewMode, WorkspaceMode,
+    ShellAccess, SystemPromptPreset, TokenPricing, ToolCallRecord, ViewMode, WorkspaceMode,
 };
 use parchment_core::protocol::usage::{estimate_request_cost, spend_toward_limit};
 use parchment_core::storage::SearchHit;
@@ -91,8 +91,8 @@ use crate::vault::{
 use crate::win32::{
     PowerLeaseStatus, Win32ComputerUse, WindowsPowerLease, apply_dwm_chrome_to_active_window,
     open_local_file_or_folder, open_web_link, pick_folder_dialog, pick_open_file_dialog,
-    pick_save_file_dialog, speak_text_aloud, start_voice_input, stop_speaking_aloud,
-    stop_voice_input,
+    pick_save_file_dialog, read_clipboard_attachments, speak_text_aloud, start_voice_input,
+    stop_speaking_aloud, stop_voice_input,
 };
 
 mod actions;
@@ -165,7 +165,6 @@ struct ActiveRunState {
     chat_id: String,
     node_id: String,
     variant_index: usize,
-    is_continue: bool,
     continue_prefix: String,
     model_used: String,
     started_at: Instant,
@@ -179,6 +178,8 @@ struct ActiveRunState {
     pending_questions: Vec<UserQuestion>,
     accumulated_text: String,
     accumulated_thinking: String,
+    live_tool_calls: Vec<ToolCallRecord>,
+    last_prose_parse_at: Instant,
     last_checkpoint_at: Instant,
 }
 
@@ -568,6 +569,7 @@ impl Render for ParchmentDesktopApp {
                             let is_editing = editing_idx == Some(ix);
                             let is_speaking_this_turn =
                                 speaking_nid.as_deref() == Some(msg.node_id.as_str());
+                            let is_latest_turn = ix + 1 == guard.len();
                             let ctx = TurnRenderContext {
                                 view_mode,
                                 palette: &palette_clone,
@@ -576,6 +578,7 @@ impl Render for ParchmentDesktopApp {
                                 user_picture_path: &user_picture_path,
                                 assistant_name: &asst_name,
                                 provider_name: &provider_name,
+                                is_latest_turn,
                                 is_speaking_this_turn,
                                 highlight_dialogue_and_narration: highlight_dn,
                                 ui_state,

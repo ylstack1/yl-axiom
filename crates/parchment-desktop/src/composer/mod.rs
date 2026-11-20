@@ -919,90 +919,27 @@ pub fn render_composer_deck(props: ComposerRenderProps<'_>) -> AnyElement {
                 p,
                 move |_, w, cx| h_queue(ComposerAction::QueuePrompt, w, cx),
             ))
-            .child({
-                let fg = if has_input {
-                    p.on_accent_ink.to_hsla()
-                } else {
-                    muted
-                };
-                let bg = if has_input {
-                    accent
-                } else {
-                    p.border.with_alpha(0.55)
-                };
-                let mut b = h_flex()
-                    .id("comp-steer-btn")
-                    .h(px(34.0))
-                    .px(px(11.0))
-                    .rounded(px(8.0))
-                    .items_center()
-                    .gap(px(5.0))
-                    .bg(bg)
-                    .border_1()
-                    .border_color(if has_input {
-                        accent
-                    } else {
-                        p.border.to_hsla()
-                    })
-                    .child(kiss_icon(KissIcon::Zap, 13.0, fg))
-                    .child(
-                        div()
-                            .text_size(px(12.0))
-                            .font_semibold()
-                            .text_color(fg)
-                            .child(strings::SEND_NOW),
-                    )
-                    .child(kiss_icon(KissIcon::SendEnter, 12.0, fg));
-                if has_input {
-                    b = b
-                        .cursor_pointer()
-                        .hover(|s| s.opacity(0.9))
-                        .on_click(move |_, w, cx| h_steer(ComposerAction::SteerNow, w, cx));
-                }
-                b
-            });
+            .child(sepia_button(
+                "comp-steer-btn",
+                strings::SEND_NOW,
+                Some(KissIcon::Zap),
+                SepiaButtonStyle::Primary,
+                true,
+                !has_input,
+                p,
+                move |_, w, cx| h_steer(ComposerAction::SteerNow, w, cx),
+            ));
     } else {
-        right_controls = right_controls.child({
-            let fg = if has_input {
-                p.on_accent_ink.to_hsla()
-            } else {
-                muted
-            };
-            let bg = if has_input {
-                accent
-            } else {
-                p.border.with_alpha(0.55)
-            };
-            let mut b = h_flex()
-                .id("comp-send-btn")
-                .h(px(34.0))
-                .px(px(12.0))
-                .rounded(px(8.0))
-                .items_center()
-                .gap(px(6.0))
-                .bg(bg)
-                .border_1()
-                .border_color(if has_input {
-                    accent
-                } else {
-                    p.border.to_hsla()
-                })
-                .child(
-                    div()
-                        .text_size(px(12.5))
-                        .font_semibold()
-                        .text_color(fg)
-                        .child(strings::SEND),
-                )
-                .child(kiss_icon(KissIcon::SendEnter, 13.0, fg));
-            if has_input {
-                b = b
-                    .cursor_pointer()
-                    .hover(|s| s.opacity(0.9))
-                    .on_click(move |_, w, cx| h_send(ComposerAction::Send, w, cx));
-            }
-            b
-        });
+        right_controls = right_controls.child(sepia_button(
+            "comp-send-btn",
+            strings::SEND,
+            Some(KissIcon::SendEnter),
+            SepiaButtonStyle::Primary,
+            true,
+            !has_input,
+            p,
+            move |_, w, cx| h_send(ComposerAction::Send, w, cx),
+        ));
     }
 
     div()
@@ -1106,13 +1043,20 @@ pub fn render_composer_deck(props: ComposerRenderProps<'_>) -> AnyElement {
                         .children(prefill_row)
                         .children(slash_popup)
                         .children(at_popup)
-                        .child(
+                        .child({
+                            let est_lines: usize = props
+                                .draft_text
+                                .split('\n')
+                                .map(|line| (line.chars().count() / 78) + 1)
+                                .sum::<usize>()
+                                .max(1);
+                            let composer_h = (32.0 + (est_lines as f32) * 20.0).clamp(54.0, 200.0);
                             Textarea::new(props.composer_input)
                                 .appearance(false)
                                 .bordered(false)
-                                .h(px(58.0))
-                                .aria_label("Message composer"),
-                        )
+                                .h(px(composer_h))
+                                .aria_label("Message composer")
+                        })
                         .child(h_divider(p))
                         .child(
                             h_flex()

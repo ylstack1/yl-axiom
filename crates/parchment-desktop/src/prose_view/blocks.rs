@@ -56,7 +56,7 @@ pub(super) fn render_turn_body(
             )))
             .into_any_element()
     } else if enable_md && !msg.prose_blocks.is_empty() {
-        let mut stack = v_flex().w_full().gap(px(8.0));
+        let mut stack = v_flex().w_full().gap(px(p.paragraph_spacing_px));
         for (b_idx, block) in msg.prose_blocks.iter().enumerate() {
             match block {
                 DisplayProseBlock::Markdown(md) => {
@@ -197,7 +197,7 @@ pub(super) fn render_turn_body(
 pub(super) fn render_dialogue_narration_text(text: &str, p: &ParchmentPalette) -> AnyElement {
     let mut col = v_flex()
         .w_full()
-        .gap(px(6.0))
+        .gap(px(p.paragraph_spacing_px))
         .text_size(px(p.prose_font_size_px))
         .line_height(gpui::relative(p.line_height_mult));
 

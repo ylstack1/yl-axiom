@@ -255,6 +255,7 @@ pub fn check_files(files: &BTreeMap<String, Vec<u8>>) -> Vec<Problem> {
     check_links(files, &mut problems);
     check_secrets(files, &mut problems);
     check_tracked_size_and_artifacts(files, &mut problems);
+    crate::version_sync::check_version_sync(files, &mut problems);
     problems
 }
 

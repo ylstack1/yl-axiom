@@ -1,5 +1,104 @@
 use super::*;
 
+struct DesktopSubagentDelegate {
+    core: Arc<ParchmentCore>,
+    profile: ProviderProfile,
+    model: String,
+    base_session: ChatSession,
+    base_policy: AgentPermissionPolicy,
+    storage_root: PathBuf,
+    web: Arc<PublicWebTransport>,
+    mcp: Option<Arc<McpRegistry>>,
+    parent_run_id: String,
+    spend_limit: f64,
+    prior_spend: f64,
+    catalog_spec: Option<ModelPricingSpec>,
+    tx: mpsc::UnboundedSender<LiveRunUpdate>,
+}
+
+#[async_trait::async_trait]
+impl SubagentDelegate for DesktopSubagentDelegate {
+    async fn run_helper(&self, task: &str) -> Result<String, String> {
+        let now = now_ms();
+        let helper_run_id = format!("{}-sub-{now}", self.parent_run_id);
+        let _ = self
+            .tx
+            .send(LiveRunUpdate::Progress(RunProgressEvent::Status(
+                "Running helper subagent…".into(),
+            )));
+        let mut helper_policy = self.base_policy.clone();
+        helper_policy.workspace_mode = match helper_policy.workspace_mode {
+            WorkspaceMode::ReadWrite => WorkspaceMode::ReadOnly,
+            other => other,
+        };
+        helper_policy.shell_access = ShellAccess::Disabled;
+        helper_policy.computer_access = false;
+        let broker = ToolApprovalBroker::new(
+            &helper_run_id,
+            &self.base_session.id,
+            ToolAccessScope::new(helper_policy),
+        );
+        let hctx = HarnessContext {
+            chat_id: self.base_session.id.clone(),
+            storage_root: self.storage_root.clone(),
+            broker,
+            web: self.web.clone(),
+            mcp: self.mcp.clone(),
+            computer_use: None,
+            subagent_delegate: None,
+            goal_state: Arc::new(AsyncMutex::new(GoalTrackerState::default())),
+            expanded_mcp_tools: Arc::new(AsyncMutex::new(HashSet::new())),
+            computer_use_settle_ms: 0,
+        };
+        let mut helper_session = ChatSession::new(
+            format!("{}-sub-{now}", self.base_session.id),
+            "Helper Subagent",
+            now,
+        );
+        helper_session.system_prompt =
+            "You are a focused read-only helper subagent. Complete the delegated task concisely and accurately."
+                .into();
+        let history = vec![MessageNode {
+            id: format!("sub-u-{now}"),
+            role: MessageRole::User,
+            variants: vec![MessageVariant {
+                id: format!("sub-u-{now}-v0"),
+                content: task.to_string(),
+                created_at: now,
+                ..Default::default()
+            }],
+            active_variant_index: 0,
+            included_in_context: true,
+            pinned: false,
+        }];
+        let protocol = self.core.protocol_client();
+        let tx_bg = self.tx.clone();
+        let outcome = AgentTurnRunner::run_turn(
+            &protocol,
+            &self.profile,
+            &self.model,
+            &helper_session,
+            &history,
+            "",
+            &hctx,
+            &helper_run_id,
+            self.spend_limit,
+            self.prior_spend,
+            self.catalog_spec.clone(),
+            move |ev| {
+                if let RunProgressEvent::Status(s) = ev {
+                    let _ = tx_bg.send(LiveRunUpdate::Progress(RunProgressEvent::Status(format!(
+                        "Helper: {s}"
+                    ))));
+                }
+            },
+        )
+        .await
+        .map_err(|e| e.to_string())?;
+        Ok(outcome.variant.content)
+    }
+}
+
 impl ParchmentDesktopApp {
     pub(super) fn submit_composer_shortcut(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let draft = self.composer.read(cx).value().to_string();
@@ -120,6 +219,17 @@ impl ParchmentDesktopApp {
 
         // Build history + determine target assistant node & variant slot.
         let mut session_snapshot = self.active_session.clone();
+        if let Some(asst) = self.active_assistant() {
+            if session_snapshot.system_prompt.trim().is_empty() {
+                session_snapshot.system_prompt = asst.system_prompt.clone();
+            }
+            if session_snapshot.authors_note.trim().is_empty() {
+                session_snapshot.authors_note = asst.authors_note.clone();
+            }
+            if session_snapshot.active_card.is_none() {
+                session_snapshot.active_card = asst.active_card.clone();
+            }
+        }
         if let Some(dir) = self.pending_guided_direction.take()
             && !dir.trim().is_empty()
         {
@@ -136,7 +246,7 @@ impl ParchmentDesktopApp {
                 session_snapshot.fragments.push(frag.clone());
             }
         }
-        let (node_id, variant_index, continue_prefix, mut history_nodes) = if let Some(idx) =
+        let (node_id, variant_index, mut continue_prefix, history_nodes) = if let Some(idx) =
             target_assistant_node_idx
             && let Some(node) = self.active_session.messages.get_mut(idx)
             && node.role == MessageRole::Assistant
@@ -202,26 +312,19 @@ impl ParchmentDesktopApp {
 
         let prefill_text = self.prefill_input.read(cx).value().trim().to_string();
         if !prefill_text.is_empty() && !is_continue {
-            history_nodes.push(MessageNode {
-                id: format!("prefill-{now}"),
-                role: MessageRole::Assistant,
-                variants: vec![MessageVariant {
-                    id: format!("prefill-{now}-v0"),
-                    content: prefill_text.clone(),
-                    created_at: now,
-                    ..Default::default()
-                }],
-                active_variant_index: 0,
-                included_in_context: true,
-                pinned: false,
-            });
+            continue_prefix = prefill_text;
+            self.active_session.draft_prefill.clear();
+            self.show_prefill_box = false;
+            self.prefill_input
+                .update(cx, |input, cx| input.set_value("", window, cx));
         }
 
         let policy = self.resolved_policy();
-        let broker = ToolApprovalBroker::new(&run_id, &chat_id, ToolAccessScope::new(policy));
+        let mut scope = ToolAccessScope::new(policy.clone());
+        scope.goal_mode_active = self.goal_mode_enabled;
+        let broker = ToolApprovalBroker::new(&run_id, &chat_id, scope);
         let retry_now = Arc::new(Notify::new());
         let (tx, rx) = mpsc::unbounded_channel();
-
         let prior_spend = self.prior_chat_spend_usd();
         let spend_limit = self.snapshot.preferences.chat_spend_limit_usd;
         let catalog_spec = self.core.registry().get_cached_spec(&model);
@@ -243,6 +346,8 @@ impl ParchmentDesktopApp {
         let broker_bg = broker.clone();
         let retry_bg = retry_now.clone();
         let model_bg = model.clone();
+        let continue_prefix_bg = continue_prefix.clone();
+        let subagent_policy = policy;
 
         let join_handle = self.core.runtime().spawn(async move {
             static WEB_TRANSPORT: std::sync::LazyLock<Arc<PublicWebTransport>> =
@@ -254,6 +359,21 @@ impl ParchmentDesktopApp {
                 });
             let web_bg = Arc::clone(&WEB_TRANSPORT);
             let protocol = core_bg.protocol_client().with_retry_notify(retry_bg);
+            let subagent_delegate: Arc<dyn SubagentDelegate> = Arc::new(DesktopSubagentDelegate {
+                core: core_bg.clone(),
+                profile: profile.clone(),
+                model: model_bg.clone(),
+                base_session: session_snapshot.clone(),
+                base_policy: subagent_policy,
+                storage_root: storage_root.clone(),
+                web: web_bg.clone(),
+                mcp: mcp_bg.clone(),
+                parent_run_id: run_id.clone(),
+                spend_limit,
+                prior_spend,
+                catalog_spec: catalog_spec.clone(),
+                tx: tx.clone(),
+            });
             let hctx = HarnessContext {
                 chat_id: session_snapshot.id.clone(),
                 storage_root,
@@ -261,7 +381,7 @@ impl ParchmentDesktopApp {
                 web: web_bg,
                 mcp: mcp_bg,
                 computer_use: Some(Arc::new(Win32ComputerUse)),
-                subagent_delegate: None,
+                subagent_delegate: Some(subagent_delegate),
                 goal_state: Arc::new(AsyncMutex::new(goal_state)),
                 expanded_mcp_tools: Arc::new(AsyncMutex::new(HashSet::new())),
                 computer_use_settle_ms: 150,
@@ -272,6 +392,7 @@ impl ParchmentDesktopApp {
                 &model_bg,
                 &session_snapshot,
                 &history_nodes,
+                &continue_prefix_bg,
                 &hctx,
                 &run_id,
                 spend_limit,
@@ -302,7 +423,6 @@ impl ParchmentDesktopApp {
                 chat_id,
                 node_id,
                 variant_index,
-                is_continue,
                 continue_prefix,
                 model_used: model,
                 started_at: Instant::now(),
@@ -316,6 +436,8 @@ impl ParchmentDesktopApp {
                 pending_questions: Vec::new(),
                 accumulated_text: String::new(),
                 accumulated_thinking: String::new(),
+                live_tool_calls: Vec::new(),
+                last_prose_parse_at: Instant::now() - Duration::from_millis(200),
                 last_checkpoint_at: Instant::now(),
             },
         );
@@ -339,7 +461,7 @@ impl ParchmentDesktopApp {
         });
         self.power_lease.release();
 
-        let partial = if run.is_continue && !run.continue_prefix.is_empty() {
+        let partial = if !run.continue_prefix.is_empty() {
             format!("{}{}", run.continue_prefix, run.accumulated_text)
         } else {
             run.accumulated_text
@@ -481,10 +603,40 @@ impl ParchmentDesktopApp {
                                 wait_ms.div_ceil(1000)
                             ));
                         }
-                        RunProgressEvent::ToolStarted { name, .. } => {
+                        RunProgressEvent::ToolStarted {
+                            call_id,
+                            name,
+                            arguments_json,
+                        } => {
+                            let starts_tool_step = run.live_tool_calls.is_empty();
+                            run.live_tool_calls.push(ToolCallRecord {
+                                id: call_id,
+                                name: name.clone(),
+                                arguments_json,
+                                is_running: true,
+                                starts_tool_step,
+                                ..Default::default()
+                            });
                             run.status_line = format!("Running {name}…");
                         }
-                        RunProgressEvent::ToolFinished { name, .. } => {
+                        RunProgressEvent::ToolFinished {
+                            call_id,
+                            name,
+                            is_error,
+                            duration_ms,
+                            result_preview,
+                        } => {
+                            if let Some(tc) = run
+                                .live_tool_calls
+                                .iter_mut()
+                                .rev()
+                                .find(|t| t.id == call_id || (t.is_running && t.name == name))
+                            {
+                                tc.is_running = false;
+                                tc.is_error = is_error;
+                                tc.duration_ms = duration_ms;
+                                tc.result_text = result_preview;
+                            }
                             run.status_line = format!("Finished {name}");
                         }
                     },
@@ -513,7 +665,7 @@ impl ParchmentDesktopApp {
                 && (!run.accumulated_text.is_empty() || !run.accumulated_thinking.is_empty())
             {
                 run.last_checkpoint_at = Instant::now();
-                let cp_content = if run.is_continue && !run.continue_prefix.is_empty() {
+                let cp_content = if !run.continue_prefix.is_empty() {
                     format!("{}{}", run.continue_prefix, run.accumulated_text)
                 } else {
                     run.accumulated_text.clone()
@@ -539,11 +691,16 @@ impl ParchmentDesktopApp {
             if run_dirty {
                 any_dirty = true;
                 if cid == &active_id {
-                    let live_text = if run.is_continue && !run.continue_prefix.is_empty() {
+                    let live_text = if !run.continue_prefix.is_empty() {
                         format!("{}{}", run.continue_prefix, run.accumulated_text)
                     } else {
                         run.accumulated_text.clone()
                     };
+                    let should_reparse =
+                        run.last_prose_parse_at.elapsed() >= Duration::from_millis(90);
+                    if should_reparse {
+                        run.last_prose_parse_at = Instant::now();
+                    }
                     let mut updated_idx = None;
                     {
                         let mut rows = self.messages.borrow_mut();
@@ -552,8 +709,9 @@ impl ParchmentDesktopApp {
                             .enumerate()
                             .find(|(_, r)| r.node_id == run.node_id)
                         {
-                            row.content = SharedString::from(live_text);
+                            row.set_streaming_content(&live_text, should_reparse);
                             row.set_streaming_thinking(&run.accumulated_thinking);
+                            row.set_streaming_tools(&run.live_tool_calls);
                             row.is_streaming = true;
                             updated_idx = Some(ix);
                         }
@@ -596,7 +754,7 @@ impl ParchmentDesktopApp {
             }
             match done {
                 Ok((mut variant, _elapsed_ms)) => {
-                    if run.is_continue && !run.continue_prefix.is_empty() {
+                    if !run.continue_prefix.is_empty() {
                         variant.content = format!("{}{}", run.continue_prefix, variant.content);
                     }
                     self.commit_completed_variant(
@@ -630,7 +788,7 @@ impl ParchmentDesktopApp {
                     self.show_run_error_notice(&err_msg, cx);
                     let err_var = MessageVariant {
                         id: format!("{}-v{}", run.node_id, run.variant_index),
-                        content: format!("**Error:** {err_msg}"),
+                        content: format!("**[Provider Error: {err_msg}]**"),
                         thinking_summary: run.accumulated_thinking,
                         model_used: run.model_used,
                         created_at: now_ms(),
@@ -733,8 +891,10 @@ impl ParchmentDesktopApp {
                     }
                     Ok(None) => {
                         self.latest_release = None;
-                        self.update_status =
-                            format!("You're up to date (v{}).", env!("CARGO_PKG_VERSION"));
+                        self.update_status = format!(
+                            "You're up to date (v{}).",
+                            parchment_core::model::APP_VERSION
+                        );
                     }
                     Err(err) => {
                         self.update_status = format!("Update check failed: {err}");
@@ -995,7 +1155,7 @@ impl ParchmentDesktopApp {
         self.pending_bg_tasks += 1;
         let http = self.core.http_client().clone();
         let repo = self.snapshot.ota_github_repo.clone();
-        let ver = env!("CARGO_PKG_VERSION").to_string();
+        let ver = parchment_core::model::APP_VERSION.to_string();
         let tx = self.bg_tx.clone();
         self.core.runtime().spawn(async move {
             let res = check_latest_github_release(&http, &repo, &ver).await;

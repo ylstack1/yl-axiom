@@ -17,9 +17,17 @@ ktlint {
     outputToConsole.set(true)
 }
 
+val manifestVersionProp = providers.fileContents(
+    rootProject.layout.projectDirectory.file(".release-please-manifest.json"),
+).asText.map { text ->
+    Regex(""""\."\s*:\s*"([^"]+)"""").find(text)?.groupValues?.get(1)?.removePrefix("v")?.trim()
+        ?.takeIf { it.isNotEmpty() }
+        ?: error("Missing root '.' version in .release-please-manifest.json")
+}
 val appVersionProp = providers.gradleProperty("appVersion")
-    .map { it.removePrefix("v").trim().ifEmpty { "3.0.0" } }
-    .orElse("3.0.0")
+    .map { it.removePrefix("v").trim() }
+    .orElse(manifestVersionProp)
+    .zip(manifestVersionProp) { explicit, fallback -> explicit.ifEmpty { fallback } }
 val githubRepoProp = providers.gradleProperty("githubRepo")
     .map { it.trim().ifEmpty { "baros4294/parchment" } }
     .orElse("baros4294/parchment")

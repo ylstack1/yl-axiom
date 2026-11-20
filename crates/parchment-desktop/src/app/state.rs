@@ -527,14 +527,15 @@ impl ParchmentDesktopApp {
 
         // Overlay any active live stream for this chat onto its row.
         if let Some(run) = self.active_runs.get(&self.active_session.id) {
-            let live_text = if run.is_continue && !run.continue_prefix.is_empty() {
+            let live_text = if !run.continue_prefix.is_empty() {
                 format!("{}{}", run.continue_prefix, run.accumulated_text)
             } else {
                 run.accumulated_text.clone()
             };
             if let Some(row) = rows.iter_mut().find(|r| r.node_id == run.node_id) {
-                row.content = SharedString::from(live_text);
+                row.set_streaming_content(&live_text, true);
                 row.set_streaming_thinking(&run.accumulated_thinking);
+                row.set_streaming_tools(&run.live_tool_calls);
                 row.is_streaming = true;
             } else {
                 let mut placeholder = DisplayMessageRow::assistant_placeholder(
@@ -542,8 +543,9 @@ impl ParchmentDesktopApp {
                     SharedString::from(run.model_used.clone()),
                     now_ms(),
                 );
-                placeholder.content = SharedString::from(live_text);
+                placeholder.set_streaming_content(&live_text, true);
                 placeholder.set_streaming_thinking(&run.accumulated_thinking);
+                placeholder.set_streaming_tools(&run.live_tool_calls);
                 rows.push(placeholder);
             }
         }
@@ -917,37 +919,13 @@ impl ParchmentDesktopApp {
         }
         window.set_window_title(&strings::window_title_for_chat(&self.active_session.title));
         self.overlay = ActiveOverlay::None;
+        let composer_focus = self.composer.read(cx).focus_handle(cx);
+        window.focus(&composer_focus, cx);
         cx.notify();
     }
 
     pub(super) fn create_new_chat(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let now = now_ms();
-        let asst_id = self.snapshot.active_assistant_id.clone();
-        let asst_clone = self
-            .snapshot
-            .assistants
-            .iter()
-            .find(|a| a.id == asst_id)
-            .cloned();
-        let mut session = ChatSession::new(format!("chat-{now}"), strings::NEW_CHAT, now);
-        session.profile_id = asst_clone
-            .as_ref()
-            .filter(|a| !a.default_profile_id.is_empty())
-            .map(|a| a.default_profile_id.clone())
-            .unwrap_or_else(|| self.snapshot.active_profile_id.clone());
-        session.assistant_id = asst_id;
-        session.view_mode = self.snapshot.preferences.default_view_mode;
-        if !self.snapshot.preferences.profile_name.trim().is_empty() {
-            session.user_name = self.snapshot.preferences.profile_name.clone();
-        }
-        if let Some(a) = asst_clone {
-            session.model_override = a.default_model_id;
-            session.system_prompt = a.system_prompt;
-            session.authors_note = a.authors_note;
-            session.authors_note_depth = a.authors_note_depth;
-            session.workspace_path = a.workspace_path;
-            session.workspace_mode = a.workspace_mode;
-        }
+        let session = super::init::build_fresh_chat_session(&self.snapshot, now_ms());
         let id = session.id.clone();
         let _ = self.core.save_full_session(&session);
         self.refresh_stubs();

@@ -459,7 +459,20 @@ impl ParchmentDesktopApp {
             return true;
         }
 
-        // 4. Built-in secondary shortcuts & Escape cascade
+        // 4. Built-in secondary shortcuts, clipboard attachment paste & Escape cascade
+        if self.overlay == ActiveOverlay::None
+            && !self.is_editing_title
+            && self.editing_message_index.is_none()
+            && ((ctrl && !shift && key == "v") || (!ctrl && shift && key == "insert"))
+        {
+            let pasted = read_clipboard_attachments(&self.data_dir.join("pasted"));
+            if !pasted.is_empty() {
+                for path in pasted {
+                    self.attach_file_from_path(&path, cx);
+                }
+                return true;
+            }
+        }
         if ctrl && shift && key == "f" {
             self.vault_open.toggle();
             cx.notify();

@@ -101,8 +101,19 @@ fn main() -> anyhow::Result<()> {
     let db_path = cli.data_dir.join("parchment.db");
     let core = ParchmentCore::open(&db_path)?;
 
+    let mut migration_warning: Option<String> = None;
     if cli.seed {
         core.seed_benchmark_dataset(300, 40, 200)?;
+    } else if !cli.bench_stream
+        && let Err(err) = core.migrate_v2_data_dir(&cli.data_dir, false)
+    {
+        eprintln!(
+            "parchment-desktop: v2 migration failed for {}: {err}",
+            cli.data_dir.display()
+        );
+        migration_warning = Some(format!(
+            "Could not finish migrating previous Parchment v2 data: {err}"
+        ));
     }
 
     let mut snapshot = core.load_settings_snapshot().unwrap_or_default();
@@ -115,7 +126,6 @@ fn main() -> anyhow::Result<()> {
     let data_dir = cli.data_dir;
     let bench_stream = cli.bench_stream;
     let bench_out = cli.bench_out;
-
     gpui_platform::application().run(move |cx: &mut App| {
         gpui_component::init(cx);
         register_primary_fonts(cx);
@@ -140,6 +150,7 @@ fn main() -> anyhow::Result<()> {
                         startup_core_ms,
                         bench_stream,
                         bench_out,
+                        migration_warning,
                         window,
                         cx,
                     )

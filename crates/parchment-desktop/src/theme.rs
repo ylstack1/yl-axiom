@@ -254,6 +254,7 @@ pub struct ParchmentPalette {
     pub prose_font_size_px: f32,
     pub code_font_size_px: f32,
     pub line_height_mult: f32,
+    pub paragraph_spacing_px: f32,
     pub max_reading_width_px: f32,
 }
 
@@ -323,6 +324,7 @@ impl ParchmentPalette {
             prose_font_size_px: cfg.prose_font_size_sp.clamp(8.0, 48.0),
             code_font_size_px: cfg.code_font_size_sp.clamp(8.0, 48.0),
             line_height_mult: cfg.prose_line_height_multiplier.clamp(1.0, 3.0),
+            paragraph_spacing_px: cfg.paragraph_spacing_dp.clamp(0.0, 64.0),
             max_reading_width_px: cfg.max_reading_width_dp.clamp(300.0, 2400.0),
         }
     }

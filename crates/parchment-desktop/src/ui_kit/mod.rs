@@ -9,9 +9,9 @@ use gpui::{
     Animation, AnimationExt as _, AnyElement, App, Bounds, ClickEvent, DispatchPhase, Div, Element,
     ElementId, GlobalElementId, Hitbox, HitboxBehavior, Hsla, InspectorElementId,
     InteractiveElement as _, IntoElement, LayoutId, Length, MouseButton, MouseDownEvent,
-    MouseMoveEvent, MouseUpEvent, ParentElement as _, Pixels, SharedString, SpringAnimation,
-    SpringConfig, SpringState, Stateful, StatefulInteractiveElement as _, Styled as _, Window,
-    canvas, div, point, pulsating_between, px,
+    MouseUpEvent, ParentElement as _, Pixels, SharedString, SpringAnimation, SpringConfig,
+    SpringState, Stateful, StatefulInteractiveElement as _, Styled as _, Window, canvas, div,
+    point, pulsating_between, px,
 };
 use gpui_component::Icon;
 use gpui_component::tooltip::Tooltip;
@@ -208,7 +208,7 @@ pub fn sepia_button(
     if has_label {
         el = el.child(label_str);
     }
-    motion::kiss_bounce_opt(bounce_id, el, 2.5, !disabled)
+    motion::kiss_bounce_opt(bounce_id, el, 1.0, !disabled)
 }
 
 /// Icon-only ghost/outline button for crisp toolbar and footer actions.

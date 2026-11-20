@@ -9,7 +9,7 @@
 use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, RwLock};
-
+use std::time::Instant;
 use tokio::sync::{Mutex, oneshot};
 
 use crate::permissions::{
@@ -122,6 +122,7 @@ pub struct ToolApprovalBroker {
     scope_source: RwLock<Option<ToolAccessScope>>,
     closed: AtomicBool,
     revision: AtomicU64,
+    wait_ms_total: AtomicU64,
     inner: Mutex<BrokerInner>,
 }
 
@@ -137,6 +138,7 @@ impl ToolApprovalBroker {
             scope_source: RwLock::new(Some(initial_scope.clone())),
             closed: AtomicBool::new(false),
             revision: AtomicU64::new(0),
+            wait_ms_total: AtomicU64::new(0),
             inner: Mutex::new(BrokerInner {
                 observed_scope: Some(initial_scope),
                 observed_revision: 0,
@@ -147,6 +149,11 @@ impl ToolApprovalBroker {
                 pending_questions: HashMap::new(),
             }),
         })
+    }
+
+    /// Total milliseconds spent waiting for interactive user approval or `ask_user` responses.
+    pub fn total_wait_ms(&self) -> u64 {
+        self.wait_ms_total.load(Ordering::Relaxed)
     }
 
     pub fn current_scope(&self) -> Option<ToolAccessScope> {
@@ -295,7 +302,10 @@ impl ToolApprovalBroker {
             (req_id, rx, scope, rev)
         };
 
+        let wait_started = Instant::now();
         let decision = rx.await.unwrap_or(ToolApprovalDecision::Deny);
+        self.wait_ms_total
+            .fetch_add(wait_started.elapsed().as_millis() as u64, Ordering::Relaxed);
         let mut inner = self.inner.lock().await;
         inner.pending.remove(&request_id);
 
@@ -400,7 +410,10 @@ impl ToolApprovalBroker {
             (req_id, rx)
         };
 
+        let wait_started = Instant::now();
         let ans = rx.await.ok().flatten();
+        self.wait_ms_total
+            .fetch_add(wait_started.elapsed().as_millis() as u64, Ordering::Relaxed);
         let mut inner = self.inner.lock().await;
         inner.pending_questions.remove(&req_id);
         ans

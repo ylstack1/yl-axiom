@@ -17,3 +17,25 @@ pub use permissions::*;
 pub use provider::*;
 pub use settings::*;
 pub use usage::*;
+
+/// Canonical Parchment application version resolved at build time from
+/// `PARCHMENT_APP_VERSION` (CI override) or `.release-please-manifest.json`.
+pub const APP_VERSION: &str = env!("PARCHMENT_APP_VERSION");
+
+#[cfg(test)]
+mod version_tests {
+    use super::APP_VERSION;
+
+    #[test]
+    fn app_version_is_valid_semver() {
+        let core = APP_VERSION.split('-').next().unwrap_or("");
+        let parts: Vec<&str> = core.split('.').collect();
+        assert_eq!(parts.len(), 3, "unexpected APP_VERSION: {APP_VERSION}");
+        for p in parts {
+            assert!(
+                p.parse::<u32>().is_ok(),
+                "non-numeric part in {APP_VERSION}"
+            );
+        }
+    }
+}

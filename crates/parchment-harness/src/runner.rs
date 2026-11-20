@@ -95,12 +95,14 @@ pub enum RunProgressEvent {
     ToolStarted {
         call_id: String,
         name: String,
+        arguments_json: String,
     },
     ToolFinished {
         call_id: String,
         name: String,
         is_error: bool,
         duration_ms: i64,
+        result_preview: String,
     },
 }
 
@@ -121,6 +123,7 @@ impl AgentTurnRunner {
         model: &str,
         session: &ChatSession,
         history_nodes: &[MessageNode],
+        continue_prefix: &str,
         harness_ctx: &HarnessContext,
         owner_run_id: &str,
         chat_spend_limit_usd: f64,
@@ -132,6 +135,7 @@ impl AgentTurnRunner {
         F: FnMut(RunProgressEvent),
     {
         let mut activity = RunActivity::new();
+        let wait_ms_before = harness_ctx.broker.total_wait_ms();
         // Borrow `history_nodes` directly on round 0; only materialize an owned Vec if tool rounds run.
         let mut owned_history: Option<Vec<MessageNode>> = None;
         let mut all_usage: Vec<ApiUsageRecord> = Vec::new();
@@ -142,7 +146,11 @@ impl AgentTurnRunner {
         let mut last_interaction_id = String::new();
         let mut final_content = String::new();
         let mut final_dialect = WireDialect::OpenAiResponses;
-        let mut last_metrics = TokenMetrics::default();
+        let mut accumulated_metrics = TokenMetrics::default();
+        let mut has_metrics = false;
+        let mut total_thinking_duration_ms: i64 = 0;
+        let mut last_raw_request_preview = String::new();
+        let mut last_raw_response_preview = String::new();
         for round_idx in 0..MAX_TOOL_ROUNDS {
             activity.tick();
             let live_spend = prior_chat_spend_usd + spend_toward_limit(&all_usage);
@@ -177,6 +185,7 @@ impl AgentTurnRunner {
 
             let mut cb = ProgressBridge(&mut on_progress);
             let round_history = owned_history.as_deref().unwrap_or(history_nodes);
+            let round_prefix = if round_idx == 0 { continue_prefix } else { "" };
             let round = protocol
                 .execute_round(
                     profile,
@@ -185,7 +194,7 @@ impl AgentTurnRunner {
                     round_history,
                     &active_wire_tools,
                     goal_ref,
-                    "",
+                    round_prefix,
                     owner_run_id,
                     catalog_spec.clone(),
                     &mut cb,
@@ -205,7 +214,52 @@ impl AgentTurnRunner {
             if !round.thinking_signature.is_empty() {
                 last_signature = round.thinking_signature;
             }
-            last_metrics = round.token_metrics;
+            total_thinking_duration_ms =
+                total_thinking_duration_ms.saturating_add(round.thinking_duration_ms);
+            if !round.raw_request_preview.is_empty() {
+                last_raw_request_preview = round.raw_request_preview;
+            }
+            if !round.raw_response_preview.is_empty() {
+                last_raw_response_preview = round.raw_response_preview;
+            }
+            if !has_metrics {
+                accumulated_metrics = round.token_metrics;
+                has_metrics = true;
+            } else {
+                let m = &round.token_metrics;
+                if m.input_tokens > 0 {
+                    accumulated_metrics.input_tokens = m.input_tokens;
+                }
+                if m.cached_input_tokens > 0 {
+                    accumulated_metrics.cached_input_tokens = m.cached_input_tokens;
+                }
+                accumulated_metrics.output_tokens = accumulated_metrics
+                    .output_tokens
+                    .saturating_add(m.output_tokens);
+                accumulated_metrics.reasoning_tokens = accumulated_metrics
+                    .reasoning_tokens
+                    .saturating_add(m.reasoning_tokens);
+                accumulated_metrics.duration_ms = accumulated_metrics
+                    .duration_ms
+                    .saturating_add(m.duration_ms);
+                accumulated_metrics.reported_requests = accumulated_metrics
+                    .reported_requests
+                    .saturating_add(m.reported_requests);
+                accumulated_metrics.reported_cost_requests = accumulated_metrics
+                    .reported_cost_requests
+                    .saturating_add(m.reported_cost_requests);
+                accumulated_metrics.estimated_cost_usd += m.estimated_cost_usd;
+                if accumulated_metrics.ttft_ms == 0 && m.ttft_ms > 0 {
+                    accumulated_metrics.ttft_ms = m.ttft_ms;
+                }
+                let total_gen = accumulated_metrics
+                    .output_tokens
+                    .saturating_add(accumulated_metrics.reasoning_tokens);
+                if accumulated_metrics.duration_ms > 0 && total_gen > 0 {
+                    accumulated_metrics.tokens_per_sec =
+                        (total_gen as f64) / (accumulated_metrics.duration_ms as f64 / 1000.0);
+                }
+            }
             all_usage.extend(round.usage_records);
             for c in round.citations {
                 if !c.url.is_empty() && !all_citations.iter().any(|e| e.url == c.url) {
@@ -243,9 +297,11 @@ impl AgentTurnRunner {
                 on_progress(RunProgressEvent::ToolStarted {
                     call_id: c.id.clone(),
                     name: c.name.clone(),
+                    arguments_json: c.arguments_json.clone(),
                 });
             }
 
+            activity.tick();
             let t_tools = Instant::now();
             let outputs: Vec<ToolOutput> = if all_delegates && step_calls.len() > 1 {
                 let pairs: Vec<(String, String)> = step_calls
@@ -277,7 +333,7 @@ impl AgentTurnRunner {
                 seq_out
             };
             let step_ms = t_tools.elapsed().as_millis() as i64;
-
+            activity.tick();
             let mut stopped = false;
             for (idx, (call, out)) in step_calls.iter_mut().zip(outputs).enumerate() {
                 call.starts_tool_step = idx == 0;
@@ -292,11 +348,13 @@ impl AgentTurnRunner {
                 if out.stopped_by_user {
                     stopped = true;
                 }
+                let result_preview: String = call.result_text.chars().take(400).collect();
                 on_progress(RunProgressEvent::ToolFinished {
                     call_id: call.id.clone(),
                     name: call.name.clone(),
                     is_error: call.is_error,
                     duration_ms: call.duration_ms,
+                    result_preview,
                 });
             }
 
@@ -329,7 +387,12 @@ impl AgentTurnRunner {
             }
         }
 
-        let elapsed_ms = activity.active_duration().as_millis() as i64;
+        let wait_ms_during = harness_ctx
+            .broker
+            .total_wait_ms()
+            .saturating_sub(wait_ms_before);
+        let elapsed_ms =
+            (activity.active_duration().as_millis() as u64).saturating_sub(wait_ms_during) as i64;
         // Strip transient screenshots before returning persistent `MessageVariant`.
         for tc in &mut all_tool_calls {
             tc.screenshot_jpeg_base64.clear();
@@ -346,12 +409,15 @@ impl AgentTurnRunner {
             content: final_content,
             thinking_summary: accumulated_thinking,
             thinking_signature: last_signature,
+            thinking_duration_ms: total_thinking_duration_ms,
             model_used: model.to_string(),
             created_at: now_ms,
             provider_protocol: Some(profile.protocol),
             provider_wire_dialect: final_dialect.wire_name().to_string(),
             provider_interaction_id: last_interaction_id,
-            token_metrics: last_metrics,
+            token_metrics: accumulated_metrics,
+            raw_request_preview: last_raw_request_preview,
+            raw_response_preview: last_raw_response_preview,
             tool_calls: all_tool_calls,
             goal_tracker,
             web_sources: all_citations,

@@ -587,6 +587,69 @@ fn adler32(data: &[u8]) -> u32 {
     (b << 16) | a
 }
 
+/// Encodes raw 8-bit RGBA pixels (`width * height * 4` bytes) into a valid PNG byte stream
+/// using uncompressed zlib stored blocks (zero external image dependencies).
+pub fn encode_rgba_to_png_bytes(width: u32, height: u32, rgba: &[u8]) -> Result<Vec<u8>, String> {
+    if width == 0 || height == 0 || width > 16_384 || height > 16_384 {
+        return Err(format!("Unsupported PNG dimensions: {width}x{height}"));
+    }
+    let row_bytes = (width as usize)
+        .checked_mul(4)
+        .ok_or_else(|| "PNG row overflow".to_string())?;
+    let expected = row_bytes
+        .checked_mul(height as usize)
+        .ok_or_else(|| "PNG buffer overflow".to_string())?;
+    if rgba.len() != expected {
+        return Err(format!(
+            "RGBA buffer length {} does not match {width}x{height} ({expected} bytes).",
+            rgba.len()
+        ));
+    }
+
+    let raw_len = (row_bytes + 1) * (height as usize);
+    let mut raw = Vec::with_capacity(raw_len);
+    for row in rgba.chunks_exact(row_bytes) {
+        raw.push(0x00); // PNG filter type 0 (None)
+        raw.extend_from_slice(row);
+    }
+    let adler = adler32(&raw);
+
+    // Wrap raw scanlines in uncompressed zlib stored blocks (max 65,535 bytes per block).
+    const MAX_STORED_BLOCK: usize = 65_535;
+    let block_count = raw.len().div_ceil(MAX_STORED_BLOCK).max(1);
+    let mut idat = Vec::with_capacity(2 + raw.len() + block_count * 5 + 4);
+    idat.extend_from_slice(&[0x78, 0x01]);
+    let mut pos = 0usize;
+    loop {
+        let rem = raw.len().saturating_sub(pos);
+        let take = rem.min(MAX_STORED_BLOCK);
+        let is_final = pos + take >= raw.len();
+        idat.push(if is_final { 0x01 } else { 0x00 });
+        let len = take as u16;
+        let nlen = !len;
+        idat.extend_from_slice(&len.to_le_bytes());
+        idat.extend_from_slice(&nlen.to_le_bytes());
+        idat.extend_from_slice(&raw[pos..pos + take]);
+        pos += take;
+        if is_final {
+            break;
+        }
+    }
+    idat.extend_from_slice(&adler.to_be_bytes());
+
+    let mut out = Vec::with_capacity(8 + 25 + 12 + idat.len() + 12);
+    out.extend_from_slice(&PNG_SIG);
+    let mut ihdr = [0u8; 13];
+    ihdr[0..4].copy_from_slice(&width.to_be_bytes());
+    ihdr[4..8].copy_from_slice(&height.to_be_bytes());
+    ihdr[8] = 8; // bit depth
+    ihdr[9] = 6; // color type RGBA
+    write_png_chunk(&mut out, b"IHDR", &ihdr);
+    write_png_chunk(&mut out, b"IDAT", &idat);
+    write_png_chunk(&mut out, b"IEND", &[]);
+    Ok(out)
+}
+
 /// Extracts bounded `.md` skill files from a ZIP archive (max 64 files, 512 KiB each).
 pub fn extract_md_skills_from_zip(zip_bytes: &[u8]) -> Result<Vec<(String, Vec<u8>)>, String> {
     let mut archive = ZipArchive::new(Cursor::new(zip_bytes))
@@ -640,5 +703,20 @@ mod tests {
             }
             other => panic!("expected Card, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn encode_rgba_to_png_produces_valid_png_chunks() {
+        let rgba = [
+            255, 0, 0, 255, 0, 255, 0, 255, //
+            0, 0, 255, 255, 255, 255, 255, 255,
+        ];
+        let png = encode_rgba_to_png_bytes(2, 2, &rgba).expect("encode 2x2");
+        assert!(png.starts_with(&PNG_SIG));
+        assert_eq!(&png[12..16], b"IHDR");
+        assert_eq!(u32::from_be_bytes([png[16], png[17], png[18], png[19]]), 2);
+        assert_eq!(u32::from_be_bytes([png[20], png[21], png[22], png[23]]), 2);
+        assert_eq!(png[25], 6);
+        assert!(png.ends_with(b"\x00\x00\x00\x00IEND\xAE\x42\x60\x82"));
     }
 }

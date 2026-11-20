@@ -7,7 +7,7 @@ pub struct WireStreamParser {
     // Accumulators for chunked function/tool calls across SSE events.
     chat_tools: BTreeMap<usize, (String, String, String)>,
     anthropic_blocks: BTreeMap<usize, AnthropicBlockState>,
-    responses_calls: BTreeMap<String, (String, String)>,
+    responses_calls: BTreeMap<String, (String, String, String)>,
     gemini_fn_calls: BTreeMap<usize, (String, String, String, String)>,
     last_thought_sig: String,
 }
@@ -54,10 +54,26 @@ impl WireStreamParser {
         let Ok(val) = serde_json::from_str::<Value>(data) else {
             return Ok(());
         };
+        if let Some(arr) = val.as_array() {
+            for item in arr {
+                if let Some(obj) = item.as_object() {
+                    self.dispatch_object(event_type, obj, out)?;
+                }
+            }
+            return Ok(());
+        }
         let Some(obj) = val.as_object() else {
             return Ok(());
         };
+        self.dispatch_object(event_type, obj, out)
+    }
 
+    fn dispatch_object(
+        &mut self,
+        event_type: &str,
+        obj: &Map<String, Value>,
+        out: &mut Vec<StreamEvent>,
+    ) -> Result<(), ProtocolError> {
         match self.dialect {
             WireDialect::OpenAiResponses => self.parse_openai_responses(event_type, obj, out),
             WireDialect::OpenAiChat => self.parse_openai_chat(obj, out),
@@ -125,6 +141,11 @@ impl WireStreamParser {
                     out.push(StreamEvent::TextDelta(d.to_string()));
                 }
             }
+            "response.output_text.annotation.added" => {
+                if let Some(ann) = obj.get("annotation").and_then(Value::as_object) {
+                    extract_url_citation_annotation(ann, out);
+                }
+            }
             "response.reasoning_summary_text.delta" | "response.reasoning.delta" => {
                 if let Some(d) = obj.get("delta").and_then(Value::as_str) {
                     out.push(StreamEvent::ThinkingDelta(d.to_string()));
@@ -134,12 +155,22 @@ impl WireStreamParser {
                 if let Some(item) = obj.get("item").and_then(Value::as_object)
                     && item.get("type").and_then(Value::as_str) == Some("function_call")
                 {
-                    let call_id = item
-                        .get("call_id")
-                        .or_else(|| item.get("id"))
+                    let item_id = item
+                        .get("id")
                         .and_then(Value::as_str)
                         .unwrap_or("")
                         .to_string();
+                    let call_id = item
+                        .get("call_id")
+                        .and_then(Value::as_str)
+                        .filter(|s| !s.is_empty())
+                        .map(str::to_string)
+                        .unwrap_or_else(|| item_id.clone());
+                    let key = if !item_id.is_empty() {
+                        item_id
+                    } else {
+                        call_id.clone()
+                    };
                     let name = item
                         .get("name")
                         .and_then(Value::as_str)
@@ -150,20 +181,30 @@ impl WireStreamParser {
                         .and_then(Value::as_str)
                         .unwrap_or("")
                         .to_string();
-                    if !call_id.is_empty() {
-                        self.responses_calls.insert(call_id, (name, args));
+                    if !key.is_empty() {
+                        self.responses_calls.insert(key, (call_id, name, args));
                     }
                 }
             }
             "response.function_call_arguments.delta" => {
-                if let Some(item_id) = obj
-                    .get("call_id")
-                    .or_else(|| obj.get("item_id"))
-                    .and_then(Value::as_str)
-                    && let Some(delta) = obj.get("delta").and_then(Value::as_str)
-                    && let Some(entry) = self.responses_calls.get_mut(item_id)
-                {
-                    entry.1.push_str(delta);
+                if let Some(delta) = obj.get("delta").and_then(Value::as_str) {
+                    let item_id = obj.get("item_id").and_then(Value::as_str);
+                    let call_id = obj.get("call_id").and_then(Value::as_str);
+                    if let Some(key) = item_id
+                        && let Some(entry) = self.responses_calls.get_mut(key)
+                    {
+                        entry.2.push_str(delta);
+                    } else if let Some(cid) = call_id {
+                        if let Some(entry) = self.responses_calls.get_mut(cid) {
+                            entry.2.push_str(delta);
+                        } else if let Some((_, entry)) = self
+                            .responses_calls
+                            .iter_mut()
+                            .find(|(_, (stored_cid, _, _))| stored_cid == cid)
+                        {
+                            entry.2.push_str(delta);
+                        }
+                    }
                 }
             }
             "response.output_item.done" => {
@@ -175,23 +216,54 @@ impl WireStreamParser {
                                 out.push(StreamEvent::ThinkingSignature(enc.to_string()));
                             }
                         }
+                        Some("message") => {
+                            if let Some(content) = item.get("content").and_then(Value::as_array) {
+                                for part in content {
+                                    if let Some(anns) =
+                                        part.get("annotations").and_then(Value::as_array)
+                                    {
+                                        for ann in anns {
+                                            if let Some(aobj) = ann.as_object() {
+                                                extract_url_citation_annotation(aobj, out);
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
                         Some("function_call") => {
-                            let call_id = item
+                            let item_id = item.get("id").and_then(Value::as_str).unwrap_or("");
+                            let raw_call_id = item
                                 .get("call_id")
-                                .or_else(|| item.get("id"))
                                 .and_then(Value::as_str)
-                                .unwrap_or("")
-                                .to_string();
+                                .filter(|s| !s.is_empty())
+                                .unwrap_or(item_id);
+                            let cached = (!item_id.is_empty())
+                                .then(|| self.responses_calls.remove(item_id))
+                                .flatten()
+                                .or_else(|| {
+                                    (!raw_call_id.is_empty())
+                                        .then(|| self.responses_calls.remove(raw_call_id))
+                                        .flatten()
+                                });
+                            let call_id = if !raw_call_id.is_empty() {
+                                raw_call_id.to_string()
+                            } else {
+                                cached.as_ref().map(|c| c.0.clone()).unwrap_or_default()
+                            };
                             let name = item
                                 .get("name")
                                 .and_then(Value::as_str)
-                                .unwrap_or("")
-                                .to_string();
+                                .filter(|s| !s.is_empty())
+                                .map(str::to_string)
+                                .or_else(|| cached.as_ref().map(|c| c.1.clone()))
+                                .unwrap_or_default();
                             let args = item
                                 .get("arguments")
                                 .and_then(Value::as_str)
+                                .filter(|s| !s.trim().is_empty())
                                 .map(str::to_string)
-                                .or_else(|| self.responses_calls.remove(&call_id).map(|e| e.1))
+                                .or_else(|| cached.map(|c| c.2).filter(|s| !s.trim().is_empty()))
                                 .unwrap_or_else(|| "{}".to_string());
                             if !name.is_empty() {
                                 out.push(StreamEvent::ToolCall {
@@ -392,6 +464,15 @@ impl WireStreamParser {
                                 },
                             );
                         }
+                        Some("web_search_tool_result") => {
+                            if let Some(items) = blk.get("content").and_then(Value::as_array) {
+                                for item in items {
+                                    if let Some(iobj) = item.as_object() {
+                                        push_citation_from_fields(iobj, out);
+                                    }
+                                }
+                            }
+                        }
                         _ => {}
                     }
                 }
@@ -421,6 +502,11 @@ impl WireStreamParser {
                                     self.anthropic_blocks.get_mut(&idx)
                             {
                                 args.push_str(j);
+                            }
+                        }
+                        Some("citations_delta") => {
+                            if let Some(cit) = delta.get("citation").and_then(Value::as_object) {
+                                push_citation_from_fields(cit, out);
                             }
                         }
                         _ => {}
@@ -522,10 +608,32 @@ impl WireStreamParser {
                 ),
             });
         }
+        extract_gemini_grounding_citations(obj, out);
+        if let Some(iobj) = inter {
+            extract_gemini_grounding_citations(iobj, out);
+            if let Some(outputs) = iobj.get("outputs").and_then(Value::as_array) {
+                for item in outputs {
+                    if let Some(anns) = item.get("annotations").and_then(Value::as_array) {
+                        for ann in anns {
+                            if let Some(aobj) = ann.as_object() {
+                                push_citation_from_fields(aobj, out);
+                            }
+                        }
+                    }
+                }
+            }
+        }
         match ev {
             "content.delta" | "step.delta" => {
                 let idx = obj.get("index").and_then(Value::as_u64).unwrap_or(0) as usize;
                 if let Some(delta) = obj.get("delta").and_then(Value::as_object) {
+                    if let Some(anns) = delta.get("annotations").and_then(Value::as_array) {
+                        for ann in anns {
+                            if let Some(aobj) = ann.as_object() {
+                                push_citation_from_fields(aobj, out);
+                            }
+                        }
+                    }
                     match delta.get("type").and_then(Value::as_str) {
                         Some("text") => {
                             if let Some(t) = delta.get("text").and_then(Value::as_str) {
@@ -652,6 +760,7 @@ impl WireStreamParser {
             .and_then(|a| a.first())
             .and_then(Value::as_object)
         {
+            extract_gemini_grounding_citations(cand, out);
             if let Some(parts) = cand
                 .get("content")
                 .and_then(|c| c.get("parts"))
@@ -661,11 +770,24 @@ impl WireStreamParser {
                     let Some(pobj) = part.as_object() else {
                         continue;
                     };
-                    if let Some(sig) = pobj.get("thoughtSignature").and_then(Value::as_str)
-                        && !sig.is_empty()
+                    let is_server_tool_part = pobj.contains_key("toolCall")
+                        || pobj.contains_key("toolResponse")
+                        || pobj.contains_key("executableCode")
+                        || pobj.contains_key("codeExecutionResult");
+                    if !is_server_tool_part
+                        && let Some(raw_sig) = pobj
+                            .get("thoughtSignature")
+                            .or_else(|| pobj.get("thought_signature"))
+                            .and_then(Value::as_str)
                     {
-                        self.last_thought_sig = sig.to_string();
-                        out.push(StreamEvent::ThinkingSignature(sig.to_string()));
+                        let sig = sanitize_gemini_thought_signature(
+                            raw_sig,
+                            pobj.contains_key("functionCall"),
+                        );
+                        if !sig.is_empty() {
+                            self.last_thought_sig = sig.clone();
+                            out.push(StreamEvent::ThinkingSignature(sig));
+                        }
                     }
                     let is_thought = pobj.get("thought").and_then(Value::as_bool) == Some(true);
                     if let Some(text) = pobj.get("text").and_then(Value::as_str)
@@ -707,5 +829,68 @@ impl WireStreamParser {
             }
         }
         Ok(())
+    }
+}
+
+fn push_citation_from_fields(obj: &Map<String, Value>, out: &mut Vec<StreamEvent>) {
+    let url = obj
+        .get("url")
+        .or_else(|| obj.get("uri"))
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .trim();
+    if url.is_empty() {
+        return;
+    }
+    let title = obj
+        .get("title")
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .trim()
+        .to_string();
+    let snippet = obj
+        .get("snippet")
+        .or_else(|| obj.get("cited_text"))
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .trim()
+        .to_string();
+    out.push(StreamEvent::Citation(RawWebCitation {
+        url: url.to_string(),
+        title,
+        snippet,
+    }));
+}
+
+fn extract_url_citation_annotation(ann: &Map<String, Value>, out: &mut Vec<StreamEvent>) {
+    if ann.get("type").and_then(Value::as_str) != Some("url_citation") {
+        return;
+    }
+    if let Some(nested) = ann.get("url_citation").and_then(Value::as_object) {
+        push_citation_from_fields(nested, out);
+    } else {
+        push_citation_from_fields(ann, out);
+    }
+}
+
+fn extract_gemini_grounding_citations(obj: &Map<String, Value>, out: &mut Vec<StreamEvent>) {
+    let Some(gm) = obj
+        .get("groundingMetadata")
+        .or_else(|| obj.get("grounding_metadata"))
+        .and_then(Value::as_object)
+    else {
+        return;
+    };
+    let Some(chunks) = gm
+        .get("groundingChunks")
+        .or_else(|| gm.get("grounding_chunks"))
+        .and_then(Value::as_array)
+    else {
+        return;
+    };
+    for chunk in chunks {
+        if let Some(web) = chunk.get("web").and_then(Value::as_object) {
+            push_citation_from_fields(web, out);
+        }
     }
 }

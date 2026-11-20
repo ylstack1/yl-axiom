@@ -16,7 +16,6 @@ use parchment_core::model::is_web_link;
 
 use crate::theme::ParchmentPalette;
 
-static APP_ICON_ICO: &[u8] = include_bytes!("../../../installer/parchment-icon.ico");
 static ACTIVE_TTS: OnceLock<Mutex<Option<Child>>> = OnceLock::new();
 static ACTIVE_STT: OnceLock<Mutex<Option<Child>>> = OnceLock::new();
 
@@ -267,13 +266,35 @@ pub fn open_web_link(url: &str) -> Result<(), String> {
 /// Applies Parchment's theme palette to the active native Windows 10/11 window caption via DWM.
 #[cfg(windows)]
 pub fn apply_dwm_chrome_to_active_window(palette: &ParchmentPalette) {
-    use windows::Win32::Foundation::HWND;
+    use windows::Win32::Foundation::{HWND, LPARAM};
     use windows::Win32::Graphics::Dwm::{
         DWMWA_BORDER_COLOR, DWMWA_CAPTION_COLOR, DWMWA_TEXT_COLOR, DWMWA_USE_IMMERSIVE_DARK_MODE,
         DWMWA_WINDOW_CORNER_PREFERENCE, DwmSetWindowAttribute,
     };
     use windows::Win32::UI::Input::KeyboardAndMouse::GetActiveWindow;
-    use windows::Win32::UI::WindowsAndMessaging::{GetForegroundWindow, GetWindowThreadProcessId};
+    use windows::Win32::UI::WindowsAndMessaging::{
+        EnumWindows, GW_OWNER, GetForegroundWindow, GetWindow, GetWindowThreadProcessId,
+        IsWindowVisible,
+    };
+    use windows::core::BOOL;
+
+    unsafe extern "system" fn enum_process_window(hwnd: HWND, lparam: LPARAM) -> BOOL {
+        let mut pid = 0u32;
+        unsafe { GetWindowThreadProcessId(hwnd, Some(&mut pid)) };
+        if pid == std::process::id()
+            && unsafe { IsWindowVisible(hwnd) }.as_bool()
+            && unsafe { GetWindow(hwnd, GW_OWNER) }
+                .map(|owner| owner.0.is_null())
+                .unwrap_or(true)
+        {
+            let slot = lparam.0 as *mut HWND;
+            if !slot.is_null() {
+                unsafe { *slot = hwnd };
+            }
+            return BOOL(0);
+        }
+        BOOL(1)
+    }
 
     unsafe {
         let mut hwnd = GetActiveWindow();
@@ -284,6 +305,11 @@ pub fn apply_dwm_chrome_to_active_window(palette: &ParchmentPalette) {
             if pid == std::process::id() {
                 hwnd = fg;
             }
+        }
+        if hwnd.0.is_null() {
+            let mut found = HWND::default();
+            let _ = EnumWindows(Some(enum_process_window), LPARAM((&raw mut found) as isize));
+            hwnd = found;
         }
         if hwnd.0.is_null() {
             return;
@@ -344,86 +370,72 @@ pub fn apply_dwm_chrome_to_active_window(palette: &ParchmentPalette) {
 
     unsafe fn apply_embedded_window_icon(hwnd: HWND) {
         use windows::Win32::Foundation::{LPARAM, WPARAM};
+        use windows::Win32::System::LibraryLoader::GetModuleHandleW;
         use windows::Win32::UI::WindowsAndMessaging::{
-            CreateIconFromResourceEx, ICON_BIG, ICON_SMALL, LR_DEFAULTCOLOR, SendMessageW,
-            WM_SETICON,
+            GetSystemMetrics, ICON_BIG, ICON_SMALL, IMAGE_ICON, LR_SHARED, LoadImageW, SM_CXICON,
+            SM_CXSMICON, SM_CYICON, SM_CYSMICON, SendMessageW, WM_SETICON,
         };
+        use windows::core::PCWSTR;
 
-        static ICON_APPLIED_HWND: OnceLock<Mutex<isize>> = OnceLock::new();
-        let slot = ICON_APPLIED_HWND.get_or_init(|| Mutex::new(0));
-        if let Ok(mut guard) = slot.lock() {
-            let cur = hwnd.0 as isize;
-            if *guard == cur {
-                return;
-            }
-            *guard = cur;
+        static ICON_APPLIED_HWND: Mutex<isize> = Mutex::new(0);
+        let cur = hwnd.0 as isize;
+        if let Ok(guard) = ICON_APPLIED_HWND.lock()
+            && *guard == cur
+        {
+            return;
         }
 
-        let pick_ico_entry = |target: i32| -> Option<&'static [u8]> {
-            if APP_ICON_ICO.len() < 6 {
-                return None;
-            }
-            let count = u16::from_le_bytes([APP_ICON_ICO[4], APP_ICON_ICO[5]]) as usize;
-            let mut best: Option<(i32, usize, usize)> = None;
-            for i in 0..count {
-                let off = 6 + i * 16;
-                if off + 16 > APP_ICON_ICO.len() {
-                    break;
-                }
-                let w = if APP_ICON_ICO[off] == 0 {
-                    256
-                } else {
-                    APP_ICON_ICO[off] as i32
-                };
-                let size = u32::from_le_bytes([
-                    APP_ICON_ICO[off + 8],
-                    APP_ICON_ICO[off + 9],
-                    APP_ICON_ICO[off + 10],
-                    APP_ICON_ICO[off + 11],
-                ]) as usize;
-                let img_off = u32::from_le_bytes([
-                    APP_ICON_ICO[off + 12],
-                    APP_ICON_ICO[off + 13],
-                    APP_ICON_ICO[off + 14],
-                    APP_ICON_ICO[off + 15],
-                ]) as usize;
-                if img_off + size <= APP_ICON_ICO.len() {
-                    let dist = (w - target).abs();
-                    if best.is_none_or(|(bd, _, _)| dist < bd) {
-                        best = Some((dist, img_off, size));
-                    }
-                }
-            }
-            best.map(|(_, img_off, size)| &APP_ICON_ICO[img_off..img_off + size])
+        let Ok(module) = (unsafe { GetModuleHandleW(None) }) else {
+            return;
         };
+        let small_w = unsafe { GetSystemMetrics(SM_CXSMICON) }.max(16);
+        let small_h = unsafe { GetSystemMetrics(SM_CYSMICON) }.max(16);
+        let big_w = unsafe { GetSystemMetrics(SM_CXICON) }.max(32);
+        let big_h = unsafe { GetSystemMetrics(SM_CYICON) }.max(32);
+        let mut applied_any = false;
 
-        if let Some(small_bytes) = pick_ico_entry(32)
-            && let Ok(hicon) = unsafe {
-                CreateIconFromResourceEx(small_bytes, true, 0x0003_0000, 32, 32, LR_DEFAULTCOLOR)
-            }
-        {
+        if let Ok(handle) = unsafe {
+            LoadImageW(
+                Some(module.into()),
+                PCWSTR(1 as _),
+                IMAGE_ICON,
+                small_w,
+                small_h,
+                LR_SHARED,
+            )
+        } {
             unsafe {
                 let _ = SendMessageW(
                     hwnd,
                     WM_SETICON,
                     Some(WPARAM(ICON_SMALL as usize)),
-                    Some(LPARAM(hicon.0 as isize)),
+                    Some(LPARAM(handle.0 as isize)),
                 );
             }
+            applied_any = true;
         }
-        if let Some(big_bytes) = pick_ico_entry(128)
-            && let Ok(hicon) = unsafe {
-                CreateIconFromResourceEx(big_bytes, true, 0x0003_0000, 64, 64, LR_DEFAULTCOLOR)
-            }
-        {
+        if let Ok(handle) = unsafe {
+            LoadImageW(
+                Some(module.into()),
+                PCWSTR(1 as _),
+                IMAGE_ICON,
+                big_w,
+                big_h,
+                LR_SHARED,
+            )
+        } {
             unsafe {
                 let _ = SendMessageW(
                     hwnd,
                     WM_SETICON,
                     Some(WPARAM(ICON_BIG as usize)),
-                    Some(LPARAM(hicon.0 as isize)),
+                    Some(LPARAM(handle.0 as isize)),
                 );
             }
+            applied_any = true;
+        }
+        if applied_any && let Ok(mut guard) = ICON_APPLIED_HWND.lock() {
+            *guard = cur;
         }
     }
 }
@@ -935,6 +947,218 @@ fn execute_win32_computer_action(action: &ComputerUseAction) -> Result<(String, 
         }
         other => Err(format!("Unsupported computer_use action '{other}'.")),
     }
+}
+
+/// Reads copied files (`CF_HDROP`) or clipboard images (registered `"PNG"` or `CF_DIB` encoded to
+/// PNG) into `dest_dir`. Returns empty when the clipboard contains only text so normal text paste
+/// is never intercepted.
+#[cfg(windows)]
+pub fn read_clipboard_attachments(dest_dir: &Path) -> Vec<PathBuf> {
+    use windows::Win32::Foundation::HGLOBAL;
+    use windows::Win32::Graphics::Gdi::BITMAPINFOHEADER;
+    use windows::Win32::System::DataExchange::{
+        CloseClipboard, GetClipboardData, IsClipboardFormatAvailable, OpenClipboard,
+        RegisterClipboardFormatW,
+    };
+    use windows::Win32::System::Memory::{GlobalLock, GlobalSize, GlobalUnlock};
+    use windows::Win32::UI::Shell::{DragQueryFileW, HDROP};
+    use windows::core::w;
+
+    const CF_DIB: u32 = 8;
+    const CF_HDROP: u32 = 15;
+    const MAX_CLIPBOARD_FILES: u32 = 32;
+    const MAX_CLIPBOARD_IMAGE_BYTES: usize = 128 * 1024 * 1024;
+
+    struct ClipboardGuard;
+    impl Drop for ClipboardGuard {
+        fn drop(&mut self) {
+            unsafe {
+                let _ = CloseClipboard();
+            }
+        }
+    }
+
+    unsafe {
+        if OpenClipboard(None).is_err() {
+            return Vec::new();
+        }
+        let _guard = ClipboardGuard;
+
+        // 1. Copied files (Explorer Ctrl+C)
+        if IsClipboardFormatAvailable(CF_HDROP).is_ok()
+            && let Ok(handle) = GetClipboardData(CF_HDROP)
+        {
+            let hdrop = HDROP(handle.0);
+            let count = DragQueryFileW(hdrop, 0xFFFF_FFFF, None).min(MAX_CLIPBOARD_FILES);
+            let mut paths = Vec::new();
+            for idx in 0..count {
+                let needed = DragQueryFileW(hdrop, idx, None);
+                if needed == 0 {
+                    continue;
+                }
+                let mut wide = vec![0u16; (needed as usize) + 1];
+                let written = DragQueryFileW(hdrop, idx, Some(&mut wide));
+                if written > 0 {
+                    let s = String::from_utf16_lossy(&wide[..written as usize]);
+                    let p = PathBuf::from(s);
+                    if p.is_file() {
+                        paths.push(p);
+                    }
+                }
+            }
+            if !paths.is_empty() {
+                return paths;
+            }
+        }
+
+        let write_png_temp = |png_bytes: &[u8]| -> Option<PathBuf> {
+            std::fs::create_dir_all(dest_dir).ok()?;
+            let stamp = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_millis())
+                .unwrap_or(0);
+            let out_path = dest_dir.join(format!("clipboard-{stamp}.png"));
+            std::fs::write(&out_path, png_bytes).ok()?;
+            Some(out_path)
+        };
+
+        // 2. Registered "PNG" format verbatim
+        let png_fmt = RegisterClipboardFormatW(w!("PNG"));
+        if png_fmt != 0
+            && IsClipboardFormatAvailable(png_fmt).is_ok()
+            && let Ok(handle) = GetClipboardData(png_fmt)
+        {
+            let hglob = HGLOBAL(handle.0);
+            let size = GlobalSize(hglob);
+            if (8..=MAX_CLIPBOARD_IMAGE_BYTES).contains(&size) {
+                let ptr = GlobalLock(hglob) as *const u8;
+                if !ptr.is_null() {
+                    let slice = std::slice::from_raw_parts(ptr, size);
+                    let res = if slice.starts_with(&[0x89, 0x50, 0x4E, 0x47]) {
+                        write_png_temp(slice)
+                    } else {
+                        None
+                    };
+                    let _ = GlobalUnlock(hglob);
+                    if let Some(p) = res {
+                        return vec![p];
+                    }
+                }
+            }
+        }
+
+        // 3. Fallback CF_DIB -> decode 24/32-bit DIB pixels and encode to PNG (never write .bmp)
+        if IsClipboardFormatAvailable(CF_DIB).is_ok()
+            && let Ok(handle) = GetClipboardData(CF_DIB)
+        {
+            let hglob = HGLOBAL(handle.0);
+            let size = GlobalSize(hglob);
+            if size >= std::mem::size_of::<BITMAPINFOHEADER>() && size <= MAX_CLIPBOARD_IMAGE_BYTES
+            {
+                let ptr = GlobalLock(hglob) as *const u8;
+                if !ptr.is_null() {
+                    let slice = std::slice::from_raw_parts(ptr, size);
+                    let png = decode_dib_to_png(slice);
+                    let _ = GlobalUnlock(hglob);
+                    if let Ok(png_bytes) = png
+                        && let Some(p) = write_png_temp(&png_bytes)
+                    {
+                        return vec![p];
+                    }
+                }
+            }
+        }
+    }
+    Vec::new()
+}
+
+#[cfg(windows)]
+fn decode_dib_to_png(dib: &[u8]) -> Result<Vec<u8>, String> {
+    if dib.len() < 40 {
+        return Err("DIB header truncated".into());
+    }
+    let bi_size = u32::from_le_bytes([dib[0], dib[1], dib[2], dib[3]]) as usize;
+    if bi_size < 40 || bi_size > dib.len() {
+        return Err("Invalid DIB header size".into());
+    }
+    let width_i32 = i32::from_le_bytes([dib[4], dib[5], dib[6], dib[7]]);
+    let height_i32 = i32::from_le_bytes([dib[8], dib[9], dib[10], dib[11]]);
+    let bpp = u16::from_le_bytes([dib[14], dib[15]]);
+    let compression = u32::from_le_bytes([dib[16], dib[17], dib[18], dib[19]]);
+    if width_i32 <= 0 || height_i32 == 0 {
+        return Err("Invalid DIB dimensions".into());
+    }
+    let width = width_i32 as u32;
+    let height = height_i32.unsigned_abs();
+    let top_down = height_i32 < 0;
+    if width > 8192 || height > 8192 {
+        return Err("DIB image exceeds 8192px dimension cap".into());
+    }
+    if !matches!(bpp, 24 | 32) || !matches!(compression, 0 | 3) {
+        return Err(format!(
+            "Unsupported DIB format: bpp={bpp} comp={compression}"
+        ));
+    }
+    let mut pixel_offset = bi_size;
+    if compression == 3 && bi_size == 40 {
+        pixel_offset = pixel_offset.saturating_add(12);
+    }
+    let stride = ((width as usize) * usize::from(bpp)).div_ceil(32) * 4;
+    let needed = pixel_offset
+        .checked_add(
+            stride
+                .checked_mul(height as usize)
+                .ok_or("DIB stride overflow")?,
+        )
+        .ok_or("DIB offset overflow")?;
+    if needed > dib.len() {
+        return Err("DIB pixel data truncated".into());
+    }
+    let pixels = &dib[pixel_offset..needed];
+    let mut rgba = vec![0u8; (width as usize) * (height as usize) * 4];
+    let mut any_nonzero_alpha = false;
+    for y in 0..(height as usize) {
+        let src_y = if top_down {
+            y
+        } else {
+            (height as usize) - 1 - y
+        };
+        let src_row = &pixels[src_y * stride..(src_y + 1) * stride];
+        let dst_row = &mut rgba[y * (width as usize) * 4..(y + 1) * (width as usize) * 4];
+        if bpp == 32 {
+            for x in 0..(width as usize) {
+                let s = x * 4;
+                dst_row[s] = src_row[s + 2]; // R
+                dst_row[s + 1] = src_row[s + 1]; // G
+                dst_row[s + 2] = src_row[s]; // B
+                let a = src_row[s + 3];
+                if a != 0 {
+                    any_nonzero_alpha = true;
+                }
+                dst_row[s + 3] = a;
+            }
+        } else {
+            for x in 0..(width as usize) {
+                let s = x * 3;
+                let d = x * 4;
+                dst_row[d] = src_row[s + 2]; // R
+                dst_row[d + 1] = src_row[s + 1]; // G
+                dst_row[d + 2] = src_row[s]; // B
+                dst_row[d + 3] = 255;
+            }
+        }
+    }
+    if bpp == 32 && !any_nonzero_alpha {
+        for px in rgba.as_chunks_mut::<4>().0 {
+            px[3] = 255;
+        }
+    }
+    parchment_core::harness::encode_rgba_to_png_bytes(width, height, &rgba)
+}
+
+#[cfg(not(windows))]
+pub fn read_clipboard_attachments(_dest_dir: &Path) -> Vec<PathBuf> {
+    Vec::new()
 }
 
 #[cfg(test)]

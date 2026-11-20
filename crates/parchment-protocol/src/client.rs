@@ -1,18 +1,21 @@
 //! Async streaming request executor combining all 5 wire dialects, HTTP 400 reasoning self-healing,
 //! `Retry-After`/backoff retry scheduling, and primary->legacy fallback (never for `CUSTOM`).
 
+use std::borrow::Cow;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+
 use parchment_model::{
     ApiUsageRecord, AuthHeaderMode, ChatSession, GoalTrackerState, MessageNode, MessageRole,
     MessageVariant, ModelPricingSpec, ProviderProfile, TokenMetrics, ToolCallRecord,
 };
-use std::sync::Arc;
-use std::sync::atomic::{AtomicUsize, Ordering};
-use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use tokio::sync::Notify;
 
 use crate::error_policy::{
-    ProtocolError, ProviderHttpError, is_transient_or_proxy_timeout_error, parse_retry_after_ms,
-    retry_delay_ms, should_fallback_to_legacy_protocol,
+    ProtocolError, ProviderHttpError, is_context_length_exceeded_error,
+    is_transient_or_proxy_timeout_error, parse_retry_after_ms, retry_delay_ms,
+    should_fallback_to_legacy_protocol,
 };
 use crate::signatures::{append_signature_chunk_safe, step_down_reasoning_effort};
 use crate::sse::{
@@ -23,10 +26,12 @@ use crate::usage::ProviderUsageLedger;
 use crate::wire::{
     RawWebCitation, StreamEvent, ToolDefinition, WireAdaptOptions, WireDialect, WireStreamParser,
     build_auth_headers_for_key, build_wire_request, resolve_primary_dialect,
+    strip_api_version_suffix,
 };
 
 const MAX_TRANSIENT_RETRIES: usize = 3;
-const MAX_HTTP_400_HEALS: usize = 5;
+const MAX_HTTP_400_HEALS: usize = 6;
+const MAX_WIRE_PREVIEW_CHARS: usize = 4_096;
 static API_KEY_RR: AtomicUsize = AtomicUsize::new(0);
 #[derive(Debug, Clone)]
 pub struct RoundExecutionResult {
@@ -35,13 +40,15 @@ pub struct RoundExecutionResult {
     pub content: String,
     pub thinking_summary: String,
     pub thinking_signature: String,
+    pub thinking_duration_ms: i64,
+    pub raw_request_preview: String,
+    pub raw_response_preview: String,
     pub tool_calls: Vec<ToolCallRecord>,
     pub citations: Vec<RawWebCitation>,
     pub hit_output_limit: bool,
     pub token_metrics: TokenMetrics,
     pub usage_records: Vec<ApiUsageRecord>,
 }
-
 pub trait StreamCallbacks {
     fn on_text_delta(&mut self, _delta: &str) {}
     fn on_thinking_delta(&mut self, _delta: &str) {}
@@ -125,12 +132,14 @@ impl ProtocolClient {
         let lower = base.to_ascii_lowercase();
         let candidates: Vec<String> = if lower.ends_with("/models") {
             vec![base.clone()]
-        } else if lower.ends_with("/v1")
-            || lower.ends_with("/v1beta")
-            || lower.ends_with("/api/v3")
-            || lower.ends_with("/api/v1")
-        {
-            vec![format!("{base}/models")]
+        } else if let Some(root) = strip_api_version_suffix(&base) {
+            let primary = format!("{base}/models");
+            let fallback = format!("{root}/v1/models");
+            if primary == fallback {
+                vec![primary]
+            } else {
+                vec![primary, fallback]
+            }
         } else {
             match dialect {
                 WireDialect::GeminiInteractions | WireDialect::GeminiGenerateContent => vec![
@@ -368,6 +377,8 @@ impl ProtocolClient {
         callbacks: &mut C,
     ) -> Result<RoundExecutionResult, ProtocolError> {
         let mut adapt = WireAdaptOptions::default();
+        let mut working_nodes: Cow<'_, [MessageNode]> = Cow::Borrowed(history_nodes);
+        let mut compacted_overflow = false;
         let mut transient_attempts = 0usize;
         let mut heal_attempts = 0usize;
         let keys = {
@@ -389,12 +400,13 @@ impl ProtocolClient {
                 dialect,
                 model,
                 session,
-                history_nodes,
+                working_nodes.as_ref(),
                 tools,
                 goal_state,
                 continue_prefix,
                 &adapt,
             )?;
+            let raw_request_preview = truncate_preview(&wire_req.body_json);
             let headers = build_auth_headers_for_key(profile, active_key, dialect);
             let usage_req_id = ledger.begin(dialect.usage_dialect());
             let mut req_builder = self.http.post(&wire_req.url).body(wire_req.body_json);
@@ -445,10 +457,10 @@ impl ProtocolClient {
                 // HTTP 400 reasoning & parameter self-healing ladder (before failing or falling back).
                 if status == 400
                     && heal_attempts < MAX_HTTP_400_HEALS
-                    && self.try_heal_http_400(profile, dialect, &body, &mut adapt)
+                    && self.try_heal_http_400(profile, dialect, tools, &body, &mut adapt)
                 {
                     heal_attempts += 1;
-                    callbacks.on_status("Retrying with adjusted provider reasoning parameters...");
+                    callbacks.on_status("Retrying with adjusted provider request parameters...");
                     continue;
                 }
 
@@ -459,6 +471,19 @@ impl ProtocolClient {
                     retry_after_ms,
                 });
 
+                if !compacted_overflow && is_context_length_exceeded_error(&http_err) {
+                    let compacted = crate::history::compact_history_nodes_on_overflow(
+                        working_nodes.as_ref(),
+                        now_ms,
+                    );
+                    if compacted.len() != working_nodes.len() {
+                        working_nodes = Cow::Owned(compacted);
+                        compacted_overflow = true;
+                        callbacks
+                            .on_status("Shortening older turns after hitting conversation limit…");
+                        continue;
+                    }
+                }
                 if matches!(status, 401 | 403 | 429)
                     && keys.len() > 1
                     && key_failovers < keys.len() - 1
@@ -496,6 +521,10 @@ impl ProtocolClient {
                 content: String::new(),
                 thinking_summary: String::new(),
                 thinking_signature: String::new(),
+                thinking_started: None,
+                thinking_duration_ms: 0,
+                raw_response_preview: String::new(),
+                raw_response_chars: 0,
                 tool_calls: Vec::new(),
                 citations: Vec::new(),
                 hit_output_limit: false,
@@ -519,12 +548,19 @@ impl ProtocolClient {
                 content,
                 thinking_summary,
                 thinking_signature,
+                thinking_started,
+                mut thinking_duration_ms,
+                raw_response_preview,
                 tool_calls,
                 citations,
                 hit_output_limit,
                 first_token_ms,
                 ..
             } = consumer;
+            if let Some(t0) = thinking_started {
+                thinking_duration_ms =
+                    thinking_duration_ms.saturating_add(t0.elapsed().as_millis() as i64);
+            }
 
             match stream_res {
                 Ok(()) => {
@@ -537,6 +573,9 @@ impl ProtocolClient {
                         content,
                         thinking_summary,
                         thinking_signature,
+                        thinking_duration_ms,
+                        raw_request_preview,
+                        raw_response_preview,
                         tool_calls,
                         citations,
                         hit_output_limit,
@@ -568,6 +607,7 @@ impl ProtocolClient {
         &self,
         profile: &ProviderProfile,
         dialect: WireDialect,
+        tools: &[ToolDefinition],
         body: &str,
         adapt: &mut WireAdaptOptions,
     ) -> bool {
@@ -587,7 +627,17 @@ impl ProtocolClient {
             return true;
         }
 
-        // 2. Reasoning effort downgrade ladder (`max -> xhigh -> high`, `minimal -> low`).
+        // 2. Gemini thinkingLevel -> thinkingBudget fallback for older models/proxies.
+        if dialect == WireDialect::GeminiGenerateContent
+            && !adapt.use_gemini_thinking_budget
+            && !adapt.omit_reasoning
+            && (lower.contains("thinkinglevel") || lower.contains("thinking_level"))
+        {
+            adapt.use_gemini_thinking_budget = true;
+            return true;
+        }
+
+        // 3. Reasoning effort downgrade ladder (`max -> xhigh -> high`, `minimal -> low`).
         if !adapt.omit_reasoning
             && let Some(next_effort) = step_down_reasoning_effort(current_eff, &lower)
         {
@@ -595,7 +645,16 @@ impl ProtocolClient {
             return true;
         }
 
-        // 3. OpenAI Chat max_completion_tokens vs max_tokens parameter mismatch.
+        // 4. OpenAI Chat `stream_options` unsupported by third-party proxies.
+        if dialect == WireDialect::OpenAiChat
+            && !adapt.omit_stream_options
+            && lower.contains("stream_options")
+        {
+            adapt.omit_stream_options = true;
+            return true;
+        }
+
+        // 5. OpenAI Chat max_completion_tokens vs max_tokens parameter mismatch.
         if dialect == WireDialect::OpenAiChat && adapt.use_max_tokens_key.is_none() {
             if lower.contains("max_completion_tokens") {
                 adapt.use_max_tokens_key = Some(true);
@@ -607,13 +666,30 @@ impl ProtocolClient {
             }
         }
 
-        // 4. Strip unsupported temperature/top_p when reasoning is active or endpoint rejects sampling.
+        // 6. Strip mixed provider built-in tools if they collide with function declarations.
+        let has_builtin = profile.enable_web_search
+            || profile.enable_code_execution
+            || profile.enable_url_context;
+        if has_builtin
+            && !adapt.omit_builtin_tools
+            && !tools.is_empty()
+            && (lower.contains("tool")
+                || lower.contains("google_search")
+                || lower.contains("code_execution")
+                || lower.contains("url_context")
+                || lower.contains("web_search"))
+        {
+            adapt.omit_builtin_tools = true;
+            return true;
+        }
+
+        // 7. Strip unsupported temperature/top_p when reasoning is active or endpoint rejects sampling.
         if !adapt.strip_sampling && (lower.contains("temperature") || lower.contains("top_p")) {
             adapt.strip_sampling = true;
             return true;
         }
 
-        // 5. Last resort: drop reasoning if endpoint rejects reasoning/thinking fields outright.
+        // 8. Last resort: drop reasoning if endpoint rejects reasoning/thinking fields outright.
         if !adapt.omit_reasoning && (lower.contains("reasoning") || lower.contains("thinking")) {
             adapt.omit_reasoning = true;
             return true;
@@ -630,6 +706,10 @@ impl ProtocolClient {
     }
 }
 
+fn truncate_preview(raw: &str) -> String {
+    raw.chars().take(MAX_WIRE_PREVIEW_CHARS).collect()
+}
+
 struct RoundStreamConsumer<'a, C: StreamCallbacks> {
     parser: WireStreamParser,
     events_buf: Vec<StreamEvent>,
@@ -637,6 +717,10 @@ struct RoundStreamConsumer<'a, C: StreamCallbacks> {
     content: String,
     thinking_summary: String,
     thinking_signature: String,
+    thinking_started: Option<Instant>,
+    thinking_duration_ms: i64,
+    raw_response_preview: String,
+    raw_response_chars: usize,
     tool_calls: Vec<ToolCallRecord>,
     citations: Vec<RawWebCitation>,
     hit_output_limit: bool,
@@ -648,7 +732,28 @@ struct RoundStreamConsumer<'a, C: StreamCallbacks> {
 }
 
 impl<C: StreamCallbacks> RoundStreamConsumer<'_, C> {
+    fn append_response_preview(&mut self, chunk: &str) {
+        if self.raw_response_chars >= MAX_WIRE_PREVIEW_CHARS || chunk.is_empty() {
+            return;
+        }
+        if !self.raw_response_preview.is_empty() && self.raw_response_chars < MAX_WIRE_PREVIEW_CHARS
+        {
+            self.raw_response_preview.push('\n');
+            self.raw_response_chars += 1;
+        }
+        let rem = MAX_WIRE_PREVIEW_CHARS.saturating_sub(self.raw_response_chars);
+        for ch in chunk.chars().take(rem) {
+            self.raw_response_preview.push(ch);
+            self.raw_response_chars += 1;
+        }
+    }
+
     fn drain_events(&mut self) {
+        let freeze = |started: &mut Option<Instant>, total_ms: &mut i64| {
+            if let Some(t0) = started.take() {
+                *total_ms = total_ms.saturating_add(t0.elapsed().as_millis() as i64);
+            }
+        };
         for ev in self.events_buf.drain(..) {
             match ev {
                 StreamEvent::Status(s) => self.callbacks.on_status(&s),
@@ -657,6 +762,9 @@ impl<C: StreamCallbacks> RoundStreamConsumer<'_, C> {
                     if self.first_token_ms.is_none() {
                         self.first_token_ms = Some(self.started.elapsed().as_millis() as i64);
                     }
+                    if self.thinking_started.is_none() {
+                        self.thinking_started = Some(Instant::now());
+                    }
                     self.thinking_summary.push_str(&d);
                     self.callbacks.on_thinking_delta(&d);
                 }
@@ -664,6 +772,7 @@ impl<C: StreamCallbacks> RoundStreamConsumer<'_, C> {
                     append_signature_chunk_safe(&mut self.thinking_signature, &s);
                 }
                 StreamEvent::TextDelta(d) => {
+                    freeze(&mut self.thinking_started, &mut self.thinking_duration_ms);
                     if self.first_token_ms.is_none() {
                         self.first_token_ms = Some(self.started.elapsed().as_millis() as i64);
                     }
@@ -676,6 +785,7 @@ impl<C: StreamCallbacks> RoundStreamConsumer<'_, C> {
                     arguments_json,
                     thought_signature,
                 } => {
+                    freeze(&mut self.thinking_started, &mut self.thinking_duration_ms);
                     let starts_tool_step = self.tool_calls.is_empty();
                     self.tool_calls.push(ToolCallRecord {
                         id,
@@ -686,12 +796,18 @@ impl<C: StreamCallbacks> RoundStreamConsumer<'_, C> {
                         ..Default::default()
                     });
                 }
-                StreamEvent::Citation(c) => self.citations.push(c),
+                StreamEvent::Citation(c) => {
+                    if !self.citations.iter().any(|existing| existing.url == c.url) {
+                        self.citations.push(c);
+                    }
+                }
                 StreamEvent::Usage { response_id, usage } => {
                     self.ledger.update(self.usage_req_id, &response_id, &usage);
                 }
                 StreamEvent::OutputLimit => self.hit_output_limit = true,
-                StreamEvent::Done => {}
+                StreamEvent::Done => {
+                    freeze(&mut self.thinking_started, &mut self.thinking_duration_ms);
+                }
             }
         }
     }
@@ -703,6 +819,7 @@ impl<C: StreamCallbacks> SseStreamConsumer for RoundStreamConsumer<'_, C> {
     }
 
     fn on_frame(&mut self, frame: &SseFrame) -> Result<(), ProtocolError> {
+        self.append_response_preview(&frame.data);
         self.events_buf.clear();
         self.parser
             .consume_sse(&frame.event_type, &frame.data, &mut self.events_buf)?;
@@ -711,6 +828,7 @@ impl<C: StreamCallbacks> SseStreamConsumer for RoundStreamConsumer<'_, C> {
     }
 
     fn on_plain_json(&mut self, body: &str) -> Result<(), ProtocolError> {
+        self.append_response_preview(body);
         self.events_buf.clear();
         self.parser.consume_sse("", body, &mut self.events_buf)?;
         self.parser.flush_pending_tools(&mut self.events_buf);

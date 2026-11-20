@@ -14,12 +14,28 @@ ktlint {
     outputToConsole.set(true)
 }
 
+val manifestVersionProp = providers.fileContents(
+    rootProject.layout.projectDirectory.file(".release-please-manifest.json"),
+).asText.map { text ->
+    Regex(""""\."\s*:\s*"([^"]+)"""").find(text)?.groupValues?.get(1)?.removePrefix("v")?.trim()
+        ?.takeIf { it.isNotEmpty() }
+        ?: error("Missing root '.' version in .release-please-manifest.json")
+}
 val appVersionProp = providers.gradleProperty("appVersion")
-    .map { it.removePrefix("v").trim().ifEmpty { "3.0.0" } }
-    .orElse("3.0.0")
+    .map { it.removePrefix("v").trim() }
+    .orElse(manifestVersionProp)
+    .zip(manifestVersionProp) { explicit, fallback -> explicit.ifEmpty { fallback } }
+val manifestVersionCodeProp = manifestVersionProp.map { ver ->
+    val parts = ver.substringBefore('-').split('.')
+    val maj = parts.getOrNull(0)?.toIntOrNull() ?: 3
+    val min = parts.getOrNull(1)?.toIntOrNull() ?: 0
+    val pat = parts.getOrNull(2)?.toIntOrNull() ?: 0
+    maj * 10_000 + min * 100 + pat
+}
 val appVersionCodeProp = providers.gradleProperty("appVersionCode")
-    .map { it.trim().toIntOrNull() ?: 300 }
-    .orElse(300)
+    .map { it.trim().toIntOrNull() ?: -1 }
+    .orElse(manifestVersionCodeProp)
+    .zip(manifestVersionCodeProp) { explicit, fallback -> if (explicit > 0) explicit else fallback }
 
 // Checks the private signer before a release build. It reads everything when it runs, so it holds no
 // reference to the build script and works with the configuration cache.

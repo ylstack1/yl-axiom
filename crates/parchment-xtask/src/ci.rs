@@ -25,6 +25,7 @@ const SHARED_GRADLE_FILES: &[&str] = &[
     "gradlew.bat",
     "mobile/compose-app/build.gradle.kts",
     "mobile/compose-app/stability-config.conf",
+    ".release-please-manifest.json",
     ".github/workflows/build-installers.yml",
 ];
 
@@ -45,7 +46,13 @@ const RUST_CORE_PREFIXES: &[&str] = &[
     "crates/parchment-core/",
 ];
 
-const RUST_ALL_FILES: &[&str] = &["Cargo.toml", "Cargo.lock", "rustfmt.toml", "clippy.toml"];
+const RUST_ALL_FILES: &[&str] = &[
+    "Cargo.toml",
+    "Cargo.lock",
+    "rustfmt.toml",
+    "clippy.toml",
+    ".release-please-manifest.json",
+];
 const SIGNING_TRIGGERS: &[&str] = &[
     ".github/scripts/ValidateAndroidSigningKey.java",
     ".github/workflows/build-installers.yml",
@@ -438,7 +445,22 @@ fn cmd_plan(repo: &Path, args: &[String]) -> Result<(), String> {
         .ok()
         .and_then(|v| v.parse().ok())
         .unwrap_or(1);
-    let version_line = std::env::var("VERSION_LINE").unwrap_or_else(|_| "3.0".into());
+    let version_line = std::env::var("VERSION_LINE")
+        .ok()
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| {
+            crate::verify::read_manifest_version(repo)
+                .ok()
+                .and_then(|v| {
+                    let core = v.split('-').next().unwrap_or(&v);
+                    let mut parts = core.split('.');
+                    let maj = parts.next()?;
+                    let min = parts.next()?;
+                    Some(format!("{maj}.{min}"))
+                })
+                .unwrap_or_else(|| "3.1".into())
+        });
     let version_base_run: u64 = std::env::var("VERSION_BASE_RUN")
         .ok()
         .and_then(|v| v.parse().ok())

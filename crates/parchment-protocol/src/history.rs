@@ -12,9 +12,11 @@ use parchment_model::{
 pub const OUTPUT_LIMIT_NOTICE: &str = "\n\n*[Output truncated: max output tokens limit reached]*";
 pub const COMPACTION_BATCH_STEPS: usize = 16;
 
-const INLINE_ERROR_PREFIXES: [&str; 5] = [
+const INLINE_ERROR_PREFIXES: [&str; 7] = [
     "**[Provider Error:",
     "**[Stream Error:",
+    "**Error:**",
+    "_Stopped before any text arrived._",
     "*[Stream paused/interrupted",
     "*[Stream interrupted",
     "*[Interrupted:",

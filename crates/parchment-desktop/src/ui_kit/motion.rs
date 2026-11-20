@@ -43,9 +43,7 @@ pub fn spring_pop_enter(id: impl Into<ElementId>, child: impl IntoElement + 'sta
 
 #[derive(Clone, Copy, Default)]
 pub struct BounceFlags {
-    hovered: bool,
     pressed: bool,
-    release_pulse: bool,
 }
 
 struct KissBounceState {
@@ -55,8 +53,9 @@ struct KissBounceState {
 }
 
 /// Zero-layout-shift interactive spring wrapper mirroring Kotlin `KissMotionNode`:
-/// lifts smoothly on hover, depresses on press, and rebounds with an underdamped spring bounce
-/// on release (instantly disabled when `App::reduce_motion()` is active; 0 idle frames at rest).
+/// stays rock-steady on hover (no vertical lift or border clipping inside `overflow_hidden()`)
+/// and applies a subtle tactile press settle for buttons/chips (0px for list rows/tabs,
+/// instantly disabled when `App::reduce_motion()` is active; 0 idle frames at rest).
 pub struct KissBounce<E> {
     id: ElementId,
     element: Option<E>,
@@ -64,17 +63,17 @@ pub struct KissBounce<E> {
     enabled: bool,
 }
 
-/// Tactile interactive bounce for buttons, icon buttons, chips, and compact cards.
+/// Subtle tactile press settle for buttons, icon buttons, chips, and compact cards.
 pub fn kiss_bounce<E: IntoElement + 'static>(id: impl Into<ElementId>, child: E) -> KissBounce<E> {
     KissBounce {
         id: id.into(),
         element: Some(child),
-        amplitude_px: 2.5,
+        amplitude_px: 1.0,
         enabled: true,
     }
 }
 
-/// Subtle interactive bounce for wide list rows (sidebar items, tabs, model/settings rows).
+/// Calm zero-shift wrapper for wide list rows (sidebar items, tabs, model/settings rows).
 pub fn kiss_bounce_subtle<E: IntoElement + 'static>(
     id: impl Into<ElementId>,
     child: E,
@@ -82,7 +81,7 @@ pub fn kiss_bounce_subtle<E: IntoElement + 'static>(
     KissBounce {
         id: id.into(),
         element: Some(child),
-        amplitude_px: 1.5,
+        amplitude_px: 0.0,
         enabled: true,
     }
 }
@@ -162,7 +161,7 @@ impl<E: IntoElement + 'static> Element for KissBounce<E> {
         window: &mut Window,
         cx: &mut App,
     ) -> Self::PrepaintState {
-        if !self.enabled {
+        if !self.enabled || self.amplitude_px <= 0.0 {
             child.prepaint(window, cx);
             return None;
         }
@@ -171,7 +170,6 @@ impl<E: IntoElement + 'static> Element for KissBounce<E> {
             return None;
         };
         let hitbox = window.insert_hitbox(bounds, HitboxBehavior::Normal);
-        let mouse_inside = bounds.contains(&window.mouse_position());
         let reduce_motion = cx.reduce_motion();
         let amp = self.amplitude_px;
         let (y_offset, flags_rc) = window.with_element_state(gid, |prev, window| {
@@ -181,33 +179,14 @@ impl<E: IntoElement + 'static> Element for KissBounce<E> {
                 flags: Rc::new(Cell::new(BounceFlags::default())),
                 updated_at: now,
             });
-            let mut f = st.flags.get();
-            // If the element scrolled or moved away from a stationary cursor, clear stale hover.
-            if !mouse_inside {
-                f.hovered = false;
-            }
-            let release_pulse = f.release_pulse;
-            f.release_pulse = false;
-            st.flags.set(f);
+            let f = st.flags.get();
             if reduce_motion {
                 st.spring = SpringState::default();
                 st.updated_at = now;
                 let rc = st.flags.clone();
                 return ((0.0_f32, rc), st);
             }
-            let target = if f.pressed {
-                1.0_f32
-            } else if f.hovered {
-                -0.62_f32
-            } else {
-                0.0_f32
-            };
-            if release_pulse {
-                if st.spring.position < 0.45 {
-                    st.spring.position = 0.55;
-                }
-                st.spring.velocity -= 18.0;
-            }
+            let target = if f.pressed { 1.0_f32 } else { 0.0_f32 };
             let dt = now
                 .duration_since(st.updated_at)
                 .as_secs_f32()
@@ -222,13 +201,17 @@ impl<E: IntoElement + 'static> Element for KissBounce<E> {
             } else {
                 window.request_animation_frame();
             }
-            let y = (st.spring.position * amp).clamp(-amp * 1.4, amp * 1.4);
+            let y = (st.spring.position * amp).clamp(0.0, amp);
             let rc = st.flags.clone();
             ((y, rc), st)
         });
-        window.with_element_offset(point(px(0.0), px(y_offset)), |window| {
+        if y_offset.abs() > 0.01 {
+            window.with_element_offset(point(px(0.0), px(y_offset)), |window| {
+                child.prepaint(window, cx);
+            });
+        } else {
             child.prepaint(window, cx);
-        });
+        }
         Some((hitbox, flags_rc))
     }
     fn paint(
@@ -260,26 +243,13 @@ impl<E: IntoElement + 'static> Element for KissBounce<E> {
                 }
             }
         });
-        let hb_up = hitbox.clone();
         let f_up = flags.clone();
         window.on_mouse_event(move |ev: &MouseUpEvent, phase, window, _cx| {
             if phase == DispatchPhase::Capture && ev.button == MouseButton::Left {
                 let mut f = f_up.get();
                 if f.pressed {
                     f.pressed = false;
-                    f.release_pulse = hb_up.is_hovered(window);
                     f_up.set(f);
-                    window.refresh();
-                }
-            }
-        });
-        window.on_mouse_event(move |_ev: &MouseMoveEvent, phase, window, _cx| {
-            if phase == DispatchPhase::Capture {
-                let now_hovered = hitbox.is_hovered(window);
-                let mut f = flags.get();
-                if f.hovered != now_hovered {
-                    f.hovered = now_hovered;
-                    flags.set(f);
                     window.refresh();
                 }
             }

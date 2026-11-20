@@ -3,7 +3,7 @@
 
 #define MyAppName "Parchment"
 #ifndef MyAppVersion
-  #define MyAppVersion "3.0.0"
+  #define MyAppVersion "3.1.0"
 #endif
 #ifndef MyCompression
   #define MyCompression "lzma2/max"

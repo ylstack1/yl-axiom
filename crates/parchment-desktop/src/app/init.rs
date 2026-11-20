@@ -10,6 +10,7 @@ impl ParchmentDesktopApp {
         startup_core_ms: f64,
         cli_bench_stream: bool,
         bench_out: Option<PathBuf>,
+        migration_warning: Option<String>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
@@ -54,25 +55,25 @@ impl ParchmentDesktopApp {
         window.on_next_frame(move |_, _| apply_dwm_chrome_to_active_window(&init_palette));
 
         let now = now_ms();
-        let initial_chat_id = if !snapshot.active_session_id.is_empty()
+        let should_start_fresh =
+            stubs.is_empty() || (snapshot.preferences.new_chat_on_launch && !cli_bench_stream);
+        let initial_chat_id = if should_start_fresh {
+            let fresh = build_fresh_chat_session(&snapshot, now);
+            let _ = core.save_full_session(&fresh);
+            stubs = core.list_chat_stubs().unwrap_or_default();
+            fresh.id
+        } else if !snapshot.active_session_id.is_empty()
             && stubs.iter().any(|s| s.id == snapshot.active_session_id)
         {
             snapshot.active_session_id.clone()
         } else if let Some(first) = stubs.first() {
             first.id.clone()
         } else {
-            let mut fresh = ChatSession::new(format!("chat-{now}"), strings::NEW_CHAT, now);
-            fresh.profile_id = snapshot.active_profile_id.clone();
-            fresh.assistant_id = snapshot.active_assistant_id.clone();
-            fresh.view_mode = snapshot.preferences.default_view_mode;
-            if !snapshot.preferences.profile_name.trim().is_empty() {
-                fresh.user_name = snapshot.preferences.profile_name.clone();
-            }
+            let fresh = build_fresh_chat_session(&snapshot, now);
             let _ = core.save_full_session(&fresh);
             stubs = core.list_chat_stubs().unwrap_or_default();
             fresh.id
         };
-
         let active_session = core
             .load_full_session(&initial_chat_id)
             .ok()
@@ -527,7 +528,8 @@ impl ParchmentDesktopApp {
             }
         });
         let focus_handle = cx.focus_handle();
-        window.focus(&focus_handle, cx);
+        let composer_focus = composer.read(cx).focus_handle(cx);
+        window.focus(&composer_focus, cx);
         let entity_keys = cx.entity().downgrade();
         subscriptions.push(
             cx.intercept_keystrokes(move |event: &KeystrokeEvent, window, cx| {
@@ -653,6 +655,9 @@ impl ParchmentDesktopApp {
         app.refresh_memory_and_skills();
         app.refresh_storage_scan();
 
+        if let Some(warn) = migration_warning {
+            app.show_notice(warn, cx);
+        }
         if cli_bench_stream {
             app.start_stream_benchmark(true, window, cx);
         } else if auto_ota {
@@ -663,6 +668,39 @@ impl ParchmentDesktopApp {
     }
 
     // ---- Helpers: profiles, assistants, permissions, persistence ----
+}
+
+pub(super) fn build_fresh_chat_session(snapshot: &AppStateSnapshot, now: i64) -> ChatSession {
+    let asst_clone = snapshot
+        .assistants
+        .iter()
+        .find(|a| a.id == snapshot.active_assistant_id)
+        .or_else(|| snapshot.assistants.first())
+        .cloned();
+    let mut session = ChatSession::new(format!("chat-{now}"), strings::NEW_CHAT, now);
+    session.profile_id = asst_clone
+        .as_ref()
+        .filter(|a| !a.default_profile_id.is_empty())
+        .map(|a| a.default_profile_id.clone())
+        .unwrap_or_else(|| snapshot.active_profile_id.clone());
+    session.assistant_id = asst_clone
+        .as_ref()
+        .map(|a| a.id.clone())
+        .unwrap_or_else(|| snapshot.active_assistant_id.clone());
+    session.view_mode = snapshot.preferences.default_view_mode;
+    if !snapshot.preferences.profile_name.trim().is_empty() {
+        session.user_name = snapshot.preferences.profile_name.clone();
+    }
+    if let Some(a) = asst_clone {
+        session.model_override = a.default_model_id;
+        session.system_prompt = a.system_prompt;
+        session.authors_note = a.authors_note;
+        session.authors_note_depth = a.authors_note_depth;
+        session.active_card = a.active_card;
+        session.workspace_path = a.workspace_path;
+        session.workspace_mode = a.workspace_mode;
+    }
+    session
 }
 
 /// Captures the window's persistent geometry while protecting against transient startup

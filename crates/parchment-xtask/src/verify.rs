@@ -11,8 +11,34 @@ use std::time::Instant;
 
 use crate::quality;
 
-const APP_VERSION: &str = "3.0.0";
-const APP_VERSION_CODE: &str = "300";
+pub fn read_manifest_version(repo: &Path) -> Result<String, String> {
+    let path = repo.join(".release-please-manifest.json");
+    let text = std::fs::read_to_string(&path)
+        .map_err(|e| format!("failed to read {}: {e}", path.display()))?;
+    crate::version_sync::parse_manifest_root_version(&text)
+        .ok_or_else(|| "missing root '.' version in .release-please-manifest.json".into())
+}
+
+pub fn derive_version_code(version: &str) -> Result<u32, String> {
+    let core = version.split('-').next().unwrap_or(version);
+    let mut parts = core.split('.');
+    let maj = parts
+        .next()
+        .ok_or_else(|| format!("missing major in {version}"))?
+        .parse::<u32>()
+        .map_err(|e| format!("invalid major in {version}: {e}"))?;
+    let min = parts
+        .next()
+        .ok_or_else(|| format!("missing minor in {version}"))?
+        .parse::<u32>()
+        .map_err(|e| format!("invalid minor in {version}: {e}"))?;
+    let pat = parts
+        .next()
+        .ok_or_else(|| format!("missing patch in {version}"))?
+        .parse::<u32>()
+        .map_err(|e| format!("invalid patch in {version}: {e}"))?;
+    Ok(maj * 10_000 + min * 100 + pat)
+}
 const MAX_ANDROID_SO_BYTES: u64 = 2_621_440; // 2.50 MB raw budget (16 KB uncompressed mmap)
 const MAX_ANDROID_APK_BYTES: u64 = 7_864_320; // 7.50 MB signed Release APK budget
 const MAX_DESKTOP_EXE_BYTES: u64 = 36_700_160; // 35.0 MB standalone GPUI .exe budget
@@ -704,12 +730,26 @@ fn run_gradle(repo: &Path, name: &str, tasks: &[String], config_cache: bool, gal
         "gradlew"
     });
 
+    let app_version = match read_manifest_version(repo) {
+        Ok(v) => v,
+        Err(err) => {
+            eprintln!("FAIL {name}: {err}");
+            return 1;
+        }
+    };
+    let app_version_code = match derive_version_code(&app_version) {
+        Ok(c) => c,
+        Err(err) => {
+            eprintln!("FAIL {name}: {err}");
+            return 1;
+        }
+    };
     let mut flags: Vec<String> = vec![
         "--no-daemon".into(),
         "--max-workers=2".into(),
         "-Pkotlin.compiler.execution.strategy=in-process".into(),
-        format!("-PappVersion={APP_VERSION}"),
-        format!("-PappVersionCode={APP_VERSION_CODE}"),
+        format!("-PappVersion={app_version}"),
+        format!("-PappVersionCode={app_version_code}"),
         "--console=plain".into(),
         "--quiet".into(),
     ];

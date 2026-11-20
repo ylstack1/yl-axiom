@@ -23,8 +23,8 @@ pub use approval::{
     ToolExecutionPermit, UserQuestion,
 };
 pub use codecs::{
-    CardImportResult, export_card_to_png_bytes, extract_docx_text, extract_md_skills_from_zip,
-    import_card_or_prompt_bytes,
+    CardImportResult, encode_rgba_to_png_bytes, export_card_to_png_bytes, extract_docx_text,
+    extract_md_skills_from_zip, import_card_or_prompt_bytes,
 };
 pub use math_dice::{eval_math_expression, roll_dice_expression};
 #[cfg(feature = "network")]
@@ -43,5 +43,6 @@ pub use runner::{AgentTurnRunner, RunActivity, RunProgressEvent, format_elapsed_
 pub use ssrf::{PublicWebTransport, convert_html_to_readable_text, is_public_ip};
 #[cfg(feature = "network")]
 pub use tools::{
-    ComputerUseAction, ComputerUseBackend, HarnessContext, HarnessExecutor, ToolOutput,
+    ComputerUseAction, ComputerUseBackend, HarnessContext, HarnessExecutor, SubagentDelegate,
+    ToolOutput,
 };

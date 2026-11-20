@@ -1020,3 +1020,528 @@ fn sse_framer_10k_events_throughput_probe() {
         elapsed.as_nanos() as f64 / 10_000.0
     );
 }
+
+#[test]
+fn smart_endpoint_url_avoids_duplicate_version_suffix_and_respects_overrides() {
+    use parchment_protocol::wire::{build_auth_headers_for_key, build_endpoint_url};
+
+    // Versioned Gemini base URL (/v1beta, /v1, /api/v1) never duplicates `/v1beta`.
+    for base in [
+        "https://generativelanguage.googleapis.com/v1beta",
+        "https://generativelanguage.googleapis.com/v1beta/",
+        "https://proxy.example.com/v1",
+        "https://proxy.example.com/api/v1",
+        "https://proxy.example.com/api/paas/v4",
+    ] {
+        let clean_base = base.trim_end_matches('/');
+        let prof = make_profile(ProviderProtocol::GeminiInteractions, base);
+        assert_eq!(
+            build_endpoint_url(&prof, WireDialect::GeminiInteractions, "gemini-2.5-pro").unwrap(),
+            format!("{clean_base}/interactions")
+        );
+        assert_eq!(
+            build_endpoint_url(
+                &prof,
+                WireDialect::GeminiGenerateContent,
+                "models/gemini-2.5-pro"
+            )
+            .unwrap(),
+            format!("{clean_base}/models/gemini-2.5-pro:streamGenerateContent?alt=sse")
+        );
+    }
+
+    // Concrete `/v1beta/interactions` base URL stays verbatim for primary and falls back cleanly.
+    let concrete = make_profile(
+        ProviderProtocol::GeminiInteractions,
+        "https://generativelanguage.googleapis.com/v1beta/interactions",
+    );
+    assert_eq!(
+        build_endpoint_url(&concrete, WireDialect::GeminiInteractions, "gemini-2.5-pro").unwrap(),
+        "https://generativelanguage.googleapis.com/v1beta/interactions"
+    );
+    assert_eq!(
+        build_endpoint_url(
+            &concrete,
+            WireDialect::GeminiGenerateContent,
+            "gemini-2.5-pro"
+        )
+        .unwrap(),
+        "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-pro:streamGenerateContent?alt=sse"
+    );
+
+    // Explicit concrete `:streamGenerateContent` base URL stays verbatim.
+    let concrete_gc = make_profile(
+        ProviderProtocol::GeminiInteractions,
+        "https://proxy.example.com/v1beta/models/gemini-2.5-pro:streamGenerateContent?alt=sse",
+    );
+    assert_eq!(
+        build_endpoint_url(
+            &concrete_gc,
+            WireDialect::GeminiGenerateContent,
+            "gemini-2.5-pro"
+        )
+        .unwrap(),
+        "https://proxy.example.com/v1beta/models/gemini-2.5-pro:streamGenerateContent?alt=sse"
+    );
+
+    // Trailing `#` opts out of path appending verbatim.
+    let pinned = make_profile(
+        ProviderProtocol::GeminiInteractions,
+        "https://proxy.example.com/custom-gemini#",
+    );
+    assert_eq!(
+        build_endpoint_url(
+            &pinned,
+            WireDialect::GeminiGenerateContent,
+            "gemini-2.5-pro"
+        )
+        .unwrap(),
+        "https://proxy.example.com/custom-gemini"
+    );
+
+    // Interactions endpoint override is ignored when falling back to generateContent.
+    let mut with_inter_ov = make_profile(
+        ProviderProtocol::GeminiInteractions,
+        "https://generativelanguage.googleapis.com/v1beta",
+    );
+    with_inter_ov.endpoint_path_override = "/v1beta/interactions".into();
+    assert_eq!(
+        build_endpoint_url(
+            &with_inter_ov,
+            WireDialect::GeminiGenerateContent,
+            "gemini-2.5-pro"
+        )
+        .unwrap(),
+        "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-pro:streamGenerateContent?alt=sse"
+    );
+
+    // Non-googleapis Gemini proxy receives both x-goog-api-key and Bearer auth headers.
+    let proxy = make_profile(
+        ProviderProtocol::GeminiInteractions,
+        "https://proxy.example.com/v1beta",
+    );
+    let headers =
+        build_auth_headers_for_key(&proxy, "sk-test-key", WireDialect::GeminiGenerateContent);
+    assert!(
+        headers
+            .iter()
+            .any(|(k, v)| k == "x-goog-api-key" && v == "sk-test-key")
+    );
+    assert!(
+        headers
+            .iter()
+            .any(|(k, v)| k == "Authorization" && v == "Bearer sk-test-key")
+    );
+}
+
+#[tokio::test]
+async fn gemini_versioned_base_url_falls_back_without_duplicate_v1beta() {
+    let (session, history) = sample_session_and_history();
+    let client = ProtocolClient::with_test_timings(test_http_client(), Duration::from_secs(5), 20);
+
+    let (base, captured) = spawn_mock_server(|_, req| {
+        if req.path == "/v1beta/interactions" {
+            MockResponse::json(
+                404,
+                r#"{"error":{"code":404,"message":"Method not found.","status":"NOT_FOUND"}}"#,
+            )
+        } else if req.path == "/v1beta/models/gemini-2.5-pro:streamGenerateContent?alt=sse" {
+            MockResponse::sse(
+                "data: {\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"Versioned OK\"}]},\"finishReason\":\"STOP\"}]}\n\n",
+            )
+        } else {
+            MockResponse::json(
+                404,
+                r#"{"error":{"code":404,"message":"Method not found.","status":"NOT_FOUND"}}"#,
+            )
+        }
+    })
+    .await;
+
+    let mut profile = make_profile(
+        ProviderProtocol::GeminiInteractions,
+        format!("{base}/v1beta"),
+    );
+    profile.api_key = "AIza-versioned".into();
+    let mut cb = RecordingCallbacks::default();
+    let res = client
+        .execute_round(
+            &profile,
+            "gemini-2.5-pro",
+            &session,
+            &history,
+            &[],
+            None,
+            "",
+            "r-ver",
+            None,
+            &mut cb,
+        )
+        .await
+        .unwrap();
+    assert_eq!(res.dialect_used, WireDialect::GeminiGenerateContent);
+    assert_eq!(res.content, "Versioned OK");
+    let reqs = captured.lock().unwrap();
+    assert_eq!(reqs.len(), 2);
+    assert_eq!(reqs[0].path, "/v1beta/interactions");
+    assert_eq!(
+        reqs[1].path,
+        "/v1beta/models/gemini-2.5-pro:streamGenerateContent?alt=sse"
+    );
+}
+
+#[test]
+fn strip_inline_error_notices_strips_desktop_error_and_stopped_banners() {
+    use parchment_protocol::history::strip_inline_error_notices;
+    assert_eq!(strip_inline_error_notices("**Error:** HTTP 500 boom"), "");
+    assert_eq!(
+        strip_inline_error_notices("_Stopped before any text arrived._"),
+        ""
+    );
+    assert_eq!(
+        strip_inline_error_notices("**[Provider Error: bad key]**"),
+        ""
+    );
+    assert_eq!(
+        strip_inline_error_notices("Normal assistant reply."),
+        "Normal assistant reply."
+    );
+}
+
+#[test]
+fn attachments_extra_body_builtin_tools_and_multistep_serialize_across_all_5_dialects() {
+    use parchment_model::{PromptAttachment, ToolCallRecord};
+    use parchment_protocol::wire::{WireAdaptOptions, build_wire_request};
+
+    let (session, mut history) = sample_session_and_history();
+    history[0].variants[0].attachments = vec![
+        PromptAttachment {
+            id: "a1".into(),
+            file_name: "photo.png".into(),
+            mime_type: "image/png".into(),
+            base64_data: "iVBORw0KGgo=".into(),
+            text_content: String::new(),
+            local_file_path: String::new(),
+        },
+        PromptAttachment {
+            id: "a2".into(),
+            file_name: "notes.txt".into(),
+            mime_type: "text/plain".into(),
+            base64_data: String::new(),
+            text_content: "hello from attachment".into(),
+            local_file_path: String::new(),
+        },
+        PromptAttachment {
+            id: "a3".into(),
+            file_name: "spec.pdf".into(),
+            mime_type: "application/pdf".into(),
+            base64_data: "JVBERi0xLjQ=".into(),
+            text_content: String::new(),
+            local_file_path: String::new(),
+        },
+    ];
+    history.push(MessageNode {
+        id: "m2".into(),
+        role: MessageRole::Assistant,
+        variants: vec![MessageVariant {
+            id: "v2".into(),
+            content: "Final summary.".into(),
+            tool_calls: vec![
+                ToolCallRecord {
+                    id: "c1".into(),
+                    name: "fs_read".into(),
+                    arguments_json: r#"{"path":"a.txt"}"#.into(),
+                    result_text: "alpha".into(),
+                    starts_tool_step: true,
+                    ..Default::default()
+                },
+                ToolCallRecord {
+                    id: "c2".into(),
+                    name: "fs_read".into(),
+                    arguments_json: r#"{"path":"b.txt"}"#.into(),
+                    result_text: "beta".into(),
+                    starts_tool_step: true,
+                    ..Default::default()
+                },
+            ],
+            ..Default::default()
+        }],
+        active_variant_index: 0,
+        included_in_context: true,
+        pinned: false,
+    });
+
+    let cases = [
+        (
+            ProviderProtocol::OpenAiResponses,
+            WireDialect::OpenAiResponses,
+        ),
+        (ProviderProtocol::OpenAiResponses, WireDialect::OpenAiChat),
+        (
+            ProviderProtocol::AnthropicMessages,
+            WireDialect::AnthropicMessages,
+        ),
+        (
+            ProviderProtocol::GeminiInteractions,
+            WireDialect::GeminiInteractions,
+        ),
+        (
+            ProviderProtocol::GeminiInteractions,
+            WireDialect::GeminiGenerateContent,
+        ),
+    ];
+    for (proto, dialect) in cases {
+        let mut profile = make_profile(proto, "https://example.invalid");
+        profile.thinking_effort.clear();
+        profile.enable_web_search = true;
+        profile.enable_code_execution = true;
+        profile.enable_url_context = true;
+        profile.raw_json_extra_body =
+            r#"{"custom_flag": true, "tools": ["smuggled"], "tool_choice": "auto"}"#.into();
+
+        let req = build_wire_request(
+            &profile,
+            dialect,
+            "test-model",
+            &session,
+            &history,
+            &sample_tools(),
+            None,
+            "Prefill:",
+            &WireAdaptOptions::default(),
+        )
+        .unwrap();
+        let body: Value = serde_json::from_str(&req.body_json).unwrap();
+        assert_eq!(body["custom_flag"], json!(true), "dialect={dialect:?}");
+        assert!(body.get("tool_choice").is_none(), "disallowed key leaked");
+        assert!(
+            !req.body_json.contains("smuggled"),
+            "smuggled tools leaked on {dialect:?}"
+        );
+        assert!(
+            req.body_json.contains("iVBORw0KGgo="),
+            "image missing on {dialect:?}"
+        );
+        assert!(
+            req.body_json.contains("hello from attachment"),
+            "inline text missing on {dialect:?}"
+        );
+        assert!(
+            req.body_json.contains("JVBERi0xLjQ="),
+            "PDF missing on {dialect:?}"
+        );
+        assert!(
+            req.body_json.contains("Prefill:"),
+            "continue_prefix missing on {dialect:?}"
+        );
+        match dialect {
+            WireDialect::OpenAiResponses => {
+                assert!(req.body_json.contains("web_search_preview"));
+                assert!(req.body_json.contains("code_interpreter"));
+            }
+            WireDialect::AnthropicMessages => {
+                assert!(req.body_json.contains("web_search_20250305"));
+                assert!(body.get("thinking").is_none());
+                // Two separate starts_tool_step rounds => 2 assistant tool_use turns + 2 user tool_result turns + closing assistant + continue_prefix
+                let msgs = body["messages"].as_array().unwrap();
+                assert!(
+                    msgs.len() >= 6,
+                    "expected multi-step Anthropic replay: {msgs:?}"
+                );
+            }
+            WireDialect::GeminiInteractions => {
+                assert!(req.body_json.contains("google_search"));
+                assert!(req.body_json.contains("code_execution"));
+                assert!(req.body_json.contains("url_context"));
+                let inp = body["input"].as_array().unwrap();
+                assert!(
+                    inp.len() >= 6,
+                    "expected multi-step Gemini Interactions replay: {inp:?}"
+                );
+            }
+            WireDialect::GeminiGenerateContent => {
+                assert!(req.body_json.contains("google_search"));
+                assert!(req.body_json.contains("code_execution"));
+                assert!(req.body_json.contains("url_context"));
+                let contents = body["contents"].as_array().unwrap();
+                assert!(
+                    contents.len() >= 6,
+                    "expected multi-step Gemini GenerateContent replay: {contents:?}"
+                );
+            }
+            WireDialect::OpenAiChat => {}
+        }
+    }
+}
+
+#[tokio::test]
+async fn openai_responses_item_id_tool_deltas_and_url_citations_parse_cleanly() {
+    let (session, history) = sample_session_and_history();
+    let client = ProtocolClient::with_test_timings(test_http_client(), Duration::from_secs(5), 20);
+
+    let sse = concat!(
+        "event: response.created\ndata: {\"type\":\"response.created\",\"response\":{\"id\":\"resp_42\"}}\n\n",
+        "event: response.output_item.added\ndata: {\"type\":\"response.output_item.added\",\"item\":{\"id\":\"fc_item_1\",\"call_id\":\"call_real_99\",\"type\":\"function_call\",\"name\":\"fs_read\",\"arguments\":\"\"}}\n\n",
+        "event: response.function_call_arguments.delta\ndata: {\"type\":\"response.function_call_arguments.delta\",\"item_id\":\"fc_item_1\",\"delta\":\"{\\\"path\\\":\\\"a\"}\n\n",
+        "event: response.function_call_arguments.delta\ndata: {\"type\":\"response.function_call_arguments.delta\",\"item_id\":\"fc_item_1\",\"delta\":\".rs\\\"}\"}\n\n",
+        "event: response.output_item.done\ndata: {\"type\":\"response.output_item.done\",\"item\":{\"id\":\"fc_item_1\",\"call_id\":\"call_real_99\",\"type\":\"function_call\",\"name\":\"fs_read\",\"arguments\":\"\"}}\n\n",
+        "event: response.output_text.annotation.added\ndata: {\"type\":\"response.output_text.annotation.added\",\"annotation\":{\"type\":\"url_citation\",\"url\":\"https://docs.rs/parchment\",\"title\":\"Parchment Docs\"}}\n\n",
+        "event: response.completed\ndata: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_42\",\"usage\":{\"input_tokens\":10,\"output_tokens\":5}}}\n\n",
+    );
+    let (base, _) = spawn_mock_server(move |_, _| MockResponse::sse(sse)).await;
+    let profile = make_profile(ProviderProtocol::OpenAiResponses, base);
+    let mut cb = RecordingCallbacks::default();
+    let res = client
+        .execute_round(
+            &profile,
+            "test-model",
+            &session,
+            &history,
+            &sample_tools(),
+            None,
+            "",
+            "r-resp-deltas",
+            None,
+            &mut cb,
+        )
+        .await
+        .unwrap();
+    assert_eq!(res.tool_calls.len(), 1);
+    assert_eq!(res.tool_calls[0].id, "call_real_99");
+    assert_eq!(res.tool_calls[0].arguments_json, r#"{"path":"a.rs"}"#);
+    assert_eq!(res.citations.len(), 1);
+    assert_eq!(res.citations[0].url, "https://docs.rs/parchment");
+    assert!(!res.raw_request_preview.is_empty());
+    assert!(!res.raw_response_preview.is_empty());
+}
+
+#[tokio::test]
+async fn gemini_plain_json_array_grounding_citations_and_thinking_budget_heal() {
+    let (session, history) = sample_session_and_history();
+    let client = ProtocolClient::with_test_timings(test_http_client(), Duration::from_secs(5), 20);
+
+    let (base, captured) = spawn_mock_server(|_, req| {
+        if req.path.contains("/interactions") {
+            return MockResponse::json(404, r#"{"error":{"message":"not found"}}"#);
+        }
+        if req.body.contains("thinkingLevel") {
+            return MockResponse::json(
+                400,
+                r#"{"error":{"message":"Invalid JSON payload: unknown field thinkingLevel"}}"#,
+            );
+        }
+        MockResponse::json(
+            200,
+            r#"[{"candidates":[{"content":{"parts":[{"thought":true,"text":"plan","thought_signature":"sig_snake_ok"},{"text":"Grounded answer."}]},"groundingMetadata":{"groundingChunks":[{"web":{"uri":"https://example.org/fact","title":"Fact Source"}}]},"finishReason":"STOP"}]}]"#,
+        )
+    })
+    .await;
+
+    let mut profile = make_profile(ProviderProtocol::GeminiInteractions, base);
+    profile.thinking_effort = "medium".into();
+    let mut cb = RecordingCallbacks::default();
+    let res = client
+        .execute_round(
+            &profile,
+            "gemini-test",
+            &session,
+            &history,
+            &[],
+            None,
+            "",
+            "r-gem-arr",
+            None,
+            &mut cb,
+        )
+        .await
+        .unwrap();
+    assert_eq!(res.dialect_used, WireDialect::GeminiGenerateContent);
+    assert_eq!(res.content, "Grounded answer.");
+    assert_eq!(res.thinking_signature, "sig_snake_ok");
+    assert_eq!(res.citations.len(), 1);
+    assert_eq!(res.citations[0].url, "https://example.org/fact");
+    let reqs = captured.lock().unwrap();
+    assert!(
+        reqs.last()
+            .unwrap()
+            .body
+            .contains("\"thinkingBudget\":8192")
+    );
+}
+
+#[tokio::test]
+async fn openai_chat_stream_options_heal_and_context_overflow_auto_compaction() {
+    let (session, _) = sample_session_and_history();
+    let client = ProtocolClient::with_test_timings(test_http_client(), Duration::from_secs(5), 20);
+
+    let mut history = Vec::new();
+    for i in 0..8 {
+        history.push(MessageNode {
+            id: format!("m-{i}"),
+            role: if i % 2 == 0 {
+                MessageRole::User
+            } else {
+                MessageRole::Assistant
+            },
+            variants: vec![MessageVariant {
+                id: format!("v-{i}"),
+                content: format!("Turn number {i} content"),
+                ..Default::default()
+            }],
+            active_variant_index: 0,
+            included_in_context: true,
+            pinned: false,
+        });
+    }
+
+    let (base, captured) = spawn_mock_server(|_, req| {
+        if req.body.contains("stream_options") {
+            return MockResponse::json(
+                400,
+                r#"{"error":{"message":"Unrecognized request argument supplied: stream_options"}}"#,
+            );
+        }
+        if !req.body.contains("Auto-Compacted Earlier Conversation Continuity Digest") {
+            return MockResponse::json(
+                400,
+                r#"{"error":{"message":"This model's maximum context length is 8192 tokens (context_length_exceeded)"}}"#,
+            );
+        }
+        MockResponse::sse(
+            "data: {\"id\":\"chatcmpl_ok\",\"choices\":[{\"delta\":{\"content\":\"Compacted OK\"},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n",
+        )
+    })
+    .await;
+
+    let mut profile = make_profile(
+        ProviderProtocol::Custom,
+        format!("{base}/v1/chat/completions"),
+    );
+    profile.custom_dialect = CUSTOM_DIALECT_OPENAI_CHAT.into();
+    let mut cb = RecordingCallbacks::default();
+    let res = client
+        .execute_round(
+            &profile,
+            "proxy-model",
+            &session,
+            &history,
+            &[],
+            None,
+            "",
+            "r-overflow",
+            None,
+            &mut cb,
+        )
+        .await
+        .unwrap();
+    assert_eq!(res.content, "Compacted OK");
+    let reqs = captured.lock().unwrap();
+    assert_eq!(reqs.len(), 3);
+    assert!(reqs[0].body.contains("stream_options"));
+    assert!(!reqs[1].body.contains("stream_options"));
+    assert!(
+        reqs[2]
+            .body
+            .contains("Auto-Compacted Earlier Conversation Continuity Digest")
+    );
+}

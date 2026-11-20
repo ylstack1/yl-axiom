@@ -1034,7 +1034,7 @@ pub(super) fn render_backup_ota_page(props: &SettingsRenderProps<'_>) -> AnyElem
         "App updates",
         Some(&format!(
             "Parchment v{} • Windows • {} stored chat{}",
-            env!("CARGO_PKG_VERSION"),
+            parchment_core::model::APP_VERSION,
             props.chat_count,
             if props.chat_count == 1 { "" } else { "s" }
         )),

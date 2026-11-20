@@ -8,6 +8,7 @@ mod ci;
 mod perf;
 mod quality;
 mod verify;
+mod version_sync;
 
 use std::path::PathBuf;
 use std::process::ExitCode;
