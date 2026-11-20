@@ -2,6 +2,23 @@
 
 What changed in each release, newest first. From 2.1.7 on, release-please writes these entries from commit messages that follow [Conventional Commits](https://www.conventionalcommits.org/) (`feat:` and `fix:` appear here and set the next version); edit wording in its release PR before merging it.
 
+## [3.1.0](https://github.com/baros4294/parchment/compare/v3.0.0...v3.1.0) (2026-11-20)
+
+
+### New
+
+* modernize v3 toolchains, GPUI parity, CI pipelines, and mobile layout ([e6a887c](https://github.com/baros4294/parchment/commit/e6a887c5d47d2aaeb25d3f7feea88789878899a3))
+
+
+### Fixes
+
+* **protocol:** keep endpoint URLs credential-free and encode query auth ([f4bb464](https://github.com/baros4294/parchment/commit/f4bb464d7f0ade493a444626d3068928b83107dc))
+
+
+### Dependencies
+
+* bump base64 from 0.22.1 to 0.23.1 ([#53](https://github.com/baros4294/parchment/issues/53)) ([c5694b7](https://github.com/baros4294/parchment/commit/c5694b75b4ffae018a2ad64d15f73516ac077c6f))
+
 ## [3.0.0](https://github.com/baros4294/parchment/compare/v2.6.0...v3.0.0) (2026-11-19)
 
 
