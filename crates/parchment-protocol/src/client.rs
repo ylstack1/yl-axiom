@@ -22,7 +22,7 @@ use crate::sse::{
 use crate::usage::ProviderUsageLedger;
 use crate::wire::{
     RawWebCitation, StreamEvent, ToolDefinition, WireAdaptOptions, WireDialect, WireStreamParser,
-    build_auth_headers, build_wire_request, resolve_primary_dialect,
+    build_auth_headers_for_key, build_wire_request, resolve_primary_dialect,
 };
 
 const MAX_TRANSIENT_RETRIES: usize = 3;
@@ -158,20 +158,11 @@ impl ProtocolClient {
         let mut last_err = String::new();
 
         for key in &keys {
-            let active_prof = profile.with_api_key(key);
-            let headers = build_auth_headers(&active_prof, dialect);
+            let trimmed_key = key.trim();
+            let headers = build_auth_headers_for_key(profile, trimmed_key, dialect);
             let mut key_auth_or_rate_limited = false;
             for base_url in &candidates {
-                let mut url = base_url.clone();
-                if active_prof.auth_header_mode == AuthHeaderMode::QueryParam
-                    && !active_prof.api_key.trim().is_empty()
-                {
-                    let sep = if url.contains('?') { '&' } else { '?' };
-                    url.push(sep);
-                    url.push_str("key=");
-                    url.push_str(active_prof.api_key.trim());
-                }
-                let mut req = self.http.get(&url);
+                let mut req = self.http.get(base_url);
                 for (k, v) in &headers {
                     if !k.eq_ignore_ascii_case("content-type") && !k.eq_ignore_ascii_case("accept")
                     {
@@ -179,7 +170,21 @@ impl ProtocolClient {
                     }
                 }
                 req = req.header("Accept", "application/json");
-                match req.send().await {
+                let mut built = match req.build() {
+                    Ok(r) => r,
+                    Err(e) => {
+                        last_err = e.to_string();
+                        continue;
+                    }
+                };
+                if profile.auth_header_mode == AuthHeaderMode::QueryParam && !trimmed_key.is_empty()
+                {
+                    built
+                        .url_mut()
+                        .query_pairs_mut()
+                        .append_pair("key", trimmed_key);
+                }
+                match self.http.execute(built).await {
                     Ok(resp) => {
                         let status = resp.status().as_u16();
                         let body = resp.text().await.unwrap_or_default();
@@ -378,9 +383,9 @@ impl ProtocolClient {
         let started = Instant::now();
 
         loop {
-            let active_profile = profile.with_api_key(&keys[key_idx]);
+            let active_key = keys[key_idx].trim();
             let wire_req = build_wire_request(
-                &active_profile,
+                profile,
                 dialect,
                 model,
                 session,
@@ -390,13 +395,23 @@ impl ProtocolClient {
                 continue_prefix,
                 &adapt,
             )?;
+            let headers = build_auth_headers_for_key(profile, active_key, dialect);
             let usage_req_id = ledger.begin(dialect.usage_dialect());
             let mut req_builder = self.http.post(&wire_req.url).body(wire_req.body_json);
-            for (k, v) in &wire_req.headers {
+            for (k, v) in &headers {
                 req_builder = req_builder.header(k.as_str(), v.as_str());
             }
+            let mut built_req = req_builder
+                .build()
+                .map_err(|e| ProtocolError::NoRetry(e.to_string()))?;
+            if profile.auth_header_mode == AuthHeaderMode::QueryParam && !active_key.is_empty() {
+                built_req
+                    .url_mut()
+                    .query_pairs_mut()
+                    .append_pair("key", active_key);
+            }
 
-            let response = match req_builder.send().await {
+            let response = match self.http.execute(built_req).await {
                 Ok(resp) => resp,
                 Err(e) => {
                     let err = ProtocolError::Transport(e.to_string());

@@ -171,7 +171,7 @@ pub fn build_endpoint_url(
         ));
     }
 
-    let mut url = if profile.protocol.is_custom_wire() {
+    let url = if profile.protocol.is_custom_wire() {
         // CUSTOM uses verbatim URL + optional path override, never appending silent guessed paths.
         let path = profile.endpoint_path_override.trim();
         if path.is_empty() {
@@ -220,14 +220,6 @@ pub fn build_endpoint_url(
         }
     };
 
-    if profile.auth_header_mode == AuthHeaderMode::QueryParam && !profile.api_key.trim().is_empty()
-    {
-        let sep = if url.contains('?') { '&' } else { '?' };
-        url.push(sep);
-        url.push_str("key=");
-        url.push_str(profile.api_key.trim());
-    }
-
     Ok(url)
 }
 
@@ -235,11 +227,19 @@ pub fn build_auth_headers(
     profile: &ProviderProfile,
     dialect: WireDialect,
 ) -> Vec<(String, String)> {
+    build_auth_headers_for_key(profile, &profile.api_key, dialect)
+}
+
+pub fn build_auth_headers_for_key(
+    profile: &ProviderProfile,
+    api_key: &str,
+    dialect: WireDialect,
+) -> Vec<(String, String)> {
     let mut headers = Vec::new();
     headers.push(("Content-Type".to_string(), "application/json".to_string()));
     headers.push(("Accept".to_string(), "text/event-stream".to_string()));
 
-    let key = profile.api_key.trim();
+    let key = api_key.trim();
     if !key.is_empty() {
         match profile.auth_header_mode {
             AuthHeaderMode::Native => match dialect {
