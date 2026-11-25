@@ -16,9 +16,16 @@
 use std::collections::BTreeMap;
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use parchment_prose::diff::compute_unified_line_diff;
 use parchment_storage::ParchmentStore;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
+
+pub mod edit;
+pub mod patch;
+
+pub use edit::FileEditor;
+pub use patch::{PatchError, PatchReview, PatchStore, PatchStatus};
 
 /// Opaque task handle — a UUID-style string that never exposes internal state.
 pub type TaskId = String;
