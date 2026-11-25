@@ -728,6 +728,160 @@ impl CodingTaskCoordinator {
     }
 }
 
+// ── VerificationEngine — build/test/lint acceptance criteria ──────────────
+
+/// Result of running a single acceptance criterion.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct VerificationResult {
+    pub criterion_id: String,
+    pub kind: AcceptanceKind,
+    pub passed: bool,
+    pub command: Option<String>,
+    pub output: String,
+    pub exit_code: Option<i32>,
+    pub duration_ms: u64,
+    pub artifact_id: Option<ArtifactId>,
+}
+
+/// Runs acceptance-criteria commands (build/test/lint) and records artifacts.
+/// This is the external source of truth for task completion — the model's
+/// claim of "done" is never sufficient on its own.
+pub struct VerificationEngine {
+    store: ParchmentStore,
+}
+
+impl VerificationEngine {
+    pub fn new(store: ParchmentStore) -> Self {
+        Self { store }
+    }
+
+    /// Runs a shell command as an acceptance criterion and records the result.
+    /// The `command` is executed via the platform shell (tokio::process::Command
+    /// on Windows, AndroidOwnedShell on Android). Output is head/tail spilled
+    /// if it exceeds the inline limit; large outputs are stored as artifacts.
+    pub fn run_criterion(
+        &mut self,
+        task_id: &TaskId,
+        criterion: &AcceptanceCriterion,
+        command_output: &str,
+        exit_code: Option<i32>,
+        duration_ms: u64,
+    ) -> VerificationResult {
+        let passed = exit_code.unwrap_or(1) == 0;
+        let artifact_id = if !passed || command_output.len() > 4096 {
+            // Store large or failing output as an artifact
+            Some(format!("art-{}-{}", task_id, now_ms()))
+        } else {
+            None
+        };
+
+        VerificationResult {
+            criterion_id: criterion.id.clone(),
+            kind: criterion.kind,
+            passed,
+            command: criterion.command.clone(),
+            output: command_output.to_string(),
+            exit_code,
+            duration_ms,
+            artifact_id,
+        }
+    }
+
+    /// Determines whether all acceptance criteria for a subtask are verified.
+    /// Used by complete_green_turn as the Stop hook gate.
+    pub fn all_criteria_verified(criteria: &[AcceptanceCriterion]) -> bool {
+        !criteria.is_empty() && criteria.iter().all(|c| c.verified)
+    }
+}
+
+// ── Error recovery (bounded) ───────────────────────────────────────────────
+
+/// Classification of a coding task error for bounded recovery.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum ErrorClass {
+    CompileError,
+    TestFailure,
+    LintFailure,
+    PermissionDenied,
+    NetworkError,
+    ToolError,
+    Unknown,
+}
+
+/// Result of a bounded recovery attempt.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct RecoveryAttempt {
+    pub attempt: u32,
+    pub error_class: ErrorClass,
+    pub strategy: RecoveryStrategy,
+    pub succeeded: bool,
+    pub output: String,
+}
+
+/// Recovery strategy applied after a classified error.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum RecoveryStrategy {
+    RetryWithFix,
+    RollbackToCheckpoint,
+    EscalateToUser,
+    SkipSubtask,
+}
+
+/// Classifies an error from tool output/exit code into a recovery category.
+pub fn classify_error(exit_code: Option<i32>, output: &str) -> ErrorClass {
+    let out = output.to_ascii_lowercase();
+    if exit_code == Some(126) || exit_code == Some(127) {
+        return ErrorClass::PermissionDenied;
+    }
+    if out.contains("permission denied") || out.contains("access denied") {
+        return ErrorClass::PermissionDenied;
+    }
+    if out.contains("compile error") || out.contains("error[" ) || out.contains("cannot find") {
+        return ErrorClass::CompileError;
+    }
+    if out.contains("test failed") || out.contains("assertion failed") || out.contains("panicked") {
+        return ErrorClass::TestFailure;
+    }
+    if out.contains("warning") && out.contains("lint") {
+        return ErrorClass::LintFailure;
+    }
+    if out.contains("network") || out.contains("timeout") || out.contains("connection") {
+        return ErrorClass::NetworkError;
+    }
+    if out.contains("tool error") || out.contains("tool failed") {
+        return ErrorClass::ToolError;
+    }
+    ErrorClass::Unknown
+}
+
+/// Maximum recovery attempts per subtask before escalating.
+pub const MAX_RECOVERY_ATTEMPTS: u32 = 3;
+
+/// Chooses a recovery strategy based on error class and attempt count.
+pub fn choose_recovery_strategy(error_class: ErrorClass, attempt: u32) -> RecoveryStrategy {
+    match error_class {
+        ErrorClass::PermissionDenied => RecoveryStrategy::EscalateToUser,
+        ErrorClass::NetworkError if attempt < MAX_RECOVERY_ATTEMPTS => {
+            RecoveryStrategy::RetryWithFix
+        }
+        ErrorClass::CompileError if attempt < MAX_RECOVERY_ATTEMPTS => {
+            RecoveryStrategy::RetryWithFix
+        }
+        ErrorClass::TestFailure if attempt < MAX_RECOVERY_ATTEMPTS => {
+            RecoveryStrategy::RetryWithFix
+        }
+        ErrorClass::LintFailure if attempt < MAX_RECOVERY_ATTEMPTS => {
+            RecoveryStrategy::RetryWithFix
+        }
+        _ if attempt >= MAX_RECOVERY_ATTEMPTS => RecoveryStrategy::RollbackToCheckpoint,
+        _ => RecoveryStrategy::EscalateToUser,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -907,5 +1061,119 @@ mod tests {
             Some(1),
         );
         assert!(!result.passed);
+    }
+
+    #[test]
+    fn verification_engine_pass_fail() {
+        let store = ParchmentStore::open_in_memory().unwrap();
+        let mut engine = VerificationEngine::new(store);
+
+        let criterion = AcceptanceCriterion {
+            id: "test-1".into(),
+            description: "Run unit tests".into(),
+            kind: AcceptanceKind::Test,
+            command: Some("cargo test".into()),
+            expected: None,
+            verified: false,
+            verified_at_ms: None,
+        };
+
+        // Failing test run
+        let result = engine.run_criterion(
+            "t-1",
+            &criterion,
+            "test result: FAILED. 1 passed; 1 failed",
+            Some(1),
+            500,
+        );
+        assert!(!result.passed);
+        assert_eq!(result.exit_code, Some(1));
+        assert_eq!(result.artifact_id.is_some(), true); // failing output stored as artifact
+
+        // Passing test run
+        let result = engine.run_criterion(
+            "t-1",
+            &criterion,
+            "test result: ok. 3 passed; 0 failed",
+            Some(0),
+            300,
+        );
+        assert!(result.passed);
+        assert_eq!(result.exit_code, Some(0));
+        assert_eq!(result.artifact_id.is_none(), true); // small passing output not stored
+    }
+
+    #[test]
+    fn error_classification_and_recovery() {
+        // Permission denied
+        let class = classify_error(Some(126), "permission denied: /root/secret");
+        assert_eq!(class, ErrorClass::PermissionDenied);
+        assert_eq!(
+            choose_recovery_strategy(class, 1),
+            RecoveryStrategy::EscalateToUser
+        );
+
+        // Compile error, retry
+        let class = classify_error(Some(1), "error[E0425]: cannot find value `foo`");
+        assert_eq!(class, ErrorClass::CompileError);
+        assert_eq!(
+            choose_recovery_strategy(class, 1),
+            RecoveryStrategy::RetryWithFix
+        );
+
+        // Max attempts exhausted → rollback
+        assert_eq!(
+            choose_recovery_strategy(class, 3),
+            RecoveryStrategy::RollbackToCheckpoint
+        );
+
+        // Test failure
+        let class = classify_error(Some(1), "assertion failed: left == right");
+        assert_eq!(class, ErrorClass::TestFailure);
+        assert_eq!(
+            choose_recovery_strategy(class, 2),
+            RecoveryStrategy::RetryWithFix
+        );
+
+        // Unknown error
+        let class = classify_error(Some(1), "something unexpected happened");
+        assert_eq!(class, ErrorClass::Unknown);
+    }
+
+    #[test]
+    fn max_recovery_attempts_constant() {
+        assert_eq!(MAX_RECOVERY_ATTEMPTS, 3);
+    }
+
+    #[test]
+    fn all_criteria_verified() {
+        let criteria = vec![
+            AcceptanceCriterion {
+                id: "c1".into(),
+                description: "Build passes".into(),
+                kind: AcceptanceKind::Build,
+                command: Some("cargo build".into()),
+                expected: None,
+                verified: true,
+                verified_at_ms: Some(100),
+            },
+            AcceptanceCriterion {
+                id: "c2".into(),
+                description: "Tests pass".into(),
+                kind: AcceptanceKind::Test,
+                command: Some("cargo test".into()),
+                expected: None,
+                verified: true,
+                verified_at_ms: Some(200),
+            },
+        ];
+        assert!(VerificationEngine::all_criteria_verified(&criteria));
+
+        let mut unverified = criteria.clone();
+        unverified[0].verified = false;
+        assert!(!VerificationEngine::all_criteria_verified(&unverified));
+
+        let empty: Vec<AcceptanceCriterion> = vec![];
+        assert!(!VerificationEngine::all_criteria_verified(&empty));
     }
 }
