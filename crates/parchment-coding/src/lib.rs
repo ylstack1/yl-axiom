@@ -889,6 +889,60 @@ pub fn choose_recovery_strategy(error_class: ErrorClass, attempt: u32) -> Recove
     }
 }
 
+/// Bounded recovery engine for coding task errors.
+///
+/// Tracks attempt counts per subtask and classifies errors to determine
+/// recovery strategy. Never retries beyond MAX_RECOVERY_ATTEMPTS — escalates
+/// to the user when recovery is exhausted.
+pub struct RecoveryEngine {
+    attempt_counts: BTreeMap<SubtaskId, u32>,
+}
+
+impl RecoveryEngine {
+    pub fn new() -> Self {
+        Self {
+            attempt_counts: BTreeMap::new(),
+        }
+    }
+
+    /// Record a failed verification and determine recovery strategy.
+    /// Returns the strategy to apply and whether recovery is exhausted.
+    pub fn attempt_recovery(
+        &mut self,
+        subtask_id: &SubtaskId,
+        exit_code: Option<i32>,
+        output: &str,
+    ) -> (RecoveryStrategy, bool) {
+        let count = self.attempt_counts.entry(subtask_id.clone()).or_insert(0);
+        *count += 1;
+        let attempt = *count;
+
+        let error_class = classify_error(exit_code, output);
+        let strategy = choose_recovery_strategy(error_class, attempt);
+
+        let exhausted = attempt >= MAX_RECOVERY_ATTEMPTS
+            || strategy == RecoveryStrategy::EscalateToUser;
+
+        (strategy, exhausted)
+    }
+
+    /// Reset attempt count for a subtask (called on successful verification).
+    pub fn reset(&mut self, subtask_id: &SubtaskId) {
+        self.attempt_counts.remove(subtask_id);
+    }
+
+    /// Get current attempt count for a subtask.
+    pub fn attempt_count(&self, subtask_id: &SubtaskId) -> u32 {
+        self.attempt_counts.get(subtask_id).copied().unwrap_or(0)
+    }
+}
+
+impl Default for RecoveryEngine {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1182,5 +1236,53 @@ mod tests {
 
         let empty: Vec<AcceptanceCriterion> = vec![];
         assert!(!VerificationEngine::all_criteria_verified(&empty));
+    }
+
+    #[test]
+    fn recovery_engine_attempt_tracking() {
+        let mut engine = RecoveryEngine::new();
+        assert_eq!(engine.attempt_count("sub-1"), 0);
+
+        let (strategy, exhausted) = engine.attempt_recovery("sub-1", Some(1), "compile error");
+        assert_eq!(engine.attempt_count("sub-1"), 1);
+        assert_eq!(strategy, RecoveryStrategy::RetryWithFix);
+        assert!(!exhausted);
+
+        let (strategy, exhausted) = engine.attempt_recovery("sub-1", Some(1), "compile error");
+        assert_eq!(engine.attempt_count("sub-1"), 2);
+        assert_eq!(strategy, RecoveryStrategy::RetryWithFix);
+        assert!(!exhausted);
+
+        let (strategy, exhausted) = engine.attempt_recovery("sub-1", Some(1), "compile error");
+        assert_eq!(engine.attempt_count("sub-1"), 3);
+        assert_eq!(strategy, RecoveryStrategy::RollbackToCheckpoint);
+        assert!(exhausted);
+    }
+
+    #[test]
+    fn recovery_engine_permission_denied_escalates() {
+        let mut engine = RecoveryEngine::new();
+        let (strategy, exhausted) =
+            engine.attempt_recovery("sub-1", Some(126), "permission denied");
+        assert_eq!(strategy, RecoveryStrategy::EscalateToUser);
+        assert!(exhausted);
+    }
+
+    #[test]
+    fn recovery_engine_reset_on_success() {
+        let mut engine = RecoveryEngine::new();
+        engine.attempt_recovery("sub-1", Some(1), "error");
+        assert_eq!(engine.attempt_count("sub-1"), 1);
+        engine.reset("sub-1");
+        assert_eq!(engine.attempt_count("sub-1"), 0);
+    }
+
+    #[test]
+    fn recovery_engine_independent_subtasks() {
+        let mut engine = RecoveryEngine::new();
+        engine.attempt_recovery("sub-1", Some(1), "error");
+        engine.attempt_recovery("sub-1", Some(1), "error");
+        assert_eq!(engine.attempt_count("sub-1"), 2);
+        assert_eq!(engine.attempt_count("sub-2"), 0);
     }
 }
