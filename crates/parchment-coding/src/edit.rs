@@ -10,8 +10,8 @@ use std::path::{Path, PathBuf};
 use parchment_harness::path_guard::{WorkspaceError, WorkspacePathGuard};
 use parchment_prose::diff::compute_unified_line_diff;
 
-use crate::patch::{FileDiff, PatchStore, PatchReview};
 use crate::CodingTaskCoordinator;
+use crate::patch::{FileDiff, PatchReview, PatchStore};
 
 /// Result of a structured file edit.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -62,8 +62,7 @@ impl FileEditor {
     /// Read a file within the workspace with bounds checking.
     pub fn read_file(&self, path: &str) -> Result<FileReadResult, WorkspaceError> {
         let full_path = self.resolve_path(path)?;
-        let content = std::fs::read_to_string(&full_path)
-            .map_err(|e| WorkspaceError::Io(e))?;
+        let content = std::fs::read_to_string(&full_path).map_err(|e| WorkspaceError::Io(e))?;
         let total_lines = content.lines().count();
         let (content_out, truncated) = if content.len() > 250_000 {
             (content[..250_000].to_string(), true)
@@ -86,13 +85,10 @@ impl FileEditor {
         edit: &FileEdit,
     ) -> Result<PatchReview, WorkspaceError> {
         let full_path = self.resolve_path(&edit.path)?;
-        let existing = std::fs::read_to_string(&full_path)
-            .map_err(|e| WorkspaceError::Io(e))?;
+        let existing = std::fs::read_to_string(&full_path).map_err(|e| WorkspaceError::Io(e))?;
 
         if edit.require_exact_match && !existing.contains(&edit.old_text) {
-            return Err(WorkspaceError::Invalid(
-                "old_text not found in file".into(),
-            ));
+            return Err(WorkspaceError::Invalid("old_text not found in file".into()));
         }
 
         let new_content = if edit.require_exact_match {
@@ -126,8 +122,7 @@ impl FileEditor {
         }
 
         let full_path = self.resolve_path(&review.diff.path)?;
-        let existing = std::fs::read_to_string(&full_path)
-            .map_err(|e| WorkspaceError::Io(e))?;
+        let existing = std::fs::read_to_string(&full_path).map_err(|e| WorkspaceError::Io(e))?;
 
         // Apply the diff: reconstruct new content from diff lines
         let new_content = self.apply_diff_lines(&existing, &review.diff.lines)?;

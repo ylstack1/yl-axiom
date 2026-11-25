@@ -25,7 +25,7 @@ pub mod edit;
 pub mod patch;
 
 pub use edit::FileEditor;
-pub use patch::{PatchError, PatchReview, PatchStore, PatchStatus};
+pub use patch::{PatchError, PatchReview, PatchStatus, PatchStore};
 
 /// Opaque task handle — a UUID-style string that never exposes internal state.
 pub type TaskId = String;
@@ -358,6 +358,30 @@ impl HookEvent {
     }
 }
 
+/// TDD phase for a subtask.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum SubtaskPhase {
+    /// No TDD phase active (Explore/Verify subtasks).
+    None,
+    /// Red: write failing tests, implementation forbidden this turn.
+    Red,
+    /// Green: implement minimum to pass, test files read-only.
+    Green,
+    /// Refactor: clean up, suite must stay green.
+    Refactor,
+}
+
+/// Result of running a coding hook gate.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CodingHookResult {
+    pub hook_id: String,
+    pub event: HookEvent,
+    pub passed: bool,
+    pub output: String,
+    pub exit_code: Option<i32>,
+}
+
 /// Errors from the coding coordinator.
 #[derive(Debug, Error)]
 pub enum CodingError {
@@ -414,7 +438,13 @@ impl CodingTaskCoordinator {
         workspace_path: String,
         owner_session_id: String,
     ) -> Result<Task, CodingError> {
-        let task = Task::new(id.clone(), title, description, workspace_path, owner_session_id);
+        let task = Task::new(
+            id.clone(),
+            title,
+            description,
+            workspace_path,
+            owner_session_id,
+        );
         self.persist_task(&task)?;
         self.tasks.insert(id.clone(), task);
         Ok(self.tasks.get(&id).unwrap().clone())
@@ -431,8 +461,8 @@ impl CodingTaskCoordinator {
             return Ok(Some(task.clone()));
         }
         if let Some(json) = self.store.load_coding_task_json(id)? {
-            let task: Task = serde_json::from_str(&json)
-                .map_err(|e| CodingError::Storage(e.to_string()))?;
+            let task: Task =
+                serde_json::from_str(&json).map_err(|e| CodingError::Storage(e.to_string()))?;
             self.tasks.insert(id.clone(), task.clone());
             return Ok(Some(task));
         }
@@ -498,8 +528,8 @@ impl CodingTaskCoordinator {
 
     /// Serializes and persists a task to storage.
     fn persist_task(&mut self, task: &Task) -> Result<(), CodingError> {
-        let task_json = serde_json::to_string(task)
-            .map_err(|e| CodingError::Storage(e.to_string()))?;
+        let task_json =
+            serde_json::to_string(task).map_err(|e| CodingError::Storage(e.to_string()))?;
         self.store.upsert_coding_task(
             &task.id,
             &task.title,
@@ -569,30 +599,6 @@ impl CodingTaskCoordinator {
     }
 
     // ── TDD phase management (Red → Green → Refactor) ──────────────────────
-
-    /// TDD phase for a subtask.
-    #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-    #[serde(rename_all = "camelCase")]
-    pub enum SubtaskPhase {
-        /// No TDD phase active (Explore/Verify subtasks).
-        None,
-        /// Red: write failing tests, implementation forbidden this turn.
-        Red,
-        /// Green: implement minimum to pass, test files read-only.
-        Green,
-        /// Refactor: clean up, suite must stay green.
-        Refactor,
-    }
-
-    /// Result of running a coding hook gate.
-    #[derive(Debug, Clone, PartialEq, Eq)]
-    pub struct CodingHookResult {
-        pub hook_id: String,
-        pub event: HookEvent,
-        pub passed: bool,
-        pub output: String,
-        pub exit_code: Option<i32>,
-    }
 
     /// Start the Red turn: write failing tests. Implementation edits are
     /// forbidden this turn. Returns the subtask's new phase.
@@ -669,10 +675,7 @@ impl CodingTaskCoordinator {
             .ok_or_else(|| CodingError::SubtaskNotFound(subtask_id.clone()))?;
 
         // All acceptance criteria must be verified before Green completes.
-        let all_verified = subtask
-            .acceptance_criteria
-            .iter()
-            .all(|c| c.verified);
+        let all_verified = subtask.acceptance_criteria.iter().all(|c| c.verified);
         if !all_verified {
             return Err(CodingError::VerificationFailed(format!(
                 "subtask {subtask_id} has unverified acceptance criteria; Stop hook blocks turn end"
@@ -847,7 +850,7 @@ pub fn classify_error(exit_code: Option<i32>, output: &str) -> ErrorClass {
     if out.contains("permission denied") || out.contains("access denied") {
         return ErrorClass::PermissionDenied;
     }
-    if out.contains("compile error") || out.contains("error[" ) || out.contains("cannot find") {
+    if out.contains("compile error") || out.contains("error[") || out.contains("cannot find") {
         return ErrorClass::CompileError;
     }
     if out.contains("test failed") || out.contains("assertion failed") || out.contains("panicked") {
@@ -920,8 +923,8 @@ impl RecoveryEngine {
         let error_class = classify_error(exit_code, output);
         let strategy = choose_recovery_strategy(error_class, attempt);
 
-        let exhausted = attempt >= MAX_RECOVERY_ATTEMPTS
-            || strategy == RecoveryStrategy::EscalateToUser;
+        let exhausted =
+            attempt >= MAX_RECOVERY_ATTEMPTS || strategy == RecoveryStrategy::EscalateToUser;
 
         (strategy, exhausted)
     }
@@ -976,14 +979,15 @@ mod tests {
     fn subtask_depends_on_ordering() {
         let store = ParchmentStore::open_in_memory().unwrap();
         let mut coord = CodingTaskCoordinator::new(store).unwrap();
-        coord.create_task(
-            "t-2".into(),
-            "Plan".into(),
-            "Plan work".into(),
-            "/tmp".into(),
-            "s-2".into(),
-        )
-        .unwrap();
+        coord
+            .create_task(
+                "t-2".into(),
+                "Plan".into(),
+                "Plan work".into(),
+                "/tmp".into(),
+                "s-2".into(),
+            )
+            .unwrap();
 
         coord
             .add_subtask(
@@ -1019,22 +1023,18 @@ mod tests {
     fn checkpoint_and_resume() {
         let store = ParchmentStore::open_in_memory().unwrap();
         let mut coord = CodingTaskCoordinator::new(store).unwrap();
-        coord.create_task(
-            "t-3".into(),
-            "Resume".into(),
-            "Resume work".into(),
-            "/tmp".into(),
-            "s-3".into(),
-        )
-        .unwrap();
+        coord
+            .create_task(
+                "t-3".into(),
+                "Resume".into(),
+                "Resume work".into(),
+                "/tmp".into(),
+                "s-3".into(),
+            )
+            .unwrap();
 
         let id = coord
-            .create_checkpoint(
-                "t-3",
-                None,
-                "Before edit".into(),
-                "snapshot://v1".into(),
-            )
+            .create_checkpoint("t-3", None, "Before edit".into(), "snapshot://v1".into())
             .unwrap();
         assert!(!id.is_empty());
 
@@ -1047,25 +1047,27 @@ mod tests {
     fn tdd_red_green_refactor_phases() {
         let store = ParchmentStore::open_in_memory().unwrap();
         let mut coord = CodingTaskCoordinator::new(store).unwrap();
-        coord.create_task(
-            "t-4".into(),
-            "TDD task".into(),
-            "TDD workflow".into(),
-            "/tmp".into(),
-            "s-4".into(),
-        )
-        .unwrap();
-        coord.add_subtask(
-            "t-4",
-            Subtask::new(
-                "sub-1".into(),
-                "Add feature".into(),
-                "Implement feature".into(),
-                SubtaskKind::Explore,
-                Vec::new(),
-            ),
-        )
-        .unwrap();
+        coord
+            .create_task(
+                "t-4".into(),
+                "TDD task".into(),
+                "TDD workflow".into(),
+                "/tmp".into(),
+                "s-4".into(),
+            )
+            .unwrap();
+        coord
+            .add_subtask(
+                "t-4",
+                Subtask::new(
+                    "sub-1".into(),
+                    "Add feature".into(),
+                    "Implement feature".into(),
+                    SubtaskKind::Explore,
+                    Vec::new(),
+                ),
+            )
+            .unwrap();
 
         // Red: write failing tests
         let phase = coord.start_red_turn("t-4", "sub-1").unwrap();
@@ -1115,12 +1117,8 @@ mod tests {
         assert_eq!(result.event, HookEvent::PostToolUse);
 
         // PostToolUse hook fails on lint errors
-        let result = coord.run_post_tool_use_hook(
-            "t-4",
-            &lint_hook,
-            "warning: unused variable",
-            Some(1),
-        );
+        let result =
+            coord.run_post_tool_use_hook("t-4", &lint_hook, "warning: unused variable", Some(1));
         assert!(!result.passed);
     }
 

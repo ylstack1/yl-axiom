@@ -4,7 +4,7 @@
 //! `parse_diff_fence`) to produce and review unified diffs before file edits are
 //! applied. All operations are read-only until explicitly committed.
 
-use parchment_prose::diff::{compute_unified_line_diff, DiffLine, DiffLineKind};
+use parchment_prose::diff::{DiffLine, DiffLineKind, compute_unified_line_diff};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 

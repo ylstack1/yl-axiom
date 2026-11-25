@@ -121,7 +121,9 @@ pub struct TextSymbolBackend {
 
 impl TextSymbolBackend {
     pub fn new(language: &str) -> Self {
-        Self { language: language.to_string() }
+        Self {
+            language: language.to_string(),
+        }
     }
 
     fn extract_symbols(&self, content: &str, file_path: &str) -> Vec<SymbolInfo> {
@@ -202,10 +204,8 @@ impl TextSymbolBackend {
             ("enum", SymbolKind::Type),
             ("trait", SymbolKind::Trait),
         ] {
-            if let Some(name) = regex_lite_regex(
-                line,
-                &format!(r"{kw}\s+([a-zA-Z_][a-zA-Z0-9_]*)"),
-            ) {
+            if let Some(name) = regex_lite_regex(line, &format!(r"{kw}\s+([a-zA-Z_][a-zA-Z0-9_]*)"))
+            {
                 return Some((name, kind));
             }
         }
@@ -221,7 +221,10 @@ impl TextSymbolBackend {
     }
 
     fn extract_kotlin_type_decl(&self, line: &str) -> Option<(String, SymbolKind)> {
-        for (kw, kind) in [("class", SymbolKind::Class), ("interface", SymbolKind::Interface)] {
+        for (kw, kind) in [
+            ("class", SymbolKind::Class),
+            ("interface", SymbolKind::Interface),
+        ] {
             if let Some(name) = regex_lite_regex(
                 line,
                 &format!(r"(?:public\s+|abstract\s+)?{kw}\s+([a-zA-Z_][a-zA-Z0-9_]*)"),
@@ -317,25 +320,21 @@ impl IntelRegistry {
             .get(language)
             .ok_or_else(|| IntelError::LanguageNotSupported(language.to_string()))?;
         if !backend.is_ready() {
-            return Err(IntelError::BackendNotAvailable(
-                format!("backend for {language} not ready"),
-            ));
+            return Err(IntelError::BackendNotAvailable(format!(
+                "backend for {language} not ready"
+            )));
         }
         backend.search_symbols(query, limit)
     }
 
-    pub fn outline(
-        &self,
-        language: &str,
-        file_path: &str,
-    ) -> Result<DocumentOutline, IntelError> {
+    pub fn outline(&self, language: &str, file_path: &str) -> Result<DocumentOutline, IntelError> {
         let backend = self
             .get(language)
             .ok_or_else(|| IntelError::LanguageNotSupported(language.to_string()))?;
         if !backend.is_ready() {
-            return Err(IntelError::BackendNotAvailable(
-                format!("backend for {language} not ready"),
-            ));
+            return Err(IntelError::BackendNotAvailable(format!(
+                "backend for {language} not ready"
+            )));
         }
         backend.outline(file_path)
     }
