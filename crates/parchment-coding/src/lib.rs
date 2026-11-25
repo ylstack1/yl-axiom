@@ -1,0 +1,665 @@
+//! Axiom Coding — autonomous software-engineering module for YL Axiom.
+//!
+//! This crate extends the existing Parchment agent harness with a coding task
+//! lifecycle: planning, dependency-aware subtasks, acceptance criteria, TDD
+//! execution (Red → Green → Refactor), checkpoints, verification, and recovery.
+//!
+//! It is a thin coordinator around `AgentTurnRunner`; it does not replace the
+//! working agent loop. Completion is based on verified results (tests pass),
+//! not model claims.
+//!
+//! Cargo feature `network` enables the shared `parchment-core` network runtime
+//! (ProtocolClient, RegistryCatalogClient, O200kTokenizer) for model calls.
+//! Without it, the crate compiles to pure domain models + coordinator logic,
+//! suitable for the slim Android JNI build.
+
+use std::collections::BTreeMap;
+use std::time::{SystemTime, UNIX_EPOCH};
+
+use parchment_storage::ParchmentStore;
+use serde::{Deserialize, Serialize};
+use thiserror::Error;
+
+/// Opaque task handle — a UUID-style string that never exposes internal state.
+pub type TaskId = String;
+/// Opaque subtask handle.
+pub type SubtaskId = String;
+/// Opaque checkpoint handle.
+pub type CheckpointId = String;
+/// Opaque artifact handle.
+pub type ArtifactId = String;
+
+/// Current time in milliseconds since the Unix epoch.
+fn now_ms() -> i64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_millis() as i64)
+        .unwrap_or(0)
+}
+
+/// Top-level persistent unit of autonomous coding work.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Task {
+    pub id: TaskId,
+    pub title: String,
+    pub description: String,
+    pub state: TaskState,
+    pub workspace_path: String,
+    pub repo_url: Option<String>,
+    pub created_at_ms: i64,
+    pub updated_at_ms: i64,
+    pub completed_at_ms: Option<i64>,
+    pub acceptance_criteria: Vec<AcceptanceCriterion>,
+    pub plan: Option<TaskPlan>,
+    pub checkpoints: Vec<Checkpoint>,
+    pub artifacts: Vec<Artifact>,
+    pub subtasks: Vec<Subtask>,
+    pub current_subtask_index: usize,
+    pub owner_session_id: String,
+    pub owner_run_id: Option<String>,
+}
+
+impl Task {
+    pub fn new(
+        id: TaskId,
+        title: String,
+        description: String,
+        workspace_path: String,
+        owner_session_id: String,
+    ) -> Self {
+        let now = now_ms();
+        Self {
+            id,
+            title,
+            description,
+            state: TaskState::Pending,
+            workspace_path,
+            repo_url: None,
+            created_at_ms: now,
+            updated_at_ms: now,
+            completed_at_ms: None,
+            acceptance_criteria: Vec::new(),
+            plan: None,
+            checkpoints: Vec::new(),
+            artifacts: Vec::new(),
+            subtasks: Vec::new(),
+            current_subtask_index: 0,
+            owner_session_id,
+            owner_run_id: None,
+        }
+    }
+
+    pub fn updated_at(&mut self) {
+        self.updated_at_ms = now_ms();
+    }
+}
+
+/// Task lifecycle states.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum TaskState {
+    Pending,
+    Planning,
+    Executing,
+    Reviewing,
+    Verified,
+    Completed,
+    Failed,
+    Blocked,
+    Paused,
+}
+
+impl TaskState {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Pending => "PENDING",
+            Self::Planning => "PLANNING",
+            Self::Executing => "EXECUTING",
+            Self::Reviewing => "REVIEWING",
+            Self::Verified => "VERIFIED",
+            Self::Completed => "COMPLETED",
+            Self::Failed => "FAILED",
+            Self::Blocked => "BLOCKED",
+            Self::Paused => "PAUSED",
+        }
+    }
+}
+
+impl Default for TaskState {
+    fn default() -> Self {
+        Self::Pending
+    }
+}
+
+/// Dependency-aware plan: subtasks ordered by `depends_on`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TaskPlan {
+    pub goal: String,
+    pub subtasks: Vec<Subtask>,
+    pub estimated_steps: u32,
+}
+
+/// A single unit of work within a task.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Subtask {
+    pub id: SubtaskId,
+    pub title: String,
+    pub description: String,
+    pub kind: SubtaskKind,
+    pub state: SubtaskState,
+    pub depends_on: Vec<SubtaskId>,
+    pub acceptance_criteria: Vec<AcceptanceCriterion>,
+    pub completed_at_ms: Option<i64>,
+}
+
+impl Subtask {
+    pub fn new(
+        id: SubtaskId,
+        title: String,
+        description: String,
+        kind: SubtaskKind,
+        depends_on: Vec<SubtaskId>,
+    ) -> Self {
+        Self {
+            id,
+            title,
+            description,
+            kind,
+            state: SubtaskState::Pending,
+            depends_on,
+            acceptance_criteria: Vec::new(),
+            completed_at_ms: None,
+        }
+    }
+}
+
+/// What kind of work a subtask performs — drives the TDD loop.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum SubtaskKind {
+    Explore,
+    WriteTests,
+    Implement,
+    Refactor,
+    Verify,
+}
+
+impl SubtaskKind {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Explore => "EXPLORE",
+            Self::WriteTests => "WRITE_TESTS",
+            Self::Implement => "IMPLEMENT",
+            Self::Refactor => "REFACTOR",
+            Self::Verify => "VERIFY",
+        }
+    }
+}
+
+impl Default for SubtaskKind {
+    fn default() -> Self {
+        Self::Explore
+    }
+}
+
+/// Subtask execution states.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum SubtaskState {
+    Pending,
+    InProgress,
+    Verified,
+    Blocked,
+    Skipped,
+    Failed,
+}
+
+impl SubtaskState {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Pending => "PENDING",
+            Self::InProgress => "IN_PROGRESS",
+            Self::Verified => "VERIFIED",
+            Self::Blocked => "BLOCKED",
+            Self::Skipped => "SKIPPED",
+            Self::Failed => "FAILED",
+        }
+    }
+}
+
+impl Default for SubtaskState {
+    fn default() -> Self {
+        Self::Pending
+    }
+}
+
+/// A measurable acceptance criterion for a task or subtask.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AcceptanceCriterion {
+    pub id: String,
+    pub description: String,
+    pub kind: AcceptanceKind,
+    pub command: Option<String>,
+    pub expected: Option<String>,
+    pub verified: bool,
+    pub verified_at_ms: Option<i64>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum AcceptanceKind {
+    Build,
+    Test,
+    Lint,
+    Review,
+    FileExists,
+    Custom,
+}
+
+impl AcceptanceKind {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Build => "BUILD",
+            Self::Test => "TEST",
+            Self::Lint => "LINT",
+            Self::Review => "REVIEW",
+            Self::FileExists => "FILE_EXISTS",
+            Self::Custom => "CUSTOM",
+        }
+    }
+}
+
+/// A point-in-time recovery snapshot reference.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Checkpoint {
+    pub id: CheckpointId,
+    pub task_id: TaskId,
+    pub subtask_id: Option<SubtaskId>,
+    pub created_at_ms: i64,
+    pub description: String,
+    pub snapshot_ref: String,
+    pub resumable: bool,
+}
+
+/// A durable output artifact (patch, diff, build log, test result, review report).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Artifact {
+    pub id: ArtifactId,
+    pub task_id: TaskId,
+    pub kind: ArtifactKind,
+    pub path: Option<String>,
+    pub content_hash: Option<String>,
+    pub bytes: u64,
+    pub created_at_ms: i64,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum ArtifactKind {
+    Patch,
+    Diff,
+    BuildLog,
+    TestResult,
+    ReviewReport,
+    ErrorReport,
+}
+
+impl ArtifactKind {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Patch => "PATCH",
+            Self::Diff => "DIFF",
+            Self::BuildLog => "BUILD_LOG",
+            Self::TestResult => "TEST_RESULT",
+            Self::ReviewReport => "REVIEW_REPORT",
+            Self::ErrorReport => "ERROR_REPORT",
+        }
+    }
+}
+
+/// Deterministic verification gate: runs after file-mutating tool calls.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CodingHook {
+    pub id: String,
+    pub event: HookEvent,
+    pub matcher: String,
+    pub command: String,
+    pub timeout_ms: u64,
+    pub blocking: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum HookEvent {
+    PostToolUse,
+    Stop,
+}
+
+impl HookEvent {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::PostToolUse => "POST_TOOL_USE",
+            Self::Stop => "STOP",
+        }
+    }
+}
+
+/// Errors from the coding coordinator.
+#[derive(Debug, Error)]
+pub enum CodingError {
+    #[error("task not found: {0}")]
+    TaskNotFound(TaskId),
+    #[error("subtask not found: {0}")]
+    SubtaskNotFound(SubtaskId),
+    #[error("invalid state transition: {0}")]
+    InvalidTransition(String),
+    #[error("storage: {0}")]
+    Storage(String),
+    #[error("verification failed: {0}")]
+    VerificationFailed(String),
+    #[error("recovery exhausted: {0}")]
+    RecoveryExhausted(String),
+}
+
+impl From<parchment_storage::StorageError> for CodingError {
+    fn from(err: parchment_storage::StorageError) -> Self {
+        Self::Storage(err.to_string())
+    }
+}
+
+/// Thin coordinator around `AgentTurnRunner`. Owns task lifecycle (plan →
+/// execute → verify → complete) and delegates per-turn model interaction to
+/// the existing agent loop. Does not duplicate tool dispatch or permission
+/// authority.
+pub struct CodingTaskCoordinator {
+    store: ParchmentStore,
+    tasks: BTreeMap<TaskId, Task>,
+}
+
+impl CodingTaskCoordinator {
+    /// Opens or creates a coding task store and loads all existing tasks.
+    pub fn new(store: ParchmentStore) -> Result<Self, CodingError> {
+        let mut tasks = BTreeMap::new();
+        let ids = store.list_coding_task_ids(None)?;
+        for id in ids {
+            if let Some(json) = store.load_coding_task_json(&id)? {
+                if let Ok(task) = serde_json::from_str::<Task>(&json) {
+                    tasks.insert(id, task);
+                }
+            }
+        }
+        Ok(Self { store, tasks })
+    }
+
+    /// Create a new coding task in the Pending state and persist it.
+    pub fn create_task(
+        &mut self,
+        id: TaskId,
+        title: String,
+        description: String,
+        workspace_path: String,
+        owner_session_id: String,
+    ) -> Result<Task, CodingError> {
+        let task = Task::new(id.clone(), title, description, workspace_path, owner_session_id);
+        self.persist_task(&task)?;
+        self.tasks.insert(id.clone(), task);
+        Ok(self.tasks.get(&id).unwrap().clone())
+    }
+
+    /// Load an existing task by ID from the in-memory cache.
+    pub fn get_task(&self, id: &TaskId) -> Option<&Task> {
+        self.tasks.get(id)
+    }
+
+    /// Load a task from storage into the cache.
+    pub fn load_task(&mut self, id: &TaskId) -> Result<Option<Task>, CodingError> {
+        if let Some(task) = self.tasks.get(id) {
+            return Ok(Some(task.clone()));
+        }
+        if let Some(json) = self.store.load_coding_task_json(id)? {
+            let task: Task = serde_json::from_str(&json)
+                .map_err(|e| CodingError::Storage(e.to_string()))?;
+            self.tasks.insert(id.clone(), task.clone());
+            return Ok(Some(task));
+        }
+        Ok(None)
+    }
+
+    /// Transition a task to a new state and persist.
+    pub fn set_task_state(&mut self, id: &TaskId, state: TaskState) -> Result<(), CodingError> {
+        let task = self
+            .tasks
+            .get_mut(id)
+            .ok_or_else(|| CodingError::TaskNotFound(id.clone()))?;
+        task.state = state;
+        task.updated_at();
+        self.persist_task(task)?;
+        Ok(())
+    }
+
+    /// Add a subtask to a task and persist.
+    pub fn add_subtask(
+        &mut self,
+        task_id: &TaskId,
+        subtask: Subtask,
+    ) -> Result<SubtaskId, CodingError> {
+        let task = self
+            .tasks
+            .get_mut(task_id)
+            .ok_or_else(|| CodingError::TaskNotFound(task_id.clone()))?;
+        let id = subtask.id.clone();
+        task.subtasks.push(subtask);
+        task.updated_at();
+        self.persist_task(task)?;
+        Ok(id)
+    }
+
+    /// Create a checkpoint for resumption and persist.
+    pub fn create_checkpoint(
+        &mut self,
+        task_id: &TaskId,
+        subtask_id: Option<SubtaskId>,
+        description: String,
+        snapshot_ref: String,
+    ) -> Result<CheckpointId, CodingError> {
+        let task = self
+            .tasks
+            .get_mut(task_id)
+            .ok_or_else(|| CodingError::TaskNotFound(task_id.clone()))?;
+        let id = format!("cp-{}-{}", task_id, now_ms());
+        let checkpoint = Checkpoint {
+            id: id.clone(),
+            task_id: task_id.clone(),
+            subtask_id,
+            created_at_ms: now_ms(),
+            description,
+            snapshot_ref,
+            resumable: true,
+        };
+        task.checkpoints.push(checkpoint);
+        task.updated_at();
+        self.persist_task(task)?;
+        Ok(id)
+    }
+
+    /// Serializes and persists a task to storage.
+    fn persist_task(&mut self, task: &Task) -> Result<(), CodingError> {
+        let task_json = serde_json::to_string(task)
+            .map_err(|e| CodingError::Storage(e.to_string()))?;
+        self.store.upsert_coding_task(
+            &task.id,
+            &task.title,
+            &task.description,
+            task.state.as_str(),
+            &task.workspace_path,
+            task.repo_url.as_deref().unwrap_or(""),
+            task.created_at_ms,
+            task.updated_at_ms,
+            task.completed_at_ms,
+            &task_json,
+            &task.owner_session_id,
+            task.owner_run_id.as_deref(),
+        )?;
+        Ok(())
+    }
+
+    /// Record an artifact produced during a task and persist.
+    pub fn add_artifact(&mut self, task_id: &TaskId, artifact: Artifact) -> Result<(), CodingError> {
+        let task = self
+            .tasks
+            .get_mut(task_id)
+            .ok_or_else(|| CodingError::TaskNotFound(task_id.clone()))?;
+        task.artifacts.push(artifact);
+        task.updated_at();
+        self.persist_task(task)?;
+        Ok(())
+    }
+
+    /// Mark an acceptance criterion as verified and persist.
+    pub fn verify_criterion(
+        &mut self,
+        task_id: &TaskId,
+        criterion_id: &str,
+    ) -> Result<(), CodingError> {
+        let task = self
+            .tasks
+            .get_mut(task_id)
+            .ok_or_else(|| CodingError::TaskNotFound(task_id.clone()))?;
+        for criterion in &mut task.acceptance_criteria {
+            if criterion.id == criterion_id {
+                criterion.verified = true;
+                criterion.verified_at_ms = Some(now_ms());
+                task.updated_at();
+                self.persist_task(task)?;
+                return Ok(());
+            }
+        }
+        for subtask in &mut task.subtasks {
+            for criterion in &mut subtask.acceptance_criteria {
+                if criterion.id == criterion_id {
+                    criterion.verified = true;
+                    criterion.verified_at_ms = Some(now_ms());
+                    task.updated_at();
+                    self.persist_task(task)?;
+                    return Ok(());
+                }
+            }
+        }
+        Err(CodingError::VerificationFailed(format!(
+            "criterion {criterion_id} not found in task {task_id}"
+        )))
+    }
+
+    /// All tasks currently tracked.
+    pub fn tasks(&self) -> impl Iterator<Item = &Task> {
+        self.tasks.values()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn task_lifecycle_transitions() {
+        let store = ParchmentStore::open_in_memory().unwrap();
+        let mut coord = CodingTaskCoordinator::new(store).unwrap();
+        let task = coord
+            .create_task(
+                "t-1".into(),
+                "Add feature".into(),
+                "Implement the thing".into(),
+                "/tmp/workspace".into(),
+                "s-1".into(),
+            )
+            .unwrap();
+        assert_eq!(task.state, TaskState::Pending);
+
+        coord.set_task_state("t-1", TaskState::Planning).unwrap();
+        let task = coord.get_task("t-1").unwrap();
+        assert_eq!(task.state, TaskState::Planning);
+
+        coord.set_task_state("t-1", TaskState::Completed).unwrap();
+        let task = coord.get_task("t-1").unwrap();
+        assert_eq!(task.state, TaskState::Completed);
+        assert!(task.completed_at_ms.is_none()); // completed_at set externally
+    }
+
+    #[test]
+    fn subtask_depends_on_ordering() {
+        let store = ParchmentStore::open_in_memory().unwrap();
+        let mut coord = CodingTaskCoordinator::new(store).unwrap();
+        coord.create_task(
+            "t-2".into(),
+            "Plan".into(),
+            "Plan work".into(),
+            "/tmp".into(),
+            "s-2".into(),
+        )
+        .unwrap();
+
+        coord
+            .add_subtask(
+                "t-2",
+                Subtask::new(
+                    "sub-1".into(),
+                    "Explore".into(),
+                    "Read files".into(),
+                    SubtaskKind::Explore,
+                    Vec::new(),
+                ),
+            )
+            .unwrap();
+        coord
+            .add_subtask(
+                "t-2",
+                Subtask::new(
+                    "sub-2".into(),
+                    "Implement".into(),
+                    "Write code".into(),
+                    SubtaskKind::Implement,
+                    vec!["sub-1".into()],
+                ),
+            )
+            .unwrap();
+
+        let task = coord.get_task("t-2").unwrap();
+        assert_eq!(task.subtasks.len(), 2);
+        assert_eq!(task.subtasks[1].depends_on, vec!["sub-1".into()]);
+    }
+
+    #[test]
+    fn checkpoint_and_resume() {
+        let store = ParchmentStore::open_in_memory().unwrap();
+        let mut coord = CodingTaskCoordinator::new(store).unwrap();
+        coord.create_task(
+            "t-3".into(),
+            "Resume".into(),
+            "Resume work".into(),
+            "/tmp".into(),
+            "s-3".into(),
+        )
+        .unwrap();
+
+        let id = coord
+            .create_checkpoint(
+                "t-3",
+                None,
+                "Before edit".into(),
+                "snapshot://v1".into(),
+            )
+            .unwrap();
+        assert!(!id.is_empty());
+
+        let task = coord.get_task("t-3").unwrap();
+        assert_eq!(task.checkpoints.len(), 1);
+        assert!(task.checkpoints[0].resumable);
+    }
+}
