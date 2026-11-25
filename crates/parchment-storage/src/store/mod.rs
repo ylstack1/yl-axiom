@@ -187,12 +187,18 @@ impl ParchmentStore {
                  owner_session_id = excluded.owner_session_id,
                  owner_run_id = excluded.owner_run_id",
             params![
-                id, title, description, state,
-                workspace_path, repo_url,
-                created_at_ms, updated_at_ms,
+                id,
+                title,
+                description,
+                state,
+                workspace_path,
+                repo_url,
+                created_at_ms,
+                updated_at_ms,
                 completed_at_ms,
                 task_json,
-                owner_session_id, owner_run_id
+                owner_session_id,
+                owner_run_id
             ],
         )?;
         Ok(())
@@ -200,20 +206,22 @@ impl ParchmentStore {
 
     /// Loads a coding task's JSON by id, or None if not found.
     pub fn load_coding_task_json(&self, task_id: &str) -> StorageResult<Option<String>> {
-        let row: Option<String> = self.conn.query_row(
-            "SELECT task_json FROM coding_tasks WHERE id = ?1",
-            params![task_id],
-            |row| row.get(0),
-        ).optional()?;
+        let row: Option<String> = self
+            .conn
+            .query_row(
+                "SELECT task_json FROM coding_tasks WHERE id = ?1",
+                params![task_id],
+                |row| row.get(0),
+            )
+            .optional()?;
         Ok(row)
     }
 
     /// Deletes a coding task and all related subtasks, criteria, checkpoints, artifacts, hooks.
     pub fn delete_coding_task(&mut self, task_id: &str) -> StorageResult<bool> {
-        let changed = self.conn.execute(
-            "DELETE FROM coding_tasks WHERE id = ?1",
-            params![task_id],
-        )?;
+        let changed = self
+            .conn
+            .execute("DELETE FROM coding_tasks WHERE id = ?1", params![task_id])?;
         Ok(changed > 0)
     }
 
@@ -224,9 +232,9 @@ impl ParchmentStore {
             Some(ws) => self.conn.prepare(
                 "SELECT id FROM coding_tasks WHERE workspace_path = ?1 ORDER BY updated_at_ms DESC",
             )?,
-            None => self.conn.prepare(
-                "SELECT id FROM coding_tasks ORDER BY updated_at_ms DESC",
-            )?,
+            None => self
+                .conn
+                .prepare("SELECT id FROM coding_tasks ORDER BY updated_at_ms DESC")?,
         };
         let rows = match workspace_path {
             Some(ws) => stmt.query_map(params![ws], |row| row.get(0))?,
