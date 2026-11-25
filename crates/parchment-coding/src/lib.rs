@@ -561,6 +561,167 @@ impl CodingTaskCoordinator {
         )))
     }
 
+    // ── TDD phase management (Red → Green → Refactor) ──────────────────────
+
+    /// TDD phase for a subtask.
+    #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    pub enum SubtaskPhase {
+        /// No TDD phase active (Explore/Verify subtasks).
+        None,
+        /// Red: write failing tests, implementation forbidden this turn.
+        Red,
+        /// Green: implement minimum to pass, test files read-only.
+        Green,
+        /// Refactor: clean up, suite must stay green.
+        Refactor,
+    }
+
+    /// Result of running a coding hook gate.
+    #[derive(Debug, Clone, PartialEq, Eq)]
+    pub struct CodingHookResult {
+        pub hook_id: String,
+        pub event: HookEvent,
+        pub passed: bool,
+        pub output: String,
+        pub exit_code: Option<i32>,
+    }
+
+    /// Start the Red turn: write failing tests. Implementation edits are
+    /// forbidden this turn. Returns the subtask's new phase.
+    pub fn start_red_turn(
+        &mut self,
+        task_id: &TaskId,
+        subtask_id: &SubtaskId,
+    ) -> Result<SubtaskPhase, CodingError> {
+        let subtask = self
+            .tasks
+            .get_mut(task_id)
+            .and_then(|t| t.subtasks.iter_mut().find(|s| &s.id == subtask_id))
+            .ok_or_else(|| CodingError::SubtaskNotFound(subtask_id.clone()))?;
+        subtask.kind = SubtaskKind::WriteTests;
+        subtask.state = SubtaskState::InProgress;
+        task.updated_at();
+        self.persist_task(task)?;
+        Ok(SubtaskPhase::Red)
+    }
+
+    /// Start the Green turn: implement minimum to pass. Test files are
+    /// read-only this turn (enforced by the hook layer, not by prompt).
+    pub fn start_green_turn(
+        &mut self,
+        task_id: &TaskId,
+        subtask_id: &SubtaskId,
+    ) -> Result<SubtaskPhase, CodingError> {
+        let subtask = self
+            .tasks
+            .get_mut(task_id)
+            .and_then(|t| t.subtasks.iter_mut().find(|s| &s.id == subtask_id))
+            .ok_or_else(|| CodingError::SubtaskNotFound(subtask_id.clone()))?;
+        subtask.kind = SubtaskKind::Implement;
+        subtask.state = SubtaskState::InProgress;
+        task.updated_at();
+        self.persist_task(task)?;
+        Ok(SubtaskPhase::Green)
+    }
+
+    /// Start the Refactor turn: clean up while the suite stays green.
+    pub fn start_refactor_turn(
+        &mut self,
+        task_id: &TaskId,
+        subtask_id: &SubtaskId,
+    ) -> Result<SubtaskPhase, CodingError> {
+        let subtask = self
+            .tasks
+            .get_mut(task_id)
+            .and_then(|t| t.subtasks.iter_mut().find(|s| &s.id == subtask_id))
+            .ok_or_else(|| CodingError::SubtaskNotFound(subtask_id.clone()))?;
+        subtask.kind = SubtaskKind::Refactor;
+        subtask.state = SubtaskState::InProgress;
+        task.updated_at();
+        self.persist_task(task)?;
+        Ok(SubtaskPhase::Refactor)
+    }
+
+    /// Complete the Green turn: mark subtask Verified only if all its
+    /// acceptance criteria are verified. A turn may not end while acceptance
+    /// tests fail (Stop hook).
+    pub fn complete_green_turn(
+        &mut self,
+        task_id: &TaskId,
+        subtask_id: &SubtaskId,
+    ) -> Result<SubtaskPhase, CodingError> {
+        let task = self
+            .tasks
+            .get_mut(task_id)
+            .ok_or_else(|| CodingError::TaskNotFound(task_id.clone()))?;
+        let subtask = task
+            .subtasks
+            .iter_mut()
+            .find(|s| &s.id == subtask_id)
+            .ok_or_else(|| CodingError::SubtaskNotFound(subtask_id.clone()))?;
+
+        // All acceptance criteria must be verified before Green completes.
+        let all_verified = subtask
+            .acceptance_criteria
+            .iter()
+            .all(|c| c.verified);
+        if !all_verified {
+            return Err(CodingError::VerificationFailed(format!(
+                "subtask {subtask_id} has unverified acceptance criteria; Stop hook blocks turn end"
+            )));
+        }
+
+        subtask.state = SubtaskState::Verified;
+        subtask.completed_at_ms = Some(now_ms());
+        task.updated_at();
+        self.persist_task(task)?;
+        Ok(SubtaskPhase::Refactor)
+    }
+
+    // ── Hook execution gates ───────────────────────────────────────────────
+
+    /// Run a PostToolUse hook after a file-mutating tool call.
+    /// Returns whether the hook passed (lint/format clean).
+    pub fn run_post_tool_use_hook(
+        &self,
+        task_id: &TaskId,
+        hook: &CodingHook,
+        command_output: &str,
+        exit_code: Option<i32>,
+    ) -> CodingHookResult {
+        let passed = exit_code.unwrap_or(1) == 0;
+        CodingHookResult {
+            hook_id: hook.id.clone(),
+            event: HookEvent::PostToolUse,
+            passed,
+            output: command_output.to_string(),
+            exit_code,
+        }
+    }
+
+    /// Run a Stop hook: blocks turn end if acceptance tests fail.
+    /// Returns whether the turn may proceed (tests passing).
+    pub fn run_stop_hook(
+        &self,
+        task_id: &TaskId,
+        hook: &CodingHook,
+        acceptance_passing: bool,
+    ) -> CodingHookResult {
+        let passed = acceptance_passing;
+        CodingHookResult {
+            hook_id: hook.id.clone(),
+            event: HookEvent::Stop,
+            passed,
+            output: if passed {
+                "Acceptance tests passing; turn may end.".to_string()
+            } else {
+                "Acceptance tests failing; Stop hook blocks turn end.".to_string()
+            },
+            exit_code: if passed { Some(0) } else { Some(1) },
+        }
+    }
+
     /// All tasks currently tracked.
     pub fn tasks(&self) -> impl Iterator<Item = &Task> {
         self.tasks.values()
@@ -665,5 +826,86 @@ mod tests {
         let task = coord.get_task("t-3").unwrap();
         assert_eq!(task.checkpoints.len(), 1);
         assert!(task.checkpoints[0].resumable);
+    }
+
+    #[test]
+    fn tdd_red_green_refactor_phases() {
+        let store = ParchmentStore::open_in_memory().unwrap();
+        let mut coord = CodingTaskCoordinator::new(store).unwrap();
+        coord.create_task(
+            "t-4".into(),
+            "TDD task".into(),
+            "TDD workflow".into(),
+            "/tmp".into(),
+            "s-4".into(),
+        )
+        .unwrap();
+        coord.add_subtask(
+            "t-4",
+            Subtask::new(
+                "sub-1".into(),
+                "Add feature".into(),
+                "Implement feature".into(),
+                SubtaskKind::Explore,
+                Vec::new(),
+            ),
+        )
+        .unwrap();
+
+        // Red: write failing tests
+        let phase = coord.start_red_turn("t-4", "sub-1").unwrap();
+        assert_eq!(phase, SubtaskPhase::Red);
+        let subtask = coord
+            .get_task("t-4")
+            .unwrap()
+            .subtasks
+            .iter()
+            .find(|s| s.id == "sub-1")
+            .unwrap();
+        assert_eq!(subtask.kind, SubtaskKind::WriteTests);
+        assert_eq!(subtask.state, SubtaskState::InProgress);
+
+        // Green: implement
+        let phase = coord.start_green_turn("t-4", "sub-1").unwrap();
+        assert_eq!(phase, SubtaskPhase::Green);
+
+        // Stop hook blocks turn end when acceptance criteria are not met
+        let hook = CodingHook {
+            id: "hook-1".into(),
+            event: HookEvent::Stop,
+            matcher: "*.rs".into(),
+            command: "cargo test".into(),
+            timeout_ms: 60000,
+            blocking: true,
+        };
+        let result = coord.run_stop_hook("t-4", &hook, false);
+        assert!(!result.passed);
+        assert_eq!(result.event, HookEvent::Stop);
+
+        // Stop hook passes when acceptance criteria are met
+        let result = coord.run_stop_hook("t-4", &hook, true);
+        assert!(result.passed);
+
+        // PostToolUse hook passes on clean lint
+        let lint_hook = CodingHook {
+            id: "hook-2".into(),
+            event: HookEvent::PostToolUse,
+            matcher: "*.rs".into(),
+            command: "cargo clippy".into(),
+            timeout_ms: 60000,
+            blocking: true,
+        };
+        let result = coord.run_post_tool_use_hook("t-4", &lint_hook, "no warnings", Some(0));
+        assert!(result.passed);
+        assert_eq!(result.event, HookEvent::PostToolUse);
+
+        // PostToolUse hook fails on lint errors
+        let result = coord.run_post_tool_use_hook(
+            "t-4",
+            &lint_hook,
+            "warning: unused variable",
+            Some(1),
+        );
+        assert!(!result.passed);
     }
 }

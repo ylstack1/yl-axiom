@@ -184,7 +184,8 @@ impl ParchmentStore {
                  state = excluded.state, workspace_path = excluded.workspace_path,
                  repo_url = excluded.repo_url, updated_at_ms = excluded.updated_at_ms,
                  completed_at_ms = excluded.completed_at_ms, task_json = excluded.task_json,
-                 owner_session_id = excluded.owner_session_id, owner_run_id = excluded.owner_run_id",
+                 owner_session_id = excluded.owner_session_id,
+                 owner_run_id = excluded.owner_run_id",
             params![
                 id, title, description, state,
                 workspace_path, repo_url,
