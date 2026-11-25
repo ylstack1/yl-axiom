@@ -1,0 +1,21 @@
+[package]
+name = "parchment-intel"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[lib]
+name = "parchment_intel"
+
+[features]
+default = []
+tree-sitter = ["tree-sitter", "tree-sitter-highlight"]
+
+[dependencies]
+serde = { workspace = true, features = ["derive"] }
+serde_json.workspace = true
+thiserror.workspace = true
+tree-sitter = { version = "0.23", optional = true }
+
+[lints]
+workspace = true
