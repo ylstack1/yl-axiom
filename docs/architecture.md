@@ -1,6 +1,6 @@
 # Architecture
 
-Parchment v3 combines a shared pure-Rust core (`crates/*`, SQLite WAL + FTS5, provider protocols, zero-copy prose engine, agent harness), a native Windows GPUI desktop shell (`crates/parchment-desktop`), and the Kotlin Multiplatform / Compose Foundation Android app (`mobile/compose-app` + `mobile/android-app`) backed by the shared Rust core via direct zero-JNA JNI (`arm64-v8a` `libparchment_core.so`).
+YL Axiom v3 combines a shared pure-Rust core (`crates/*`, SQLite WAL + FTS5, provider protocols, zero-copy prose engine, agent harness), a native Windows GPUI desktop shell (`crates/parchment-desktop`), and the Kotlin Multiplatform / Compose Foundation Android app (`mobile/compose-app` + `mobile/android-app`) backed by the shared Rust core via direct zero-JNA JNI (`arm64-v8a` `libparchment_core.so`).
 
 New contributors and AI harnesses should start with [AGENTS.md](../AGENTS.md) for working rules, engineering rigor, and stable system contracts, and [CONTRIBUTING.md](../.github/CONTRIBUTING.md) for local setup and verification commands.
 
@@ -93,7 +93,7 @@ All Kotlin files below sit under `mobile/compose-app/src/commonMain/kotlin/io/pa
 1. `Main.kt` (desktop) and `MainActivity.kt` (Android) initialize platform hosts (`DesktopPlatformHost` / `AndroidPlatformHost`) and render `ParchmentApp`, which binds Compose snapshot state in `ParchmentAppController` and `ParchmentStatePersistence`.
 2. Initial hydration loads metadata and chat stubs first so startup stays fast even with large histories; inactive chats come from `chat-index.json` (stubs checked against each `chat.json`'s size and modification time, a cache only) and full chat bodies hydrate on demand and persist incrementally through `ParchmentDiskWriter` backed by `AtomicFileStorage` / `SnapshotFileStorage`. While a reply streams, its checkpoints save the reply alone to `chats/<id>/live.json`, stamped with the `chat.json` it extends; the whole chat is saved at most every 30 s and when the reply ends (which deletes the sidecar), and loading a chat folds in a sidecar a crash left behind.
 3. Data roots:
-   - **Desktop packaged / Windows user install:** `%LOCALAPPDATA%\ParchmentAI`
+   - **Desktop packaged / Windows user install:** `%LOCALAPPDATA%\YL-Axiom`
    - **Desktop development (`:composeApp:run`):** `mobile/compose-app/parchment-portable-data` (override with `--user-dir`)
    - **Android:** `Context.filesDir`
    - **Tests:** isolated temporary directories (`TemporaryFolder` / `createTempDirectory`) so dev or installed user data is never touched.

@@ -1,6 +1,6 @@
-//! Pure domain models and invariants for Parchment v3.
+//! Pure domain models and invariants for YL Axiom v3.
 //!
-//! Serde JSON representations match Parchment v2's `kotlinx.serialization` schema field-for-field
+//! Serde JSON representations match YL Axiom v2's `kotlinx.serialization` schema field-for-field
 //! so v2 `settings.json`, `chats/<id>/chat.json`, `live.json`, and `.parchment` archives round-trip
 //! cleanly with zero data or signature loss.
 
@@ -18,7 +18,7 @@ pub use provider::*;
 pub use settings::*;
 pub use usage::*;
 
-/// Canonical Parchment application version resolved at build time from
+/// Canonical YL Axiom application version resolved at build time from
 /// `PARCHMENT_APP_VERSION` (CI override) or `.release-please-manifest.json`.
 pub const APP_VERSION: &str = env!("PARCHMENT_APP_VERSION");
 

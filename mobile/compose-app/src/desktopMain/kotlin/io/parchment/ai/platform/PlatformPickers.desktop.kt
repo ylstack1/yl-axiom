@@ -68,10 +68,10 @@ actual object PlatformPickers {
     private fun chooseImportFiles(allowedExtensions: List<String>, allowMultiple: Boolean = true): List<File> {
         val allowAll = allowedExtensions.isEmpty() || allowedExtensions.contains("*")
         val title = when {
-            allowAll && allowMultiple -> "Attach Files to Parchment"
-            allowAll -> "Attach File to Parchment"
-            allowMultiple -> "Import Files into Parchment"
-            else -> "Import File into Parchment"
+            allowAll && allowMultiple -> "Attach Files to YL Axiom"
+            allowAll -> "Attach File to YL Axiom"
+            allowMultiple -> "Import Files into YL Axiom"
+            else -> "Import File into YL Axiom"
         }
         if (WindowsNative.isWindows) {
             WindowsFolderDialog.pickFiles(
@@ -132,7 +132,7 @@ actual object PlatformPickers {
     private suspend fun exportStreamed(defaultFileName: String, write: (OutputStream) -> Unit): String? = withContext(Dispatchers.IO) {
         val chosenTarget = if (WindowsNative.isWindows) {
             WindowsFolderDialog.saveFile(
-                title = "Export from Parchment",
+                title = "Export from YL Axiom",
                 defaultFileName = defaultFileName,
                 ownerHwnd = activeWindowHwnd()
             ).getOrElse {
@@ -145,7 +145,7 @@ actual object PlatformPickers {
     }
 
     private fun chooseSaveFallback(defaultFileName: String): String? {
-        val dialog = FileDialog(null as Frame?, "Export from Parchment", FileDialog.SAVE)
+        val dialog = FileDialog(null as Frame?, "Export from YL Axiom", FileDialog.SAVE)
         dialog.file = defaultFileName
         dialog.isVisible = true
         val dir = dialog.directory

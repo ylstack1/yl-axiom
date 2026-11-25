@@ -1,4 +1,4 @@
-//! Non-destructive, idempotent migrator from Parchment v2 flat JSON layout to v3 SQLite WAL.
+//! Non-destructive, idempotent migrator from YL Axiom v2 flat JSON layout to v3 SQLite WAL.
 //!
 //! Reads `settings.json` (or legacy `parchment_state.json`), `chats/<id>/chat.json`,
 //! crash-surviving `chats/<id>/live.json` sidecars (verifying `(chatLength, chatModifiedMs)` stamp),
@@ -42,7 +42,7 @@ struct LiveTurnPayload {
     variant: MessageVariant,
 }
 
-/// Migrates a Parchment v2 data directory (`%LOCALAPPDATA%\ParchmentAI` or portable folder) into
+/// Migrates a YL Axiom v2 data directory (`%LOCALAPPDATA%\YL-Axiom` or portable folder) into
 /// `store` without modifying or deleting any legacy files.
 pub fn migrate_v2_directory(
     store: &mut ParchmentStore,

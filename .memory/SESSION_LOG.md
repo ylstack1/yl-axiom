@@ -19,7 +19,7 @@
 
 ## 2026-11-20 (initial discovery session)
 - Performed deep repository discovery: read all 8 Rust crates (model, storage, protocol, prose, harness, core, desktop, xtask), Android/Kotlin source (compose-app androidMain/commonMain/desktopMain/jvmShared, android-app), build configs (Cargo.toml, build.gradle.kts, settings.gradle.kts, gradle.properties), CI workflows, docs (architecture.md, design.md, performance.md), AGENTS.md, TODO.md, README.md.
-- Verified actual source state (not relying on historical audit claims): Parchment v3.1.1, Rust 1.100, edition 2024, MIT license.
+- Verified actual source state (not relying on historical audit claims): YL Axiom v3.1.1, Rust 1.100, edition 2024, MIT license.
 - Confirmed existing agent harness: AgentTurnRunner (MAX_TOOL_ROUNDS=64), HarnessExecutor (21 tools, MAX_PARALLEL_SUBAGENTS=4), ToolApprovalBroker, AgentPermissionGate, WorkspacePathGuard, McpRegistry, PublicWebTransport, SubagentDelegate.
 - Confirmed storage: SQLite WAL + FTS5, SCHEMA_VERSION=1, non-destructive v2 migrator, archive codec.
 - Confirmed platforms: Windows GPUI desktop, Android Compose + JNI (slim 1.85 MB arm64-v8a .so), `io.parchment.ai` packageId.

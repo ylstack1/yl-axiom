@@ -88,7 +88,7 @@ actual object PlatformRuntime {
         }
         ensureNotificationPermission(ctx)
         // Reconcile an already-promoted service in-process so background heartbeats and approval
-        // transitions never call startForegroundService() while Parchment is off-screen.
+        // transitions never call startForegroundService() while YL Axiom is off-screen.
         if (LongDecodeForegroundService.syncRunning(owners, runnable, status)) {
             foregroundKeepAliveRequested = true
             return
@@ -145,7 +145,7 @@ actual object PlatformRuntime {
                 Uri.parse("package:${ctx.packageName}")
             ).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
             ctx.startActivity(permIntent)
-            error("Please allow 'Install unknown apps' for Parchment in the Android settings screen that just opened, then tap Update again.")
+            error("Please allow 'Install unknown apps' for YL Axiom in the Android settings screen that just opened, then tap Update again.")
         }
 
         val packageInstaller = ctx.packageManager.packageInstaller

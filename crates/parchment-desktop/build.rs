@@ -291,12 +291,12 @@ fn build_vs_version_info(app_version: &str) -> Result<Vec<u8>, Box<dyn Error>> {
     }
 
     let string_entries = vec![
-        build_string_entry("CompanyName", "Parchment")?,
-        build_string_entry("FileDescription", "Parchment Desktop")?,
+        build_string_entry("CompanyName", "YL Stack")?,
+        build_string_entry("FileDescription", "YL Axiom Desktop")?,
         build_string_entry("FileVersion", &file_version_str)?,
-        build_string_entry("InternalName", "Parchment")?,
-        build_string_entry("OriginalFilename", "Parchment.exe")?,
-        build_string_entry("ProductName", "Parchment")?,
+        build_string_entry("InternalName", "YL Axiom")?,
+        build_string_entry("OriginalFilename", "YL-Axiom.exe")?,
+        build_string_entry("ProductName", "YL Axiom")?,
         build_string_entry("ProductVersion", app_version)?,
     ];
     let string_table = build_container_block("040904B0", 1, &[], 0, &string_entries)?;

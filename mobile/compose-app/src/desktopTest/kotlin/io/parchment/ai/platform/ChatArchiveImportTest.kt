@@ -190,7 +190,7 @@ class ChatArchiveImportTest {
     @Test fun importedMediaPathsStayInsideAppStorage() {
         mapOf(
             "chats/a/media/x.png" to "chats/a/media/x.png",
-            "C:\\Users\\me\\AppData\\Local\\ParchmentAI\\chats\\a\\media\\x.png" to "chats/a/media/x.png",
+            "C:\\Users\\me\\AppData\\Local\\YL-Axiom\\chats\\a\\media\\x.png" to "chats/a/media/x.png",
             "/data/user/0/io.parchment.ai/files/media/x.png" to "media/x.png",
             "chats/a/media/my photo.png" to "chats/a/media/my_photo.png",
             "C:\\Users\\me\\.ssh\\id_rsa" to "",

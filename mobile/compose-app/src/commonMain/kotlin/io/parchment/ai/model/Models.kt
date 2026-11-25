@@ -401,7 +401,7 @@ data class CharacterOrScenarioCard(
     val tags: List<String> = emptyList(),
     val embeddedFragments: List<ContextFragment> = emptyList(),
     val sourceFormat: String = "parchment-v1",
-    /** The imported card's own `data` object, so fields Parchment does not edit survive export. */
+    /** The imported card's own `data` object, so fields YL Axiom does not edit survive export. */
     val sourceData: String = ""
 ) {
     fun buildCompiledInstructions(userName: String = "User"): String {
@@ -453,7 +453,7 @@ data class SystemPromptPreset(
 )
 
 /**
- * Parchment Persistent Assistant / Agent Profile.
+ * YL Axiom Persistent Assistant / Agent Profile.
  * Lives independently of Topics (ChatSessions), so deleting a Topic never deletes your System Prompt or Agent setup.
  */
 @Immutable
@@ -481,7 +481,7 @@ data class AssistantAgent(
 )
 
 /**
- * Parchment Global & Task-Specific Default Models Configuration.
+ * YL Axiom Global & Task-Specific Default Models Configuration.
  */
 @Immutable
 @Serializable
@@ -516,7 +516,7 @@ enum class SendShortcutMode(val label: String) {
 }
 
 /**
- * Parchment Granular Display, Rendering, and Behavior Preferences.
+ * YL Axiom Granular Display, Rendering, and Behavior Preferences.
  */
 /** A server is reached by [url], or on desktop by running [command]. */
 @Immutable
@@ -650,7 +650,7 @@ data class ChatSession(
 @Immutable
 @Serializable
 data class ThemeConfig(
-    val name: String = "Parchment & Espresso Ink (Sepia)",
+    val name: String = "YL Axiom & Espresso Ink (Sepia)",
     val colorMode: String = "Sepia", // Sepia, Light, Dark
     val canvasBgHex: String = "#F4ECD8",
     val sheetBgHex: String = "#EBE0C5",
@@ -712,7 +712,7 @@ data class ThemeConfig(
                 dangerHex = "#F0857A"
             ),
             ThemeConfig(
-                name = "Parchment Warm Ivory (Light)",
+                name = "YL Axiom Warm Ivory (Light)",
                 colorMode = "Light",
                 canvasBgHex = "#F8F7F4",
                 sheetBgHex = "#EFECE6",

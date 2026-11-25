@@ -1,4 +1,4 @@
-//! Parchment v3 shared core facade (`parchment-model` + `parchment-storage` + `parchment-prose`
+//! YL Axiom v3 shared core facade (`parchment-model` + `parchment-storage` + `parchment-prose`
 //! + `parchment-harness` + optional `parchment-protocol` network runtime).
 //!
 //! - Default (`network` feature): native Rust runtime for Windows GPUI desktop.

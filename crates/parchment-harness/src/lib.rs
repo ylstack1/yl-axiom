@@ -1,4 +1,4 @@
-//! Parchment v3 21-tool agent harness, workspace security perimeter, SSRF-pinned public web
+//! YL Axiom v3 21-tool agent harness, workspace security perimeter, SSRF-pinned public web
 //! transport, run-scoped approval broker, MCP client/registry, `.docx`/card codecs, and runner.
 
 #[cfg(feature = "network")]

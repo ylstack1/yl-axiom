@@ -535,7 +535,7 @@ fun SepiaDivider(modifier: Modifier = Modifier) {
 }
 
 /**
- * Parchment Soft Circular Avatar / Icon Badge (for Assistants, Providers, and Models).
+ * YL Axiom Soft Circular Avatar / Icon Badge (for Assistants, Providers, and Models).
  */
 @Composable
 fun SepiaAvatarCircle(
@@ -589,7 +589,7 @@ fun SepiaAvatarCircle(
 }
 
 /**
- * Parchment Animated Pill Toggle Switch (Pure Compose Foundation).
+ * YL Axiom Animated Pill Toggle Switch (Pure Compose Foundation).
  */
 @Composable
 fun SepiaToggleSwitch(
@@ -661,7 +661,7 @@ private fun SepiaToggleTrack(checked: Boolean) {
 }
 
 /**
- * Parchment Settings Preference Toggle Row (Title + Subtitle on left, Switch on right).
+ * YL Axiom Settings Preference Toggle Row (Title + Subtitle on left, Switch on right).
  */
 @Composable
 fun SepiaToggleRow(

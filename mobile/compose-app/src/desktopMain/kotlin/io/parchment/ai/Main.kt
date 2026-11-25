@@ -116,7 +116,7 @@ private fun saveWindowGeometry(geom: SavedWindowGeometry) {
             setProperty("xDp", geom.xDp.toString())
             setProperty("yDp", geom.yDp.toString())
         }
-        f.outputStream().use { props.store(it, "Parchment Desktop Window Geometry") }
+        f.outputStream().use { props.store(it, "YL Axiom Desktop Window Geometry") }
     }
 }
 
@@ -136,14 +136,14 @@ private fun attachDropTargetRecursively(component: Component, createTarget: () -
     }
 }
 
-/** "Chat — Parchment" while idle; a run's progress text (which starts with the app name) replaces it. */
+/** "Chat — YL Axiom" while idle; a run's progress text (which starts with the app name) replaces it. */
 internal fun windowCaption(runStatus: String, captionTitle: String): String {
-    val idle = runStatus.isBlank() || runStatus == "Parchment"
+    val idle = runStatus.isBlank() || runStatus == "YL Axiom"
     val title = captionTitle.trim()
     return when {
         !idle -> runStatus
-        title.isEmpty() -> "Parchment"
-        else -> "$title — Parchment"
+        title.isEmpty() -> "YL Axiom"
+        else -> "$title — YL Axiom"
     }
 }
 
@@ -190,13 +190,13 @@ fun main(args: Array<String>) {
     val startupGeometry = loadSavedWindowGeometry()
 
     application {
-        // Pre-seed the chat title from initialAppStateLoad so Frame 1 opens directly with "Chat — Parchment".
+        // Pre-seed the chat title from initialAppStateLoad so Frame 1 opens directly with "Chat — YL Axiom".
         val initialCaption = remember {
             val snap = initialAppStateLoad.value.first
             (snap.sessions.find { it.id == snap.activeSessionId } ?: snap.sessions.firstOrNull())
                 ?.title?.trim().orEmpty()
         }
-        var runStatus by remember { mutableStateOf("Parchment") }
+        var runStatus by remember { mutableStateOf("YL Axiom") }
         var captionTitle by remember { mutableStateOf(initialCaption) }
         PlatformRuntime.windowStatusCallback = { newTitle -> runStatus = newTitle }
         val windowTitle = windowCaption(runStatus, captionTitle)

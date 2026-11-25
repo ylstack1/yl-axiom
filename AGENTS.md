@@ -1,4 +1,4 @@
-# Parchment Rules & System Contracts
+# YL Axiom Rules & System Contracts
 
 Rules bind every contributor and agent. Persist session state in the repo, never chat history.
 
@@ -32,7 +32,7 @@ On any feature/schema/UI/setting change: update both platforms (keep camelCase J
 - Strict build budget: at most ONE narrow check per completed batch (never chain or repeat heavy Rust/Gradle/--release builds); no auto Git snapshots; never force-push, overwrite unrelated work, or claim unrun checks.
 - Never lose history/instructions, weaken permissions, alter opaque signatures, or silently enable server storage.
 - Fix Android quirks generically (no brand/model notices). Use edit tools, not patch scripts.
-- Never overwrite %LOCALAPPDATA%\Programs\Parchment or kill global Parchment.exe. Keep secrets/keys/PII out of repo/logs/requests.
+- Never overwrite %LOCALAPPDATA%\Programs\YL Axiom or kill global YL-Axiom.exe. Keep secrets/keys/PII out of repo/logs/requests.
 - Compose Foundation / GPUI + KissVectorIcon/KissIcon/ModelLabSvgIcon only (no Material/raw emoji).
 - Keep AGENTS.md and TODO.md plain: minimal markdown (#, ##, lists, rare backticks only for escaping; no bold, ###+, links, tables, or code fences) and no em dashes (enforced by cargo xtask review).
 

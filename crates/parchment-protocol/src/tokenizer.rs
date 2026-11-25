@@ -325,7 +325,7 @@ mod tests {
         let tok = O200kTokenizer::new();
         assert_eq!(tok.count_tokens("", true), 0);
         let english = tok.count_tokens(
-            "Hello world! It's 2026 and Parchment v3 runs natively.",
+            "Hello world! It's 2026 and YL Axiom v3 runs natively.",
             true,
         );
         assert!(

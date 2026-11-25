@@ -194,7 +194,7 @@ internal class ProcessMcpTransport(private val process: McpProcess) : McpTranspo
                     val message = runCatching { AiProviderEngine.json.parseToJsonElement(line) as? JsonObject }.getOrNull() ?: continue
                     val id = message["id"] ?: continue
                     if ("method" in message) {
-                        // Parchment offers no client features, so a server's own requests are refused.
+                        // YL Axiom offers no client features, so a server's own requests are refused.
                         write(
                             buildJsonObject {
                                 put("jsonrpc", "2.0"); put("id", id)
@@ -335,7 +335,7 @@ internal class McpClient(private val transport: McpTransport) {
             val mergedMeta = JsonObject(
                 existingMeta + mapOf(
                     MCP_VERSION_META to JsonPrimitive(MCP_STATELESS_VERSION),
-                    MCP_CLIENT_INFO_META to buildJsonObject { put("name", "Parchment"); put("version", "2") }
+                    MCP_CLIENT_INFO_META to buildJsonObject { put("name", "YL Axiom"); put("version", "2") }
                 )
             )
             put("params", JsonObject(params + ("_meta" to mergedMeta)))
@@ -401,7 +401,7 @@ internal class McpClient(private val transport: McpTransport) {
                 buildJsonObject {
                     put("protocolVersion", MCP_HANDSHAKE_VERSION)
                     put("capabilities", JsonObject(emptyMap()))
-                    put("clientInfo", buildJsonObject { put("name", "Parchment"); put("version", "2") })
+                    put("clientInfo", buildJsonObject { put("name", "YL Axiom"); put("version", "2") })
                 }
             )
         } catch (httpErr: McpHttpException) {

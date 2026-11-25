@@ -1,5 +1,5 @@
 #![allow(clippy::print_stdout)]
-//! Parchment unified developer & CI automation (`cargo xtask <command>`).
+//! YL Axiom unified developer & CI automation (`cargo xtask <command>`).
 //!
 //! Pure Rust `std` only — covers both Rust Desktop (GPUI + core crates) and Kotlin Mobile
 //! (Compose Android + slim 16 KB-aligned `arm64-v8a` JNI `.so`).
@@ -36,7 +36,7 @@ fn repo_root() -> PathBuf {
 
 fn print_usage() {
     eprintln!(
-        "Parchment xtask (Rust Desktop + Kotlin Mobile)
+        "YL Axiom xtask (Rust Desktop + Kotlin Mobile)
 
 Usage: cargo xtask <command> [options]
 

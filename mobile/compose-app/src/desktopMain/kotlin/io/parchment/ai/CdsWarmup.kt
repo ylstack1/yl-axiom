@@ -69,7 +69,7 @@ internal fun runCdsWarmup(): Nothing {
         runCatching { PlatformPickers.preloadStartupFonts() }
         runCatching { predecodedAppIconPainter }
         runCatching { loadSavedWindowGeometry() }
-        runCatching { windowCaption("Parchment", "Warm-up") }
+        runCatching { windowCaption("YL Axiom", "Warm-up") }
         val loader = DesktopPlatformHost::class.java.classLoader
         listOf(
             "androidx.compose.ui.window.Application_desktopKt",

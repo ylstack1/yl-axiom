@@ -87,11 +87,11 @@ actual object PlatformRuntime {
         if (elapsedSeconds < 0 || elapsedSeconds == lastReportedDecodeSec) return
         lastReportedDecodeSec = elapsedSeconds
         if (isWindows && windowsPowerLeaseLazy.isInitialized()) windowsPowerLease.refresh()
-        reportDecodeWindowStatus("Parchment — " + modelName + " (+" + outputTokens + " tok • " + elapsedSeconds + "s)")
+        reportDecodeWindowStatus("YL Axiom — " + modelName + " (+" + outputTokens + " tok • " + elapsedSeconds + "s)")
     }
 
     actual fun createOtaStagedDownload(assetName: String): OtaStagedDownload {
-        val safeName = assetName.replace(Regex("[^a-zA-Z0-9._-]"), "_").ifBlank { "Parchment-Windows-Setup.exe" }
+        val safeName = assetName.replace(Regex("[^a-zA-Z0-9._-]"), "_").ifBlank { "YL-Axiom-Windows-Setup.exe" }
         // The installer runs silently and is not signature-checked by the system, so a published checksum is required.
         return OtaStagedFile(File(File(DesktopPlatformHost.resolveStorageDir(), "ota"), safeName), requireDigest = true, installer = ::installOtaExecutable)
     }
@@ -109,8 +109,8 @@ actual object PlatformRuntime {
         val tempDir = checkNotNull(installerFile.parentFile) { "The update has no folder." }
 
         val localAppData = System.getenv("LOCALAPPDATA") ?: ""
-        val installedExe = File(localAppData, "Programs\\Parchment\\Parchment.exe")
-        val fallbackExe = File(System.getProperty("user.dir"), "Parchment.exe")
+        val installedExe = File(localAppData, "Programs\\YL Axiom\\YL-Axiom.exe")
+        val fallbackExe = File(System.getProperty("user.dir"), "YL-Axiom.exe")
         val relaunchTarget = if (installedExe.exists()) installedExe.absolutePath else fallbackExe.absolutePath
 
         val currentPid = runCatching { ProcessHandle.current().pid() }.getOrDefault(0L)
@@ -152,6 +152,6 @@ actual object PlatformRuntime {
             kotlin.system.exitProcess(0)
         }.apply { isDaemon = true }.start()
 
-        "Downloaded ${installerFile.length() / 1024} KB. Applying silent Windows update & restarting Parchment…"
+        "Downloaded ${installerFile.length() / 1024} KB. Applying silent Windows update & restarting YL Axiom…"
     }
 }

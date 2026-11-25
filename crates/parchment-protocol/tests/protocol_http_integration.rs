@@ -182,7 +182,7 @@ fn sample_session_and_history() -> (ChatSession, Vec<MessageNode>) {
         "title": "Protocol Test",
     }))
     .unwrap();
-    session.system_prompt = "You are Parchment test assistant.".into();
+    session.system_prompt = "You are YL Axiom test assistant.".into();
     let user = MessageNode {
         id: "m1".into(),
         role: MessageRole::User,
@@ -1385,7 +1385,7 @@ async fn openai_responses_item_id_tool_deltas_and_url_citations_parse_cleanly() 
         "event: response.function_call_arguments.delta\ndata: {\"type\":\"response.function_call_arguments.delta\",\"item_id\":\"fc_item_1\",\"delta\":\"{\\\"path\\\":\\\"a\"}\n\n",
         "event: response.function_call_arguments.delta\ndata: {\"type\":\"response.function_call_arguments.delta\",\"item_id\":\"fc_item_1\",\"delta\":\".rs\\\"}\"}\n\n",
         "event: response.output_item.done\ndata: {\"type\":\"response.output_item.done\",\"item\":{\"id\":\"fc_item_1\",\"call_id\":\"call_real_99\",\"type\":\"function_call\",\"name\":\"fs_read\",\"arguments\":\"\"}}\n\n",
-        "event: response.output_text.annotation.added\ndata: {\"type\":\"response.output_text.annotation.added\",\"annotation\":{\"type\":\"url_citation\",\"url\":\"https://docs.rs/parchment\",\"title\":\"Parchment Docs\"}}\n\n",
+        "event: response.output_text.annotation.added\ndata: {\"type\":\"response.output_text.annotation.added\",\"annotation\":{\"type\":\"url_citation\",\"url\":\"https://docs.rs/yl-axiom\",\"title\":\"YL Axiom Docs\"}}\n\n",
         "event: response.completed\ndata: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_42\",\"usage\":{\"input_tokens\":10,\"output_tokens\":5}}}\n\n",
     );
     let (base, _) = spawn_mock_server(move |_, _| MockResponse::sse(sse)).await;

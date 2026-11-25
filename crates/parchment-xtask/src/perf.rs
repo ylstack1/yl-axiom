@@ -143,7 +143,7 @@ fn measure_desktop_run(
             if window_ms < 0.0 {
                 window_ms = started.elapsed().as_secs_f64() * 1000.0;
             }
-            if title.ends_with("Parchment") && title != "Parchment" {
+            if title.ends_with("YL Axiom") && title != "YL Axiom" {
                 title_ms = started.elapsed().as_secs_f64() * 1000.0;
             }
         }

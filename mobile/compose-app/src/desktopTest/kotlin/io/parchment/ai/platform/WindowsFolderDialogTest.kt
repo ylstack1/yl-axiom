@@ -23,7 +23,7 @@ class WindowsFolderDialogTest {
                             WindowsFolderDialog.FOS_PATHMUSTEXIST
                         dialog.setOptions(dialog.options() or flags)
                         assertEquals(flags, dialog.options() and flags)
-                        dialog.setTitle("Parchment test")
+                        dialog.setTitle("YL Axiom test")
                         assertTrue(dialog.setFolder(existing.toString()))
                         assertFalse(dialog.setFolder("Z:\\parchment-no-such-drive-or-folder"))
                     }

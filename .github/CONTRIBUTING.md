@@ -1,4 +1,4 @@
-# Contributing to Parchment
+# Contributing to YL Axiom
 
 Thanks for helping. This page covers principles, dual-stack setup (Rust Desktop + Kotlin Android), and verification commands. [AGENTS.md](../AGENTS.md) holds the binding rules and stable contracts for people and AI agents alike.
 

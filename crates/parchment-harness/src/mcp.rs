@@ -368,7 +368,7 @@ impl McpClient {
                 json!({
                     "protocolVersion": version,
                     "capabilities": {},
-                    "clientInfo": { "name": "Parchment", "version": parchment_model::APP_VERSION }
+                    "clientInfo": { "name": "YL Axiom", "version": parchment_model::APP_VERSION }
                 }),
             )
             .await?;

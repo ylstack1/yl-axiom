@@ -116,7 +116,7 @@ pub async fn check_latest_github_release(
     let url = format!("https://api.github.com/repos/{clean_repo}/releases/latest");
     let resp = http
         .get(&url)
-        .header("User-Agent", format!("Parchment/{current_version}"))
+        .header("User-Agent", format!("YL-Axiom/{current_version}"))
         .header("Accept", "application/vnd.github+json")
         .send()
         .await

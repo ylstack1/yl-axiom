@@ -85,7 +85,7 @@ class Batch6FeaturesTest {
         val docxBytes = buildZip("word/document.xml" to docXml.encodeToByteArray())
         val text = PlatformWorkspace.extractDocxText(docxBytes).getOrThrow()
 
-        assertTrue("Hello & welcome — <Parchment>" in text, "Decoded entities missing: $text")
+        assertTrue("Hello & welcome — <YL Axiom>" in text, "Decoded entities missing: $text")
         assertTrue("Line 1\nLine 2" in text, "Line break missing: $text")
         assertTrue("ColA\tColB" in text, "Table columns missing: $text")
         assertFalse("DELETED_SECRET" in text, "Tracked deletion text must be excluded: $text")

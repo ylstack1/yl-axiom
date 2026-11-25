@@ -214,7 +214,7 @@ object CardAndPromptCodec {
         else -> emptyList()
     }
 
-    /** Lays Parchment's edits over the imported entry, so ordering, regex and vendor fields survive. */
+    /** Lays YL Axiom's edits over the imported entry, so ordering, regex and vendor fields survive. */
     private fun loreEntry(fragment: ContextFragment, order: Int, raw: JsonObject?): JsonObject {
         val entry = LinkedHashMap<String, JsonElement>(raw ?: emptyMap())
         val hasOwnName = (raw?.get("name") as? JsonPrimitive)?.contentOrNull?.isNotBlank() == true

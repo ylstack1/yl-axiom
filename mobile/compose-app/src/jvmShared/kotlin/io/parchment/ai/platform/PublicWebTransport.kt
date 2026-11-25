@@ -106,7 +106,7 @@ internal object PublicWebTransport {
             check(remaining > 0) { "Web request timed out." }
             val call = client.newCall(
                 Request.Builder().url(target).get()
-                    .header("User-Agent", "ParchmentAI/${ParchmentBuildConfig.APP_VERSION}")
+                    .header("User-Agent", "YL-Axiom/${ParchmentBuildConfig.APP_VERSION}")
                     .header("Accept", accept)
                     .build()
             )

@@ -8,10 +8,10 @@ import kotlin.test.assertTrue
 
 class WindowCaptionTest {
     @Test fun idleCaptionNamesTheChatAndARunShowsItsProgress() {
-        assertEquals("Kyoto trip plan — Parchment", windowCaption("Parchment", " Kyoto trip plan "))
-        assertEquals("Settings — Parchment", windowCaption("Parchment", "Settings"))
-        assertEquals("Parchment", windowCaption("Parchment", ""))
-        val running = "Parchment — model (+120 tok • 4s)"
+        assertEquals("Kyoto trip plan — YL Axiom", windowCaption("YL Axiom", " Kyoto trip plan "))
+        assertEquals("Settings — YL Axiom", windowCaption("YL Axiom", "Settings"))
+        assertEquals("YL Axiom", windowCaption("YL Axiom", ""))
+        val running = "YL Axiom — model (+120 tok • 4s)"
         assertEquals(running, windowCaption(running, "Kyoto trip plan"))
     }
 

@@ -1033,7 +1033,7 @@ pub(super) fn render_backup_ota_page(props: &SettingsRenderProps<'_>) -> AnyElem
     let mut ota_card = section_card(
         "App updates",
         Some(&format!(
-            "Parchment v{} • Windows • {} stored chat{}",
+            "YL Axiom v{} • Windows • {} stored chat{}",
             parchment_core::model::APP_VERSION,
             props.chat_count,
             if props.chat_count == 1 { "" } else { "s" }
