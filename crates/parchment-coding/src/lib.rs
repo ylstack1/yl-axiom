@@ -511,7 +511,11 @@ impl CodingTaskCoordinator {
     }
 
     /// Record an artifact produced during a task and persist.
-    pub fn add_artifact(&mut self, task_id: &TaskId, artifact: Artifact) -> Result<(), CodingError> {
+    pub fn add_artifact(
+        &mut self,
+        task_id: &TaskId,
+        artifact: Artifact,
+    ) -> Result<(), CodingError> {
         let task = self
             .tasks
             .get_mut(task_id)

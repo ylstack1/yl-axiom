@@ -67,7 +67,7 @@ class Batch6FeaturesTest {
             <?xml version="1.0" encoding="UTF-8" standalone="yes"?>
             <w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
               <w:body>
-                <w:p><w:r><w:t>Hello &amp; welcome &#8212; &lt;Parchment&gt;</w:t></w:r></w:p>
+                <w:p><w:r><w:t>Hello &amp; welcome &#8212; &lt;YL Axiom&gt;</w:t></w:r></w:p>
                 <w:p>
                   <w:r><w:t>Line 1</w:t><w:br/><w:t>Line 2</w:t></w:r>
                   <w:del><w:r><w:delText>DELETED_SECRET</w:delText></w:r></w:del>
