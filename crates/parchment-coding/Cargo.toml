@@ -9,9 +9,7 @@ name = "parchment_coding"
 
 [features]
 default = []
-network = [
-    "dep:parchment-core/network",
-]
+network = ["parchment-core/network"]
 
 [dependencies]
 parchment-core = { path = "../parchment-core", default-features = false }
