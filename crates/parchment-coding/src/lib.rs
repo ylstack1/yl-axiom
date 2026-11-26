@@ -1024,7 +1024,7 @@ mod tests {
 
         let task = coord.get_task("t-2").unwrap();
         assert_eq!(task.subtasks.len(), 2);
-        assert_eq!(task.subtasks[1].depends_on, vec!["sub-1".into()]);
+        assert_eq!(task.subtasks[1].depends_on, vec!["sub-1".to_string()]);
     }
 
     #[test]

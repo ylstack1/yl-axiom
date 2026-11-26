@@ -132,7 +132,7 @@ impl FileEditor {
 
         Ok(EditResult {
             patch_id: patch_id.to_string(),
-            path: review.diff.path,
+            path: review.diff.path.clone(),
             diff: review.diff,
             bytes_written,
             applied: true,
