@@ -119,6 +119,7 @@ pub struct TextSymbolBackend {
     language: String,
 }
 
+#[allow(dead_code)]
 impl TextSymbolBackend {
     pub fn new(language: &str) -> Self {
         Self {
@@ -238,7 +239,7 @@ impl TextSymbolBackend {
 
 /// Simple regex-like extraction without the `regex` crate dependency.
 /// Finds the first capture group for a simple pattern.
-fn regex_lite_regex(line: &str, _pattern: &str) -> Option<String> {
+fn _regex_lite_regex(_line: &str, _pattern: &str) -> Option<String> {
     // Lightweight heuristic: find identifier after keyword
     // This is a placeholder; real implementation uses tree-sitter or regex crate
     let keywords: &[&str] = &["fn", "fun", "struct", "enum", "trait", "class", "interface"];
@@ -263,7 +264,11 @@ impl CodeIntelBackend for TextSymbolBackend {
         &self.language
     }
 
-    fn search_symbols(&self, query: &str, limit: usize) -> Result<SymbolSearchResult, IntelError> {
+    fn search_symbols(
+        &self,
+        _query: &str,
+        _limit: usize,
+    ) -> Result<SymbolSearchResult, IntelError> {
         // Text backend searches within indexed documents; for now return empty
         // with the query recorded. Full implementation indexes workspace files.
         Ok(SymbolSearchResult {
