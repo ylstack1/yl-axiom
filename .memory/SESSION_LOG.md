@@ -1,5 +1,20 @@
 # YL Axiom — Session Log
 
+## 2026-11-26 (Phase 1-6 implementation + first green verification)
+- Rebranded user-visible strings to YL Axiom; packageId `io.parchment.ai`, JNI class
+  names, storage IDs and migration keys deliberately preserved.
+- Added `parchment-coding` (task lifecycle, TDD Red-Green-Refactor, hook gates,
+  VerificationEngine, bounded RecoveryEngine, patch/diff workflow, FileEditor) and
+  `parchment-intel` (CodeIntelBackend, tree-sitter-ready).
+- Added additive SQLite schema v2: coding_tasks, coding_subtasks,
+  coding_acceptance_criteria, coding_checkpoints, coding_artifacts, coding_hooks.
+- Added `.github/workflows/build-android.yml` (Android-only debug APK + upload) and
+  fixed its `classify_android` trigger list, licensing, JVM args and test task name.
+- Verified on main @ 77248f9: check / test (22 passed) / clippy -D warnings / fmt all
+  PASS; CI Build Android APK PASS (1.86 MB .so, 16 KB aligned, APK uploaded).
+- Not verified: parchment-desktop (GPUI/Win32), Android device runtime, Windows .exe.
+- Not started: UI wiring for Axiom Coding (Phase 9), context/artifact work (Phase 7).
+
 ## 2026-11-25 (Phase 4 implementation session)
 
 - Implemented Phase 4: TDD Red-Green-Refactor loop + hook gates in `crates/parchment-coding/src/lib.rs`:

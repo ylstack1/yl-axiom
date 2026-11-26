@@ -1,5 +1,13 @@
 # YL Axiom — Current State
 
+## Verified on main @ 77248f9 (independent local run)
+- `cargo check -p parchment-coding` PASS
+- `cargo test -p parchment-coding` PASS (22 passed, 0 failed)
+- `cargo clippy --workspace --exclude parchment-desktop --all-targets -- -D warnings` PASS (0 warnings)
+- `cargo fmt --all -- --check` PASS
+- CI `Build Android APK` PASS: slim arm64-v8a `.so` (1.86 MB, 16 KB aligned) + debug APK built and uploaded
+- Not verified: `parchment-desktop` (GPUI/Win32 cannot build on the Linux VM), Android device runtime, Windows `.exe`
+
 ## What currently works (verified from source)
 - Full YL Axiom v3.1.1 codebase: 8 Rust crates + Kotlin Multiplatform/Compose Android app + Windows GPUI desktop.
 - Assistant and Chat fully functional: provider protocols (Gemini/OpenAI/Anthropic/Custom), 21 built-in tools, MCP, subagents (max 4), ToolApprovalBroker, WorkspacePathGuard, SSRF transport, Skills, SQLite WAL + FTS5 storage, non-destructive v2 migration, archive import/export.
