@@ -194,10 +194,12 @@ impl TextSymbolBackend {
         symbols
     }
 
+    #[allow(dead_code)]
     fn extract_rust_function(&self, line: &str) -> Option<String> {
         regex_lite_regex(line, r"fn\s+([a-zA-Z_][a-zA-Z0-9_]*)")
     }
 
+    #[allow(dead_code)]
     fn extract_rust_type_decl(&self, line: &str) -> Option<(String, SymbolKind)> {
         for (kw, kind) in [
             ("struct", SymbolKind::Class),
@@ -212,6 +214,7 @@ impl TextSymbolBackend {
         None
     }
 
+    #[allow(dead_code)]
     fn extract_kotlin_function(&self, line: &str) -> Option<String> {
         regex_lite_regex(
             line,
@@ -219,6 +222,7 @@ impl TextSymbolBackend {
         )
     }
 
+    #[allow(dead_code)]
     fn extract_kotlin_type_decl(&self, line: &str) -> Option<(String, SymbolKind)> {
         for (kw, kind) in [
             ("class", SymbolKind::Class),
@@ -263,7 +267,11 @@ impl CodeIntelBackend for TextSymbolBackend {
         &self.language
     }
 
-    fn search_symbols(&self, query: &str, limit: usize) -> Result<SymbolSearchResult, IntelError> {
+    fn search_symbols(
+        &self,
+        _query: &str,
+        _limit: usize,
+    ) -> Result<SymbolSearchResult, IntelError> {
         // Text backend searches within indexed documents; for now return empty
         // with the query recorded. Full implementation indexes workspace files.
         Ok(SymbolSearchResult {
