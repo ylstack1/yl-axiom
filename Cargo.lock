@@ -4467,6 +4467,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "parchment-intel"
+version = "3.1.1"
+dependencies = [
+ "serde",
+ "thiserror 2.0.21",
+]
+
+[[package]]
 name = "parchment-model"
 version = "3.1.1"
 dependencies = [
