@@ -1,0 +1,356 @@
+name: Build Android APK
+
+on:
+  push:
+    branches:
+      - main
+      - master
+    tags:
+      - "v*"
+    paths:
+      - "mobile/**"
+      - "crates/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - ".cargo/**"
+      - "rustfmt.toml"
+      - "clippy.toml"
+      - "build.gradle.kts"
+      - "settings.gradle.kts"
+      - "gradle.properties"
+      - "gradlew"
+      - "gradlew.bat"
+      - ".github/workflows/build-android.yml"
+  pull_request:
+    branches:
+      - main
+      - master
+    paths:
+      - "mobile/**"
+      - "crates/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - ".cargo/**"
+      - "rustfmt.toml"
+      - "clippy.toml"
+      - "build.gradle.kts"
+      - "settings.gradle.kts"
+      - "gradle.properties"
+      - "gradlew"
+      - "gradlew.bat"
+      - ".github/workflows/build-android.yml"
+  workflow_dispatch:
+    inputs:
+      build_variant:
+        description: "Build variant (debug or release)"
+        required: false
+        default: "debug"
+        type: choice
+        options:
+          - debug
+          - release
+
+permissions:
+  contents: read
+
+cache-mode: write
+
+# Cancel superseded branch and PR builds immediately, while never cancelling version-tag or manual release runs.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}-${{ github.event_name == 'workflow_dispatch' && github.run_id || 'ci' }}
+  cancel-in-progress: ${{ !startsWith(github.ref, 'refs/tags/v') && github.event_name != 'workflow_dispatch' }}
+
+env:
+  ANDROID_SDK_ROOT: /usr/local/lib/android
+  ANDROID_HOME: /usr/local/lib/android
+  GRADLE_OPTS: -Dorg.gradle.jvmargs="-Xmx5g -XX:+UseParallelGC -XX:MaxMetaspaceSize=1g -Dfile.encoding=UTF-8" -Pkotlin.compiler.execution.strategy=in-process
+
+jobs:
+  preflight:
+    name: Preflight Gates & Path Filter
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    cache-mode: none
+    outputs:
+      build_number: ${{ steps.plan.outputs.build_number }}
+      app_version: ${{ steps.plan.outputs.app_version }}
+      app_version_code: ${{ steps.plan.outputs.app_version_code }}
+      release_tag: ${{ steps.plan.outputs.release_tag }}
+      rust_core: ${{ steps.plan.outputs.rust_core }}
+      android: ${{ steps.plan.outputs.android }}
+      ktlint: ${{ steps.plan.outputs.ktlint }}
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 1
+          fetch-tags: false
+
+      - name: Set up Rust Toolchain
+        uses: dtolnay/rust-toolchain@39008827e6b4319a349e9a42dfc90579dd25f1ca # stable
+        with:
+          components: rustfmt,clippy
+          targets: aarch64-linux-android
+
+      - name: Run Quality Gates, xtask Tests, and Resolve Affected Jobs
+        id: plan
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BASE_SHA: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event.before }}
+        run: |
+          set -euo pipefail
+          cargo test -p parchment-xtask
+          cargo xtask review
+          cargo xtask ci plan android
+
+      - name: Upload Prebuilt xtask Binary for Gradle Jobs
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: parchment-xtask-linux
+          path: target/debug/parchment-xtask
+          compression-level: 0
+          retention-days: 1
+          if-no-files-found: error
+
+  rust-core-check:
+    name: Rust Core (clippy, tests)
+    needs: preflight
+    if: needs.preflight.outputs.rust_core == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 1
+          fetch-tags: false
+
+      - name: Set up Rust Toolchain
+        uses: dtolnay/rust-toolchain@39008827e6b4319a349e9a42dfc90579dd25f1ca # stable
+        with:
+          components: clippy
+          targets: aarch64-linux-android
+
+      - name: Cache Rust Dependencies
+        uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          shared-key: rust-android-core
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+          cache-bin: false
+
+      - name: Verify Rust Clippy and Tests
+        run: |
+          set -euo pipefail
+          cargo clippy --workspace --exclude parchment-desktop --all-targets -- -D warnings
+          cargo clippy -p parchment-core --no-default-features --features android-jni -- -D warnings
+          cargo test --workspace --exclude parchment-desktop
+          cargo test -p parchment-core --no-default-features --features android-jni
+
+  ktlint-check:
+    name: Kotlin Lint (ktlintCheck)
+    needs: preflight
+    if: needs.preflight.outputs.ktlint == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 1
+          fetch-tags: false
+
+      - name: Set up JDK 25 (Temurin)
+        uses: actions/setup-java@d1374f8ac74474200d16ef8ecee22c7ae7a51880 # v6.3.0
+        with:
+          distribution: "temurin"
+          java-version: "25"
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@8da46b539cd8fe6ab27ca75128919a18d757604c # v6.4.1
+        with:
+          cache-read-only: ${{ github.ref != 'refs/heads/main' }}
+
+      - name: Run ktlintCheck
+        run: |
+          set -euo pipefail
+          chmod +x ./gradlew
+          ./gradlew :composeApp:ktlintCheck \
+            -Dorg.gradle.jvmargs="-Xmx5g -XX:+UseParallelGC -XX:MaxMetaspaceSize=1g -Dfile.encoding=UTF-8" \
+            --no-daemon --no-configuration-cache --max-workers=4 \
+            -Pkotlin.compiler.execution.strategy=in-process
+
+  build-android-apk:
+    name: Build Android Debug APK (arm64-v8a + Rust JNI)
+    needs: [preflight, rust-core-check, ktlint-check]
+    if: >-
+      !cancelled() &&
+      needs.preflight.result == 'success' &&
+      (needs.rust-core-check.result == 'success' || needs.rust-core-check.result == 'skipped') &&
+      (needs.ktlint-check.result == 'success' || needs.ktlint-check.result == 'skipped') &&
+      needs.preflight.outputs.android == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 1
+          fetch-tags: false
+
+      - name: Download Prebuilt xtask Binary
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: parchment-xtask-linux
+          path: ${{ runner.temp }}/xtask
+
+      - name: Set up Rust Toolchain (aarch64-linux-android)
+        uses: dtolnay/rust-toolchain@39008827e6b4319a349e9a42dfc90579dd25f1ca # stable
+        with:
+          targets: aarch64-linux-android
+
+      - name: Cache Rust Dependencies (Android)
+        uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          shared-key: rust-android
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+          cache-bin: false
+
+      - name: Restore cargo-ndk Binary Cache
+        id: cache-cargo-ndk
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cargo/bin/cargo-ndk
+          key: cargo-ndk-4.1.2-${{ runner.os }}-${{ runner.arch }}
+
+      - name: Install cargo-ndk if Missing
+        if: steps.cache-cargo-ndk.outputs.cache-hit != 'true'
+        run: cargo install cargo-ndk --version 4.1.2 --locked
+
+      - name: Save cargo-ndk Cache (main only)
+        if: github.ref == 'refs/heads/main' && steps.cache-cargo-ndk.outputs.cache-hit != 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cargo/bin/cargo-ndk
+          key: cargo-ndk-4.1.2-${{ runner.os }}-${{ runner.arch }}
+
+      - name: Build Slim 16 KB-Aligned Rust JNI Core (arm64-v8a)
+        run: |
+          set -euo pipefail
+          export ANDROID_NDK_HOME="${ANDROID_NDK_HOME:-${ANDROID_NDK_LATEST_HOME:-}}"
+          test -d "$ANDROID_NDK_HOME"
+          cargo xtask android-so
+
+      - name: Set up JDK 25 (Temurin)
+        uses: actions/setup-java@d1374f8ac74474200d16ef8ecee22c7ae7a51880 # v6.3.0
+        with:
+          distribution: "temurin"
+          java-version: "25"
+
+      - name: Restore Android Platform 37 Cache
+        id: cache-android-platform
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: /usr/local/lib/android/sdk/platforms/android-37*
+          key: android-platform-37-${{ runner.os }}
+
+      - name: Restore Android Build-Tools 37 Cache
+        id: cache-android-bt
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: /usr/local/lib/android/sdk/build-tools/37*
+          key: android-build-tools-37-${{ runner.os }}
+
+      - name: Write Android SDK License Hashes
+        run: |
+          mkdir -p "$ANDROID_HOME/licenses"
+          printf "\n8933bad161af4178b1185d1a37fbf41ea5269c55\nd56f5187479451eabf01fb78af6dfcb131a6481e\n24333f8a63b6825ea9c5514f83c2829b004d1fee\n" > "$ANDROID_HOME/licenses/android-sdk-license"
+          printf "\n84831b9409646a918e30573bab4c9c91346d8abd\n504667f4c0de7af1a06de9f4b1727b84351f2910\n" > "$ANDROID_HOME/licenses/android-sdk-preview-license"
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@8da46b539cd8fe6ab27ca75128919a18d757604c # v6.4.1
+        with:
+          cache-read-only: ${{ github.ref != 'refs/heads/main' }}
+
+      - name: Build Android Debug APK
+        env:
+          APP_VER: ${{ needs.preflight.outputs.app_version }}
+          APP_CODE: ${{ needs.preflight.outputs.app_version_code }}
+        run: |
+          set -euo pipefail
+          chmod +x ./gradlew
+          ./gradlew :androidApp:assembleDebug \
+            -Dorg.gradle.jvmargs="-Xmx5g -XX:+UseParallelGC -XX:MaxMetaspaceSize=1g -Dfile.encoding=UTF-8" \
+            -PappVersion="$APP_VER" \
+            -PappVersionCode="$APP_CODE" \
+            -PgithubRepo="$GITHUB_REPOSITORY" \
+            -PofficialRelease=false \
+            --no-daemon --no-configuration-cache --max-workers=4 \
+            -Pkotlin.compiler.execution.strategy=in-process
+          echo "ANDROID_BUILD_VARIANT=debug" >> "$GITHUB_ENV"
+
+      - name: Verify APK and Bundled JNI
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          cp mobile/android-app/build/outputs/apk/debug/*.apk dist/YL-Axiom-Android-Debug.apk
+          test -s dist/YL-Axiom-Android-Debug.apk
+          unzip -l dist/YL-Axiom-Android-Debug.apk | grep -q 'lib/arm64-v8a/libparchment_core.so'
+          echo "Android debug APK built and verified"
+
+      - name: Run Android Debug Tests
+        run: |
+          set -euo pipefail
+          chmod +x ./gradlew "$RUNNER_TEMP/xtask/parchment-xtask"
+          "$RUNNER_TEMP/xtask/parchment-xtask" ci run-gradle -- :composeApp:debugUnitTest \
+            -Dorg.gradle.jvmargs="-Xmx5g -XX:+UseParallelGC -XX:MaxMetaspaceSize=1g -Dfile.encoding=UTF-8" \
+            -Pparchment.testForks=2 \
+            --no-daemon --no-configuration-cache --max-workers=4 \
+            -Pkotlin.compiler.execution.strategy=in-process
+
+      - name: Save Android Platform 37 Cache (main only)
+        if: github.ref == 'refs/heads/main' && steps.cache-android-platform.outputs.cache-hit != 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: /usr/local/lib/android/sdk/platforms/android-37*
+          key: android-platform-37-${{ runner.os }}
+
+      - name: Save Android Build-Tools 37 Cache (main only)
+        if: github.ref == 'refs/heads/main' && steps.cache-android-bt.outputs.cache-hit != 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: /usr/local/lib/android/sdk/build-tools/37*
+          key: android-build-tools-37-${{ runner.os }}
+
+      - name: Upload Android Debug APK Artifact
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: YL-Axiom-Android-Debug-APK
+          path: dist/YL-Axiom-Android-Debug.apk
+          compression-level: 1
+          retention-days: ${{ github.event_name == 'pull_request' && 7 || 30 }}
+          if-no-files-found: error
+
+      - name: Upload Android Test Compiled Artifacts
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: YL-Axiom-Android-Test-Artifacts
+          path: |
+            mobile/compose-app/build/reports/tests/debug/**
+            mobile/compose-app/build/test-results/debug/**
+            mobile/android-app/build/reports/**/debug/**
+          compression-level: 1
+          retention-days: ${{ github.event_name == 'pull_request' && 7 || 30 }}
+          if-no-files-found: warn
+
+      - name: Upload Android Lint Report
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: YL-Axiom-Android-Lint-Report
+          path: mobile/**/build/reports/lint/**/*.html
+          compression-level: 1
+          retention-days: ${{ github.event_name == 'pull_request' && 7 || 30 }}
+          if-no-files-found: warn

@@ -71,7 +71,7 @@
 - Plan-first mode as an explicit task phase — matches Phase 4 planning.
 - Tool profiles (core/auto/web/full) with hidden-but-callable tools via a discovery meta-tool, so the advertised schema set (and prompt-cache prefix) stays stable — strong idea, adopted as Decision 15.
 
-**Explicitly rejected:** its GPL source, its `run_shell`-as-universal-adapter design (Parchment has a typed 21-tool catalog, which is safer), and its env-var configuration model (Parchment uses typed serde models).
+**Explicitly rejected:** its GPL source, its `run_shell`-as-universal-adapter design (YL Axiom has a typed 21-tool catalog, which is safer), and its env-var configuration model (YL Axiom uses typed serde models).
 
 **Status:** Verified decision.
 

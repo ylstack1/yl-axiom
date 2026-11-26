@@ -1,6 +1,6 @@
 ---
 name: Feature request
-about: Suggest something Parchment should do
+about: Suggest something YL Axiom should do
 labels: enhancement
 ---
 

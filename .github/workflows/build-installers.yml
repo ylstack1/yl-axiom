@@ -350,14 +350,14 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p dist
-          cp mobile/android-app/build/outputs/apk/"$ANDROID_BUILD_VARIANT"/*.apk dist/Parchment-Android-Universal.apk
+          cp mobile/android-app/build/outputs/apk/"$ANDROID_BUILD_VARIANT"/*.apk dist/YL-Axiom-Android-Universal.apk
           if [[ "$ANDROID_BUILD_VARIANT" == release ]]; then
-            cp mobile/android-app/build/outputs/mapping/release/mapping.txt dist/Parchment-Android-R8-mapping.txt
-            SIZE=$(stat -c%s dist/Parchment-Android-Universal.apk)
+            cp mobile/android-app/build/outputs/mapping/release/mapping.txt dist/YL-Axiom-Android-R8-mapping.txt
+            SIZE=$(stat -c%s dist/YL-Axiom-Android-Universal.apk)
             test "$SIZE" -le 7864320
           fi
-          test -s dist/Parchment-Android-Universal.apk
-          unzip -l dist/Parchment-Android-Universal.apk | grep -q 'lib/arm64-v8a/libparchment_core.so'
+          test -s dist/YL-Axiom-Android-Universal.apk
+          unzip -l dist/YL-Axiom-Android-Universal.apk | grep -q 'lib/arm64-v8a/libparchment_core.so'
 
       - name: Save Android Platform 37 Cache (main only)
         if: github.ref == 'refs/heads/main' && steps.cache-android-platform.outputs.cache-hit != 'true'
@@ -376,8 +376,8 @@ jobs:
       - name: Upload Android APK Artifact
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: Parchment-Android-APK
-          path: dist/Parchment-*
+          name: YL-Axiom-Android-APK
+          path: dist/YL-Axiom-*
           compression-level: 1
           retention-days: ${{ github.event_name == 'pull_request' && 7 || 30 }}
           if-no-files-found: error
@@ -455,28 +455,28 @@ jobs:
           INNO_COMPRESSION: ${{ github.event_name == 'pull_request' && 'lzma2/fast' || 'lzma2/max' }}
         run: iscc.exe "/DMyAppVersion=$env:APP_VER" "/DMyCompression=$env:INNO_COMPRESSION" installer\windows-installer.iss
 
-      - name: Verify Silent Inno Setup Install Lands Standalone Parchment.exe
+      - name: Verify Silent Inno Setup Install Lands Standalone YL-Axiom.exe
         shell: pwsh
         env:
           APP_VER: ${{ needs.preflight.outputs.app_version }}
         run: |
-          $testDir = Join-Path ([System.IO.Path]::GetTempPath()) "parchment-inno-smoke"
+          $testDir = Join-Path ([System.IO.Path]::GetTempPath()) "yl-axiom-inno-smoke"
           Remove-Item -Recurse -Force $testDir -ErrorAction SilentlyContinue
           try {
-            $proc = Start-Process -FilePath "build\installer\Parchment-Windows-x64-Setup.exe" `
+            $proc = Start-Process -FilePath "build\installer\YL-Axiom-Windows-x64-Setup.exe" `
               -ArgumentList "/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART", "/DIR=$testDir" `
               -Wait -PassThru
             if ($proc.ExitCode -ne 0) { throw "Silent installer exited with $($proc.ExitCode)" }
-            $installed = Get-Item "$testDir\Parchment.exe" -ErrorAction Stop
-            if ($installed.Length -lt 1048576) { throw "Installed Parchment.exe is unexpectedly small: $($installed.Length) B" }
+            $installed = Get-Item "$testDir\YL-Axiom.exe" -ErrorAction Stop
+            if ($installed.Length -lt 1048576) { throw "Installed YL-Axiom.exe is unexpectedly small: $($installed.Length) B" }
             $prodVer = $installed.VersionInfo.ProductVersion
             if ($prodVer -ne $env:APP_VER) {
-              throw "Installed Parchment.exe ProductVersion '$prodVer' != expected '$($env:APP_VER)'"
+              throw "Installed YL-Axiom.exe ProductVersion '$prodVer' != expected '$($env:APP_VER)'"
             }
             Add-Type -Namespace Win32Check -Name Native -MemberDefinition '[DllImport("shell32.dll", CharSet = CharSet.Unicode)] public static extern uint ExtractIconExW(string lpszFile, int nIconIndex, IntPtr[] phiconLarge, IntPtr[] phiconSmall, uint nIcons);'
             $iconCount = [Win32Check.Native]::ExtractIconExW($installed.FullName, -1, $null, $null, 0)
             if ($iconCount -lt 1) {
-              throw "Installed Parchment.exe has no embedded Win32 icon resource (ExtractIconExW=$iconCount)"
+              throw "Installed YL-Axiom.exe has no embedded Win32 icon resource (ExtractIconExW=$iconCount)"
             }
           } finally {
             Remove-Item -Recurse -Force $testDir -ErrorAction SilentlyContinue
@@ -484,8 +484,8 @@ jobs:
       - name: Upload Windows EXE Installer Artifact
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: Parchment-Windows-EXE-Installer
-          path: build/installer/Parchment-Windows-x64-Setup.exe
+          name: YL-Axiom-Windows-EXE-Installer
+          path: build/installer/YL-Axiom-Windows-x64-Setup.exe
           compression-level: 0
           retention-days: ${{ github.event_name == 'pull_request' && 7 || 30 }}
           if-no-files-found: error
@@ -542,12 +542,12 @@ jobs:
             --no-daemon --no-configuration-cache --no-build-cache --max-workers=4 -PappVersion=1.0.0
           "$RUNNER_TEMP/xtask/parchment-xtask" ci check-sbom build/reports/cyclonedx/bom.json
           mkdir -p dist
-          cp build/reports/cyclonedx/bom.json dist/Parchment-SBOM.cdx.json
+          cp build/reports/cyclonedx/bom.json dist/YL-Axiom-SBOM.cdx.json
       - name: Upload SBOM Artifact
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: Parchment-SBOM
-          path: dist/Parchment-SBOM.cdx.json
+          name: YL-Axiom-SBOM
+          path: dist/YL-Axiom-SBOM.cdx.json
           compression-level: 1
           retention-days: 30
           if-no-files-found: error
@@ -577,7 +577,7 @@ jobs:
       - name: Download Android APK Artifact
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
-          name: Parchment-Android-APK
+          name: YL-Axiom-Android-APK
           path: release-assets
           run-id: ${{ inputs.reuse_android_run || github.run_id }}
           github-token: ${{ inputs.reuse_android_run && github.token || '' }}
@@ -585,7 +585,7 @@ jobs:
       - name: Download Windows EXE Installer Artifact
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
-          name: Parchment-Windows-EXE-Installer
+          name: YL-Axiom-Windows-EXE-Installer
           path: release-assets
 
       - name: Download Release SBOM Artifact
@@ -593,7 +593,7 @@ jobs:
         continue-on-error: true
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
-          name: Parchment-SBOM
+          name: YL-Axiom-SBOM
           path: release-assets
 
       # release-please already wrote the notes from the commits; this adds the signing note and how to check a
@@ -607,7 +607,7 @@ jobs:
             echo
             echo "Check a download with \`sha256sum -c SHA256SUMS.txt\` (or \`Get-FileHash\` on Windows)."
           } >> notes.md
-          (cd release-assets && sha256sum Parchment-* > SHA256SUMS.txt && cat SHA256SUMS.txt)
+          (cd release-assets && sha256sum YL-Axiom-* > SHA256SUMS.txt && cat SHA256SUMS.txt)
 
       - name: Create or Update GitHub Release for In-App OTA Updater
         uses: softprops/action-gh-release@8a0cd651e5b2365bd640854a3fa5dfc70e4875f3 # v3.0.4
@@ -617,9 +617,9 @@ jobs:
           body_path: notes.md
           append_body: true
           files: |
-            release-assets/Parchment-Android-Universal.apk
-            release-assets/Parchment-Android-R8-mapping.txt
-            release-assets/Parchment-SBOM.cdx.json
-            release-assets/Parchment-Windows-x64-Setup.exe
+            release-assets/YL-Axiom-Android-Universal.apk
+            release-assets/YL-Axiom-Android-R8-mapping.txt
+            release-assets/YL-Axiom-SBOM.cdx.json
+            release-assets/YL-Axiom-Windows-x64-Setup.exe
             release-assets/SHA256SUMS.txt
           fail_on_unmatched_files: false

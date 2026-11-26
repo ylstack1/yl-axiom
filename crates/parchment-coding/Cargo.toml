@@ -1,0 +1,23 @@
+[package]
+name = "parchment-coding"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[lib]
+name = "parchment_coding"
+
+[features]
+default = []
+network = ["parchment-harness/network"]
+
+[dependencies]
+parchment-harness = { path = "../parchment-harness", default-features = false }
+parchment-prose = { path = "../parchment-prose" }
+parchment-storage = { path = "../parchment-storage" }
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+
+[lints]
+workspace = true

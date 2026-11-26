@@ -977,7 +977,7 @@ impl ParchmentDesktopApp {
             }
             SettingsAction::ExportArchive => {
                 if let Some(dest) = pick_save_file_dialog(
-                    "Export Parchment archive",
+                    "Export YL Axiom archive",
                     "parchment-backup.parchment",
                     "parchment",
                 ) {
@@ -999,7 +999,7 @@ impl ParchmentDesktopApp {
             SettingsAction::ImportArchive => {
                 let Some(src) = pick_open_file_dialog(
                     "Import chats or archive",
-                    "Parchment Archive / JSON",
+                    "YL Axiom Archive / JSON",
                     "*.parchment;*.zip;*.json",
                 ) else {
                     return;

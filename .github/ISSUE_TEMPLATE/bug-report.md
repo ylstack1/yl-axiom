@@ -1,6 +1,6 @@
 ---
 name: Bug report
-about: Something in Parchment doesn't work as expected
+about: Something in YL Axiom doesn't work as expected
 labels: bug
 ---
 
@@ -12,7 +12,7 @@ labels: bug
 1.
 
 **Version and platform**
-<!-- Parchment version (Settings > Storage & Updates), Windows or Android, OS version. -->
+<!-- YL Axiom version (Settings > Storage & Updates), Windows or Android, OS version. -->
 
 **Provider and wire format, if relevant**
 <!-- For example: Custom provider, OpenAI Chat Completions. Never paste API keys. -->

@@ -22,7 +22,7 @@ mobile/
 ## Crate responsibilities (verified by reading source)
 
 ### parchment-model (`crates/parchment-model/src/`)
-Pure domain models and invariants. Serde JSON matches Parchment v2 `kotlinx.serialization` schema field-for-field so v2 `settings.json`, `chats/<id>/chat.json`, `live.json`, and `.parchment` archives round-trip with zero data or signature loss.
+Pure domain models and invariants. Serde JSON matches YL Axiom v2 `kotlinx.serialization` schema field-for-field so v2 `settings.json`, `chats/<id>/chat.json`, `live.json`, and `.parchment` archives round-trip with zero data or signature loss.
 - `chat.rs`: `ChatSession`, `MessageNode`, `MessageRole`, `MessageVariant`, `ChatStub`, `PinnedMessageStub`, `ContextFragment`, `WorkspaceMode`, `TodoItem`, `GoalTrackerState`, media, citations, attachments.
 - `permissions.rs`: `AgentPermissionPolicy`, `ToolApprovalMode` (AskForChanges/AskEveryTool/Never), `ShellAccess` (Disabled/FullAccess), `AgentPermissionOverrides`, `WorkspaceMode` (Off/ReadOnly/ReadWrite).
 - `provider.rs`: `ProviderProfile`, `ProviderProtocol` (GeminiInteractions/OpenAiResponses/AnthropicMessages/Custom), `ModelPricingSpec`, `DefaultModelConfig`, `ProviderStorage`, `CUSTOM_DIALECTS`.

@@ -6,6 +6,8 @@ members = [
     "crates/parchment-protocol",
     "crates/parchment-prose",
     "crates/parchment-harness",
+    "crates/parchment-coding",
+    "crates/parchment-intel",
     "crates/parchment-core",
     "crates/parchment-desktop",
     "crates/parchment-xtask",

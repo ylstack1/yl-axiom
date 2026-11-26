@@ -1,10 +1,10 @@
-# Parchment TODO
+# YL Axiom TODO
 
 Updated 2026-11-20. AGENTS.md owns rules, rigor, and stable contracts. Finished tasks are removed; git history and CHANGELOG.md keep history.
 
 ## Current status
 
-- Source: Parchment v3 toolchain, dependency, code idiom, and CI modernization (Rust 1.100.0 + Cargo lints/cooldown, base64 0.23.1, zip 9.8.1, Kotlin 2.4.21/Compose 1.12.2/AGP 9.3.3/Gradle 9.7.1, CycloneDX 3.6.1, Scorecard v2.6.0, GitHub Actions cache-mode + prebuilt xtask reuse + lead-overhead sharding).
+- Source: YL Axiom v3 toolchain, dependency, code idiom, and CI modernization (Rust 1.100.0 + Cargo lints/cooldown, base64 0.23.1, zip 9.8.1, Kotlin 2.4.21/Compose 1.12.2/AGP 9.3.3/Gradle 9.7.1, CycloneDX 3.6.1, Scorecard v2.6.0, GitHub Actions cache-mode + prebuilt xtask reuse + lead-overhead sharding).
 - Last verified: 2026-11-20: cargo xtask fmt, affected, android-so, cargo build --release -p parchment-desktop, test UiGalleryTest, perf: PASS review, PASS rust (clippy -D warnings, Cargo unused-dep lints deny, 68 workspace + 2 slim android-jni tests), PASS android-so (1.85 MB, 3 PT_LOAD 16 KB aligned), desktop-exe (27.82 MB, 244 ms window / 271 ms title / 2.55 ms core / 0.622 ms stream CPU p95 / 16.66 ms VSync / 136.5 MB idle RAM), ktlintCheck, 584 Kotlin tests + UiGalleryTest, compileAndroidMain; existing signed R8 APK 5.39 MB (private signer env vars not loaded).
 - Next action: Load private signer (. .\scripts\load-private-signer.ps1) and run cargo xtask final for a fresh signed APK if publishing a release; otherwise review diff, commit, and run manual user checks (13.6, 17.1).
 
