@@ -461,7 +461,8 @@ impl CodingTaskCoordinator {
             .ok_or_else(|| CodingError::TaskNotFound(id.to_string()))?;
         task.state = state;
         task.updated_at();
-        Self::persist_to_store(&mut self.store, task)?;
+        let task_clone = task.clone();
+        Self::persist_to_store(&mut self.store, &task_clone)?;
         Ok(())
     }
 
@@ -471,15 +472,16 @@ impl CodingTaskCoordinator {
         task_id: &str,
         subtask: Subtask,
     ) -> Result<SubtaskId, CodingError> {
+        let subtask_id = subtask.id.clone();
         let task = self
             .tasks
             .get_mut(task_id)
             .ok_or_else(|| CodingError::TaskNotFound(task_id.to_string()))?;
-        let id = subtask.id.clone();
         task.subtasks.push(subtask);
         task.updated_at();
-        Self::persist_to_store(&mut self.store, task)?;
-        Ok(id)
+        let task_clone = task.clone();
+        Self::persist_to_store(&mut self.store, &task_clone)?;
+        Ok(subtask_id)
     }
 
     /// Create a checkpoint for resumption and persist.
@@ -490,13 +492,9 @@ impl CodingTaskCoordinator {
         description: String,
         snapshot_ref: String,
     ) -> Result<CheckpointId, CodingError> {
-        let task = self
-            .tasks
-            .get_mut(task_id)
-            .ok_or_else(|| CodingError::TaskNotFound(task_id.to_string()))?;
-        let id = format!("cp-{task_id}-{}", now_ms());
+        let checkpoint_id = format!("cp-{task_id}-{}", now_ms());
         let checkpoint = Checkpoint {
-            id: id.clone(),
+            id: checkpoint_id.clone(),
             task_id: task_id.to_string(),
             subtask_id,
             created_at_ms: now_ms(),
@@ -504,10 +502,15 @@ impl CodingTaskCoordinator {
             snapshot_ref,
             resumable: true,
         };
+        let task = self
+            .tasks
+            .get_mut(task_id)
+            .ok_or_else(|| CodingError::TaskNotFound(task_id.to_string()))?;
         task.checkpoints.push(checkpoint);
         task.updated_at();
-        Self::persist_to_store(&mut self.store, task)?;
-        Ok(id)
+        let task_clone = task.clone();
+        Self::persist_to_store(&mut self.store, &task_clone)?;
+        Ok(checkpoint_id)
     }
 
     /// Serializes and persists a task to storage.
@@ -543,7 +546,8 @@ impl CodingTaskCoordinator {
             .ok_or_else(|| CodingError::TaskNotFound(task_id.to_string()))?;
         task.artifacts.push(artifact);
         task.updated_at();
-        Self::persist_to_store(&mut self.store, task)?;
+        let task_clone = task.clone();
+        Self::persist_to_store(&mut self.store, &task_clone)?;
         Ok(())
     }
 
@@ -583,7 +587,8 @@ impl CodingTaskCoordinator {
         }
         if found {
             task.updated_at();
-            Self::persist_to_store(&mut self.store, task)?;
+            let task_clone = task.clone();
+            Self::persist_to_store(&mut self.store, &task_clone)?;
             Ok(())
         } else {
             Err(CodingError::VerificationFailed(format!(
@@ -613,7 +618,8 @@ impl CodingTaskCoordinator {
         subtask.kind = SubtaskKind::WriteTests;
         subtask.state = SubtaskState::InProgress;
         task.updated_at();
-        Self::persist_to_store(&mut self.store, task)?;
+        let task_clone = task.clone();
+        Self::persist_to_store(&mut self.store, &task_clone)?;
         Ok(SubtaskPhase::Red)
     }
 
@@ -636,7 +642,8 @@ impl CodingTaskCoordinator {
         subtask.kind = SubtaskKind::Implement;
         subtask.state = SubtaskState::InProgress;
         task.updated_at();
-        Self::persist_to_store(&mut self.store, task)?;
+        let task_clone = task.clone();
+        Self::persist_to_store(&mut self.store, &task_clone)?;
         Ok(SubtaskPhase::Green)
     }
 
@@ -658,7 +665,8 @@ impl CodingTaskCoordinator {
         subtask.kind = SubtaskKind::Refactor;
         subtask.state = SubtaskState::InProgress;
         task.updated_at();
-        Self::persist_to_store(&mut self.store, task)?;
+        let task_clone = task.clone();
+        Self::persist_to_store(&mut self.store, &task_clone)?;
         Ok(SubtaskPhase::Refactor)
     }
 
@@ -691,7 +699,8 @@ impl CodingTaskCoordinator {
         subtask.state = SubtaskState::Verified;
         subtask.completed_at_ms = Some(now_ms());
         task.updated_at();
-        Self::persist_to_store(&mut self.store, task)?;
+        let task_clone = task.clone();
+        Self::persist_to_store(&mut self.store, &task_clone)?;
         Ok(SubtaskPhase::Refactor)
     }
 

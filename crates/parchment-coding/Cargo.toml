@@ -15,7 +15,7 @@ network = ["parchment-harness/network"]
 parchment-harness = { path = "../parchment-harness", default-features = false }
 parchment-prose = { path = "../parchment-prose" }
 parchment-storage = { path = "../parchment-storage" }
-serde.workspace = true
+serde = { workspace = true, features = ["derive"] }
 serde_json.workspace = true
 thiserror.workspace = true
 

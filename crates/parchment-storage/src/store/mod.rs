@@ -229,20 +229,25 @@ impl ParchmentStore {
     /// Lists all coding task ids, optionally filtered by workspace path.
     pub fn list_coding_task_ids(&self, workspace_path: Option<&str>) -> StorageResult<Vec<String>> {
         let mut ids: Vec<String> = Vec::new();
-        let mut stmt = match workspace_path {
-            Some(ws) => self.conn.prepare(
-                "SELECT id FROM coding_tasks WHERE workspace_path = ?1 ORDER BY updated_at_ms DESC",
-            )?,
-            None => self
-                .conn
-                .prepare("SELECT id FROM coding_tasks ORDER BY updated_at_ms DESC")?,
-        };
-        let rows = match workspace_path {
-            Some(ws) => stmt.query_map(params![ws], |row| row.get(0))?,
-            None => stmt.query_map([], |row| row.get(0))?,
-        };
-        for r in rows {
-            ids.push(r?);
+        match workspace_path {
+            Some(ws) => {
+                let mut stmt = self.conn.prepare(
+                    "SELECT id FROM coding_tasks WHERE workspace_path = ?1 ORDER BY updated_at_ms DESC",
+                )?;
+                let rows = stmt.query_map(params![ws], |row| row.get::<_, String>(0))?;
+                for r in rows {
+                    ids.push(r?);
+                }
+            }
+            None => {
+                let mut stmt = self
+                    .conn
+                    .prepare("SELECT id FROM coding_tasks ORDER BY updated_at_ms DESC")?;
+                let rows = stmt.query_map([], |row| row.get::<_, String>(0))?;
+                for r in rows {
+                    ids.push(r?);
+                }
+            }
         }
         Ok(ids)
     }
