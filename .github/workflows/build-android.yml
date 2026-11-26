@@ -231,6 +231,7 @@ jobs:
 
       - name: Restore Android Platform 37 Cache
         id: cache-android-platform
+        continue-on-error: true
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: /usr/local/lib/android/sdk/platforms/android-37*
@@ -238,16 +239,27 @@ jobs:
 
       - name: Restore Android Build-Tools 37 Cache
         id: cache-android-bt
+        continue-on-error: true
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: /usr/local/lib/android/sdk/build-tools/37*
           key: android-build-tools-37-${{ runner.os }}
 
+      # The SDK tree is root-owned on the runner image, so elevate only for the
+      # license files and fall back to a plain write when sudo is unavailable.
       - name: Write Android SDK License Hashes
         run: |
-          mkdir -p "$ANDROID_HOME/licenses"
-          printf "\n8933bad161af4178b1185d1a37fbf41ea5269c55\nd56f5187479451eabf01fb78af6dfcb131a6481e\n24333f8a63b6825ea9c5514f83c2829b004d1fee\n" > "$ANDROID_HOME/licenses/android-sdk-license"
-          printf "\n84831b9409646a918e30573bab4c9c91346d8abd\n504667f4c0de7af1a06de9f4b1727b84351f2910\n" > "$ANDROID_HOME/licenses/android-sdk-preview-license"
+          set -euo pipefail
+          if command -v sudo >/dev/null 2>&1; then
+            sudo mkdir -p "$ANDROID_HOME/licenses"
+            printf "\n8933bad161af4178b1185d1a37fbf41ea5269c55\nd56f5187479451eabf01fb78af6dfcb131a6481e\n24333f8a63b6825ea9c5514f83c2829b004d1fee\n" | sudo tee "$ANDROID_HOME/licenses/android-sdk-license" >/dev/null
+            printf "\n84831b9409646a918e30573bab4c9c91346d8abd\n504667f4c0de7af1a06de9f4b1727b84351f2910\n" | sudo tee "$ANDROID_HOME/licenses/android-sdk-preview-license" >/dev/null
+          else
+            mkdir -p "$ANDROID_HOME/licenses"
+            printf "\n8933bad161af4178b1185d1a37fbf41ea5269c55\nd56f5187479451eabf01fb78af6dfcb131a6481e\n24333f8a63b6825ea9c5514f83c2829b004d1fee\n" > "$ANDROID_HOME/licenses/android-sdk-license"
+            printf "\n84831b9409646a918e30573bab4c9c91346d8abd\n504667f4c0de7af1a06de9f4b1727b84351f2910\n" > "$ANDROID_HOME/licenses/android-sdk-preview-license"
+          fi
+          echo "Android SDK licenses written"
 
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@8da46b539cd8fe6ab27ca75128919a18d757604c # v6.4.1
