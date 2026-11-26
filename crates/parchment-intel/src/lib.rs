@@ -239,7 +239,8 @@ impl TextSymbolBackend {
 
 /// Simple regex-like extraction without the `regex` crate dependency.
 /// Finds the first capture group for a simple pattern.
-fn _regex_lite_regex(_line: &str, _pattern: &str) -> Option<String> {
+#[allow(dead_code)]
+fn regex_lite_regex(_line: &str, _pattern: &str) -> Option<String> {
     // Lightweight heuristic: find identifier after keyword
     // This is a placeholder; real implementation uses tree-sitter or regex crate
     let keywords: &[&str] = &["fn", "fun", "struct", "enum", "trait", "class", "interface"];
