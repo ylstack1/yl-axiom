@@ -346,7 +346,7 @@ pub fn classify_android(paths: Option<&HashSet<String>>) -> BTreeMap<&'static st
 
     let shared_gradle = paths.iter().any(|p| {
         p.starts_with("gradle/")
-            || SHARED_GRADLE_FILES.iter().any(|s| p == s)
+            || SHARED_GRADLE_FILES.iter().any(|s| p.as_str() == *s)
             || p.starts_with("mobile/compose-app/src/commonMain/")
             || p.starts_with("mobile/compose-app/src/jvmShared/")
     });
