@@ -2,7 +2,7 @@ use rusqlite::Connection;
 
 use crate::StorageResult;
 
-pub const SCHEMA_VERSION: i32 = 1;
+pub const SCHEMA_VERSION: i32 = 2;
 
 /// Tool call outputs larger than 64 KiB spill to `result_overflow` so viewport window queries
 /// stay fast and lean even across 100-step agent runs with multi-megabyte tool receipts.
@@ -165,6 +165,110 @@ pub fn configure_and_migrate(conn: &Connection) -> StorageResult<()> {
              END;
 
              PRAGMA user_version = 1;",
+        )?;
+    }
+
+    if current_version < 2 {
+        conn.execute_batch(
+            "CREATE TABLE IF NOT EXISTS coding_tasks (
+                 id TEXT PRIMARY KEY,
+                 title TEXT NOT NULL,
+                 description TEXT NOT NULL,
+                 state TEXT NOT NULL DEFAULT 'PENDING',
+                 workspace_path TEXT NOT NULL DEFAULT '',
+                 repo_url TEXT NOT NULL DEFAULT '',
+                 created_at_ms INTEGER NOT NULL DEFAULT 0,
+                 updated_at_ms INTEGER NOT NULL DEFAULT 0,
+                 completed_at_ms INTEGER,
+                 task_json TEXT NOT NULL DEFAULT '{}',
+                 owner_session_id TEXT NOT NULL DEFAULT '',
+                 owner_run_id TEXT NOT NULL DEFAULT ''
+             );
+
+             CREATE INDEX IF NOT EXISTS idx_coding_tasks_workspace
+                 ON coding_tasks(workspace_path);
+             CREATE INDEX IF NOT EXISTS idx_coding_tasks_state
+                 ON coding_tasks(state);
+             CREATE INDEX IF NOT EXISTS idx_coding_tasks_owner
+                 ON coding_tasks(owner_session_id);
+
+             CREATE TABLE IF NOT EXISTS coding_subtasks (
+                 id TEXT PRIMARY KEY,
+                 task_id TEXT NOT NULL REFERENCES coding_tasks(id) ON DELETE CASCADE,
+                 title TEXT NOT NULL,
+                 description TEXT NOT NULL,
+                 kind TEXT NOT NULL DEFAULT 'EXPLORE',
+                 state TEXT NOT NULL DEFAULT 'PENDING',
+                 depends_on_json TEXT NOT NULL DEFAULT '[]',
+                 created_at_ms INTEGER NOT NULL DEFAULT 0,
+                 completed_at_ms INTEGER,
+                 subtask_json TEXT NOT NULL DEFAULT '{}'
+             );
+
+             CREATE INDEX IF NOT EXISTS idx_coding_subtasks_task
+                 ON coding_subtasks(task_id);
+             CREATE INDEX IF NOT EXISTS idx_coding_subtasks_state
+                 ON coding_subtasks(state);
+
+             CREATE TABLE IF NOT EXISTS coding_acceptance_criteria (
+                 id TEXT PRIMARY KEY,
+                 task_id TEXT NOT NULL REFERENCES coding_tasks(id) ON DELETE CASCADE,
+                 subtask_id TEXT REFERENCES coding_subtasks(id) ON DELETE CASCADE,
+                 description TEXT NOT NULL,
+                 kind TEXT NOT NULL DEFAULT 'CUSTOM',
+                 command TEXT NOT NULL DEFAULT '',
+                 expected TEXT NOT NULL DEFAULT '',
+                 verified INTEGER NOT NULL DEFAULT 0,
+                 verified_at_ms INTEGER,
+                 criterion_json TEXT NOT NULL DEFAULT '{}'
+             );
+
+             CREATE INDEX IF NOT EXISTS idx_coding_criteria_task
+                 ON coding_acceptance_criteria(task_id);
+
+             CREATE TABLE IF NOT EXISTS coding_checkpoints (
+                 id TEXT PRIMARY KEY,
+                 task_id TEXT NOT NULL REFERENCES coding_tasks(id) ON DELETE CASCADE,
+                 subtask_id TEXT REFERENCES coding_subtasks(id) ON DELETE CASCADE,
+                 created_at_ms INTEGER NOT NULL DEFAULT 0,
+                 description TEXT NOT NULL DEFAULT '',
+                 snapshot_ref TEXT NOT NULL DEFAULT '',
+                 resumable INTEGER NOT NULL DEFAULT 1,
+                 checkpoint_json TEXT NOT NULL DEFAULT '{}'
+             );
+
+             CREATE INDEX IF NOT EXISTS idx_coding_checkpoints_task
+                 ON coding_checkpoints(task_id);
+
+             CREATE TABLE IF NOT EXISTS coding_artifacts (
+                 id TEXT PRIMARY KEY,
+                 task_id TEXT NOT NULL REFERENCES coding_tasks(id) ON DELETE CASCADE,
+                 kind TEXT NOT NULL DEFAULT 'PATCH',
+                 path TEXT NOT NULL DEFAULT '',
+                 content_hash TEXT NOT NULL DEFAULT '',
+                 bytes INTEGER NOT NULL DEFAULT 0,
+                 created_at_ms INTEGER NOT NULL DEFAULT 0,
+                 artifact_json TEXT NOT NULL DEFAULT '{}'
+             );
+
+             CREATE INDEX IF NOT EXISTS idx_coding_artifacts_task
+                 ON coding_artifacts(task_id);
+
+             CREATE TABLE IF NOT EXISTS coding_hooks (
+                 id TEXT PRIMARY KEY,
+                 task_id TEXT NOT NULL REFERENCES coding_tasks(id) ON DELETE CASCADE,
+                 event TEXT NOT NULL DEFAULT 'POST_TOOL_USE',
+                 matcher TEXT NOT NULL DEFAULT '',
+                 command TEXT NOT NULL DEFAULT '',
+                 timeout_ms INTEGER NOT NULL DEFAULT 60000,
+                 blocking INTEGER NOT NULL DEFAULT 0,
+                 hook_json TEXT NOT NULL DEFAULT '{}'
+             );
+
+             CREATE INDEX IF NOT EXISTS idx_coding_hooks_task
+                 ON coding_hooks(task_id);
+
+             PRAGMA user_version = 2;",
         )?;
     }
 

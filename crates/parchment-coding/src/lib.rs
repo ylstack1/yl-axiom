@@ -404,10 +404,10 @@ impl CodingTaskCoordinator {
         let mut tasks = BTreeMap::new();
         let ids = store.list_coding_task_ids(None)?;
         for id in ids {
-            if let Some(json) = store.load_coding_task_json(&id)? {
-                if let Ok(task) = serde_json::from_str::<Task>(&json) {
-                    tasks.insert(id, task);
-                }
+            if let Some(json) = store.load_coding_task_json(&id)?
+                && let Ok(task) = serde_json::from_str::<Task>(&json)
+            {
+                tasks.insert(id, task);
             }
         }
         Ok(Self { store, tasks })
