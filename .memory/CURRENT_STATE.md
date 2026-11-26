@@ -1,5 +1,14 @@
 # YL Axiom — Current State
 
+## Verified on main @ 401f7de (independent local runs)
+- `cargo check -p parchment-coding` PASS
+- `cargo test -p parchment-coding` PASS (31 passed, 0 failed)
+- `cargo clippy -p parchment-coding --all-targets -- -D warnings` PASS (0 warnings)
+- `cargo clippy --workspace --exclude parchment-desktop --all-targets -- -D warnings` PASS (verified at 77248f9)
+- `cargo fmt --all -- --check` PASS
+- CI `Build Android APK` PASS: slim arm64-v8a `.so` (1.86 MB, 16 KB aligned) + debug APK built and uploaded
+- Not verified: `parchment-desktop` (GPUI/Win32 cannot build on the Linux VM), Android device runtime, Windows `.exe`
+
 ## Verified on main @ 77248f9 (independent local run)
 - `cargo check -p parchment-coding` PASS
 - `cargo test -p parchment-coding` PASS (22 passed, 0 failed)
