@@ -1082,37 +1082,22 @@ internal object Strings {
 
     // Axiom Coding
     val axiomCoding = "Axiom Coding"
-    val axiomCodingSubtitle = "Plan, build and verify with an agent"
     val axiomCodingEmptyTitle = "No coding tasks yet"
     val axiomCodingEmptyBody =
         "Give the agent a goal. It plans the work, edits files, runs the tests and reports what it verified."
     val axiomCodingNewTask = "New coding task"
-    val axiomCodingTaskTitle = "Task title"
-    val axiomCodingTaskGoal = "What should be done?"
-    val axiomCodingCreate = "Create task"
-    val axiomCodingCancel = "Cancel"
     val axiomCodingPlan = "Plan"
-    val axiomCodingSubtasks = "Steps"
-    val axiomCodingActivity = "Activity"
     val axiomCodingChanges = "Changed files"
     val axiomCodingVerification = "Verification"
     val axiomCodingNoSteps = "The plan has not been written yet."
     val axiomCodingNoChanges = "No files have been changed yet."
     val axiomCodingNoVerification = "Nothing has been verified yet."
-    val axiomCodingApprove = "Approve"
     val axiomCodingPause = "Pause"
     val axiomCodingResume = "Resume"
-    val axiomCodingStop = "Stop"
     val axiomCodingWaitingApproval = "Waiting for your approval"
     val axiomCodingPassed = "Passed"
     val axiomCodingFailed = "Failed"
-    val axiomCodingNotRun = "Not run"
-    val axiomCodingStepPending = "Waiting"
-    val axiomCodingStepActive = "In progress"
-    val axiomCodingStepDone = "Done"
-    val axiomCodingStepBlocked = "Blocked"
     fun axiomCodingStepCount(done: Int, total: Int): String = "$done of $total steps done"
     fun axiomCodingChangedFileCount(count: Int): String =
         "$count file${if (count == 1) "" else "s"} changed"
-    fun axiomCodingTaskState(state: String): String = state
 }
