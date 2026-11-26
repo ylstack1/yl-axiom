@@ -195,8 +195,7 @@ impl TextSymbolBackend {
     }
 
     fn extract_rust_function(&self, line: &str) -> Option<String> {
-        let re = regex_lite_regex(line, r"fn\s+([a-zA-Z_][a-zA-Z0-9_]*)");
-        re
+        regex_lite_regex(line, r"fn\s+([a-zA-Z_][a-zA-Z0-9_]*)")
     }
 
     fn extract_rust_type_decl(&self, line: &str) -> Option<(String, SymbolKind)> {
@@ -214,11 +213,10 @@ impl TextSymbolBackend {
     }
 
     fn extract_kotlin_function(&self, line: &str) -> Option<String> {
-        let re = regex_lite_regex(
+        regex_lite_regex(
             line,
             r"(?:public\s+|private\s+|internal\s+)?fun\s+([a-zA-Z_][a-zA-Z0-9_]*)",
-        );
-        re
+        )
     }
 
     fn extract_kotlin_type_decl(&self, line: &str) -> Option<(String, SymbolKind)> {
