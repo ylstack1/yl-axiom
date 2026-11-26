@@ -287,11 +287,13 @@ jobs:
           unzip -l dist/YL-Axiom-Android-Debug.apk | grep -q 'lib/arm64-v8a/libparchment_core.so'
           echo "Android debug APK built and verified"
 
-      - name: Run Android Debug Tests
+      # The KMP module exposes desktopTest (JVM/Skiko); Android host tests are not
+      # enabled in compose-app, so run the JVM suite that actually exists.
+      - name: Run Compose JVM Tests
         run: |
           set -euo pipefail
           chmod +x ./gradlew "$RUNNER_TEMP/xtask/parchment-xtask"
-          "$RUNNER_TEMP/xtask/parchment-xtask" ci run-gradle -- :composeApp:debugUnitTest \
+          "$RUNNER_TEMP/xtask/parchment-xtask" ci run-gradle -- :composeApp:desktopTest \
             -Pparchment.testForks=2 \
             --no-daemon --no-configuration-cache --max-workers=4
 
@@ -325,8 +327,8 @@ jobs:
         with:
           name: YL-Axiom-Android-Test-Artifacts
           path: |
-            mobile/compose-app/build/reports/tests/debug/**
-            mobile/compose-app/build/test-results/debug/**
+            mobile/compose-app/build/reports/tests/**/
+            mobile/compose-app/build/test-results/**/
             mobile/android-app/build/reports/**/debug/**
           compression-level: 1
           retention-days: ${{ github.event_name == 'pull_request' && 7 || 30 }}
