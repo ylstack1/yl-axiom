@@ -1098,6 +1098,5 @@ internal object Strings {
     val axiomCodingPassed = "Passed"
     val axiomCodingFailed = "Failed"
     fun axiomCodingStepCount(done: Int, total: Int): String = "$done of $total steps done"
-    fun axiomCodingChangedFileCount(count: Int): String =
-        "$count file${if (count == 1) "" else "s"} changed"
+    fun axiomCodingChangedFileCount(count: Int): String = "$count file${if (count == 1) "" else "s"} changed"
 }
