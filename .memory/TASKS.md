@@ -83,8 +83,8 @@ Statuses: NOT_STARTED | IN_PROGRESS | BLOCKED | NEEDS_REVIEW | VERIFIED_COMPLETE
 ## Phase 7 — Context retrieval and artifact management
 - T-701 Disk-spilled large outputs (reuse 64 KiB spill pattern) — NOT_STARTED
 - T-702 Artifact storage/retrieval (patch, diff, build log, test result, review report) — NOT_STARTED
-- T-703 Stable cached prefix + quantized compaction for coding turns — NOT_STARTED
-- T-704 Tool-result clearing policy (exclude build/test evidence) — NOT_STARTED
+- T-703 Stable cached prefix + quantized compaction for coding turns — VERIFIED_COMPLETE (context.rs, 9 tests, awaiting CI)
+- T-704 Tool-result clearing policy (exclude build/test evidence) — VERIFIED_COMPLETE (context.rs)
 - T-705 Subagent context isolation for noisy exploration — NOT_STARTED
 
 ## Phase 8 — Subagents and advanced agent workflows

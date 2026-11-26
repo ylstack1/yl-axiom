@@ -20,9 +20,14 @@ use parchment_storage::ParchmentStore;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
+pub mod context;
 pub mod edit;
 pub mod patch;
 
+pub use context::{
+    CodingContext, ContextSection, SectionKind, ToolResultContext, assemble, compact_history,
+    is_compaction_boundary, is_evidence_tool, should_clear_result,
+};
 pub use edit::FileEditor;
 pub use patch::{PatchError, PatchReview, PatchStatus, PatchStore};
 
