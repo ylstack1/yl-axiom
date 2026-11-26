@@ -51,7 +51,7 @@ pub struct CodingContext {
 
 /// True when `step` sits on a compaction boundary.
 pub fn is_compaction_boundary(step: usize) -> bool {
-    step > 0 && step % COMPACTION_STEP == 0
+    step > 0 && step.is_multiple_of(COMPACTION_STEP)
 }
 
 /// True when a tool's output is verification evidence and must be preserved.
