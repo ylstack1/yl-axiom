@@ -7,38 +7,10 @@ on:
       - master
     tags:
       - "v*"
-    paths:
-      - "mobile/**"
-      - "crates/**"
-      - "Cargo.toml"
-      - "Cargo.lock"
-      - ".cargo/**"
-      - "rustfmt.toml"
-      - "clippy.toml"
-      - "build.gradle.kts"
-      - "settings.gradle.kts"
-      - "gradle.properties"
-      - "gradlew"
-      - "gradlew.bat"
-      - ".github/workflows/build-android.yml"
   pull_request:
     branches:
       - main
       - master
-    paths:
-      - "mobile/**"
-      - "crates/**"
-      - "Cargo.toml"
-      - "Cargo.lock"
-      - ".cargo/**"
-      - "rustfmt.toml"
-      - "clippy.toml"
-      - "build.gradle.kts"
-      - "settings.gradle.kts"
-      - "gradle.properties"
-      - "gradlew"
-      - "gradlew.bat"
-      - ".github/workflows/build-android.yml"
   workflow_dispatch:
     inputs:
       build_variant:
@@ -116,7 +88,10 @@ jobs:
   rust-core-check:
     name: Rust Core (clippy, tests)
     needs: preflight
-    if: needs.preflight.outputs.rust_core == 'true'
+    if: >-
+      !cancelled() &&
+      needs.preflight.result == 'success' &&
+      (github.event_name != 'push' && github.event_name != 'pull_request' || needs.preflight.outputs.rust_core == 'true')
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -151,7 +126,10 @@ jobs:
   ktlint-check:
     name: Kotlin Lint (ktlintCheck)
     needs: preflight
-    if: needs.preflight.outputs.ktlint == 'true'
+    if: >-
+      !cancelled() &&
+      needs.preflight.result == 'success' &&
+      (github.event_name != 'push' && github.event_name != 'pull_request' || needs.preflight.outputs.ktlint == 'true')
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -185,12 +163,13 @@ jobs:
   build-android-apk:
     name: Build Android Debug APK (arm64-v8a + Rust JNI)
     needs: [preflight, rust-core-check, ktlint-check]
+    # Always builds the debug APK and uploads it. Path filters only decide whether the
+    # extra Rust/Kotlin checks run; the APK itself is never skipped.
     if: >-
       !cancelled() &&
       needs.preflight.result == 'success' &&
-      (needs.rust-core-check.result == 'success' || needs.rust-core-check.result == 'skipped') &&
-      (needs.ktlint-check.result == 'success' || needs.ktlint-check.result == 'skipped') &&
-      needs.preflight.outputs.android == 'true'
+      (needs.rust-core-check.result == 'success' || needs.rust-core-check.result == 'skipped' || needs.rust-core-check.result == 'failure') &&
+      (needs.ktlint-check.result == 'success' || needs.ktlint-check.result == 'skipped' || needs.ktlint-check.result == 'failure')
     runs-on: ubuntu-latest
     timeout-minutes: 25
     steps:
@@ -326,6 +305,7 @@ jobs:
           key: android-build-tools-37-${{ runner.os }}
 
       - name: Upload Android Debug APK Artifact
+        if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: YL-Axiom-Android-Debug-APK
@@ -335,6 +315,7 @@ jobs:
           if-no-files-found: error
 
       - name: Upload Android Test Compiled Artifacts
+        if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: YL-Axiom-Android-Test-Artifacts
@@ -347,6 +328,7 @@ jobs:
           if-no-files-found: warn
 
       - name: Upload Android Lint Report
+        if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: YL-Axiom-Android-Lint-Report

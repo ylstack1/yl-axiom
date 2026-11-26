@@ -34,6 +34,8 @@ const RUST_ANDROID_PREFIXES: &[&str] = &[
     "crates/parchment-storage/",
     "crates/parchment-prose/",
     "crates/parchment-harness/",
+    "crates/parchment-coding/",
+    "crates/parchment-intel/",
     "crates/parchment-core/",
 ];
 
@@ -43,6 +45,8 @@ const RUST_CORE_PREFIXES: &[&str] = &[
     "crates/parchment-protocol/",
     "crates/parchment-prose/",
     "crates/parchment-harness/",
+    "crates/parchment-coding/",
+    "crates/parchment-intel/",
     "crates/parchment-core/",
 ];
 
