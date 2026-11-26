@@ -267,11 +267,7 @@ impl CodeIntelBackend for TextSymbolBackend {
         &self.language
     }
 
-    fn search_symbols(
-        &self,
-        _query: &str,
-        _limit: usize,
-    ) -> Result<SymbolSearchResult, IntelError> {
+    fn search_symbols(&self, query: &str, _limit: usize) -> Result<SymbolSearchResult, IntelError> {
         // Text backend searches within indexed documents; for now return empty
         // with the query recorded. Full implementation indexes workspace files.
         Ok(SymbolSearchResult {
