@@ -1,6 +1,6 @@
 # Third-party notices
 
-Parchment is MIT licensed (see [LICENSE](../LICENSE)). It bundles these fonts, each under the [SIL Open Font License 1.1](https://openfontlicense.org) (OFL). The copyright lines are taken from the font files themselves. The full licence text ships with both apps beside the fonts, in [`fonts/OFL.txt`](../mobile/compose-app/src/commonMain/resources/fonts/OFL.txt). The fonts may be used, bundled and redistributed with the app; they may not be sold on their own.
+YL Axiom is MIT licensed (see [LICENSE](../LICENSE)). It bundles these fonts, each under the [SIL Open Font License 1.1](https://openfontlicense.org) (OFL). The copyright lines are taken from the font files themselves. The full licence text ships with both apps beside the fonts, in [`fonts/OFL.txt`](../mobile/compose-app/src/commonMain/resources/fonts/OFL.txt). The fonts may be used, bundled and redistributed with the app; they may not be sold on their own.
 
 | Font | Files | Copyright |
 |---|---|---|

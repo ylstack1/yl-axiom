@@ -9,4 +9,4 @@ labels: question
 **What you've tried**
 
 **Version and platform**
-<!-- Parchment version (Settings > Storage & Updates), Windows or Android. Never paste API keys. -->
+<!-- YL Axiom version (Settings > Storage & Updates), Windows or Android. Never paste API keys. -->

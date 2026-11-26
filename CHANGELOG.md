@@ -35,7 +35,7 @@ What changed in each release, newest first. From 2.1.7 on, release-please writes
 
 ### New
 
-* Parchment v3 native Rust core, Windows GPUI desktop, and Android JNI ([a12791d](https://github.com/baros4294/parchment/commit/a12791d0d3f2353b982cb9ddeb7e17bcd21fb4fe))
+* YL Axiom v3 native Rust core, Windows GPUI desktop, and Android JNI ([a12791d](https://github.com/baros4294/parchment/commit/a12791d0d3f2353b982cb9ddeb7e17bcd21fb4fe))
 
 ## [2.6.0](https://github.com/baros4294/parchment/compare/v2.5.2...v2.6.0) (2026-11-19)
 

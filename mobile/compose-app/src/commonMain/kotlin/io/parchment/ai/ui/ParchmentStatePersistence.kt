@@ -1172,8 +1172,8 @@ internal fun sanitizeLoadedSnapshot(saved: AppStateSnapshot): AppStateSnapshot {
     val safeOpenTabs = (loaded.openTabSessionIds.filter { it in validSessionIdSet } + safeActiveSessionId).distinct()
 
     val migratedTheme = migrateThemeTypefaceDefaults(
-        if (loaded.theme.name.endsWith("Warm Ivory (Light)") && !loaded.theme.name.startsWith("Parchment ")) {
-            loaded.theme.copy(name = "Parchment Warm Ivory (Light)")
+        if (loaded.theme.name.endsWith("Warm Ivory (Light)") && !loaded.theme.name.startsWith("YL Axiom ")) {
+            loaded.theme.copy(name = "YL Axiom Warm Ivory (Light)")
         } else {
             loaded.theme
         }

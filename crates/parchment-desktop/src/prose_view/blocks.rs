@@ -220,7 +220,7 @@ pub(super) fn render_dialogue_narration_text(text: &str, p: &ParchmentPalette) -
     col.into_any_element()
 }
 
-/// Parchment warm code card matching `desktop-chat.png`:
+/// YL Axiom warm code card matching `desktop-chat.png`:
 /// `sheetBg` header with `</> lang (N lines)` + Wrap / Collapse / Download / Copy, hairline divider,
 /// and warm syntax-highlighted monospace body.
 #[allow(clippy::too_many_arguments)]

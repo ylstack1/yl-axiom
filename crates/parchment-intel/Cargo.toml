@@ -1,0 +1,18 @@
+[package]
+name = "parchment-intel"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[lib]
+name = "parchment_intel"
+
+[features]
+default = []
+
+[dependencies]
+serde = { workspace = true, features = ["derive"] }
+thiserror.workspace = true
+
+[lints]
+workspace = true

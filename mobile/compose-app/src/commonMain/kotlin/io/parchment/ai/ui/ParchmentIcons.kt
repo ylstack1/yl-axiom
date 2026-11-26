@@ -27,7 +27,7 @@ import io.parchment.ai.network.AiProviderEngine
 import io.parchment.ai.network.getDiscoveredVendorForModel
 
 /**
- * Parchment's own vector icons on a 24×24 grid, drawn with Compose Foundation and tinted by the theme,
+ * YL Axiom's own vector icons on a 24×24 grid, drawn with Compose Foundation and tinted by the theme,
  * so no OS emoji is needed.
  */
 enum class KissIcon {

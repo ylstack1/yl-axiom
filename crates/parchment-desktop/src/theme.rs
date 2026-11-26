@@ -1,4 +1,4 @@
-//! Parchment Design System theme palette, all 9 built-in presets, WCAG AA `>= 4.5:1` contrast
+//! YL Axiom Design System theme palette, all 9 built-in presets, WCAG AA `>= 4.5:1` contrast
 //! enforcement (`readable_ink`, `on_fill_ink`), bundled font registration, and `gpui-component`
 //! global `Theme` synchronization matching `docs/design.md` and `ParchmentTheme.kt`.
 
@@ -519,7 +519,7 @@ pub fn sync_gpui_component_theme(palette: &ParchmentPalette, cx: &mut App) {
     });
 }
 
-/// All 9 built-in Parchment theme presets (exact hex parity with v2 `ThemeConfig.PRESETS`).
+/// All 9 built-in YL Axiom theme presets (exact hex parity with v2 `ThemeConfig.PRESETS`).
 pub fn theme_presets() -> Vec<ThemeConfig> {
     let make = |name: &str,
                 mode: &str,
@@ -589,7 +589,7 @@ pub fn theme_presets() -> Vec<ThemeConfig> {
             "#F0857A",
         ),
         make(
-            "Parchment Warm Ivory (Light)",
+            "YL Axiom Warm Ivory (Light)",
             "Light",
             "#F8F7F4",
             "#EFECE6",

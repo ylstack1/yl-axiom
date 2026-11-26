@@ -1,15 +1,15 @@
-; Parchment — Minimal Zero-Trace Windows Installer (Inno Setup)
+; YL Axiom — Minimal Zero-Trace Windows Installer (Inno Setup)
 ; Compiled in GitHub Actions after cargo build --release -p parchment-desktop
 
-#define MyAppName "Parchment"
+#define MyAppName "YL Axiom"
 #ifndef MyAppVersion
   #define MyAppVersion "3.1.0"
 #endif
 #ifndef MyCompression
   #define MyCompression "lzma2/max"
 #endif
-#define MyAppPublisher "Parchment"
-#define MyAppExeName "Parchment.exe"
+#define MyAppPublisher "YL Stack"
+#define MyAppExeName "YL-Axiom.exe"
 
 [Setup]
 AppId={{8D49C66A-9870-4C97-9499-684F84A8E432}
@@ -21,7 +21,7 @@ DefaultGroupName={#MyAppName}
 DisableProgramGroupPage=yes
 PrivilegesRequired=lowest
 OutputDir=..\build\installer
-OutputBaseFilename=Parchment-Windows-x64-Setup
+OutputBaseFilename=YL-Axiom-Windows-x64-Setup
 Compression={#MyCompression}
 SolidCompression=yes
 LZMAUseSeparateProcess=yes
@@ -50,7 +50,7 @@ Filename: "{app}\{#MyAppExeName}"; Description: "{cm:LaunchProgram,{#StringChang
 
 ; ==============================================================================
 ; SAFE UNINSTALLATION: Only removes the application binaries in {app},
-; NEVER deleting %LOCALAPPDATA%\ParchmentAI so updates/reinstalls keep all user data!
+; NEVER deleting %LOCALAPPDATA%\YL-Axiom so updates/reinstalls keep all user data!
 ; ==============================================================================
 [UninstallDelete]
 Type: filesandordirs; Name: "{app}"

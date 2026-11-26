@@ -1,4 +1,4 @@
-//! Parchment Design System primitives matching `docs/design.md`, `DesignTokens.kt`,
+//! YL Axiom Design System primitives matching `docs/design.md`, `DesignTokens.kt`,
 //! `ParchmentComponents.kt`, and `ParchmentModelPickerAndStats.kt`.
 
 use std::cell::Cell;
@@ -721,7 +721,7 @@ pub fn section_card_with_action(
     card
 }
 
-/// Animated Parchment pill switch track (`SepiaToggleTrack` from `ParchmentFormComponents.kt`).
+/// Animated YL Axiom pill switch track (`SepiaToggleTrack` from `ParchmentFormComponents.kt`).
 pub fn sepia_toggle_track(
     id: impl Into<ElementId>,
     checked: bool,

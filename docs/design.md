@@ -1,6 +1,6 @@
-# Parchment design
+# YL Axiom design
 
-Parchment is for reading and steering long conversations with models, on Windows and Android. Chats show as messenger bubbles by default, with yours on the right and the assistant's on the left. The Page view sets the same conversation as one continuous page.
+YL Axiom is for reading and steering long conversations with models, on Windows and Android. Chats show as messenger bubbles by default, with yours on the right and the assistant's on the left. The Page view sets the same conversation as one continuous page.
 
 ## Principles
 
@@ -13,7 +13,7 @@ Parchment is for reading and steering long conversations with models, on Windows
 
 ## Tokens
 
-Colors come from `ThemeConfig`, so every preset keeps working. Parchment & Espresso Ink is the default.
+Colors come from `ThemeConfig`, so every preset keeps working. YL Axiom & Espresso Ink is the default.
 
 | Token | Default | Role |
 |---|---|---|
@@ -41,9 +41,9 @@ Everything else lives in `ui/DesignTokens.kt`. New UI uses these names, not lite
 
 ## What we learned from award-winning apps
 
-Studied 2026-11 (iA Writer, Things, Linear, Raycast, Bear, Craft, Apple Design Award criteria). Ideas only, never assets or branding. Each lesson names the Parchment change it leads to.
+Studied 2026-11 (iA Writer, Things, Linear, Raycast, Bear, Craft, Apple Design Award criteria). Ideas only, never assets or branding. Each lesson names the YL Axiom change it leads to.
 
-| Lesson | Seen in | In Parchment |
+| Lesson | Seen in | In YL Axiom |
 |---|---|---|
 | Typography is the interface: a reading measure, a clear type scale, nothing competing with the text | iA Writer, Bear | One reading width and one type scale (above) |
 | Calm by default: secondary actions recede until wanted | Things, Linear | Controls appear on hover; at large text the phone composer moves its actions to a second row |
@@ -70,7 +70,7 @@ The app icon is one nib over a line of ink. `installer/parchment-icon.ico`, `mob
 
 ## Windows
 
-The native Rust GPUI window (`crates/parchment-desktop/src/win32.rs`) uses the native caption, so minimize, maximize, Snap Layouts and rounded corners are the system's own, tinted via DWM to match the active theme. File open (with multi-select and filter presets), file save, and workspace folder dialogs use native Windows COM `IFileOpenDialog` and `IFileSaveDialog` pickers modal to the window. The caption shows the app icon and "chat title — Parchment" (or "Settings — Parchment"); while a reply generates it shows the run's progress instead.
+The native Rust GPUI window (`crates/parchment-desktop/src/win32.rs`) uses the native caption, so minimize, maximize, Snap Layouts and rounded corners are the system's own, tinted via DWM to match the active theme. File open (with multi-select and filter presets), file save, and workspace folder dialogs use native Windows COM `IFileOpenDialog` and `IFileSaveDialog` pickers modal to the window. The caption shows the app icon and "chat title — YL Axiom" (or "Settings — YL Axiom"); while a reply generates it shows the run's progress instead.
 ## Reviewing changes
 
 `cargo xtask test UiGalleryTest` renders the real app at phone and desktop sizes, in light and dark and at 200% text (`*-text200-*`), plus an icon sheet, into `.parchment-local/verification/gallery/`, using sample chats in the test sandbox.
@@ -94,4 +94,4 @@ Interface text lives in `strings/Strings.kt` (Kotlin) and `crates/parchment-desk
 | Utility requests | Background requests |
 | Auto-retrying, backoff | Trying again |
 
-Keep "API key", "tokens", "Markdown" and "World Book": people meet these terms outside Parchment. Show a term of art such as temperature beside a plain description.
+Keep "API key", "tokens", "Markdown" and "World Book": people meet these terms outside YL Axiom. Show a term of art such as temperature beside a plain description.

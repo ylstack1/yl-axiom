@@ -1,18 +1,18 @@
-# Parchment
+# YL Axiom
 
-A native AI chat and agent app for Windows and Android. Bring your own provider and key; Parchment talks to it directly, keeps your chats on your device, and asks before any tool touches your files, the web or your screen.
+A native AI software-engineering app for Windows and Android. Bring your own provider and key; YL Axiom talks to it directly, keeps your chats on your device, and asks before any tool touches your files, the web or your screen.
 
 Built with a native Rust core (SQLite WAL + FTS5), a native Windows GPUI desktop shell, and Jetpack Compose Foundation on Android: no Electron, no WebView, no Material.
 
-[![Latest Release](installer/release-badge.svg)](https://github.com/baros4294/parchment/releases/latest) [![Build](https://github.com/baros4294/parchment/actions/workflows/build-installers.yml/badge.svg?branch=main)](https://github.com/baros4294/parchment/actions/workflows/build-installers.yml) [![CodeQL](https://github.com/baros4294/parchment/actions/workflows/codeql.yml/badge.svg?branch=main)](https://github.com/baros4294/parchment/actions/workflows/codeql.yml)
+[![Latest Release](installer/release-badge.svg)](https://github.com/ylstack1/yl-axiom/releases/latest) [![Build](https://github.com/ylstack1/yl-axiom/actions/workflows/build-installers.yml/badge.svg?branch=main)](https://github.com/ylstack1/yl-axiom/actions/workflows/build-installers.yml) [![CodeQL](https://github.com/ylstack1/yl-axiom/actions/workflows/codeql.yml/badge.svg?branch=main)](https://github.com/ylstack1/yl-axiom/actions/workflows/codeql.yml)
 
-**Download:** [Windows installer (`.exe`)](https://github.com/baros4294/parchment/releases/latest/download/Parchment-Windows-x64-Setup.exe) · [Android (`.apk`)](https://github.com/baros4294/parchment/releases/latest/download/Parchment-Android-Universal.apk)
+**Download:** [Windows installer (`.exe`)](https://github.com/ylstack1/yl-axiom/releases/latest/download/YL-Axiom-Windows-x64-Setup.exe) · [Android (`.apk`)](https://github.com/ylstack1/yl-axiom/releases/latest/download/YL-Axiom-Android-Universal.apk)
 
 <p>
-  <img src="docs/images/desktop-chat.png" alt="Parchment on Windows, light theme" width="49%">
-  <img src="docs/images/desktop-chat-dark.png" alt="Parchment on Windows, dark theme" width="49%">
+  <img src="docs/images/desktop-chat.png" alt="YL Axiom on Windows, light theme" width="49%">
+  <img src="docs/images/desktop-chat-dark.png" alt="YL Axiom on Windows, dark theme" width="49%">
 </p>
-<p align="center"><img src="docs/images/phone-chat.png" alt="Parchment on Android" width="30%"></p>
+<p align="center"><img src="docs/images/phone-chat.png" alt="YL Axiom on Android" width="30%"></p>
 
 ## What it does
 
@@ -50,7 +50,7 @@ Built with a native Rust core (SQLite WAL + FTS5), a native Windows GPUI desktop
 - In-app updates check size and SHA-256 before installing.
 ## Privacy
 
-There are no accounts, analytics or telemetry. Your chats, settings and keys stay on your device. Parchment connects to:
+There are no accounts, analytics or telemetry. Your chats, settings and keys stay on your device. YL Axiom connects to:
 
 - **Your providers**, with your keys, when you send a message or list models.
 - **Public model catalogs** (models.dev, OpenRouter, Vercel AI Gateway, AI/ML API and LiteLLM) when a model's limits or prices are unknown. No key or chat content is sent.
@@ -74,6 +74,7 @@ Run `cargo xtask status` (or `cargo xtask affected`) to verify both the Rust des
 | [docs/release-signing.md](docs/release-signing.md) | Private release keystore setup and CI signing secrets |
 | [docs/third-party-notices.md](docs/third-party-notices.md) | Third-party font and library licence notices |
 | [TODO.md](TODO.md) | Current status, open work and known gaps |
+| [.memory/](.memory/) | YL Axiom engineering knowledge base: vision, architecture, audit, decisions, roadmap, tasks, risks |
 
 ## Acknowledgements
 
@@ -82,6 +83,8 @@ Run `cargo xtask status` (or `cargo xtask affected`) to verify both the Rust des
 - [Oh-My-Pi](https://github.com/can1357/oh-my-pi): long-running agent loops and patient retries.
 - [Kelivo](https://github.com/chevey339/kelivo): settings structure, task-specific default models and usage accounting.
 - [iA Writer](https://ia.net/writer) and [Craft](https://www.craft.do/): the reading-first page.
+- [aacode-rs](https://github.com/kandada/aacode-rs): tool-profile and context-compaction ideas (concepts only; GPL-3.0, no code reused).
+- [fastshell](https://github.com/kandada/fastshell): optional Apache-2.0 Android shell runtime backend (feature-gated, not in default builds).
 
 **Formats and standards**
 - [Model Context Protocol](https://modelcontextprotocol.io/) and its [official registry](https://registry.modelcontextprotocol.io/): MCP servers and the server browser.

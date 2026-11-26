@@ -1,4 +1,4 @@
-rootProject.name = "Parchment"
+rootProject.name = "YL-Axiom"
 enableFeaturePreview("TYPESAFE_PROJECT_ACCESSORS")
 
 pluginManagement {

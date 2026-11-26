@@ -12,7 +12,7 @@ private const val MAX_SCREENSHOT_WIDTH = 1080
 private const val SCROLL_STEP_PX = 160f
 private const val DOUBLE_TAP_GAP_MS = 60L
 
-/** Works only after the user turns on Parchment in Android's Accessibility settings. */
+/** Works only after the user turns on YL Axiom in Android's Accessibility settings. */
 internal object AndroidComputerControl : ComputerControl {
     @Volatile private var scale = 0.0
 
@@ -25,7 +25,7 @@ internal object AndroidComputerControl : ComputerControl {
     @Volatile private var screenshotHeight = 0
 
     private val service: ParchmentAccessibilityService
-        get() = checkNotNull(ParchmentAccessibilityService.instance) { "Turn on Parchment in Accessibility settings first." }
+        get() = checkNotNull(ParchmentAccessibilityService.instance) { "Turn on YL Axiom in Accessibility settings first." }
 
     override val isAvailable: Boolean get() = ParchmentAccessibilityService.instance != null
 

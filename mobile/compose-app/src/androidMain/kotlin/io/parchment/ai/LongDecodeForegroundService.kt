@@ -217,7 +217,7 @@ class LongDecodeForegroundService : Service() {
         val mgr = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
         val channel = NotificationChannel(
             CHANNEL_ID,
-            "Parchment Long Decode",
+            "YL Axiom Long Decode",
             NotificationManager.IMPORTANCE_LOW
         ).apply {
             description = "Keeps long-running AI generation streams active in background"
@@ -241,7 +241,7 @@ class LongDecodeForegroundService : Service() {
             )
         }
         return builder
-            .setContentTitle("Parchment — Active Generation")
+            .setContentTitle("YL Axiom — Active Generation")
             .setContentText(statusText)
             .setSmallIcon(android.R.drawable.ic_menu_edit)
             .setOngoing(true)
@@ -290,7 +290,7 @@ class LongDecodeForegroundService : Service() {
                 else foregroundFailure = "Background execution unavailable: $message"
                 publishNotice()
             }
-            android.util.Log.w("Parchment", "Background execution failed", error)
+            android.util.Log.w("YL Axiom", "Background execution failed", error)
         }
         private fun clearCpuFailure() = synchronized(noticeLock) { cpuFailure = ""; publishNotice() }
         fun refreshNotificationNotice(context: Context, clearRecoveredFailure: Boolean = false) {
@@ -302,14 +302,14 @@ class LongDecodeForegroundService : Service() {
                 if (clearRecoveredFailure) foregroundFailure = ""
                 notificationNotice = if (enabled) "" else if (Build.VERSION.SDK_INT >= 33) {
                     "Notifications are disabled. Active foreground services appear in Android Task Manager."
-                } else "Notifications are disabled for Parchment."
+                } else "Notifications are disabled for YL Axiom."
                 publishNotice()
             }
         }
         private const val CHANNEL_ID = "parchment_long_decode_channel"
         private const val NOTIFICATION_ID = 4101
-        private const val WAKE_LOCK_TAG = "ParchmentAI::LongDecodeWakeLock"
-        private const val WIFI_LOCK_TAG = "ParchmentAI::LongDecodeWifiLock"
+        private const val WAKE_LOCK_TAG = "YLAxiom::LongDecodeWakeLock"
+        private const val WIFI_LOCK_TAG = "YLAxiom::LongDecodeWifiLock"
         const val EXTRA_ACTION = "extra_action"
         const val EXTRA_STATUS = "extra_status"
         const val EXTRA_OWNERS = "extra_owners"

@@ -6,7 +6,7 @@ import io.parchment.ai.platform.PlatformWorkspace
 
 /**
  * 10-second TTL cache for read-only workspace instruction files (`AGENTS.md`, `CLAUDE.md`, `PARCHMENT.md`),
- * Parchment's global `memory/AGENT.md`, and `.parchment/.agents/.claude` SKILL.md manifests.
+ * YL Axiom's global `memory/AGENT.md`, and `.parchment/.agents/.claude` SKILL.md manifests.
  */
 internal object WorkspaceContextCache {
 

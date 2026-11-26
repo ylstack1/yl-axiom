@@ -156,7 +156,7 @@ pub fn classify_installers(
 
     let shared_gradle = any_p(&|p| {
         p.starts_with("gradle/")
-            || SHARED_GRADLE_FILES.contains(&p)
+            || SHARED_GRADLE_FILES.iter().any(|s| p.as_str() == *s)
             || p.starts_with("mobile/compose-app/src/commonMain/")
             || p.starts_with("mobile/compose-app/src/jvmShared/")
     });
@@ -335,6 +335,52 @@ pub fn classify_codeql(paths: Option<&HashSet<String>>) -> BTreeMap<&'static str
     out
 }
 
+pub fn classify_android(paths: Option<&HashSet<String>>) -> BTreeMap<&'static str, String> {
+    let mut out = BTreeMap::new();
+    let Some(paths) = paths else {
+        out.insert("rust_core", "true".into());
+        out.insert("android", "true".into());
+        out.insert("ktlint", "true".into());
+        return out;
+    };
+
+    let shared_gradle = paths.iter().any(|p| {
+        p.starts_with("gradle/")
+            || SHARED_GRADLE_FILES.iter().any(|s| p.as_str() == s.as_str())
+            || p.starts_with("mobile/compose-app/src/commonMain/")
+            || p.starts_with("mobile/compose-app/src/jvmShared/")
+    });
+    let rust_core_for_android = paths.iter().any(|p| {
+        RUST_ANDROID_PREFIXES.iter().any(|pre| p.starts_with(pre))
+            || p.starts_with(".cargo/")
+            || p == "Cargo.toml"
+            || p == "Cargo.lock"
+    });
+    let android = shared_gradle
+        || rust_core_for_android
+        || paths.iter().any(|p| {
+            p.starts_with("mobile/android-app/")
+                || p.starts_with("mobile/compose-app/src/androidMain/")
+                || p == ".github/scripts/ValidateAndroidSigningKey.java"
+                || p == ".github/scripts/sbom.init.gradle.kts"
+        });
+    let ktlint = shared_gradle
+        || paths.iter().any(|p| {
+            p.ends_with(".kt")
+                || p.ends_with(".kts")
+                || p == "build.gradle.kts"
+                || p == "settings.gradle.kts"
+                || p == "gradle.properties"
+                || p == ".editorconfig"
+        });
+
+    let b = |v: bool| if v { "true" } else { "false" }.to_string();
+    out.insert("rust_core", b(rust_core_for_android));
+    out.insert("android", b(android));
+    out.insert("ktlint", b(ktlint));
+    out
+}
+
 fn changed_files_from_git(
     repo: &Path,
     base_sha: &str,
@@ -434,8 +480,13 @@ fn resolve_build_number(
 
 fn cmd_plan(repo: &Path, args: &[String]) -> Result<(), String> {
     let mode = args.first().map(String::as_str).unwrap_or("");
-    if !matches!(mode, "installers" | "quality-signals" | "codeql") {
-        return Err("Usage: cargo xtask ci plan <installers|quality-signals|codeql>".into());
+    if !matches!(
+        mode,
+        "installers" | "quality-signals" | "codeql" | "android"
+    ) {
+        return Err(
+            "Usage: cargo xtask ci plan <installers|quality-signals|codeql|android>".into(),
+        );
     }
     let event = std::env::var("GITHUB_EVENT_NAME").unwrap_or_default();
     let git_ref = std::env::var("GITHUB_REF").unwrap_or_default();
@@ -493,6 +544,7 @@ fn cmd_plan(repo: &Path, args: &[String]) -> Result<(), String> {
         }
         "quality-signals" => outputs.extend(classify_quality_signals(paths.as_ref())),
         "codeql" => outputs.extend(classify_codeql(paths.as_ref())),
+        "android" => outputs.extend(classify_android(paths.as_ref())),
         _ => unreachable!(),
     }
 

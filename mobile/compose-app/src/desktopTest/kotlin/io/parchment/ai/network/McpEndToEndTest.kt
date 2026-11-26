@@ -515,7 +515,7 @@ for line in sys.stdin:
                 } else {
                     val meta = msg["params"]!!.jsonObject["_meta"]!!.jsonObject
                     assertEquals(MCP_STATELESS_VERSION, meta["io.modelcontextprotocol/protocolVersion"]?.jsonPrimitive?.content)
-                    assertEquals("Parchment", meta["io.modelcontextprotocol/clientInfo"]?.jsonObject?.get("name")?.jsonPrimitive?.content)
+                    assertEquals("YL Axiom", meta["io.modelcontextprotocol/clientInfo"]?.jsonObject?.get("name")?.jsonPrimitive?.content)
                     val res = buildJsonObject {
                         put("jsonrpc", "2.0")
                         put("id", msg.getValue("id"))

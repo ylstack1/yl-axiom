@@ -68,7 +68,7 @@ internal fun updateBlockedReason(runningChats: Int, queuedPrompts: Int): String?
 }
 
 internal const val DEV_BUILD_UPDATE_MESSAGE =
-    "This is a development build, so it doesn't install updates. Update the installed Parchment instead."
+    "This is a development build, so it doesn't install updates. Update the installed YL Axiom instead."
 
 /** Reads GitHub's nullable `sha256:<hex>` asset digest; anything else counts as not published. */
 internal fun sha256FromAssetDigest(rawDigest: String?): String = rawDigest.orEmpty().trim().removePrefix("sha256:").lowercase().takeIf(SHA256_HEX::matches).orEmpty()
@@ -89,7 +89,7 @@ object OtaUpdateEngine {
     private suspend fun fetchGitHubReleaseResponse(url: String) = withTimeout(GITHUB_API_TIMEOUT_MS) {
         httpClient.get(url) {
             header("Accept", "application/vnd.github+json")
-            header("User-Agent", "Parchment-OTA-Updater/${ParchmentBuildConfig.APP_VERSION}")
+            header("User-Agent", "YL-Axiom-OTA-Updater/${ParchmentBuildConfig.APP_VERSION}")
         }
     }
 
@@ -156,7 +156,7 @@ object OtaUpdateEngine {
                 name.endsWith(expectedSuffix, ignoreCase = true)
             } ?: error("Release '$tagName' does not contain a $expectedSuffix installer asset yet (build may still be in progress).")
 
-            val assetName = matchingAsset["name"]?.jsonPrimitive?.contentOrNull ?: "Parchment$expectedSuffix"
+            val assetName = matchingAsset["name"]?.jsonPrimitive?.contentOrNull ?: "YL-Axiom$expectedSuffix"
             val downloadUrl = matchingAsset["browser_download_url"]?.jsonPrimitive?.contentOrNull
                 ?.takeIf { it.startsWith("https://", ignoreCase = true) }
                 ?: error("Missing HTTPS browser_download_url on asset '$assetName'.")
@@ -208,7 +208,7 @@ object OtaUpdateEngine {
             var expectedBytes = release.assetSizeBytes
 
             httpClient.prepareGet(release.assetDownloadUrl) {
-                header("User-Agent", "Parchment-OTA-Updater/${ParchmentBuildConfig.APP_VERSION}")
+                header("User-Agent", "YL-Axiom-OTA-Updater/${ParchmentBuildConfig.APP_VERSION}")
             }.execute { response ->
                 if (!response.status.isSuccess()) {
                     error("Failed to download ${release.assetName}: HTTP ${response.status.value}")

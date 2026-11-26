@@ -118,7 +118,7 @@ internal class RunLeaseRegistry(
     private fun publish() {
         val runnable = owners.values.count { it.runnable }
         val status = when {
-            owners.isEmpty() -> "Parchment"
+            owners.isEmpty() -> "YL Axiom"
             runnable == 0 -> "Awaiting approval (${owners.size} runs)"
             owners.size == 1 -> "Working (${owners.values.first().model})…"
             else -> "$runnable working / ${owners.size} runs"

@@ -1,6 +1,6 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
-//! Parchment v3 Native Windows Desktop Entry Point (GPUI + `parchment-core` + Win32 DWM/COM).
+//! YL Axiom v3 Native Windows Desktop Entry Point (GPUI + `parchment-core` + Win32 DWM/COM).
 //!
 //! Default data root:
 //! - Development / debug: `./parchment-portable-data` (never touches installed user data)
@@ -88,7 +88,7 @@ fn default_data_dir() -> PathBuf {
         if let Ok(local) = std::env::var("LOCALAPPDATA")
             && !local.trim().is_empty()
         {
-            return PathBuf::from(local).join("ParchmentAI");
+            return PathBuf::from(local).join("YL-Axiom");
         }
         PathBuf::from("parchment-portable-data")
     }
@@ -112,7 +112,7 @@ fn main() -> anyhow::Result<()> {
             cli.data_dir.display()
         );
         migration_warning = Some(format!(
-            "Could not finish migrating previous Parchment v2 data: {err}"
+            "Could not finish migrating previous YL Axiom v2 data: {err}"
         ));
     }
 

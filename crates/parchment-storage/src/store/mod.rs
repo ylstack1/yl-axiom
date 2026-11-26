@@ -157,6 +157,95 @@ impl ParchmentStore {
         Ok(())
     }
 
+    /// Upserts a coding task, replacing any existing row with the same id.
+    /// `task_json` is the full serialized task as a JSON string.
+    pub fn upsert_coding_task(
+        &mut self,
+        id: &str,
+        title: &str,
+        description: &str,
+        state: &str,
+        workspace_path: &str,
+        repo_url: &str,
+        created_at_ms: i64,
+        updated_at_ms: i64,
+        completed_at_ms: Option<i64>,
+        task_json: &str,
+        owner_session_id: &str,
+        owner_run_id: Option<&str>,
+    ) -> StorageResult<()> {
+        self.conn.execute(
+            "INSERT INTO coding_tasks (id, title, description, state, workspace_path, repo_url,
+                 created_at_ms, updated_at_ms, completed_at_ms, task_json,
+                 owner_session_id, owner_run_id)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)
+             ON CONFLICT(id) DO UPDATE SET
+                 title = excluded.title, description = excluded.description,
+                 state = excluded.state, workspace_path = excluded.workspace_path,
+                 repo_url = excluded.repo_url, updated_at_ms = excluded.updated_at_ms,
+                 completed_at_ms = excluded.completed_at_ms, task_json = excluded.task_json,
+                 owner_session_id = excluded.owner_session_id,
+                 owner_run_id = excluded.owner_run_id",
+            params![
+                id,
+                title,
+                description,
+                state,
+                workspace_path,
+                repo_url,
+                created_at_ms,
+                updated_at_ms,
+                completed_at_ms,
+                task_json,
+                owner_session_id,
+                owner_run_id
+            ],
+        )?;
+        Ok(())
+    }
+
+    /// Loads a coding task's JSON by id, or None if not found.
+    pub fn load_coding_task_json(&self, task_id: &str) -> StorageResult<Option<String>> {
+        let row: Option<String> = self
+            .conn
+            .query_row(
+                "SELECT task_json FROM coding_tasks WHERE id = ?1",
+                params![task_id],
+                |row| row.get(0),
+            )
+            .optional()?;
+        Ok(row)
+    }
+
+    /// Deletes a coding task and all related subtasks, criteria, checkpoints, artifacts, hooks.
+    pub fn delete_coding_task(&mut self, task_id: &str) -> StorageResult<bool> {
+        let changed = self
+            .conn
+            .execute("DELETE FROM coding_tasks WHERE id = ?1", params![task_id])?;
+        Ok(changed > 0)
+    }
+
+    /// Lists all coding task ids, optionally filtered by workspace path.
+    pub fn list_coding_task_ids(&self, workspace_path: Option<&str>) -> StorageResult<Vec<String>> {
+        let mut ids: Vec<String> = Vec::new();
+        let mut stmt = match workspace_path {
+            Some(ws) => self.conn.prepare(
+                "SELECT id FROM coding_tasks WHERE workspace_path = ?1 ORDER BY updated_at_ms DESC",
+            )?,
+            None => self
+                .conn
+                .prepare("SELECT id FROM coding_tasks ORDER BY updated_at_ms DESC")?,
+        };
+        let rows = match workspace_path {
+            Some(ws) => stmt.query_map(params![ws], |row| row.get(0))?,
+            None => stmt.query_map([], |row| row.get(0))?,
+        };
+        for r in rows {
+            ids.push(r?);
+        }
+        Ok(ids)
+    }
+
     /// Loads settings (profiles, assistants, preferences, theme, worldbook, presets, cards).
     /// Sessions live in the normalized `chats` table, so `snapshot.sessions` is always empty here.
     pub fn load_settings(&self) -> StorageResult<AppStateSnapshot> {

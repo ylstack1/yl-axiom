@@ -1,7 +1,7 @@
 //! Rich message turn renderer matching `MessageTurnItem.kt`, `MessageTurnFooter.kt`,
 //! `MessageTurnReasoningSection.kt`, `MessageTurnMediaAndDrawers.kt`, and `docs/design.md`.
 //!
-//! Precomputes structured prose blocks, syntax-highlighted warm Parchment code cards,
+//! Precomputes structured prose blocks, syntax-highlighted warm YL Axiom code cards,
 //! tool diff previews, bounded LaTeX/SVG callouts, quiet tool groups, and token/cost
 //! metadata once when a row is built or completes streaming so 120Hz render frames stay fast.
 
@@ -380,7 +380,7 @@ fn clip_preview(raw: &str, max_chars: usize) -> SharedString {
     }
 }
 
-/// Splits Markdown into prose runs, warm Parchment code cards (with precomputed syntax tokens),
+/// Splits Markdown into prose runs, warm YL Axiom code cards (with precomputed syntax tokens),
 /// bounded LaTeX math blocks, and inline SVG diagrams.
 fn precompute_prose_blocks(content: &str, allow_rich_blocks: bool) -> Vec<DisplayProseBlock> {
     if content.is_empty() {

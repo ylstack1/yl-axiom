@@ -45,7 +45,7 @@ internal object ComputerUse {
 
     suspend fun perform(argumentsJson: String, settleMs: Long = SETTLE_MS, isCancelled: () -> Boolean): ComputerOutcome {
         val action = parseAction(argumentsJson).getOrElse { return ComputerOutcome("Error: ${it.message}", isError = true) }
-        if (!control.isAvailable) return ComputerOutcome("Error: Computer control is not available. On Android, turn on Parchment in Accessibility settings.", isError = true)
+        if (!control.isAvailable) return ComputerOutcome("Error: Computer control is not available. On Android, turn on YL Axiom in Accessibility settings.", isError = true)
         if (isCancelled()) return ComputerOutcome("The run stopped before the action ran.")
         // Let the approval card or overlay leave the screen and the user's own tap finish settling first.
         delay(settleMs)

@@ -27,7 +27,7 @@ class OtaUpdateEngineHttpTest {
 
     @AfterTest fun cleanUp() { root.deleteRecursively() }
 
-    private fun release(url: String, size: Long = payload.size.toLong(), sha: String = checksum) = OtaReleaseInfo("v9.0.0", "9.0.0", "Update", "", "", "Parchment-Setup.exe", url, size, true, sha)
+    private fun release(url: String, size: Long = payload.size.toLong(), sha: String = checksum) = OtaReleaseInfo("v9.0.0", "9.0.0", "Update", "", "", "YL-Axiom-Setup.exe", url, size, true, sha)
 
     private fun <T> serving(respond: (HttpExchange) -> Unit, block: (String) -> T): T {
         val server = HttpServer.create(InetSocketAddress("127.0.0.1", 0), 0)
@@ -169,7 +169,7 @@ class OtaUpdateEngineHttpTest {
             }
             createContext("/repos/owner/parchment/releases") { ex ->
                 val body = if (listStatus == 200) {
-                    """[{"tag_name":"v99.2.0","name":"Release 99.2.0","body":"Notes","published_at":"2026-11-15T00:00:00Z","assets":[{"name":"Parchment-Setup.exe","size":4096,"digest":"sha256:$shaHex","browser_download_url":"https://github.com/owner/parchment/releases/download/v99.2.0/Parchment-Setup.exe"}]}]"""
+                    """[{"tag_name":"v99.2.0","name":"Release 99.2.0","body":"Notes","published_at":"2026-11-15T00:00:00Z","assets":[{"name":"YL-Axiom-Setup.exe","size":4096,"digest":"sha256:$shaHex","browser_download_url":"https://github.com/owner/yl-axiom/releases/download/v99.2.0/YL-Axiom-Setup.exe"}]}]"""
                 } else {
                     "rate limit exceeded"
                 }.toByteArray()
@@ -183,7 +183,7 @@ class OtaUpdateEngineHttpTest {
             val base = "http://127.0.0.1:${server.address.port}"
             val info = OtaUpdateEngine.checkForUpdatesFromBase("owner/parchment", base).getOrThrow()
             assertEquals("v99.2.0", info.tagName)
-            assertEquals("Parchment-Setup.exe", info.assetName)
+            assertEquals("YL-Axiom-Setup.exe", info.assetName)
             assertEquals(shaHex, info.assetSha256)
             assertTrue(info.isNewerThanCurrent)
 

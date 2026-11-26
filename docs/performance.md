@@ -1,6 +1,6 @@
-# Parchment performance
+# YL Axiom performance
 
-Parchment is built for low-end hardware first and 120Hz+ smoothness on modern displays. Measure both targets with `cargo xtask perf`; it builds and benchmarks the standalone native GPUI Windows `.exe` against 300 synthetic chats + an 87.6 KB live streaming code-fence stress test in a scratch folder (never your data), checks Android `libparchment_core.so` & APK size budgets, and measures the installed Android app over `adb` when a phone is connected (`--android-install` installs the local release APK first).
+YL Axiom is built for low-end hardware first and 120Hz+ smoothness on modern displays. Measure both targets with `cargo xtask perf`; it builds and benchmarks the standalone native GPUI Windows `.exe` against 300 synthetic chats + an 87.6 KB live streaming code-fence stress test in a scratch folder (never your data), checks Android `libparchment_core.so` & APK size budgets, and measures the installed Android app over `adb` when a phone is connected (`--android-install` installs the local release APK first).
 
 ## Reference devices
 
@@ -34,7 +34,7 @@ Measure both v3 desktop and Android with `cargo xtask perf` (`--android-install`
 
 ### Historical v2 JVM baseline notes (2026-11-18)
 
-Parchment v2 (JVM Compose Desktop) used a single `DEFLATED` uber-jar, C1-only JIT, Generational Shenandoah, and a Project Leyden AOT cache (`173.5 MB` runtime, `774 ms` startup, `194.3 MB` idle RAM). Parchment v3 replaces the JVM desktop runtime with the standalone Rust GPUI binary (`27.78 MB`, `270 ms` startup, `134.7 MB` maximized idle RAM) while retaining the shared Kotlin Compose Foundation UI for Android (`:composeApp:desktopTest` still runs JVM/Skiko UI probe tests).
+YL Axiom v2 (JVM Compose Desktop) used a single `DEFLATED` uber-jar, C1-only JIT, Generational Shenandoah, and a Project Leyden AOT cache (`173.5 MB` runtime, `774 ms` startup, `194.3 MB` idle RAM). YL Axiom v3 replaces the JVM desktop runtime with the standalone Rust GPUI binary (`27.78 MB`, `270 ms` startup, `134.7 MB` maximized idle RAM) while retaining the shared Kotlin Compose Foundation UI for Android (`:composeApp:desktopTest` still runs JVM/Skiko UI probe tests).
 
 ## What keeps start-up, frame times, and memory fast
 

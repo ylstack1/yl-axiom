@@ -383,7 +383,7 @@ impl Default for DesktopWindowConfig {
 }
 
 fn default_theme_name() -> String {
-    "Parchment & Espresso Ink (Sepia)".to_string()
+    "YL Axiom & Espresso Ink (Sepia)".to_string()
 }
 fn default_color_mode() -> String {
     "Sepia".to_string()

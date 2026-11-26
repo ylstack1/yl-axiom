@@ -4402,8 +4402,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "parchment-coding"
+version = "3.1.1"
+dependencies = [
+ "parchment-core",
+ "parchment-harness",
+ "parchment-model",
+ "parchment-storage",
+ "serde_json",
+ "thiserror 2.0.21",
+]
+
+[[package]]
 name = "parchment-core"
-version = "3.1.0"
+version = "3.1.1"
 dependencies = [
  "jni",
  "parchment-harness",
@@ -4418,7 +4430,7 @@ dependencies = [
 
 [[package]]
 name = "parchment-desktop"
-version = "3.1.0"
+version = "3.1.1"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -4435,7 +4447,7 @@ dependencies = [
 
 [[package]]
 name = "parchment-harness"
-version = "3.1.0"
+version = "3.1.1"
 dependencies = [
  "async-trait",
  "base64 0.23.1",
@@ -4456,7 +4468,7 @@ dependencies = [
 
 [[package]]
 name = "parchment-model"
-version = "3.1.0"
+version = "3.1.1"
 dependencies = [
  "serde",
  "serde_json",
@@ -4464,14 +4476,14 @@ dependencies = [
 
 [[package]]
 name = "parchment-prose"
-version = "3.1.0"
+version = "3.1.1"
 dependencies = [
  "serde",
 ]
 
 [[package]]
 name = "parchment-protocol"
-version = "3.1.0"
+version = "3.1.1"
 dependencies = [
  "base64 0.23.1",
  "bytes",
@@ -4485,7 +4497,7 @@ dependencies = [
 
 [[package]]
 name = "parchment-storage"
-version = "3.1.0"
+version = "3.1.1"
 dependencies = [
  "parchment-model",
  "rusqlite",
@@ -4497,7 +4509,7 @@ dependencies = [
 
 [[package]]
 name = "parchment-xtask"
-version = "3.1.0"
+version = "3.1.1"
 
 [[package]]
 name = "parking"

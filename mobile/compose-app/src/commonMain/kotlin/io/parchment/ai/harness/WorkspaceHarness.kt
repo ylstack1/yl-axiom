@@ -136,7 +136,7 @@ object WorkspaceHarness {
      */
     fun discoverWorkspaceContextFiles(workspaceRoot: String): String = WorkspaceContextCache.discoverContextFiles(workspaceRoot)
 
-    /** Auto-discovers Parchment's global `memory/AGENT.md` when created in application storage. */
+    /** Auto-discovers YL Axiom's global `memory/AGENT.md` when created in application storage. */
     fun discoverGlobalAgentMemory(appStorageRoot: String = ""): String = WorkspaceContextCache.discoverGlobalMemory(appStorageRoot)
 
     /**

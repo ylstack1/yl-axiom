@@ -284,7 +284,7 @@ impl PublicWebTransport {
         for _ in 0..MAX_REDIRECT_HOPS {
             let resp = client
                 .get(target.as_str())
-                .header("User-Agent", "ParchmentAI/3.0")
+                .header("User-Agent", "YL-Axiom/3.0")
                 .header("Accept", accept)
                 .send()
                 .await

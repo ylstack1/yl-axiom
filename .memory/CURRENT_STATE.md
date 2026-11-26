@@ -1,7 +1,7 @@
 # YL Axiom — Current State
 
 ## What currently works (verified from source)
-- Full Parchment v3.1.1 codebase: 8 Rust crates + Kotlin Multiplatform/Compose Android app + Windows GPUI desktop.
+- Full YL Axiom v3.1.1 codebase: 8 Rust crates + Kotlin Multiplatform/Compose Android app + Windows GPUI desktop.
 - Assistant and Chat fully functional: provider protocols (Gemini/OpenAI/Anthropic/Custom), 21 built-in tools, MCP, subagents (max 4), ToolApprovalBroker, WorkspacePathGuard, SSRF transport, Skills, SQLite WAL + FTS5 storage, non-destructive v2 migration, archive import/export.
 - Windows GPUI desktop shell (native, multi-tab, streaming, 3.5 s checkpoints, one-use approval broker).
 - Android Compose app with shared Rust core via zero-JNA JNI (slim 1.85 MB arm64-v8a .so).

@@ -40,7 +40,7 @@ internal object DesktopPlatformHost {
         // 2. Standard isolated per-user app data directory
         val localAppData = System.getenv("LOCALAPPDATA")
         val baseDir = if (!localAppData.isNullOrBlank()) {
-            File(localAppData, "ParchmentAI")
+            File(localAppData, "YL-Axiom")
         } else {
             File(System.getProperty("user.home"), ".parchment-ai")
         }

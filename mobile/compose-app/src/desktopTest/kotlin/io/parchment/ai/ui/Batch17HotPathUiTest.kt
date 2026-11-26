@@ -88,7 +88,7 @@ class Batch17HotPathUiTest {
             val darkBytes = renderPngBytes(scene, 16_000_000L)
             assertFalse(
                 lightBytes.contentEquals(darkBytes),
-                "InlineSvgArtifactPreview must re-parse currentColor against updated LocalParchmentPalette.primaryInk"
+                "InlineSvgArtifactPreview must re-parse currentColor against updated LocalYL-AxiomPalette.primaryInk"
             )
         } finally {
             scene.close()

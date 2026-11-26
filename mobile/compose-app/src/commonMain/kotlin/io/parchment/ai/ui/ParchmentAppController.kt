@@ -608,7 +608,7 @@ internal class ParchmentAppController(
     }
 
     /**
-     * Parchment Automatic & Manual AI Title Generation.
+     * YL Axiom Automatic & Manual AI Title Generation.
      * Respects `session.isTitleManuallySet` unless `forceRegenerate = true` (when clicking `✦`).
      */
     fun recordUtilityUsage(sessionId: String, record: ApiUsageRecord) {

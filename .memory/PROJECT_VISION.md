@@ -27,7 +27,7 @@ YL Axiom is an independent fork of Parchment v3.1.1 (https://github.com/baros429
 ## Stable contracts (inherited from Parchment)
 - Rust 1.100.0, edition 2024, 8 workspace crates.
 - MIT license.
-- CamelCase JSON / SQLite schema parity with Parchment v2 for migration compatibility.
+- CamelCase JSON / SQLite schema parity with YL Axiom v2 for migration compatibility.
 - Windows: native Rust GPUI desktop shell + Win32 DWM/COM, file dialogs, process management.
 - Android: Kotlin Multiplatform / Compose Foundation + shared Rust core via direct zero-JNA JNI (`arm64-v8a` `libparchment_core.so`).
 - SQLite WAL + FTS5 storage with non-destructive v2 migration.
