@@ -464,6 +464,10 @@ fun ParchmentApp(
                     }
                 }
 
+                // The three top-level destinations. Chat keeps the existing behaviour as the default.
+                var appMode by remember { mutableStateOf(AppMode.CHAT) }
+                val axiomCodingViewState = remember { AxiomCodingViewState() }
+
                 // Register Android System Back Gesture / Back Button Navigation Stack
                 LaunchedEffect(
                     showCommandPalette,
@@ -478,7 +482,8 @@ fun ParchmentApp(
                     showComposerToolsDrawer,
                     showSidebar,
                     isSettingsOpen,
-                    isCompactScreen
+                    isCompactScreen,
+                    appMode
                 ) {
                     PlatformRuntime.registerBackHandler {
                         when {
@@ -528,6 +533,10 @@ fun ParchmentApp(
                             }
                             isSettingsOpen -> {
                                 isSettingsOpen = false
+                                true
+                            }
+                            appMode == AppMode.CODING -> {
+                                appMode = AppMode.CHAT
                                 true
                             }
                             else -> false
@@ -645,7 +654,13 @@ fun ParchmentApp(
                             )
                     ) {
                         if (platformWindowChrome != null) {
-                            platformWindowChrome(if (isSettingsOpen) Strings.settings else activeSession.title)
+                            platformWindowChrome(
+                                when {
+                                    isSettingsOpen -> Strings.settings
+                                    appMode == AppMode.CODING -> Strings.axiomCoding
+                                    else -> activeSession.title
+                                }
+                            )
                         }
 
                         val hasModalOverlay = showCommandPalette ||
@@ -663,6 +678,31 @@ fun ParchmentApp(
                                 .fillMaxWidth()
                                 .then(if (hasModalOverlay) Modifier.clearAndSetSemantics {} else Modifier)
                         ) {
+                            // Mode switch: Assistant, Chat and Axiom Coding. Chat stays the default.
+                            if (!isSettingsOpen) {
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(horizontal = Space.s12, vertical = Space.s6),
+                                    horizontalArrangement = Arrangement.spacedBy(Space.s6)
+                                ) {
+                                    SepiaChip(
+                                        label = Strings.assistant,
+                                        selected = appMode == AppMode.ASSISTANT,
+                                        onClick = { appMode = AppMode.ASSISTANT }
+                                    )
+                                    SepiaChip(
+                                        label = Strings.chats,
+                                        selected = appMode == AppMode.CHAT,
+                                        onClick = { appMode = AppMode.CHAT }
+                                    )
+                                    SepiaChip(
+                                        label = Strings.axiomCoding,
+                                        selected = appMode == AppMode.CODING,
+                                        onClick = { appMode = AppMode.CODING }
+                                    )
+                                }
+                            }
                             // 1. Top bar, hidden while Settings is open so there is only one way back to the chat.
                             if (!isSettingsOpen) {
                                 val bgStreamingCount = activeStreamsBySession.keys.count { it != activeSession.id }
@@ -1252,6 +1292,14 @@ fun ParchmentApp(
                                                     onShortcutCaptureInterceptorChange = { shortcutCaptureInterceptor = it },
                                                     onNotify = { bannerNotification = it },
                                                     onClose = { isSettingsOpen = false }
+                                                )
+                                            } else if (appMode == AppMode.CODING) {
+                                                AxiomCodingScreen(
+                                                    state = axiomCodingViewState,
+                                                    onNewTask = stableAction { appMode = AppMode.CHAT },
+                                                    onPause = stableAction { },
+                                                    onResume = stableAction { },
+                                                    onStop = stableAction { }
                                                 )
                                             } else {
                                                 ManuscriptViewport(
