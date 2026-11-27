@@ -53,6 +53,8 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import io.parchment.ai.ParchmentBuildConfig
+import io.parchment.ai.harness.AxiomCodingStore
+import io.parchment.ai.harness.CodingTaskSummary
 import io.parchment.ai.model.AgentPermissionResolver
 import io.parchment.ai.model.AppStateSnapshot
 import io.parchment.ai.model.AssistantAgent
@@ -65,8 +67,6 @@ import io.parchment.ai.network.AiProviderEngine
 import io.parchment.ai.network.ModelsDevClient
 import io.parchment.ai.network.OtaUpdateEngine
 import io.parchment.ai.network.OtaUpdateState
-import io.parchment.ai.harness.AxiomCodingStore
-import io.parchment.ai.harness.CodingTaskSummary
 import io.parchment.ai.network.RunErrorKind
 import io.parchment.ai.network.fetchAvailableModels
 import io.parchment.ai.platform.PlatformPickers
