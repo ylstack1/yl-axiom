@@ -40,12 +40,13 @@ mod jni_android;
 // `jni` and `parchment-coding` are android-only dependencies referenced by the
 // slim `android-jni` build (`jni_android.rs`). Reference them here under the
 // default `network` feature too so `cargo`'s `unused_dependencies = deny` does
-// not flag them when the JNI feature is off. `as _` suppresses unused-import
-// warnings since these are dependency-graph references only.
+// not flag them when the JNI feature is off.
 #[cfg(feature = "network")]
-use jni::JniError as _;
-#[cfg(feature = "network")]
-use parchment_coding::Task as _;
+#[allow(dead_code)]
+fn _unused_dep_references() {
+    let _ = std::marker::PhantomData::<fn(jni::errors::Error)>;
+    let _ = std::marker::PhantomData::<fn(parchment_coding::TaskId)>;
+}
 
 #[derive(Debug, Clone)]
 pub enum CoreError {
