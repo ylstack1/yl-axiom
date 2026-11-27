@@ -430,8 +430,12 @@ impl CodingTaskCoordinator {
                 tasks.insert(id, task);
             }
         }
-        Ok(Self { store, tasks, recovery_engine: RecoveryEngine::new() })
-}
+        Ok(Self {
+            store,
+            tasks,
+            recovery_engine: RecoveryEngine::new(),
+        })
+    }
 
     /// Create a new coding task in the Pending state and persist it.
     pub fn create_task(
