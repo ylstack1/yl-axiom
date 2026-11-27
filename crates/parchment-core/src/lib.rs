@@ -34,7 +34,7 @@ pub use parchment_protocol::{SseFrame, SseFramer};
 pub use parchment_storage as storage;
 pub use parchment_storage::{SearchHit as CoreSearchHit, V2MigrationReport as CoreMigrationReport};
 
-#[cfg(all(feature = "android-jni", feature = "network"))]
+#[cfg(feature = "android-jni")]
 mod jni_android;
 
 #[derive(Debug, Clone)]
@@ -129,13 +129,13 @@ impl ParchmentCore {
     /// Read-only store access for the JNI bridge. Panics are impossible here
     /// because the caller holds no lock; a poisoned mutex yields an empty guard
     /// error which the JNI layer turns into a null/false result.
-    #[cfg(all(feature = "android-jni", feature = "network"))]
+    #[cfg(feature = "android-jni")]
     pub(crate) fn lock_store_for_jni(&self) -> std::sync::MutexGuard<'_, ParchmentStore> {
         self.store.lock().unwrap_or_else(|e| e.into_inner())
     }
 
     /// Mutable store access for the JNI bridge.
-    #[cfg(all(feature = "android-jni", feature = "network"))]
+    #[cfg(feature = "android-jni")]
     pub(crate) fn lock_store_for_jni_mut(&self) -> std::sync::MutexGuard<'_, ParchmentStore> {
         self.store.lock().unwrap_or_else(|e| e.into_inner())
     }

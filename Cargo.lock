@@ -4418,6 +4418,7 @@ name = "parchment-core"
 version = "3.1.1"
 dependencies = [
  "jni",
+ "parchment-coding",
  "parchment-harness",
  "parchment-model",
  "parchment-prose",

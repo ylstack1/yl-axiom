@@ -17,11 +17,11 @@ network = [
     "parchment-harness/network",
     "parchment-harness/ripgrep",
 ]
-android-jni = ["dep:jni", "dep:parchment-coding"]
+android-jni = []
 
 [dependencies]
-jni = { version = "0.22", optional = true }
-parchment-coding = { path = "../parchment-coding", default-features = false, optional = true }
+jni = { version = "0.22" }
+parchment-coding = { path = "../parchment-coding", default-features = false }
 parchment-harness = { path = "../parchment-harness", default-features = false }
 parchment-model = { path = "../parchment-model" }
 parchment-prose = { path = "../parchment-prose" }
