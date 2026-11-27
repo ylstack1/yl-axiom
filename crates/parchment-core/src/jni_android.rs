@@ -76,7 +76,7 @@ pub extern "system" fn Java_io_parchment_ai_platform_ParchmentNativeCore_nativeS
     unowned_env
         .with_env(|env| -> Result<jboolean, JniError> {
             let Some(core) = (unsafe { borrow_handle(handle) }) else {
-                return Ok(false);
+                return Ok(false as jboolean);
             };
             let raw = json.try_to_string(env)?;
             Ok(core.save_settings_json(&raw).is_ok())
@@ -119,7 +119,7 @@ pub extern "system" fn Java_io_parchment_ai_platform_ParchmentNativeCore_nativeS
     unowned_env
         .with_env(|env| -> Result<jboolean, JniError> {
             let Some(core) = (unsafe { borrow_handle(handle) }) else {
-                return Ok(false);
+                return Ok(false as jboolean);
             };
             let raw = json.try_to_string(env)?;
             Ok(core.save_chat_json(&raw).is_ok())
@@ -139,7 +139,7 @@ pub extern "system" fn Java_io_parchment_ai_platform_ParchmentNativeCore_nativeD
     unowned_env
         .with_env(|env| -> Result<jboolean, JniError> {
             let Some(core) = (unsafe { borrow_handle(handle) }) else {
-                return Ok(false);
+                return Ok(false as jboolean);
             };
             let cid = chat_id.try_to_string(env)?;
             Ok(core.delete_chat(&cid).unwrap_or(false))
@@ -279,20 +279,20 @@ pub extern "system" fn Java_io_parchment_ai_platform_ParchmentNativeCore_nativeS
     unowned_env
         .with_env(|env| -> Result<jboolean, JniError> {
             let Some(core) = (unsafe { borrow_handle(handle) }) else {
-                return Ok(false);
+                return Ok(false as jboolean);
             };
             let raw = json.try_to_string(env)?;
             let value: serde_json::Value = match serde_json::from_str(&raw) {
                 Ok(v) => v,
-                Err(_) => return Ok(false),
+                Err(_) => return Ok(false as jboolean),
             };
             let _task: Task = match serde_json::from_str(&raw) {
                 Ok(t) => t,
-                Err(_) => return Ok(false),
+                Err(_) => return Ok(false as jboolean),
             };
             let id = value.get("id").and_then(|v| v.as_str()).unwrap_or("");
             if id.is_empty() {
-                return Ok(false);
+                return Ok(false as jboolean);
             }
             let mut store = core.lock_store_for_jni_mut();
             store
@@ -346,7 +346,7 @@ pub extern "system" fn Java_io_parchment_ai_platform_ParchmentNativeCore_nativeD
     unowned_env
         .with_env(|env| -> Result<jboolean, JniError> {
             let Some(core) = (unsafe { borrow_handle(handle) }) else {
-                return Ok(false);
+                return Ok(false as jboolean);
             };
             let tid = task_id.try_to_string(env)?;
             let mut store = core.lock_store_for_jni_mut();
