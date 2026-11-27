@@ -1342,7 +1342,31 @@ fun ParchmentApp(
                                                                     )
                                                                 }.getOrDefault(false)
                                                             }
-                                                            if (moved) axiomRefreshTick++
+                                                            if (moved) {
+                                                                axiomRefreshTick++
+                                                                // Run the real agent turn (model + tool loop)
+                                                                // and record the result via Rust.
+                                                                val storageDir = java.io.File(
+                                                                    PlatformStorage.getAppStorageDirectoryPath()
+                                                                )
+                                                                val session = appState.sessions.firstOrNull()
+                                                                val profile = appState.profiles.firstOrNull()
+                                                                if (session != null && profile != null) {
+                                                                    withContext(Dispatchers.IO) {
+                                                                        runCatching {
+                                                                            AxiomCodingStore.runAgentTurn(
+                                                                                storageDir = storageDir,
+                                                                                taskId = taskId,
+                                                                                subtaskId = taskId,
+                                                                                profile = profile,
+                                                                                session = session,
+                                                                                historyNodes = emptyList(),
+                                                                                prompt = "You are working on coding task $taskId. Plan and execute the work.",
+                                                                            )
+                                                                        }
+                                                                    }
+                                                                }
+                                                            }
                                                         }
                                                     },
                                                     onDeleteTask = stableCallback { taskId ->
