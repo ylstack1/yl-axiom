@@ -742,51 +742,58 @@ impl CodingTaskCoordinator {
             .tasks
             .get(task_id)
             .ok_or_else(|| CodingError::TaskNotFound(task_id.to_string()))?;
-        let subtask = task
+        let all_verified = task
             .subtasks
             .iter()
             .find(|s| s.id == subtask_id)
-            .ok_or_else(|| CodingError::SubtaskNotFound(subtask_id.to_string()))?;
+            .ok_or_else(|| CodingError::SubtaskNotFound(subtask_id.to_string()))?
+            .acceptance_criteria
+            .iter()
+            .all(|c| c.verified);
 
         // Mark subtask in progress.
-        let task = self
-            .tasks
-            .get_mut(task_id)
-            .ok_or_else(|| CodingError::TaskNotFound(task_id.to_string()))?;
-        let subtask = task
-            .subtasks
-            .iter_mut()
-            .find(|s| s.id == subtask_id)
-            .ok_or_else(|| CodingError::SubtaskNotFound(subtask_id.to_string()))?;
-        subtask.state = SubtaskState::InProgress;
-        task.updated_at();
-        let task_clone = task.clone();
+        let task_clone;
+        {
+            let task = self
+                .tasks
+                .get_mut(task_id)
+                .ok_or_else(|| CodingError::TaskNotFound(task_id.to_string()))?;
+            let subtask = task
+                .subtasks
+                .iter_mut()
+                .find(|s| s.id == subtask_id)
+                .ok_or_else(|| CodingError::SubtaskNotFound(subtask_id.to_string()))?;
+            subtask.state = SubtaskState::InProgress;
+            task.updated_at();
+            task_clone = task.clone();
+        }
         Self::persist_to_store(&mut self.store, &task_clone)?;
 
         // Run the model + tool loop (driven by the Kotlin host via JNI).
         let content = model_content.to_string();
 
         // Run verification against the subtask's acceptance criteria.
-        let mut verification_passed = true;
-        for criterion in &subtask.acceptance_criteria {
-            if !criterion.verified {
-                // In a full implementation this would run the criterion command
-                // via VerificationEngine. For Phase A we treat the model
-                // producing no tool calls as provisional completion.
-                verification_passed = false;
-            }
-        }
+        let mut verification_passed = all_verified;
 
         // PostToolUse hook wiring is Phase D.
         let mut recovery_used = 0;
 
         // Bounded recovery: if verification failed, attempt recovery up to MAX.
         if !verification_passed {
-            let (strategy, exhausted) = self
+            let (_strategy, exhausted) = self
                 .recovery_engine
                 .attempt_recovery(subtask_id, None, &content);
             recovery_used += 1;
             if exhausted {
+                let task = self
+                    .tasks
+                    .get_mut(task_id)
+                    .ok_or_else(|| CodingError::TaskNotFound(task_id.to_string()))?;
+                let subtask = task
+                    .subtasks
+                    .iter_mut()
+                    .find(|s| s.id == subtask_id)
+                    .ok_or_else(|| CodingError::SubtaskNotFound(subtask_id.to_string()))?;
                 subtask.state = SubtaskState::Blocked;
                 task.updated_at();
                 let task_clone = task.clone();
@@ -810,13 +817,25 @@ impl CodingTaskCoordinator {
         } else {
             SubtaskPhase::None
         };
-        subtask.state = if verification_passed {
-            SubtaskState::Verified
-        } else {
-            SubtaskState::InProgress
-        };
-        task.updated_at();
-        let task_clone = task.clone();
+        let task_clone;
+        {
+            let task = self
+                .tasks
+                .get_mut(task_id)
+                .ok_or_else(|| CodingError::TaskNotFound(task_id.to_string()))?;
+            let subtask = task
+                .subtasks
+                .iter_mut()
+                .find(|s| s.id == subtask_id)
+                .ok_or_else(|| CodingError::SubtaskNotFound(subtask_id.to_string()))?;
+            subtask.state = if verification_passed {
+                SubtaskState::Verified
+            } else {
+                SubtaskState::InProgress
+            };
+            task.updated_at();
+            task_clone = task.clone();
+        }
         Self::persist_to_store(&mut self.store, &task_clone)?;
 
         Ok(TurnResult {
