@@ -103,6 +103,18 @@ actual object PlatformStorage {
 
     actual fun writeGlobalAgentMemory(content: String, storageRootOverride: String): Result<String> = AppAgentStorage.writeGlobalMemory(AndroidPlatformHost::resolveStorageDir, content, storageRootOverride)
 
+    actual fun listCodingTaskIds(storageDir: File): List<String> =
+        ParchmentNativeCore.listCodingTaskIds(storageDir)?.split("\n").filter { it.isNotEmpty() } ?: emptyList()
+
+    actual fun loadCodingTaskJson(storageDir: File, taskId: String): String? =
+        ParchmentNativeCore.loadCodingTaskJson(storageDir, taskId)
+
+    actual fun saveCodingTaskJson(storageDir: File, json: String): Boolean =
+        ParchmentNativeCore.saveCodingTaskJson(storageDir, json)
+
+    actual fun deleteCodingTask(storageDir: File, taskId: String): Boolean =
+        ParchmentNativeCore.deleteCodingTask(storageDir, taskId)
+
     internal fun resolveLocalMediaFile(filePath: String): File? = mediaStore.resolve(filePath)
 
     actual fun saveGeneratedMediaFile(fileName: String, bytes: ByteArray, sessionId: String): String = mediaStore.save(fileName, bytes, sessionId)

@@ -2,6 +2,7 @@ package io.parchment.ai.platform
 
 import androidx.compose.ui.graphics.ImageBitmap
 import io.parchment.ai.model.StoredAppFileItem
+import java.io.File
 
 /** A chat file's identity for the stub index: any write changes its size or modification time. */
 data class ChatFileStamp(val length: Long, val lastModifiedMs: Long)
@@ -43,6 +44,13 @@ expect object PlatformStorage {
     fun listAppStorageFiles(): List<StoredAppFileItem>
     fun deleteAppStorageFile(fullPath: String): Boolean
     fun writeSessionTodoMarkdown(sessionId: String, markdown: String, storageRootOverride: String = ""): Result<String>
+
+    // Native coding-task store (Rust `parchment-core` via `ParchmentNativeCore` on Android).
+    fun listCodingTaskIds(storageDir: File): List<String>
+    fun loadCodingTaskJson(storageDir: File, taskId: String): String?
+    fun saveCodingTaskJson(storageDir: File, json: String): Boolean
+    fun deleteCodingTask(storageDir: File, taskId: String): Boolean
+
     fun hasGlobalAgentMemory(storageRootOverride: String = ""): Boolean
     fun readGlobalAgentMemory(maxLines: Int = 500, storageRootOverride: String = ""): Result<String>
     fun writeGlobalAgentMemory(content: String, storageRootOverride: String = ""): Result<String>
