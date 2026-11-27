@@ -13,7 +13,6 @@ use jni::sys::{jboolean, jint, jlong};
 
 use crate::ParchmentCore;
 use parchment_coding::{CodingTaskCoordinator, Task};
-use serde_json;
 
 unsafe fn borrow_handle<'a>(handle: jlong) -> Option<&'a ParchmentCore> {
     if handle == 0 {
