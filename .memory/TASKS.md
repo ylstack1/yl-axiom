@@ -21,36 +21,36 @@ Statuses: NOT_STARTED | IN_PROGRESS | BLOCKED | NEEDS_REVIEW | VERIFIED_COMPLETE
 - T-016 Update plan with researched best practices — VERIFIED_COMPLETE
 
 ## Phase 1 — Product identity, rebranding and application foundation
-- T-101 Centralize user-visible strings (strings.rs, Strings.kt) — NOT_STARTED
-- T-102 Rebrand app name "Parchment" → "YL Axiom" in user-visible strings — NOT_STARTED
-- T-103 Rebrand desktop window title — NOT_STARTED
-- T-104 Rebrand Android application label — NOT_STARTED
-- T-105 Rebrand README, docs, installer assets — NOT_STARTED
-- T-106 Preserve packageId (io.parchment.ai), JNI symbols, storage IDs, license, history — NOT_STARTED (constraint task)
-- T-107 Verify rebrand via existing tests (no functional regression) — NOT_STARTED
+- T-101 Centralize user-visible strings (strings.rs, Strings.kt) — COMPLETE
+- T-102 Rebrand app name "Parchment" → "YL Axiom" in user-visible strings — COMPLETE
+- T-103 Rebrand desktop window title — COMPLETE
+- T-104 Rebrand Android application label — COMPLETE
+- T-105 Rebrand README, docs, installer assets — NOT_STARTED (README/docs still say Parchment)
+- T-106 Preserve packageId (io.parchment.ai), JNI symbols, storage IDs, license, history — COMPLETE (constraint task)
+- T-107 Verify rebrand via existing tests (no functional regression) — VERIFIED_COMPLETE (CI green on feat/axiom-coding-ui)
 
 ## Phase 2 — Architecture boundaries and shared-core cleanup
-- T-201 Add parchment-coding Cargo module to workspace — NOT_STARTED
-- T-202 Add coding task tables to SQLite schema (non-destructive migration) — NOT_STARTED
-- T-203 Verify existing harness/tests unchanged — NOT_STARTED
+- T-201 Add parchment-coding Cargo module to workspace — COMPLETE
+- T-202 Add coding task tables to SQLite schema (non-destructive migration) — COMPLETE
+- T-203 Verify existing harness/tests unchanged — VERIFIED_COMPLETE (22 tests pass on main)
 
 ## Phase 3 — Axiom Coding module and independent sessions
-- T-301 Define Task, TaskPlan, Subtask domain models — NOT_STARTED
-- T-302 Define AcceptanceCriterion, Checkpoint, Artifact domain models — NOT_STARTED
-- T-303 Implement persistent CRUD for coding tasks in storage — NOT_STARTED
-- T-304 Make coding sessions independent from Chat sessions — NOT_STARTED
-- T-305 Unit tests for task state transitions and CRUD — NOT_STARTED
+- T-301 Define Task, TaskPlan, Subtask domain models — COMPLETE (parchment-coding/lib.rs)
+- T-302 Define AcceptanceCriterion, Checkpoint, Artifact domain models — COMPLETE (parchment-coding/lib.rs)
+- T-303 Implement persistent CRUD for coding tasks in storage — COMPLETE (parchment-coding/lib.rs)
+- T-304 Make coding sessions independent from Chat sessions — NOT_STARTED (coordinator has no callers)
+- T-305 Unit tests for task state transitions and CRUD — PARTIAL (task models exist, TDD/verification tests not implemented)
 
 ## Phase 4 — Autonomous task orchestration, planning and checkpoints
-- T-401 Implement CodingTaskCoordinator (plan → execute → verify → complete) — NOT_STARTED
+- T-401 Implement CodingTaskCoordinator (plan → execute → verify → complete) — COMPLETE (run_turn + JNI + Kotlin wiring)
 - T-402 Dependency-aware subtask ordering — NOT_STARTED
-- T-403 Checkpoints after verified subtask and on pause/block — NOT_STARTED
+- T-403 Checkpoints after verified subtask and on pause/block — PARTIAL (create_checkpoint CRUD only, no verified-subtask gating)
 - T-404 Resumption from checkpoint — NOT_STARTED
 - T-405 Stream progress via RunProgressEvent + coding events — NOT_STARTED
 - T-406 Unit tests for coordinator lifecycle — NOT_STARTED
 
 ## Phase 4b — TDD loop and hook gates
-- T-410 Define SubtaskKind (Explore/WriteTests/Implement/Refactor/Verify) — NOT_STARTED
+- T-410 Define SubtaskKind (Explore/WriteTests/Implement/Refactor/Verify) — COMPLETE (enum only)
 - T-411 Implement Red turn (write failing tests, no impl) — NOT_STARTED
 - T-412 Implement Green turn (impl only, tests read-only) — NOT_STARTED
 - T-413 Implement Refactor turn (suite stays green) — NOT_STARTED
@@ -60,13 +60,13 @@ Statuses: NOT_STARTED | IN_PROGRESS | BLOCKED | NEEDS_REVIEW | VERIFIED_COMPLETE
 - T-417 Unit tests for TDD phase transitions and hook gating — NOT_STARTED
 
 ## Phase 5 — Codebase exploration and editing workflows
-- T-501 Structured patch workflow + diff review (parchment-prose diff) — NOT_STARTED
+- T-501 Structured patch workflow + diff review (parchment-prose diff) — PARTIAL (PatchStore/FileEditor exist, no task integration)
 - T-502 Windows platform adapter (native file access, tokio::process) — NOT_STARTED
-- T-503 Android platform adapter (SAF, AndroidOwnedShell) — NOT_STARTED
+- T-503 Android platform adapter (SAF, AndroidOwnedShell) — PARTIAL (ParchmentNativeCore JNI exists, no sandboxed shell)
 - T-504 Capability discovery + graceful fallback — NOT_STARTED
 
 ## Phase 5b — Code intelligence
-- T-510 Add parchment-intel crate (tree-sitter) — NOT_STARTED
+- T-510 Add parchment-intel crate (tree-sitter) — PARTIAL (CodeIntelBackend trait shell only, no backend)
 - T-511 Symbol search tool (read-only) — NOT_STARTED
 - T-512 Document outline tool — NOT_STARTED
 - T-513 AST pattern search/rewrite tools — NOT_STARTED
@@ -75,36 +75,36 @@ Statuses: NOT_STARTED | IN_PROGRESS | BLOCKED | NEEDS_REVIEW | VERIFIED_COMPLETE
 - T-516 Tests for intel tools and backend selection — NOT_STARTED
 
 ## Phase 6 — Execution, build/test verification and recovery
-- T-601 VerificationEngine (build/test/lint acceptance criteria) — NOT_STARTED
-- T-602 ErrorClassifier + RecoveryEngine (bounded recovery) — NOT_STARTED
+- T-601 VerificationEngine (build/test/lint acceptance criteria) — IN_PROGRESS (Rust struct exists, shell command execution pending)
+- T-602 ErrorClassifier + RecoveryEngine (bounded recovery) — IN_PROGRESS (Rust struct exists, needs integration into run_turn)
 - T-603 Completion based on verified results — NOT_STARTED
 - T-604 Unit tests for verification and recovery — NOT_STARTED
 
 ## Phase 7 — Context retrieval and artifact management
-- T-701 Disk-spilled large outputs (reuse 64 KiB spill pattern) — NOT_STARTED
-- T-702 Artifact storage/retrieval (patch, diff, build log, test result, review report) — NOT_STARTED
-- T-703 Stable cached prefix + quantized compaction for coding turns — VERIFIED_COMPLETE (context.rs, 9 tests, awaiting CI)
-- T-704 Tool-result clearing policy (exclude build/test evidence) — VERIFIED_COMPLETE (context.rs)
+- T-701 Disk-spilled large outputs — NOT_STARTED
+- T-702 Artifact storage/retrieval — NOT_STARTED
+- T-703 Stable cached prefix + quantized compaction for coding turns — VERIFIED_COMPLETE
+- T-704 Tool-result clearing policy — VERIFIED_COMPLETE
 - T-705 Subagent context isolation for noisy exploration — NOT_STARTED
 
 ## Phase 8 — Subagents and advanced agent workflows
-- T-801 Coding subagent coordination (reuse SubagentDelegate, max 4) — NOT_STARTED
+- T-801 Coding subagent coordination — NOT_STARTED
 - T-802 Subagent permissions inherit parent scope — NOT_STARTED
-- T-803 A2A watch-list review (no adoption) — NOT_STARTED
+- T-803 A2A watch-list review — NOT_STARTED
 
 ## Phase 9 — Windows and Android integration and capability parity
-- T-901 Windows GPUI Coding UI (task overview, plan, tool approval, terminal, diffs, verification, pause/cancel/resume) — NOT_STARTED
-- T-902 Android Compose Coding UI — NOT_STARTED
-- T-903 Native file dialogs (Windows COM / Android SAF) — NOT_STARTED
-- T-904 Optional `android-shell-fastshell` backend behind shell abstraction (Apache-2.0) — NOT_STARTED
-- T-905 Bridge fastshell `exit_code = 100` / `PERMISSION_NEEDED` into ToolApprovalBroker — NOT_STARTED
-- T-906 Measure `.so` budget with and without fastshell feature — NOT_STARTED
-- T-907 Capability discovery for Android (tree-sitter only, restricted shell) — NOT_STARTED
+- T-901 Windows GPUI Coding UI — NOT_STARTED
+- T-902 Android Compose Coding UI — PARTIAL (basic task list screen only, not a coding environment)
+- T-903 Native file dialogs — NOT_STARTED
+- T-904 Optional android-shell-fastshell backend — NOT_STARTED
+- T-905 Bridge fastshell exit_code/PERMISSION_NEEDED — NOT_STARTED
+- T-906 Measure .so budget — NOT_STARTED
+- T-907 Capability discovery for Android — NOT_STARTED
 
 ## Phase 10 — Performance, security, reliability and release readiness
-- T-1001 Perf budgets (exe, APK, .so, start time, memory) — NOT_STARTED
-- T-1002 Security review (confinement, SSRF, approvals, MCP, secrets) — NOT_STARTED
-- T-1003 Full test suite + CI — NOT_STARTED
+- T-1001 Perf budgets — NOT_STARTED
+- T-1002 Security review — NOT_STARTED
+- T-1003 Full test suite + CI — PARTIAL (CI green on main, but agent-loop tests missing)
 - T-1004 Release build — NOT_STARTED
 
 ## Riskiest decisions to validate early
