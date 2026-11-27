@@ -1,9 +1,6 @@
 package io.parchment.ai.harness
 
-import io.parchment.ai.platform.ParchmentNativeCore
 import kotlinx.serialization.Serializable
-import kotlinx.serialization.json.Json
-import java.io.File
 
 /**
  * A coding task as the UI sees it. This is a view model over the Rust
@@ -23,68 +20,31 @@ data class CodingTaskSummary(
 )
 
 /**
- * Thin Kotlin access to the Rust coding-task store.
- *
- * It only maps JSON across the JNI boundary. Planning, TDD phases, hooks,
- * verification and recovery all live in `parchment-coding`, so there is no
- * second agent engine here.
+ * Thin Kotlin access to the coding-task store. Platform-specific actual
+ * maps JSON across the JNI boundary to Rust `parchment-coding`. Planning,
+ * TDD phases, hooks, verification and recovery all live in Rust, so there
+ * is no second agent engine here.
  */
-object AxiomCodingStore {
-    private val json = Json {
-        ignoreUnknownKeys = true
-        encodeDefaults = true
-        prettyPrint = false
-    }
-
+expect object AxiomCodingStore {
     /** Newest-first task summaries for the sidebar/list. */
-    fun listTasks(storageDir: File): List<CodingTaskSummary> {
-        val ids = ParchmentNativeCore.listCodingTaskIds(storageDir)
-        if (ids.isEmpty()) return emptyList()
-        return ids.mapNotNull { id ->
-            val raw = ParchmentNativeCore.loadCodingTaskJson(storageDir, id) ?: return@mapNotNull null
-            runCatching { json.decodeFromString<CodingTaskSummary>(raw) }.getOrNull()
-        }
-    }
+    fun listTasks(storageDir: java.io.File): List<CodingTaskSummary>
 
     /**
      * Creates a task with a generated id and returns its summary, or null when
      * the native store rejected the write.
      */
     fun createTask(
-        storageDir: File,
+        storageDir: java.io.File,
         title: String,
         description: String,
         workspacePath: String,
         ownerSessionId: String
-    ): CodingTaskSummary? {
-        val now = System.currentTimeMillis()
-        val id = "task-$now"
-        val task = CodingTaskSummary(
-            id = id,
-            title = title,
-            description = description,
-            state = "PENDING",
-            workspacePath = workspacePath,
-            createdAtMs = now,
-            updatedAtMs = now
-        )
-        val raw = runCatching { json.encodeToString(task) }.getOrNull() ?: return null
-        val saved = ParchmentNativeCore.saveCodingTaskJson(storageDir, raw)
-        return if (saved) task else null
-    }
+    ): CodingTaskSummary?
 
     /** Moves a task to a new lifecycle state. */
-    fun setState(storageDir: File, taskId: String, state: String): Boolean {
-        val existing = loadTask(storageDir, taskId) ?: return false
-        val updated = existing.copy(state = state, updatedAtMs = System.currentTimeMillis())
-        val raw = runCatching { json.encodeToString(updated) }.getOrNull() ?: return false
-        return ParchmentNativeCore.saveCodingTaskJson(storageDir, raw)
-    }
+    fun setState(storageDir: java.io.File, taskId: String, state: String): Boolean
 
-    fun loadTask(storageDir: File, taskId: String): CodingTaskSummary? {
-        val raw = ParchmentNativeCore.loadCodingTaskJson(storageDir, taskId) ?: return null
-        return runCatching { json.decodeFromString<CodingTaskSummary>(raw) }.getOrNull()
-    }
+    fun loadTask(storageDir: java.io.File, taskId: String): CodingTaskSummary?
 
-    fun deleteTask(storageDir: File, taskId: String): Boolean = ParchmentNativeCore.deleteCodingTask(storageDir, taskId)
+    fun deleteTask(storageDir: java.io.File, taskId: String): Boolean
 }

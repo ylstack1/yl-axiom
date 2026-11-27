@@ -71,6 +71,8 @@ import io.parchment.ai.platform.PlatformPickers
 import io.parchment.ai.platform.PlatformRuntime
 import io.parchment.ai.platform.PlatformStorage
 import io.parchment.ai.platform.PlatformVoice
+import io.parchment.ai.harness.AxiomCodingStore
+import io.parchment.ai.harness.CodingTaskSummary
 import io.parchment.ai.platform.PlatformWorkspace
 import io.parchment.ai.protocol.CardAndPromptCodec
 import io.parchment.ai.protocol.O200kTokenizer
