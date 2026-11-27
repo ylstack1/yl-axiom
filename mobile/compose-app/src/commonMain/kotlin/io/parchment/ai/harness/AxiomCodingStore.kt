@@ -87,6 +87,5 @@ object AxiomCodingStore {
         return runCatching { json.decodeFromString<CodingTaskSummary>(raw) }.getOrNull()
     }
 
-    fun deleteTask(storageDir: File, taskId: String): Boolean =
-        PlatformStorage.deleteCodingTask(storageDir, taskId)
+    fun deleteTask(storageDir: File, taskId: String): Boolean = PlatformStorage.deleteCodingTask(storageDir, taskId)
 }

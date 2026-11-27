@@ -103,7 +103,7 @@ actual object PlatformStorage {
 
     actual fun writeGlobalAgentMemory(content: String, storageRootOverride: String): Result<String> = AppAgentStorage.writeGlobalMemory(AndroidPlatformHost::resolveStorageDir, content, storageRootOverride)
 
-    actual fun listCodingTaskIds(storageDir: File): List<String> = ParchmentNativeCore.listCodingTaskIds(storageDir)?.split("\n".toRegex()).filter { it.isNotEmpty() } ?: emptyList()
+    actual fun listCodingTaskIds(storageDir: File): List<String> = ParchmentNativeCore.listCodingTaskIds(storageDir)?.split("\n".toRegex()).orEmpty().filter { it.isNotEmpty() }
 
     actual fun loadCodingTaskJson(storageDir: File, taskId: String): String? = ParchmentNativeCore.loadCodingTaskJson(storageDir, taskId)
 
