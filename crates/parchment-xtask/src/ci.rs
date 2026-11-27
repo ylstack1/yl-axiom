@@ -160,7 +160,7 @@ pub fn classify_installers(
 
     let shared_gradle = any_p(&|p| {
         p.starts_with("gradle/")
-            || SHARED_GRADLE_FILES.contains(&p.as_str())
+            || SHARED_GRADLE_FILES.contains(&p)
             || p.starts_with("mobile/compose-app/src/commonMain/")
             || p.starts_with("mobile/compose-app/src/jvmShared/")
     });
