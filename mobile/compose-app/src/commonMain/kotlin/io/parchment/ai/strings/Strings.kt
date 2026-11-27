@@ -1089,6 +1089,7 @@ internal object Strings {
     val axiomCodingTaskTitle = "Task title"
     val axiomCodingTaskGoal = "What should the agent do?"
     val axiomCodingOpen = "Open"
+    val axiomCodingCreate = "Create"
     val axiomCodingDelete = "Delete"
     val axiomCodingStorageUnavailable = "Coding tasks cannot be loaded right now. Restart the app and try again."
     val axiomCodingStatePending = "Waiting"
