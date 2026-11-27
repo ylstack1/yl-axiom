@@ -94,6 +94,14 @@ actual object PlatformStorage {
     actual fun saveCodingTaskJson(storageDir: File, json: String): Boolean = false
     actual fun deleteCodingTask(storageDir: File, taskId: String): Boolean = false
 
+    actual fun runTurn(
+        storageDir: File,
+        taskId: String,
+        subtaskId: String,
+        content: String,
+        toolCallsExecuted: Int,
+    ): String = "{}"
+
     internal fun resolveLocalMediaFile(filePath: String): File? = mediaStore.resolve(filePath)
 
     actual fun saveGeneratedMediaFile(fileName: String, bytes: ByteArray, sessionId: String): String = mediaStore.save(fileName, bytes, sessionId)
