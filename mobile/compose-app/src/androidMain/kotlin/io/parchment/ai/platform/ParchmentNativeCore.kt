@@ -120,6 +120,20 @@ internal object ParchmentNativeCore {
         return runCatching { nativeDeleteCodingTask(h, taskId) }.getOrDefault(false)
     }
 
+    fun runTurn(
+        storageDir: File,
+        taskId: String,
+        subtaskId: String,
+        content: String,
+        toolCallsExecuted: Int,
+    ): String {
+        val h = handleFor(storageDir)
+        if (h == 0L) return "{}"
+        return runCatching {
+            nativeRunTurn(h, taskId, subtaskId, content, toolCallsExecuted)
+        }.getOrDefault("{}")
+    }
+
     @JvmStatic private external fun nativeOpen(storageDir: String): Long
 
     @JvmStatic private external fun nativeLoadSettingsJson(handle: Long): String?
@@ -151,4 +165,12 @@ internal object ParchmentNativeCore {
     @JvmStatic private external fun nativeSaveCodingTaskJson(handle: Long, json: String): Boolean
 
     @JvmStatic private external fun nativeDeleteCodingTask(handle: Long, taskId: String): Boolean
+
+    @JvmStatic private external fun nativeRunTurn(
+        handle: Long,
+        taskId: String,
+        subtaskId: String,
+        content: String,
+        toolCallsExecuted: Int,
+    ): String
 }
