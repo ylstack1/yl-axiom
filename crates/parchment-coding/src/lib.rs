@@ -777,13 +777,8 @@ impl CodingTaskCoordinator {
             }
         }
 
-        // Run PostToolUse hook if any tools were executed.
+        // PostToolUse hook wiring is Phase D.
         let mut recovery_used = 0;
-        if tool_calls_executed > 0 {
-            if let Some(hook) = subtask.acceptance_criteria.first().and_then(|_| None) {
-                let _ = hook; // placeholder - real hook wiring in Phase D
-            }
-        }
 
         // Bounded recovery: if verification failed, attempt recovery up to MAX.
         if !verification_passed {
