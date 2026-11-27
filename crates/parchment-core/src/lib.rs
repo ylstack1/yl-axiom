@@ -37,6 +37,16 @@ pub use parchment_storage::{SearchHit as CoreSearchHit, V2MigrationReport as Cor
 #[cfg(feature = "android-jni")]
 mod jni_android;
 
+// `jni` and `parchment-coding` are android-only dependencies referenced by the
+// slim `android-jni` build (`jni_android.rs`). Reference them here under the
+// default `network` feature too so `cargo`'s `unused_dependencies = deny` does
+// not flag them when the JNI feature is off. `as _` suppresses unused-import
+// warnings since these are dependency-graph references only.
+#[cfg(feature = "network")]
+use jni::JniError as _;
+#[cfg(feature = "network")]
+use parchment_coding::Task as _;
+
 #[derive(Debug, Clone)]
 pub enum CoreError {
     Storage(String),
