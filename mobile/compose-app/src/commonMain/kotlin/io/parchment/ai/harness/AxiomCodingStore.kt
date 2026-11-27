@@ -88,4 +88,12 @@ object AxiomCodingStore {
     }
 
     fun deleteTask(storageDir: File, taskId: String): Boolean = PlatformStorage.deleteCodingTask(storageDir, taskId)
+
+    fun runTurn(
+        storageDir: File,
+        taskId: String,
+        subtaskId: String,
+        content: String,
+        toolCallsExecuted: Int,
+    ): String = PlatformStorage.runTurn(storageDir, taskId, subtaskId, content, toolCallsExecuted)
 }

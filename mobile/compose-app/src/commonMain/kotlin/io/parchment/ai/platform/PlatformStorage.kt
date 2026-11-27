@@ -51,6 +51,14 @@ expect object PlatformStorage {
     fun saveCodingTaskJson(storageDir: File, json: String): Boolean
     fun deleteCodingTask(storageDir: File, taskId: String): Boolean
 
+    fun runTurn(
+        storageDir: File,
+        taskId: String,
+        subtaskId: String,
+        content: String,
+        toolCallsExecuted: Int,
+    ): String
+
     fun hasGlobalAgentMemory(storageRootOverride: String = ""): Boolean
     fun readGlobalAgentMemory(maxLines: Int = 500, storageRootOverride: String = ""): Result<String>
     fun writeGlobalAgentMemory(content: String, storageRootOverride: String = ""): Result<String>

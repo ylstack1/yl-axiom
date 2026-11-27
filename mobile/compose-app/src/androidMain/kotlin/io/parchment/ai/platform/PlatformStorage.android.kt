@@ -111,6 +111,14 @@ actual object PlatformStorage {
 
     actual fun deleteCodingTask(storageDir: File, taskId: String): Boolean = ParchmentNativeCore.deleteCodingTask(storageDir, taskId)
 
+    actual fun runTurn(
+        storageDir: File,
+        taskId: String,
+        subtaskId: String,
+        content: String,
+        toolCallsExecuted: Int,
+    ): String = ParchmentNativeCore.runTurn(storageDir, taskId, subtaskId, content, toolCallsExecuted)
+
     internal fun resolveLocalMediaFile(filePath: String): File? = mediaStore.resolve(filePath)
 
     actual fun saveGeneratedMediaFile(fileName: String, bytes: ByteArray, sessionId: String): String = mediaStore.save(fileName, bytes, sessionId)
