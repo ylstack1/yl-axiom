@@ -34,7 +34,7 @@ pub use parchment_protocol::{SseFrame, SseFramer};
 pub use parchment_storage as storage;
 pub use parchment_storage::{SearchHit as CoreSearchHit, V2MigrationReport as CoreMigrationReport};
 
-#[cfg(feature = "android-jni")]
+#[cfg(all(feature = "android-jni", feature = "network"))]
 mod jni_android;
 
 #[derive(Debug, Clone)]

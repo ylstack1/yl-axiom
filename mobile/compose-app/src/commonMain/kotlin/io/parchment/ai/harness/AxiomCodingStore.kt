@@ -86,6 +86,5 @@ object AxiomCodingStore {
         return runCatching { json.decodeFromString<CodingTaskSummary>(raw) }.getOrNull()
     }
 
-    fun deleteTask(storageDir: File, taskId: String): Boolean =
-        ParchmentNativeCore.deleteCodingTask(storageDir, taskId)
+    fun deleteTask(storageDir: File, taskId: String): Boolean = ParchmentNativeCore.deleteCodingTask(storageDir, taskId)
 }

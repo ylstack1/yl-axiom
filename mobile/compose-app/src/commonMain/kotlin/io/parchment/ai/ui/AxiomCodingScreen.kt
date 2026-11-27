@@ -193,12 +193,11 @@ private fun CodingTaskSummary.stateLabel(): String = when (state.uppercase()) {
 }
 
 /** "N of M steps verified", or a plain step count when nothing is verified. */
-private fun CodingTaskSummary.progressLabel(): String =
-    if (verifiedCount > 0) {
-        Strings.axiomCodingProgress(verifiedCount, subtaskCount)
-    } else {
-        Strings.axiomCodingStepTotal(subtaskCount)
-    }
+private fun CodingTaskSummary.progressLabel(): String = if (verifiedCount > 0) {
+    Strings.axiomCodingProgress(verifiedCount, subtaskCount)
+} else {
+    Strings.axiomCodingStepTotal(subtaskCount)
+}
 
 @Composable
 private fun AxiomNotice(text: String, modifier: Modifier = Modifier) {
