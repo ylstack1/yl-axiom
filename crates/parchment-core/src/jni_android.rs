@@ -328,7 +328,8 @@ pub extern "system" fn Java_io_parchment_ai_platform_ParchmentNativeCore_nativeS
                         .unwrap_or(""),
                     value.get("ownerRunId").and_then(|v| v.as_str()),
                 )
-                .is_ok()
+                .map_ok(|_| true)
+                .unwrap_or(false)
         })
         .resolve::<ThrowRuntimeExAndDefault>()
 }
