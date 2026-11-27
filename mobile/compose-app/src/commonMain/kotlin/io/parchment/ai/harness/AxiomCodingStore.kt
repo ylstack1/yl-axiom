@@ -1,6 +1,16 @@
 package io.parchment.ai.harness
 
+import io.parchment.ai.model.ChatSession
+import io.parchment.ai.model.MessageNode
+import io.parchment.ai.model.MessageRole
+import io.parchment.ai.model.MessageVariant
+import io.parchment.ai.model.ProviderProfile
+import io.parchment.ai.network.AiProviderEngine
+import io.parchment.ai.network.StreamUpdate
 import io.parchment.ai.platform.PlatformStorage
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.collect
+import kotlinx.coroutines.withContext
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 import java.io.File
@@ -96,4 +106,61 @@ object AxiomCodingStore {
         content: String,
         toolCallsExecuted: Int,
     ): String = PlatformStorage.runTurn(storageDir, taskId, subtaskId, content, toolCallsExecuted)
+
+    /**
+     * Runs one real agent turn: calls the model via [AiProviderEngine.streamGeneration]
+     * (which handles the full tool-call loop internally), collects the result, then
+     * records it via [runTurn] (Rust CodingTaskCoordinator).
+     *
+     * Returns the model's final content, or null on error.
+     */
+    suspend fun runAgentTurn(
+        storageDir: File,
+        taskId: String,
+        subtaskId: String,
+        profile: ProviderProfile,
+        session: ChatSession,
+        historyNodes: List<MessageNode>,
+        prompt: String,
+    ): String? = withContext(Dispatchers.IO) {
+        val userNode = MessageNode(
+            id = "coding-prompt-${System.currentTimeMillis()}",
+            role = MessageRole.USER,
+            variants = listOf(
+                MessageVariant(
+                    id = "v1",
+                    content = prompt,
+                ),
+            ),
+        )
+        val callHistory = historyNodes + userNode
+        var finalContent = ""
+        var toolCallsExecuted = 0
+        var completed = false
+
+        AiProviderEngine.streamGeneration(
+            profile = profile,
+            session = session,
+            historyNodes = callHistory,
+        ).collect { update ->
+            when (update) {
+                is StreamUpdate.ContentDelta -> finalContent += update.delta
+                is StreamUpdate.ToolCallEvent -> toolCallsExecuted++
+                is StreamUpdate.Completed -> {
+                    if (update.fullContent.isNotEmpty()) finalContent = update.fullContent
+                    toolCallsExecuted = update.toolCalls.size
+                    completed = true
+                }
+                is StreamUpdate.Error -> {
+                    finalContent = "Error: ${update.message}"
+                }
+                else -> {}
+            }
+        }
+
+        if (completed || finalContent.isNotEmpty()) {
+            runTurn(storageDir, taskId, subtaskId, finalContent, toolCallsExecuted)
+        }
+        if (finalContent.isNotEmpty()) finalContent else null
+    }
 }
