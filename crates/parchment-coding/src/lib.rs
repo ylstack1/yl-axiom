@@ -1110,7 +1110,7 @@ mod tests {
 
     #[test]
     fn task_lifecycle_transitions() {
-        let store = ParchmentStore::open_in_memory().unwrap();
+        let mut store = ParchmentStore::open_in_memory().unwrap();
         let mut coord = CodingTaskCoordinator::new(&mut store).unwrap();
         let task = coord
             .create_task(
@@ -1135,7 +1135,7 @@ mod tests {
 
     #[test]
     fn subtask_depends_on_ordering() {
-        let store = ParchmentStore::open_in_memory().unwrap();
+        let mut store = ParchmentStore::open_in_memory().unwrap();
         let mut coord = CodingTaskCoordinator::new(&mut store).unwrap();
         coord
             .create_task(
@@ -1179,7 +1179,7 @@ mod tests {
 
     #[test]
     fn checkpoint_and_resume() {
-        let store = ParchmentStore::open_in_memory().unwrap();
+        let mut store = ParchmentStore::open_in_memory().unwrap();
         let mut coord = CodingTaskCoordinator::new(&mut store).unwrap();
         coord
             .create_task(
@@ -1203,7 +1203,7 @@ mod tests {
 
     #[test]
     fn tdd_red_green_refactor_phases() {
-        let store = ParchmentStore::open_in_memory().unwrap();
+        let mut store = ParchmentStore::open_in_memory().unwrap();
         let mut coord = CodingTaskCoordinator::new(&mut store).unwrap();
         coord
             .create_task(

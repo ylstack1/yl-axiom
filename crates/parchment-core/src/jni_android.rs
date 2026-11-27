@@ -378,11 +378,11 @@ pub extern "system" fn Java_io_parchment_ai_platform_ParchmentNativeCore_nativeR
             let sid = subtask_id.try_to_string(env)?;
             let text = content.try_to_string(env)?;
             let mut store = core.lock_store_for_jni_mut();
-            let mut coordinator = CodingTaskCoordinator::new(&mut store)
-                .map_err(|e| JniError::from(e.to_string()))?;
+            let mut coordinator =
+                CodingTaskCoordinator::new(&mut store).map_err(|_| JniError::Unknown)?;
             let result = coordinator
                 .run_turn(&tid, &sid, &text, tool_calls_executed as usize)
-                .map_err(|e| JniError::from(e.to_string()))?;
+                .map_err(|_| JniError::Unknown)?;
             let json = serde_json::to_string(&result).unwrap_or_else(|_| String::new());
             JString::from_str(env, &json)
         })
