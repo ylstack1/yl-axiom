@@ -295,7 +295,7 @@ pub extern "system" fn Java_io_parchment_ai_platform_ParchmentNativeCore_nativeS
                 return Ok(false as jboolean);
             }
             let mut store = core.lock_store_for_jni_mut();
-            store
+            Ok(store
                 .upsert_coding_task(
                     id,
                     value.get("title").and_then(|v| v.as_str()).unwrap_or(""),
@@ -328,7 +328,7 @@ pub extern "system" fn Java_io_parchment_ai_platform_ParchmentNativeCore_nativeS
                         .unwrap_or(""),
                     value.get("ownerRunId").and_then(|v| v.as_str()),
                 )
-                .is_ok()
+                .is_ok())
         })
         .resolve::<ThrowRuntimeExAndDefault>()
 }
