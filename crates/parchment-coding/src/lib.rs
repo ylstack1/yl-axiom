@@ -726,19 +726,17 @@ impl CodingTaskCoordinator {
 
     /// Run one autonomous coding turn for a subtask.
     ///
-    /// Drives the model + tool loop (via the host delegate), then runs
-    /// verification (acceptance criteria), recovery (bounded retries), and hook
-    /// gates (PostToolUse / Stop). Returns a [TurnResult] summarizing what
-    /// happened and whether the turn is complete.
-    ///
-    /// On the slim `android-jni` build this delegates to the JNI bridge
-    /// (`ParchmentNativeCore.run_agent_turn`). On desktop the delegate is
-    /// wired directly to `AgentTurnRunner`.
+    /// The Kotlin host drives the model + tool loop (via JNI) and passes the
+    /// resulting content and tool-call count here. This method marks the
+    /// subtask in progress, runs verification against acceptance criteria,
+    /// performs bounded recovery on failure, and persists the final state.
+    /// Returns a [TurnResult] summarizing what happened.
     pub fn run_turn(
         &mut self,
         task_id: &str,
         subtask_id: &str,
-        prompt: &str,
+        model_content: &str,
+        tool_calls_executed: usize,
     ) -> Result<TurnResult, CodingError> {
         let task = self
             .tasks
@@ -765,9 +763,8 @@ impl CodingTaskCoordinator {
         let task_clone = task.clone();
         Self::persist_to_store(&mut self.store, &task_clone)?;
 
-        // Run the model + tool loop via the host delegate.
-        let (content, tool_calls_executed, turn_complete) =
-            self.run_agent_turn_delegate(task_id, prompt)?;
+        // Run the model + tool loop (driven by the Kotlin host via JNI).
+        let content = model_content.to_string();
 
         // Run verification against the subtask's acceptance criteria.
         let mut verification_passed = true;
@@ -788,9 +785,8 @@ impl CodingTaskCoordinator {
             }
         }
 
-        // Bounded recovery: if turn not complete and verification failed,
-        // attempt recovery up to MAX_RECOVERY_ATTEMPTS.
-        if !turn_complete || !verification_passed {
+        // Bounded recovery: if verification failed, attempt recovery up to MAX.
+        if !verification_passed {
             let (strategy, exhausted) = self
                 .recovery_engine
                 .attempt_recovery(subtask_id, None, &content);
@@ -814,12 +810,12 @@ impl CodingTaskCoordinator {
         }
 
         // Persist final state.
-        let phase = if turn_complete && verification_passed {
+        let phase = if verification_passed {
             SubtaskPhase::Refactor
         } else {
             SubtaskPhase::None
         };
-        subtask.state = if turn_complete && verification_passed {
+        subtask.state = if verification_passed {
             SubtaskState::Verified
         } else {
             SubtaskState::InProgress
@@ -836,33 +832,8 @@ impl CodingTaskCoordinator {
             tool_calls_executed,
             verification_passed,
             recovery_used,
-            turn_complete: turn_complete && verification_passed,
+            turn_complete: verification_passed,
         })
-    }
-
-    /// Host delegate for the model + tool loop. Android uses the JNI bridge;
-    /// desktop uses direct FFI (wired in a later phase).
-    #[cfg(feature = "android-jni")]
-    fn run_agent_turn_delegate(
-        &self,
-        _task_id: &str,
-        _prompt: &str,
-    ) -> Result<(String, usize, bool), CodingError> {
-        Err(CodingError::Storage(
-            "JNI run_agent_turn not yet implemented in jni_android.rs".to_string(),
-        ))
-    }
-
-    /// Non-Android builds: no delegate available yet.
-    #[cfg(not(feature = "android-jni"))]
-    fn run_agent_turn_delegate(
-        &self,
-        _task_id: &str,
-        _prompt: &str,
-    ) -> Result<(String, usize, bool), CodingError> {
-        Err(CodingError::Storage(
-            "desktop direct-FFI turn runner not yet wired".to_string(),
-        ))
     }
 
     // ── Hook execution gates ───────────────────────────────────────────────
