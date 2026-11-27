@@ -12,7 +12,7 @@ use jni::objects::{JByteArray, JClass, JString};
 use jni::sys::{jboolean, jint, jlong};
 
 use crate::ParchmentCore;
-use parchment_coding::{CodingTaskCoordinator, Task, TurnResult};
+use parchment_coding::{CodingTaskCoordinator, Task};
 use serde_json;
 
 unsafe fn borrow_handle<'a>(handle: jlong) -> Option<&'a ParchmentCore> {
@@ -378,10 +378,10 @@ pub extern "system" fn Java_io_parchment_ai_platform_ParchmentNativeCore_nativeR
             let sid = subtask_id.try_to_string(env)?;
             let text = content.try_to_string(env)?;
             let mut store = core.lock_store_for_jni_mut();
-            let mut coordinator = CodingTaskCoordinator::new(store.clone());
+            let mut coordinator = CodingTaskCoordinator::new((*store).clone())?;
             let result = coordinator.run_turn(&tid, &sid, &text, tool_calls_executed as usize)?;
             let json = serde_json::to_string(&result).unwrap_or_else(|_| String::new());
-            Ok(JString::from_str(env, &json))
+            JString::from_str(env, &json)
         })
         .resolve::<ThrowRuntimeExAndDefault>()
 }

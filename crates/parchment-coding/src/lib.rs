@@ -773,7 +773,7 @@ impl CodingTaskCoordinator {
         let content = model_content.to_string();
 
         // Run verification against the subtask's acceptance criteria.
-        let mut verification_passed = all_verified;
+        let verification_passed = all_verified;
 
         // PostToolUse hook wiring is Phase D.
         let mut recovery_used = 0;
