@@ -130,17 +130,13 @@ impl ParchmentCore {
     /// because the caller holds no lock; a poisoned mutex yields an empty guard
     /// error which the JNI layer turns into a null/false result.
     #[cfg(feature = "android-jni")]
-    pub(crate) fn lock_store_for_jni(
-        &self,
-    ) -> std::sync::MutexGuard<'_, ParchmentStore> {
+    pub(crate) fn lock_store_for_jni(&self) -> std::sync::MutexGuard<'_, ParchmentStore> {
         self.store.lock().unwrap_or_else(|e| e.into_inner())
     }
 
     /// Mutable store access for the JNI bridge.
     #[cfg(feature = "android-jni")]
-    pub(crate) fn lock_store_for_jni_mut(
-        &self,
-    ) -> std::sync::MutexGuard<'_, ParchmentStore> {
+    pub(crate) fn lock_store_for_jni_mut(&self) -> std::sync::MutexGuard<'_, ParchmentStore> {
         self.store.lock().unwrap_or_else(|e| e.into_inner())
     }
 

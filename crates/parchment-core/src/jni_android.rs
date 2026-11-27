@@ -294,15 +294,33 @@ pub extern "system" fn Java_io_parchment_ai_platform_ParchmentNativeCore_nativeS
                 .upsert_coding_task(
                     id,
                     value.get("title").and_then(|v| v.as_str()).unwrap_or(""),
-                    value.get("description").and_then(|v| v.as_str()).unwrap_or(""),
-                    value.get("state").and_then(|v| v.as_str()).unwrap_or("PENDING"),
-                    value.get("workspacePath").and_then(|v| v.as_str()).unwrap_or(""),
+                    value
+                        .get("description")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or(""),
+                    value
+                        .get("state")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("PENDING"),
+                    value
+                        .get("workspacePath")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or(""),
                     value.get("repoUrl").and_then(|v| v.as_str()).unwrap_or(""),
-                    value.get("createdAtMs").and_then(|v| v.as_i64()).unwrap_or(0),
-                    value.get("updatedAtMs").and_then(|v| v.as_i64()).unwrap_or(0),
+                    value
+                        .get("createdAtMs")
+                        .and_then(|v| v.as_i64())
+                        .unwrap_or(0),
+                    value
+                        .get("updatedAtMs")
+                        .and_then(|v| v.as_i64())
+                        .unwrap_or(0),
                     value.get("completedAtMs").and_then(|v| v.as_i64()),
                     &raw,
-                    value.get("ownerSessionId").and_then(|v| v.as_str()).unwrap_or(""),
+                    value
+                        .get("ownerSessionId")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or(""),
                     value.get("ownerRunId").and_then(|v| v.as_str()),
                 )
                 .is_ok()
