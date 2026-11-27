@@ -94,6 +94,32 @@ internal object ParchmentNativeCore {
         return runCatching { nativeExtractDocx(bytes) }.getOrNull()
     }
 
+    /** Newest-first coding task ids, or null when the native core is unavailable. */
+    fun listCodingTaskIds(storageDir: File): List<String> {
+        val h = handleFor(storageDir)
+        if (h == 0L) return emptyList()
+        val raw = runCatching { nativeListCodingTaskIds(h) }.getOrNull() ?: return emptyList()
+        return raw.lineSequence().map { it.trim() }.filter { it.isNotEmpty() }.toList()
+    }
+
+    fun loadCodingTaskJson(storageDir: File, taskId: String): String? {
+        val h = handleFor(storageDir)
+        if (h == 0L) return null
+        return runCatching { nativeLoadCodingTaskJson(h, taskId) }.getOrNull()
+    }
+
+    fun saveCodingTaskJson(storageDir: File, json: String): Boolean {
+        val h = handleFor(storageDir)
+        if (h == 0L) return false
+        return runCatching { nativeSaveCodingTaskJson(h, json) }.getOrDefault(false)
+    }
+
+    fun deleteCodingTask(storageDir: File, taskId: String): Boolean {
+        val h = handleFor(storageDir)
+        if (h == 0L) return false
+        return runCatching { nativeDeleteCodingTask(h, taskId) }.getOrDefault(false)
+    }
+
     @JvmStatic private external fun nativeOpen(storageDir: String): Long
 
     @JvmStatic private external fun nativeLoadSettingsJson(handle: Long): String?
@@ -117,4 +143,12 @@ internal object ParchmentNativeCore {
     ): String?
 
     @JvmStatic private external fun nativeExtractDocx(bytes: ByteArray): String?
+
+    @JvmStatic private external fun nativeListCodingTaskIds(handle: Long): String?
+
+    @JvmStatic private external fun nativeLoadCodingTaskJson(handle: Long, taskId: String): String?
+
+    @JvmStatic private external fun nativeSaveCodingTaskJson(handle: Long, json: String): Boolean
+
+    @JvmStatic private external fun nativeDeleteCodingTask(handle: Long, taskId: String): Boolean
 }

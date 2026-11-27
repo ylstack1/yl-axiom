@@ -466,7 +466,29 @@ fun ParchmentApp(
 
                 // The three top-level destinations. Chat keeps the existing behaviour as the default.
                 var appMode by remember { mutableStateOf(AppMode.CHAT) }
-                val axiomCodingViewState = remember { AxiomCodingViewState() }
+                var axiomTasks by remember { mutableStateOf<List<CodingTaskSummary>>(emptyList()) }
+                var axiomStorageReady by remember { mutableStateOf(true) }
+                var axiomRefreshTick by remember { mutableStateOf(0) }
+                var axiomSelectedTaskId by remember { mutableStateOf<String?>(null) }
+
+                // Real persisted tasks from the Rust store; refreshed after every mutation.
+                LaunchedEffect(appMode, axiomRefreshTick) {
+                    if (appMode == AppMode.CODING) {
+                        val snapshot = withContext(Dispatchers.IO) {
+                            runCatching {
+                                AxiomCodingStore.listTasks(
+                                    java.io.File(PlatformStorage.getAppStorageDirectoryPath())
+                                )
+                            }.getOrNull()
+                        }
+                        if (snapshot != null) {
+                            axiomTasks = snapshot
+                            axiomStorageReady = true
+                        } else {
+                            axiomStorageReady = false
+                        }
+                    }
+                }
 
                 // Register Android System Back Gesture / Back Button Navigation Stack
                 LaunchedEffect(
@@ -1295,11 +1317,32 @@ fun ParchmentApp(
                                                 )
                                             } else if (appMode == AppMode.CODING) {
                                                 AxiomCodingScreen(
-                                                    state = axiomCodingViewState,
-                                                    onNewTask = stableAction { appMode = AppMode.CHAT },
-                                                    onPause = stableAction { },
-                                                    onResume = stableAction { },
-                                                    onStop = stableAction { }
+                                                    tasks = axiomTasks,
+                                                    storageAvailable = axiomStorageReady,
+                                                    onNewTask = stableAction {
+                                                        appMode = AppMode.CHAT
+                                                    },
+                                                    onOpenTask = stableCallback { taskId ->
+                                                        axiomSelectedTaskId = taskId
+                                                    },
+                                                    onDeleteTask = stableCallback { taskId ->
+                                                        appProcessScope.launch {
+                                                            val removed = withContext(Dispatchers.IO) {
+                                                                runCatching {
+                                                                    AxiomCodingStore.deleteTask(
+                                                                        java.io.File(
+                                                                            PlatformStorage
+                                                                                .getAppStorageDirectoryPath()
+                                                                        ),
+                                                                        taskId
+                                                                    )
+                                                                }.getOrDefault(false)
+                                                            }
+                                                            if (removed) {
+                                                                axiomRefreshTick++
+                                                            }
+                                                        }
+                                                    }
                                                 )
                                             } else {
                                                 ManuscriptViewport(
