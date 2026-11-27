@@ -412,15 +412,15 @@ impl From<parchment_storage::StorageError> for CodingError {
 /// execute → verify → complete) and delegates per-turn model interaction to
 /// the existing agent loop. Does not duplicate tool dispatch or permission
 /// authority.
-pub struct CodingTaskCoordinator {
-    store: ParchmentStore,
+pub struct CodingTaskCoordinator<'a> {
+    store: &'a mut ParchmentStore,
     tasks: BTreeMap<TaskId, Task>,
     recovery_engine: RecoveryEngine,
 }
 
-impl CodingTaskCoordinator {
+impl<'a> CodingTaskCoordinator<'a> {
     /// Opens or creates a coding task store and loads all existing tasks.
-    pub fn new(store: ParchmentStore) -> Result<Self, CodingError> {
+    pub fn new(store: &'a mut ParchmentStore) -> Result<Self, CodingError> {
         let mut tasks = BTreeMap::new();
         let ids = store.list_coding_task_ids(None)?;
         for id in ids {
@@ -453,7 +453,7 @@ impl CodingTaskCoordinator {
             workspace_path,
             owner_session_id,
         );
-        Self::persist_to_store(&mut self.store, &task)?;
+        Self::persist_to_store(self.store, &task)?;
         self.tasks.insert(id, task.clone());
         Ok(task)
     }
@@ -486,7 +486,7 @@ impl CodingTaskCoordinator {
         task.state = state;
         task.updated_at();
         let task_clone = task.clone();
-        Self::persist_to_store(&mut self.store, &task_clone)?;
+        Self::persist_to_store(self.store, &task_clone)?;
         Ok(())
     }
 
@@ -504,7 +504,7 @@ impl CodingTaskCoordinator {
         task.subtasks.push(subtask);
         task.updated_at();
         let task_clone = task.clone();
-        Self::persist_to_store(&mut self.store, &task_clone)?;
+        Self::persist_to_store(self.store, &task_clone)?;
         Ok(subtask_id)
     }
 
@@ -533,7 +533,7 @@ impl CodingTaskCoordinator {
         task.checkpoints.push(checkpoint);
         task.updated_at();
         let task_clone = task.clone();
-        Self::persist_to_store(&mut self.store, &task_clone)?;
+        Self::persist_to_store(self.store, &task_clone)?;
         Ok(checkpoint_id)
     }
 
@@ -567,7 +567,7 @@ impl CodingTaskCoordinator {
         task.artifacts.push(artifact);
         task.updated_at();
         let task_clone = task.clone();
-        Self::persist_to_store(&mut self.store, &task_clone)?;
+        Self::persist_to_store(self.store, &task_clone)?;
         Ok(())
     }
 
@@ -608,7 +608,7 @@ impl CodingTaskCoordinator {
         if found {
             task.updated_at();
             let task_clone = task.clone();
-            Self::persist_to_store(&mut self.store, &task_clone)?;
+            Self::persist_to_store(self.store, &task_clone)?;
             Ok(())
         } else {
             Err(CodingError::VerificationFailed(format!(
@@ -639,7 +639,7 @@ impl CodingTaskCoordinator {
         subtask.state = SubtaskState::InProgress;
         task.updated_at();
         let task_clone = task.clone();
-        Self::persist_to_store(&mut self.store, &task_clone)?;
+        Self::persist_to_store(self.store, &task_clone)?;
         Ok(SubtaskPhase::Red)
     }
 
@@ -663,7 +663,7 @@ impl CodingTaskCoordinator {
         subtask.state = SubtaskState::InProgress;
         task.updated_at();
         let task_clone = task.clone();
-        Self::persist_to_store(&mut self.store, &task_clone)?;
+        Self::persist_to_store(self.store, &task_clone)?;
         Ok(SubtaskPhase::Green)
     }
 
@@ -686,7 +686,7 @@ impl CodingTaskCoordinator {
         subtask.state = SubtaskState::InProgress;
         task.updated_at();
         let task_clone = task.clone();
-        Self::persist_to_store(&mut self.store, &task_clone)?;
+        Self::persist_to_store(self.store, &task_clone)?;
         Ok(SubtaskPhase::Refactor)
     }
 
@@ -720,7 +720,7 @@ impl CodingTaskCoordinator {
         subtask.completed_at_ms = Some(now_ms());
         task.updated_at();
         let task_clone = task.clone();
-        Self::persist_to_store(&mut self.store, &task_clone)?;
+        Self::persist_to_store(self.store, &task_clone)?;
         Ok(SubtaskPhase::Refactor)
     }
 
@@ -767,7 +767,7 @@ impl CodingTaskCoordinator {
             task.updated_at();
             task_clone = task.clone();
         }
-        Self::persist_to_store(&mut self.store, &task_clone)?;
+        Self::persist_to_store(self.store, &task_clone)?;
 
         // Run the model + tool loop (driven by the Kotlin host via JNI).
         let content = model_content.to_string();
@@ -797,7 +797,7 @@ impl CodingTaskCoordinator {
                 subtask.state = SubtaskState::Blocked;
                 task.updated_at();
                 let task_clone = task.clone();
-                Self::persist_to_store(&mut self.store, &task_clone)?;
+                Self::persist_to_store(self.store, &task_clone)?;
                 return Ok(TurnResult {
                     task_id: task_id.to_string(),
                     subtask_id: Some(subtask_id.to_string()),
@@ -836,7 +836,7 @@ impl CodingTaskCoordinator {
             task.updated_at();
             task_clone = task.clone();
         }
-        Self::persist_to_store(&mut self.store, &task_clone)?;
+        Self::persist_to_store(self.store, &task_clone)?;
 
         Ok(TurnResult {
             task_id: task_id.to_string(),
@@ -1111,7 +1111,7 @@ mod tests {
     #[test]
     fn task_lifecycle_transitions() {
         let store = ParchmentStore::open_in_memory().unwrap();
-        let mut coord = CodingTaskCoordinator::new(store).unwrap();
+        let mut coord = CodingTaskCoordinator::new(&mut store).unwrap();
         let task = coord
             .create_task(
                 "t-1".into(),
@@ -1136,7 +1136,7 @@ mod tests {
     #[test]
     fn subtask_depends_on_ordering() {
         let store = ParchmentStore::open_in_memory().unwrap();
-        let mut coord = CodingTaskCoordinator::new(store).unwrap();
+        let mut coord = CodingTaskCoordinator::new(&mut store).unwrap();
         coord
             .create_task(
                 "t-2".into(),
@@ -1180,7 +1180,7 @@ mod tests {
     #[test]
     fn checkpoint_and_resume() {
         let store = ParchmentStore::open_in_memory().unwrap();
-        let mut coord = CodingTaskCoordinator::new(store).unwrap();
+        let mut coord = CodingTaskCoordinator::new(&mut store).unwrap();
         coord
             .create_task(
                 "t-3".into(),
@@ -1204,7 +1204,7 @@ mod tests {
     #[test]
     fn tdd_red_green_refactor_phases() {
         let store = ParchmentStore::open_in_memory().unwrap();
-        let mut coord = CodingTaskCoordinator::new(store).unwrap();
+        let mut coord = CodingTaskCoordinator::new(&mut store).unwrap();
         coord
             .create_task(
                 "t-4".into(),
