@@ -52,7 +52,7 @@ internal fun FileDropOverlay() {
 
 /** A dimmed backdrop that closes on a click outside, with a confirmation card in the middle. */
 @Composable
-private fun ConfirmBackdrop(onDismiss: () -> Unit, content: @Composable () -> Unit) {
+internal fun ConfirmBackdrop(onDismiss: () -> Unit, content: @Composable () -> Unit) {
     Box(
         modifier = Modifier
             .fillMaxSize()

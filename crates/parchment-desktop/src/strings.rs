@@ -6,7 +6,7 @@
 //! "Branch" (not fork), "Choose folder" (not mount), "Thinking" (not reasoning),
 //! "Reused" (not cache read), "Update" (not OTA).
 
-pub const APP_NAME: &str = "Parchment";
+pub const APP_NAME: &str = "YL Axiom";
 pub const NEW_CHAT: &str = "New chat";
 pub const UNTITLED: &str = "Untitled";
 pub const DEFAULT_ASSISTANT: &str = "Default Assistant";

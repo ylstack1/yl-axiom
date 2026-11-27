@@ -25,7 +25,7 @@ internal object AndroidComputerControl : ComputerControl {
     @Volatile private var screenshotHeight = 0
 
     private val service: ParchmentAccessibilityService
-        get() = checkNotNull(ParchmentAccessibilityService.instance) { "Turn on Parchment in Accessibility settings first." }
+        get() = checkNotNull(ParchmentAccessibilityService.instance) { "Turn on YL Axiom in Accessibility settings first." }
 
     override val isAvailable: Boolean get() = ParchmentAccessibilityService.instance != null
 

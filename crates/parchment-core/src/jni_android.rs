@@ -12,6 +12,7 @@ use jni::objects::{JByteArray, JClass, JString};
 use jni::sys::{jboolean, jint, jlong};
 
 use crate::ParchmentCore;
+use parchment_coding::Task;
 
 unsafe fn borrow_handle<'a>(handle: jlong) -> Option<&'a ParchmentCore> {
     if handle == 0 {
@@ -75,7 +76,7 @@ pub extern "system" fn Java_io_parchment_ai_platform_ParchmentNativeCore_nativeS
     unowned_env
         .with_env(|env| -> Result<jboolean, JniError> {
             let Some(core) = (unsafe { borrow_handle(handle) }) else {
-                return Ok(false);
+                return Ok(false as jboolean);
             };
             let raw = json.try_to_string(env)?;
             Ok(core.save_settings_json(&raw).is_ok())
@@ -118,7 +119,7 @@ pub extern "system" fn Java_io_parchment_ai_platform_ParchmentNativeCore_nativeS
     unowned_env
         .with_env(|env| -> Result<jboolean, JniError> {
             let Some(core) = (unsafe { borrow_handle(handle) }) else {
-                return Ok(false);
+                return Ok(false as jboolean);
             };
             let raw = json.try_to_string(env)?;
             Ok(core.save_chat_json(&raw).is_ok())
@@ -138,7 +139,7 @@ pub extern "system" fn Java_io_parchment_ai_platform_ParchmentNativeCore_nativeD
     unowned_env
         .with_env(|env| -> Result<jboolean, JniError> {
             let Some(core) = (unsafe { borrow_handle(handle) }) else {
-                return Ok(false);
+                return Ok(false as jboolean);
             };
             let cid = chat_id.try_to_string(env)?;
             Ok(core.delete_chat(&cid).unwrap_or(false))
@@ -213,6 +214,143 @@ pub extern "system" fn Java_io_parchment_ai_platform_ParchmentNativeCore_nativeE
                 Ok(text) => JString::from_str(env, text),
                 Err(_) => Ok(JString::null()),
             }
+        })
+        .resolve::<ThrowRuntimeExAndDefault>()
+}
+
+/// Lists coding task ids as a newline-separated string, newest first.
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_io_parchment_ai_platform_ParchmentNativeCore_nativeListCodingTaskIds<
+    'caller,
+>(
+    mut unowned_env: EnvUnowned<'caller>,
+    _class: JClass<'caller>,
+    handle: jlong,
+) -> JString<'caller> {
+    unowned_env
+        .with_env(|env| -> Result<JString<'caller>, JniError> {
+            let Some(core) = (unsafe { borrow_handle(handle) }) else {
+                return Ok(JString::null());
+            };
+            let store = core.lock_store_for_jni();
+            match store.list_coding_task_ids(None) {
+                Ok(ids) => JString::from_str(env, ids.join("\n")),
+                Err(_) => Ok(JString::null()),
+            }
+        })
+        .resolve::<ThrowRuntimeExAndDefault>()
+}
+
+/// Loads one coding task as JSON, or null when it does not exist.
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_io_parchment_ai_platform_ParchmentNativeCore_nativeLoadCodingTaskJson<
+    'caller,
+>(
+    mut unowned_env: EnvUnowned<'caller>,
+    _class: JClass<'caller>,
+    handle: jlong,
+    task_id: JString<'caller>,
+) -> JString<'caller> {
+    unowned_env
+        .with_env(|env| -> Result<JString<'caller>, JniError> {
+            let Some(core) = (unsafe { borrow_handle(handle) }) else {
+                return Ok(JString::null());
+            };
+            let tid = task_id.try_to_string(env)?;
+            let store = core.lock_store_for_jni();
+            match store.load_coding_task_json(&tid) {
+                Ok(Some(json)) => JString::from_str(env, json),
+                _ => Ok(JString::null()),
+            }
+        })
+        .resolve::<ThrowRuntimeExAndDefault>()
+}
+
+/// Saves a coding task from its JSON form. Returns true on success.
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_io_parchment_ai_platform_ParchmentNativeCore_nativeSaveCodingTaskJson<
+    'caller,
+>(
+    mut unowned_env: EnvUnowned<'caller>,
+    _class: JClass<'caller>,
+    handle: jlong,
+    json: JString<'caller>,
+) -> jboolean {
+    unowned_env
+        .with_env(|env| -> Result<jboolean, JniError> {
+            let Some(core) = (unsafe { borrow_handle(handle) }) else {
+                return Ok(false as jboolean);
+            };
+            let raw = json.try_to_string(env)?;
+            let value: serde_json::Value = match serde_json::from_str(&raw) {
+                Ok(v) => v,
+                Err(_) => return Ok(false as jboolean),
+            };
+            let _task: Task = match serde_json::from_str(&raw) {
+                Ok(t) => t,
+                Err(_) => return Ok(false as jboolean),
+            };
+            let id = value.get("id").and_then(|v| v.as_str()).unwrap_or("");
+            if id.is_empty() {
+                return Ok(false as jboolean);
+            }
+            let mut store = core.lock_store_for_jni_mut();
+            Ok(store
+                .upsert_coding_task(
+                    id,
+                    value.get("title").and_then(|v| v.as_str()).unwrap_or(""),
+                    value
+                        .get("description")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or(""),
+                    value
+                        .get("state")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("PENDING"),
+                    value
+                        .get("workspacePath")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or(""),
+                    value.get("repoUrl").and_then(|v| v.as_str()).unwrap_or(""),
+                    value
+                        .get("createdAtMs")
+                        .and_then(|v| v.as_i64())
+                        .unwrap_or(0),
+                    value
+                        .get("updatedAtMs")
+                        .and_then(|v| v.as_i64())
+                        .unwrap_or(0),
+                    value.get("completedAtMs").and_then(|v| v.as_i64()),
+                    &raw,
+                    value
+                        .get("ownerSessionId")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or(""),
+                    value.get("ownerRunId").and_then(|v| v.as_str()),
+                )
+                .is_ok())
+        })
+        .resolve::<ThrowRuntimeExAndDefault>()
+}
+
+/// Deletes a coding task. Returns true when a row was removed.
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_io_parchment_ai_platform_ParchmentNativeCore_nativeDeleteCodingTask<
+    'caller,
+>(
+    mut unowned_env: EnvUnowned<'caller>,
+    _class: JClass<'caller>,
+    handle: jlong,
+    task_id: JString<'caller>,
+) -> jboolean {
+    unowned_env
+        .with_env(|env| -> Result<jboolean, JniError> {
+            let Some(core) = (unsafe { borrow_handle(handle) }) else {
+                return Ok(false as jboolean);
+            };
+            let tid = task_id.try_to_string(env)?;
+            let mut store = core.lock_store_for_jni_mut();
+            Ok(store.delete_coding_task(&tid).unwrap_or(false))
         })
         .resolve::<ThrowRuntimeExAndDefault>()
 }

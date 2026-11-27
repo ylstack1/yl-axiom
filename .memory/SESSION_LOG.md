@@ -18,7 +18,15 @@
 - Not verified: parchment-desktop (GPUI/Win32), Android device runtime, Windows .exe.
 - Not started: UI wiring for Axiom Coding (Phase 9), context/artifact work (Phase 7).
 
-## 2026-11-25 (Phase 4 implementation session)
+## 2026-11-27 (Session handoff)
+- User requested handoff summary; all implementation work is committed and pushed.
+- Branch `feat/axiom-coding-foundation` @ `28432ff` (engine code, not on main)
+- Branch `feat/axiom-coding-ui` @ `d113759` (UI wiring, not on main)
+- Main @ `051b771` (docs + verified green state)
+- CI blocker: `parchment-core/Cargo.toml` has `unused dependency jni` and `unused dependency parchment-coding` due to optional deps + workspace `unused_dependencies = deny`. Fix documented in `.harness/memory/session_handoff.md`.
+- Phase 7 verified green on main @ 401f7de (31 tests, clippy clean).
+- Phase 9 UI branch has dead-code and ktlint issues, documented.
+- User will fix in a new session with a local agent that has real tool access.
 
 - Implemented Phase 4: TDD Red-Green-Refactor loop + hook gates in `crates/parchment-coding/src/lib.rs`:
   - `SubtaskPhase` enum (None/Red/Green/Refactor) for TDD phase tracking

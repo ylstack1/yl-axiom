@@ -209,7 +209,7 @@ actual object PlatformPickers {
     actual fun copyTextToClipboard(text: String): Boolean = runCatching {
         val ctx = AndroidPlatformHost.appContext ?: return false
         val clipboard = ctx.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-        clipboard.setPrimaryClip(ClipData.newPlainText("Parchment Text", text))
+        clipboard.setPrimaryClip(ClipData.newPlainText("YL Axiom Text", text))
         true
     }.getOrDefault(false)
 
@@ -224,7 +224,7 @@ actual object PlatformPickers {
         file.writeBytes(bytes)
         val uri = ParchmentFileProvider.getUriForFile(ctx, file)
         val clipboard = ctx.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-        clipboard.setPrimaryClip(ClipData.newUri(ctx.contentResolver, "Parchment Image", uri))
+        clipboard.setPrimaryClip(ClipData.newUri(ctx.contentResolver, "YL Axiom Image", uri))
         true
     }.getOrDefault(false)
 

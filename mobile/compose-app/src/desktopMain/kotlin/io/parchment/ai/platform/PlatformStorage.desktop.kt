@@ -89,6 +89,11 @@ actual object PlatformStorage {
 
     actual fun writeGlobalAgentMemory(content: String, storageRootOverride: String): Result<String> = AppAgentStorage.writeGlobalMemory(DesktopPlatformHost::resolveStorageDir, content, storageRootOverride)
 
+    actual fun listCodingTaskIds(storageDir: File): List<String> = emptyList()
+    actual fun loadCodingTaskJson(storageDir: File, taskId: String): String? = null
+    actual fun saveCodingTaskJson(storageDir: File, json: String): Boolean = false
+    actual fun deleteCodingTask(storageDir: File, taskId: String): Boolean = false
+
     internal fun resolveLocalMediaFile(filePath: String): File? = mediaStore.resolve(filePath)
 
     actual fun saveGeneratedMediaFile(fileName: String, bytes: ByteArray, sessionId: String): String = mediaStore.save(fileName, bytes, sessionId)

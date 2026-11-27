@@ -145,7 +145,7 @@ actual object PlatformRuntime {
                 Uri.parse("package:${ctx.packageName}")
             ).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
             ctx.startActivity(permIntent)
-            error("Please allow 'Install unknown apps' for Parchment in the Android settings screen that just opened, then tap Update again.")
+            error("Please allow 'Install unknown apps' for YL Axiom in the Android settings screen that just opened, then tap Update again.")
         }
 
         val packageInstaller = ctx.packageManager.packageInstaller

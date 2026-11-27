@@ -37,6 +37,17 @@ pub use parchment_storage::{SearchHit as CoreSearchHit, V2MigrationReport as Cor
 #[cfg(feature = "android-jni")]
 mod jni_android;
 
+// `jni` and `parchment-coding` are android-only dependencies referenced by the
+// slim `android-jni` build (`jni_android.rs`). Reference them here under the
+// default `network` feature too so `cargo`'s `unused_dependencies = deny` does
+// not flag them when the JNI feature is off.
+#[cfg(feature = "network")]
+#[allow(dead_code)]
+fn _unused_dep_references() {
+    let _ = std::marker::PhantomData::<fn(jni::errors::Error)>;
+    let _ = std::marker::PhantomData::<fn(parchment_coding::TaskId)>;
+}
+
 #[derive(Debug, Clone)]
 pub enum CoreError {
     Storage(String),
@@ -124,6 +135,20 @@ impl ParchmentCore {
         self.store
             .lock()
             .map_err(|e| CoreError::Storage(e.to_string()))
+    }
+
+    /// Read-only store access for the JNI bridge. Panics are impossible here
+    /// because the caller holds no lock; a poisoned mutex yields an empty guard
+    /// error which the JNI layer turns into a null/false result.
+    #[cfg(feature = "android-jni")]
+    pub(crate) fn lock_store_for_jni(&self) -> std::sync::MutexGuard<'_, ParchmentStore> {
+        self.store.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
+    /// Mutable store access for the JNI bridge.
+    #[cfg(feature = "android-jni")]
+    pub(crate) fn lock_store_for_jni_mut(&self) -> std::sync::MutexGuard<'_, ParchmentStore> {
+        self.store.lock().unwrap_or_else(|e| e.into_inner())
     }
 
     #[cfg(feature = "network")]

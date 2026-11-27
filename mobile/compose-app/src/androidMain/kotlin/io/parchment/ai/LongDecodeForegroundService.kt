@@ -217,7 +217,7 @@ class LongDecodeForegroundService : Service() {
         val mgr = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
         val channel = NotificationChannel(
             CHANNEL_ID,
-            "Parchment Long Decode",
+            "YL Axiom Long Decode",
             NotificationManager.IMPORTANCE_LOW
         ).apply {
             description = "Keeps long-running AI generation streams active in background"
@@ -241,7 +241,7 @@ class LongDecodeForegroundService : Service() {
             )
         }
         return builder
-            .setContentTitle("Parchment — Active Generation")
+            .setContentTitle("YL Axiom — Active Generation")
             .setContentText(statusText)
             .setSmallIcon(android.R.drawable.ic_menu_edit)
             .setOngoing(true)
@@ -302,7 +302,7 @@ class LongDecodeForegroundService : Service() {
                 if (clearRecoveredFailure) foregroundFailure = ""
                 notificationNotice = if (enabled) "" else if (Build.VERSION.SDK_INT >= 33) {
                     "Notifications are disabled. Active foreground services appear in Android Task Manager."
-                } else "Notifications are disabled for Parchment."
+                } else "Notifications are disabled for YL Axiom."
                 publishNotice()
             }
         }

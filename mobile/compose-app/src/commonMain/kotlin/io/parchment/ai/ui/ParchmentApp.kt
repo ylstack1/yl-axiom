@@ -53,6 +53,8 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import io.parchment.ai.ParchmentBuildConfig
+import io.parchment.ai.harness.AxiomCodingStore
+import io.parchment.ai.harness.CodingTaskSummary
 import io.parchment.ai.model.AgentPermissionResolver
 import io.parchment.ai.model.AppStateSnapshot
 import io.parchment.ai.model.AssistantAgent
@@ -464,6 +466,34 @@ fun ParchmentApp(
                     }
                 }
 
+                // The three top-level destinations. Chat keeps the existing behaviour as the default.
+                var appMode by remember { mutableStateOf(AppMode.CHAT) }
+                var axiomTasks by remember { mutableStateOf<List<CodingTaskSummary>>(emptyList()) }
+                var axiomStorageReady by remember { mutableStateOf(true) }
+                var axiomRefreshTick by remember { mutableStateOf(0) }
+                var axiomSelectedTaskId by remember { mutableStateOf<String?>(null) }
+                var axiomNewTaskTitle by remember { mutableStateOf("") }
+                var showAxiomNewTask by remember { mutableStateOf(false) }
+
+                // Real persisted tasks from the Rust store; refreshed after every mutation.
+                LaunchedEffect(appMode, axiomRefreshTick) {
+                    if (appMode == AppMode.CODING) {
+                        val snapshot = withContext(Dispatchers.IO) {
+                            runCatching {
+                                AxiomCodingStore.listTasks(
+                                    java.io.File(PlatformStorage.getAppStorageDirectoryPath())
+                                )
+                            }.getOrNull()
+                        }
+                        if (snapshot != null) {
+                            axiomTasks = snapshot
+                            axiomStorageReady = true
+                        } else {
+                            axiomStorageReady = false
+                        }
+                    }
+                }
+
                 // Register Android System Back Gesture / Back Button Navigation Stack
                 LaunchedEffect(
                     showCommandPalette,
@@ -478,7 +508,8 @@ fun ParchmentApp(
                     showComposerToolsDrawer,
                     showSidebar,
                     isSettingsOpen,
-                    isCompactScreen
+                    isCompactScreen,
+                    appMode
                 ) {
                     PlatformRuntime.registerBackHandler {
                         when {
@@ -528,6 +559,10 @@ fun ParchmentApp(
                             }
                             isSettingsOpen -> {
                                 isSettingsOpen = false
+                                true
+                            }
+                            appMode == AppMode.CODING -> {
+                                appMode = AppMode.CHAT
                                 true
                             }
                             else -> false
@@ -645,7 +680,13 @@ fun ParchmentApp(
                             )
                     ) {
                         if (platformWindowChrome != null) {
-                            platformWindowChrome(if (isSettingsOpen) Strings.settings else activeSession.title)
+                            platformWindowChrome(
+                                when {
+                                    isSettingsOpen -> Strings.settings
+                                    appMode == AppMode.CODING -> Strings.axiomCoding
+                                    else -> activeSession.title
+                                }
+                            )
                         }
 
                         val hasModalOverlay = showCommandPalette ||
@@ -663,6 +704,31 @@ fun ParchmentApp(
                                 .fillMaxWidth()
                                 .then(if (hasModalOverlay) Modifier.clearAndSetSemantics {} else Modifier)
                         ) {
+                            // Mode switch: Assistant, Chat and Axiom Coding. Chat stays the default.
+                            if (!isSettingsOpen) {
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(horizontal = Space.s12, vertical = Space.s6),
+                                    horizontalArrangement = Arrangement.spacedBy(Space.s6)
+                                ) {
+                                    SepiaChip(
+                                        label = Strings.assistant,
+                                        selected = appMode == AppMode.ASSISTANT,
+                                        onClick = { appMode = AppMode.ASSISTANT }
+                                    )
+                                    SepiaChip(
+                                        label = Strings.chats,
+                                        selected = appMode == AppMode.CHAT,
+                                        onClick = { appMode = AppMode.CHAT }
+                                    )
+                                    SepiaChip(
+                                        label = Strings.axiomCoding,
+                                        selected = appMode == AppMode.CODING,
+                                        onClick = { appMode = AppMode.CODING }
+                                    )
+                                }
+                            }
                             // 1. Top bar, hidden while Settings is open so there is only one way back to the chat.
                             if (!isSettingsOpen) {
                                 val bgStreamingCount = activeStreamsBySession.keys.count { it != activeSession.id }
@@ -1253,6 +1319,85 @@ fun ParchmentApp(
                                                     onNotify = { bannerNotification = it },
                                                     onClose = { isSettingsOpen = false }
                                                 )
+                                            } else if (appMode == AppMode.CODING) {
+                                                AxiomCodingScreen(
+                                                    tasks = axiomTasks,
+                                                    storageAvailable = axiomStorageReady,
+                                                    onNewTask = stableAction {
+                                                        axiomNewTaskTitle = ""
+                                                        showAxiomNewTask = true
+                                                    },
+                                                    onOpenTask = stableCallback { taskId ->
+                                                        axiomSelectedTaskId = taskId
+                                                        appProcessScope.launch {
+                                                            val moved = withContext(Dispatchers.IO) {
+                                                                runCatching {
+                                                                    AxiomCodingStore.setState(
+                                                                        java.io.File(
+                                                                            PlatformStorage
+                                                                                .getAppStorageDirectoryPath()
+                                                                        ),
+                                                                        taskId,
+                                                                        "PLANNING"
+                                                                    )
+                                                                }.getOrDefault(false)
+                                                            }
+                                                            if (moved) axiomRefreshTick++
+                                                        }
+                                                    },
+                                                    onDeleteTask = stableCallback { taskId ->
+                                                        appProcessScope.launch {
+                                                            val removed = withContext(Dispatchers.IO) {
+                                                                runCatching {
+                                                                    AxiomCodingStore.deleteTask(
+                                                                        java.io.File(
+                                                                            PlatformStorage
+                                                                                .getAppStorageDirectoryPath()
+                                                                        ),
+                                                                        taskId
+                                                                    )
+                                                                }.getOrDefault(false)
+                                                            }
+                                                            if (removed) {
+                                                                axiomRefreshTick++
+                                                            }
+                                                        }
+                                                    }
+                                                )
+                                                if (showAxiomNewTask) {
+                                                    AxiomNewTaskDialog(
+                                                        title = axiomNewTaskTitle,
+                                                        onTitleChange = stableCallback { axiomNewTaskTitle = it },
+                                                        onCreate = stableAction {
+                                                            val title = axiomNewTaskTitle.trim()
+                                                            if (title.isNotEmpty()) {
+                                                                appProcessScope.launch {
+                                                                    val created = withContext(Dispatchers.IO) {
+                                                                        runCatching {
+                                                                            AxiomCodingStore.createTask(
+                                                                                java.io.File(
+                                                                                    PlatformStorage
+                                                                                        .getAppStorageDirectoryPath()
+                                                                                ),
+                                                                                title = title,
+                                                                                description = "",
+                                                                                workspacePath = "",
+                                                                                ownerSessionId = activeSession.id
+                                                                            )
+                                                                        }.getOrNull()
+                                                                    }
+                                                                    showAxiomNewTask = false
+                                                                    axiomNewTaskTitle = ""
+                                                                    if (created != null) axiomRefreshTick++
+                                                                }
+                                                            }
+                                                        },
+                                                        onDismiss = stableAction {
+                                                            showAxiomNewTask = false
+                                                            axiomNewTaskTitle = ""
+                                                        }
+                                                    )
+                                                }
                                             } else {
                                                 ManuscriptViewport(
                                                     appState = appState,

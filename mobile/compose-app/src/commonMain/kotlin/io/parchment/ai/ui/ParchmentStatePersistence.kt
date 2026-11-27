@@ -76,6 +76,16 @@ enum class SidebarTab {
     PINNED
 }
 
+/**
+ * The three top-level destinations: Assistant, Chat and Axiom Coding.
+ * Chat is the default so existing behaviour is unchanged.
+ */
+enum class AppMode {
+    ASSISTANT,
+    CHAT,
+    CODING
+}
+
 sealed interface DeleteConfirmRequest {
     data class SingleSession(val sessionId: String, val title: String) : DeleteConfirmRequest
     data class ClearAllSessions(val assistantName: String, val count: Int) : DeleteConfirmRequest

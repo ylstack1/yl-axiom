@@ -170,7 +170,7 @@ class ParchmentAccessibilityService : AccessibilityService() {
         ).apply {
             gravity = Gravity.TOP or Gravity.CENTER_HORIZONTAL
             y = dp(48)
-            title = "Parchment Approval"
+            title = "YL Axiom Approval"
         }
         val view = buildOverlayView(request)
         runCatching {
@@ -191,7 +191,7 @@ class ParchmentAccessibilityService : AccessibilityService() {
     private fun dp(value: Int): Int = TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_DIP, value.toFloat(), resources.displayMetrics).toInt()
 
     private fun buildOverlayView(request: ToolApprovalRequest): View {
-        val paneTitleText = "${Strings.approval2("Parchment")} · ${request.toolName}"
+        val paneTitleText = "${Strings.approval2("YL Axiom")} · ${request.toolName}"
         val root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             val pad = dp(14)
