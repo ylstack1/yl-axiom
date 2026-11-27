@@ -12,6 +12,7 @@ use jni::objects::{JByteArray, JClass, JString};
 use jni::sys::{jboolean, jint, jlong};
 
 use crate::ParchmentCore;
+use parchment_coding::Task;
 
 unsafe fn borrow_handle<'a>(handle: jlong) -> Option<&'a ParchmentCore> {
     if handle == 0 {
@@ -285,6 +286,10 @@ pub extern "system" fn Java_io_parchment_ai_platform_ParchmentNativeCore_nativeS
                 Ok(v) => v,
                 Err(_) => return Ok(false),
             };
+            let _task: Task = match serde_json::from_str(&raw) {
+                Ok(t) => t,
+                Err(_) => return Ok(false),
+            };
             let id = value.get("id").and_then(|v| v.as_str()).unwrap_or("");
             if id.is_empty() {
                 return Ok(false);
@@ -345,7 +350,7 @@ pub extern "system" fn Java_io_parchment_ai_platform_ParchmentNativeCore_nativeD
             };
             let tid = task_id.try_to_string(env)?;
             let mut store = core.lock_store_for_jni_mut();
-            store.delete_coding_task(&tid).unwrap_or(false)
+            Ok(store.delete_coding_task(&tid).unwrap_or(false))
         })
         .resolve::<ThrowRuntimeExAndDefault>()
 }
