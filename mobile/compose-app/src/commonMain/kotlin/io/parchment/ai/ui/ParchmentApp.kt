@@ -470,6 +470,8 @@ fun ParchmentApp(
                 var axiomStorageReady by remember { mutableStateOf(true) }
                 var axiomRefreshTick by remember { mutableStateOf(0) }
                 var axiomSelectedTaskId by remember { mutableStateOf<String?>(null) }
+                var axiomNewTaskTitle by remember { mutableStateOf("") }
+                var showAxiomNewTask by remember { mutableStateOf(false) }
 
                 // Real persisted tasks from the Rust store; refreshed after every mutation.
                 LaunchedEffect(appMode, axiomRefreshTick) {
@@ -1320,10 +1322,26 @@ fun ParchmentApp(
                                                     tasks = axiomTasks,
                                                     storageAvailable = axiomStorageReady,
                                                     onNewTask = stableAction {
-                                                        appMode = AppMode.CHAT
+                                                        axiomNewTaskTitle = ""
+                                                        showAxiomNewTask = true
                                                     },
                                                     onOpenTask = stableCallback { taskId ->
                                                         axiomSelectedTaskId = taskId
+                                                        appProcessScope.launch {
+                                                            val moved = withContext(Dispatchers.IO) {
+                                                                runCatching {
+                                                                    AxiomCodingStore.setState(
+                                                                        java.io.File(
+                                                                            PlatformStorage
+                                                                                .getAppStorageDirectoryPath()
+                                                                        ),
+                                                                        taskId,
+                                                                        "PLANNING"
+                                                                    )
+                                                                }.getOrDefault(false)
+                                                            }
+                                                            if (moved) axiomRefreshTick++
+                                                        }
                                                     },
                                                     onDeleteTask = stableCallback { taskId ->
                                                         appProcessScope.launch {
@@ -1344,6 +1362,40 @@ fun ParchmentApp(
                                                         }
                                                     }
                                                 )
+                                                if (showAxiomNewTask) {
+                                                    AxiomNewTaskDialog(
+                                                        title = axiomNewTaskTitle,
+                                                        onTitleChange = stableCallback { axiomNewTaskTitle = it },
+                                                        onCreate = stableAction {
+                                                            val title = axiomNewTaskTitle.trim()
+                                                            if (title.isNotEmpty()) {
+                                                                appProcessScope.launch {
+                                                                    val created = withContext(Dispatchers.IO) {
+                                                                        runCatching {
+                                                                            AxiomCodingStore.createTask(
+                                                                                java.io.File(
+                                                                                    PlatformStorage
+                                                                                        .getAppStorageDirectoryPath()
+                                                                                ),
+                                                                                title = title,
+                                                                                description = "",
+                                                                                workspacePath = "",
+                                                                                ownerSessionId = activeSession.id
+                                                                            )
+                                                                        }.getOrNull()
+                                                                    }
+                                                                    showAxiomNewTask = false
+                                                                    axiomNewTaskTitle = ""
+                                                                    if (created != null) axiomRefreshTick++
+                                                                }
+                                                            }
+                                                        },
+                                                        onDismiss = stableAction {
+                                                            showAxiomNewTask = false
+                                                            axiomNewTaskTitle = ""
+                                                        }
+                                                    )
+                                                }
                                             } else {
                                                 ManuscriptViewport(
                                                     appState = appState,

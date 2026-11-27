@@ -221,3 +221,46 @@ private fun AxiomNotice(text: String, modifier: Modifier = Modifier) {
         )
     }
 }
+
+/**
+ * New-task prompt. Uses the existing SepiaTextField and SepiaButton; the
+ * create button stays disabled until a title is typed, so there is no dead
+ * control and no empty task can be created.
+ */
+@Composable
+internal fun AxiomNewTaskDialog(
+    title: String,
+    onTitleChange: (String) -> Unit,
+    onCreate: () -> Unit,
+    onDismiss: () -> Unit
+) {
+    val p = LocalParchmentPalette.current
+    ConfirmBackdrop(onDismiss) {
+        SepiaConfirmationCard(
+            title = Strings.axiomCodingNewTask,
+            body = Strings.axiomCodingTaskGoal,
+            options = {
+                SepiaTextField(
+                    value = title,
+                    onValueChange = onTitleChange,
+                    label = Strings.axiomCodingTaskTitle,
+                    modifier = Modifier.fillMaxWidth()
+                )
+            }
+        ) {
+            SepiaButton(
+                text = Strings.cancel,
+                compact = true,
+                style = SepiaButtonStyle.OUTLINE,
+                onClick = onDismiss
+            )
+            SepiaButton(
+                text = Strings.axiomCodingCreate,
+                compact = true,
+                style = SepiaButtonStyle.PRIMARY,
+                onClick = onCreate,
+                enabled = title.isNotBlank()
+            )
+        }
+    }
+}
