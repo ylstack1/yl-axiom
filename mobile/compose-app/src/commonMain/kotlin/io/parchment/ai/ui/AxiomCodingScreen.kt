@@ -10,7 +10,10 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicText
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.runtime.Composable
@@ -30,6 +33,7 @@ import io.parchment.ai.model.ChatSession
 import io.parchment.ai.model.ProviderProfile
 import io.parchment.ai.strings.Strings
 import java.io.File
+import kotlinx.coroutines.launch
 
 /**
  * Axiom Coding workspace.
@@ -307,12 +311,12 @@ private fun AxiomCodingView(
         ) {
             BasicText(
                 text = task.stateLabel(),
-                style = p.uiCaptionStyle.copy(color = p.mutedInk),
+                style = p.uiLabelStyle.copy(color = p.mutedInk),
                 maxLines = 1
             )
             BasicText(
                 text = Strings.axiomCodingStepTotal(task.subtaskCount),
-                style = p.uiCaptionStyle.copy(color = p.mutedInk),
+                style = p.uiLabelStyle.copy(color = p.mutedInk),
                 maxLines = 1
             )
         }
