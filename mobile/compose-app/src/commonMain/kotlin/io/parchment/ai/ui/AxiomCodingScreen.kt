@@ -9,7 +9,6 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.BasicText
@@ -29,16 +28,10 @@ import androidx.compose.ui.unit.sp
 import io.parchment.ai.harness.AxiomCodingStore
 import io.parchment.ai.harness.CodingTaskSummary
 import io.parchment.ai.model.ChatSession
-import io.parchment.ai.model.MessageNode
 import io.parchment.ai.model.ProviderProfile
-import io.parchment.ai.network.AiProviderEngine
-import io.parchment.ai.network.StreamUpdate
 import io.parchment.ai.platform.PlatformStorage
 import io.parchment.ai.strings.Strings
 import java.io.File
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.flow.collect
-import kotlinx.coroutines.withContext
 
 /**
  * Axiom Coding workspace.
