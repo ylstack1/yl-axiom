@@ -48,8 +48,8 @@ import kotlinx.coroutines.launch
 internal fun AxiomCodingScreen(
     tasks: List<CodingTaskSummary>,
     storageAvailable: Boolean,
-    profile: ProviderProfile,
-    session: ChatSession,
+    profile: ProviderProfile?,
+    session: ChatSession?,
     storageDir: File,
     onNewTask: () -> Unit,
     onOpenTask: (String) -> Unit,
@@ -229,8 +229,8 @@ private fun AxiomTaskRow(
 private fun AxiomCodingView(
     task: CodingTaskSummary,
     storageAvailable: Boolean,
-    profile: ProviderProfile,
-    session: ChatSession,
+    profile: ProviderProfile?,
+    session: ChatSession?,
     storageDir: File,
     onDelete: () -> Unit,
     modifier: Modifier = Modifier
@@ -273,8 +273,8 @@ private fun AxiomCodingView(
                                 storageDir = storageDir,
                                 taskId = task.id,
                                 subtaskId = task.id,
-                                profile = profile,
-                                session = session,
+                                profile = profile!!,
+                                session = session!!,
                                 historyNodes = emptyList(),
                                 prompt = "Implement the coding task titled '${task.title}'. Description: ${task.description.orEmpty()}"
                             )
@@ -283,7 +283,7 @@ private fun AxiomCodingView(
                         running = false
                     }
                 },
-                enabled = !running && storageAvailable
+                enabled = !running && storageAvailable && profile != null && session != null
             )
         }
 
