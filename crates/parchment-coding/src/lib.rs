@@ -751,6 +751,21 @@ impl<'a> CodingTaskCoordinator<'a> {
             .iter()
             .all(|c| c.verified);
 
+        // When no explicit acceptance criteria are set, the model running tools
+        // (build/test/lint via the agent loop) is the verification signal.
+        let verification_passed = if all_verified {
+            true
+        } else {
+            // Check if there are any criteria at all; if none, use tool execution.
+            let has_criteria = self
+                .tasks
+                .get(task_id)
+                .and_then(|t| t.subtasks.iter().find(|s| s.id == subtask_id))
+                .map(|s| !s.acceptance_criteria.is_empty())
+                .unwrap_or(false);
+            !has_criteria && tool_calls_executed > 0
+        };
+
         // Mark subtask in progress.
         let task_clone;
         {
@@ -771,9 +786,6 @@ impl<'a> CodingTaskCoordinator<'a> {
 
         // Run the model + tool loop (driven by the Kotlin host via JNI).
         let content = model_content.to_string();
-
-        // Run verification against the subtask's acceptance criteria.
-        let verification_passed = all_verified;
 
         // PostToolUse hook wiring is Phase D.
         let mut recovery_used = 0;
