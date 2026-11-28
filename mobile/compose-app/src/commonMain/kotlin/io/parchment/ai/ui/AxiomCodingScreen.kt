@@ -84,11 +84,7 @@ internal fun AxiomCodingScreen(
                 verticalArrangement = Arrangement.spacedBy(Space.s12)
             ) {
                 if (tasks.isEmpty()) {
-                    AxiomCodingEmpty(
-                        storageAvailable = storageAvailable,
-                        onNewTask = onNewTask,
-                        modifier = Modifier.fillMaxWidth()
-                    )
+                    AxiomCodingEmpty(modifier = Modifier.fillMaxWidth())
                 } else {
                     tasks.forEach { task ->
                         AxiomTaskRow(
@@ -269,7 +265,7 @@ private fun AxiomCodingView(
                 .weight(1f)
                 .background(p.cardBg.copy(alpha = 0.06f))
                 .padding(Space.s12)
-                .clip(RoundedCornerShape(Radius.s8))
+                .clip(RoundedCornerShape(Radius.r12))
         ) {
             BasicText(
                 text = output ?: Strings.axiomCodingNoOutput,
