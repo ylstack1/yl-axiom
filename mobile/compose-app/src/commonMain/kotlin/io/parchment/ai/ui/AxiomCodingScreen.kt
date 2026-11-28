@@ -23,13 +23,11 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
-import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import io.parchment.ai.harness.AxiomCodingStore
 import io.parchment.ai.harness.CodingTaskSummary
 import io.parchment.ai.model.ChatSession
 import io.parchment.ai.model.ProviderProfile
-import io.parchment.ai.platform.PlatformStorage
 import io.parchment.ai.strings.Strings
 import java.io.File
 
