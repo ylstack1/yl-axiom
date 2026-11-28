@@ -822,7 +822,6 @@ internal object Strings {
     fun characterCardsPngJson(a: Any?): String = "Character cards (PNG/JSON) & $a"
     fun storageBackupsAndAppUpdatesV(a: Any?): String = "Storage, backups and app updates (v$a)"
     val searchAssistants = "🔍 Search assistants…"
-    val searchPinned = "🔍 Search pinned…"
     val searchChats = "🔍 Search chats…"
     val chats = "Chats"
     val pinned = "Pinned"
