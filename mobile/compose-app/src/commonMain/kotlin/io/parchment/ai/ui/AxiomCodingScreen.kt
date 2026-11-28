@@ -6,12 +6,12 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicText
@@ -84,7 +84,7 @@ internal fun AxiomCodingScreen(
                 verticalArrangement = Arrangement.spacedBy(Space.s12)
             ) {
                 if (tasks.isEmpty()) {
-                    EmptyAxiomCoding(
+                    AxiomCodingEmpty(
                         storageAvailable = storageAvailable,
                         onNewTask = onNewTask,
                         modifier = Modifier.fillMaxWidth()
@@ -267,13 +267,13 @@ private fun AxiomCodingView(
             modifier = Modifier
                 .fillMaxSize()
                 .weight(1f)
-                .background(p.surface.copy(alpha = 0.06f))
+                .background(p.cardBg.copy(alpha = 0.06f))
                 .padding(Space.s12)
                 .clip(RoundedCornerShape(Radius.s8))
         ) {
             BasicText(
                 text = output ?: Strings.axiomCodingNoOutput,
-                style = p.codeStyle,
+                style = p.monoStyle,
                 maxLines = Int.MAX_VALUE,
                 overflow = TextOverflow.Visible
             )
@@ -286,12 +286,12 @@ private fun AxiomCodingView(
         ) {
             BasicText(
                 text = task.stateLabel(),
-                style = p.uiCaptionStyle.copy(color = p.mutedInk),
+                style = p.uiLabelStyle.copy(color = p.mutedInk),
                 maxLines = 1
             )
             BasicText(
                 text = Strings.axiomCodingStepTotal(task.subtaskCount),
-                style = p.uiCaptionStyle.copy(color = p.mutedInk),
+                style = p.uiLabelStyle.copy(color = p.mutedInk),
                 maxLines = 1
             )
         }
