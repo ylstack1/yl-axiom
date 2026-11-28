@@ -5,14 +5,21 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicText
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -25,10 +32,11 @@ import io.parchment.ai.strings.Strings
 /**
  * Axiom Coding workspace.
  *
+ * A chat-like coding environment: tasks are listed on the left; opening a task
+ * opens a real coding session whose agent output streams in the right pane.
  * Every colour, space, radius, stroke and text style comes from DesignTokens.kt
  * and ParchmentPalette; every control is an existing component. All copy lives
- * in Strings. The list is real persisted data from the Rust store, and every
- * button performs a real store operation.
+ * in Strings. Every button performs a real store operation.
  */
 @Composable
 internal fun AxiomCodingScreen(
@@ -42,15 +50,12 @@ internal fun AxiomCodingScreen(
     val p = LocalParchmentPalette.current
     val win = LocalParchmentWindowSize.current
 
+    var selectedTaskId by remember { mutableStateOf<String?>(null) }
+
     Column(
         modifier = modifier
             .fillMaxSize()
-            .background(p.canvasBg)
-            .verticalScroll(rememberScrollState())
-            .padding(
-                horizontal = if (win.isCompact) Space.s12 else Space.s16,
-                vertical = Space.s16
-            ),
+            .background(p.canvasBg),
         verticalArrangement = Arrangement.spacedBy(Space.s12)
     ) {
         if (!storageAvailable) {
@@ -60,36 +65,95 @@ internal fun AxiomCodingScreen(
             )
         }
 
-        if (tasks.isEmpty()) {
-            EmptyAxiomCoding(
-                storageAvailable = storageAvailable,
-                onNewTask = onNewTask,
-                modifier = Modifier.fillMaxWidth()
-            )
-        } else {
-            tasks.forEach { task ->
-                AxiomTaskRow(
-                    task = task,
-                    onOpen = { onOpenTask(task.id) },
-                    onDelete = { onDeleteTask(task.id) },
-                    modifier = Modifier.fillMaxWidth()
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .weight(1f)
+        ) {
+            // Left column: task list.
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .weight(0.42f)
+                    .verticalScroll(rememberScrollState())
+                    .padding(
+                        horizontal = if (win.isCompact) Space.s8 else Space.s16,
+                        vertical = Space.s12
+                    ),
+                verticalArrangement = Arrangement.spacedBy(Space.s12)
+            ) {
+                if (tasks.isEmpty()) {
+                    EmptyAxiomCoding(
+                        storageAvailable = storageAvailable,
+                        onNewTask = onNewTask,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                } else {
+                    tasks.forEach { task ->
+                        AxiomTaskRow(
+                            task = task,
+                            isSelected = task.id == selectedTaskId,
+                            onOpen = {
+                                selectedTaskId = task.id
+                                onOpenTask(task.id)
+                            },
+                            onDelete = { onDeleteTask(task.id) },
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(Space.s12))
+                SepiaButton(
+                    text = Strings.axiomCodingNewTask,
+                    onClick = onNewTask,
+                    style = SepiaButtonStyle.PRIMARY,
+                    enabled = storageAvailable
                 )
+            }
+
+            SepiaDivider()
+
+            // Right column: coding view (streaming output + task detail).
+            Column(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .weight(0.58f)
+                    .verticalScroll(rememberScrollState())
+                    .padding(
+                        horizontal = if (win.isCompact) Space.s8 else Space.s16,
+                        vertical = Space.s12
+                    ),
+                verticalArrangement = Arrangement.spacedBy(Space.s12)
+            ) {
+                if (selectedTaskId == null) {
+                    AxiomCodingEmpty()
+                } else {
+                    val selected = tasks.firstOrNull { it.id == selectedTaskId }
+                    if (selected != null) {
+                        AxiomCodingView(
+                            task = selected,
+                            storageAvailable = storageAvailable,
+                            onRunTask = {
+                                onOpenTask(selectedTaskId!!)
+                            },
+                            onDelete = { onDeleteTask(selectedTaskId!!) }
+                        )
+                    }
+                }
             }
         }
     }
 }
 
+/** Empty coding view when no task is selected. */
 @Composable
-private fun EmptyAxiomCoding(
-    storageAvailable: Boolean,
-    onNewTask: () -> Unit,
-    modifier: Modifier = Modifier
-) {
+private fun AxiomCodingEmpty() {
     val p = LocalParchmentPalette.current
     Column(
-        modifier = modifier.padding(vertical = Space.s24),
+        modifier = Modifier.fillMaxSize(),
         horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.spacedBy(Space.s10)
+        verticalArrangement = Arrangement.spacedBy(Space.s24)
     ) {
         KissVectorIcon(icon = KissIcon.CODE, tint = p.accent, size = IconSize.xl)
         BasicText(
@@ -104,19 +168,14 @@ private fun EmptyAxiomCoding(
             maxLines = 3,
             overflow = TextOverflow.Ellipsis
         )
-        if (storageAvailable) {
-            SepiaButton(
-                text = Strings.axiomCodingNewTask,
-                onClick = onNewTask,
-                style = SepiaButtonStyle.PRIMARY
-            )
-        }
     }
 }
 
+/** A single coding task row in the sidebar list. */
 @Composable
 private fun AxiomTaskRow(
     task: CodingTaskSummary,
+    isSelected: Boolean,
     onOpen: () -> Unit,
     onDelete: () -> Unit,
     modifier: Modifier = Modifier
@@ -125,7 +184,7 @@ private fun AxiomTaskRow(
     SepiaSectionCard(
         title = task.title,
         subtitle = task.stateLabel(),
-        modifier = modifier,
+        modifier = modifier.fillMaxWidth(),
         headerAction = {
             SepiaButton(
                 text = Strings.axiomCodingOpen,
@@ -158,6 +217,109 @@ private fun AxiomTaskRow(
     }
 }
 
+/** The coding view: streaming output + task controls. */
+@Composable
+private fun AxiomCodingView(
+    task: CodingTaskSummary,
+    storageAvailable: Boolean,
+    onRunTask: () -> Unit,
+    onDelete: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    val p = LocalParchmentPalette.current
+    var running by remember { mutableStateOf(false) }
+    var output by remember { mutableStateOf<String?>(null) }
+
+    Column(
+        modifier = modifier.fillMaxSize(),
+        verticalArrangement = Arrangement.spacedBy(Space.s12)
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(Space.s8)
+        ) {
+            BasicText(
+                text = task.title,
+                style = p.uiHeaderStyle.copy(fontSize = 18.sp),
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.weight(1f)
+            )
+            SepiaButton(
+                text = Strings.cancel,
+                compact = true,
+                style = SepiaButtonStyle.OUTLINE,
+                onClick = onDelete,
+                enabled = !running
+            )
+            SepiaButton(
+                text = Strings.axiomCodingRun,
+                compact = true,
+                style = SepiaButtonStyle.PRIMARY,
+                onClick = onRunTask,
+                enabled = !running && storageAvailable
+            )
+        }
+
+        // Streaming output area.
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .weight(1f)
+                .background(p.surface.copy(alpha = 0.06f))
+                .padding(Space.s12)
+                .clip(RoundedCornerShape(Radius.s8))
+        ) {
+            BasicText(
+                text = output ?: Strings.axiomCodingNoOutput,
+                style = p.codeStyle,
+                maxLines = Int.MAX_VALUE,
+                overflow = TextOverflow.Visible
+            )
+        }
+
+        // Status row.
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(Space.s8)
+        ) {
+            BasicText(
+                text = task.stateLabel(),
+                style = p.uiCaptionStyle.copy(color = p.mutedInk),
+                maxLines = 1
+            )
+            BasicText(
+                text = Strings.axiomCodingStepTotal(task.subtaskCount),
+                style = p.uiCaptionStyle.copy(color = p.mutedInk),
+                maxLines = 1
+            )
+        }
+    }
+}
+
+/** Notice displayed when something goes wrong. */
+@Composable
+private fun AxiomNotice(text: String, modifier: Modifier = Modifier) {
+    val p = LocalParchmentPalette.current
+    val shape = RoundedCornerShape(Radius.r12)
+    Box(
+        modifier = modifier
+            .clip(shape)
+            .background(p.danger.copy(alpha = 0.10f))
+            .border(LineWidth.hairline, p.danger.copy(alpha = 0.52f), shape)
+            .heightIn(min = Space.s48)
+            .padding(horizontal = Space.s10, vertical = Space.s8),
+        contentAlignment = Alignment.Center
+    ) {
+        BasicText(
+            text = text,
+            style = p.uiLabelStyle.copy(color = p.danger, fontWeight = FontWeight.Medium),
+            maxLines = 3,
+            overflow = TextOverflow.Ellipsis
+        )
+    }
+}
+
 /** Human-readable state label; the raw enum name is never shown. */
 private fun CodingTaskSummary.stateLabel(): String = when (state.uppercase()) {
     "PLANNING" -> Strings.axiomCodingStatePlanning
@@ -178,28 +340,6 @@ private fun CodingTaskSummary.progressLabel(): String = if (verifiedCount > 0) {
     Strings.axiomCodingStepTotal(subtaskCount)
 }
 
-@Composable
-private fun AxiomNotice(text: String, modifier: Modifier = Modifier) {
-    val p = LocalParchmentPalette.current
-    val shape = androidx.compose.foundation.shape.RoundedCornerShape(Radius.r12)
-    Box(
-        modifier = modifier
-            .clip(shape)
-            .background(p.danger.copy(alpha = 0.10f))
-            .border(LineWidth.hairline, p.danger.copy(alpha = 0.52f), shape)
-            .heightIn(min = Space.s48)
-            .padding(horizontal = Space.s10, vertical = Space.s8),
-        contentAlignment = Alignment.Center
-    ) {
-        BasicText(
-            text = text,
-            style = p.uiLabelStyle.copy(color = p.danger, fontWeight = FontWeight.Medium),
-            maxLines = 3,
-            overflow = TextOverflow.Ellipsis
-        )
-    }
-}
-
 /**
  * New-task prompt. Uses the existing SepiaTextField and SepiaButton; the
  * create button stays disabled until a title is typed, so there is no dead
@@ -212,7 +352,6 @@ internal fun AxiomNewTaskDialog(
     onCreate: () -> Unit,
     onDismiss: () -> Unit
 ) {
-    val p = LocalParchmentPalette.current
     ConfirmBackdrop(onDismiss) {
         SepiaConfirmationCard(
             title = Strings.axiomCodingNewTask,
