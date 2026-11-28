@@ -5,7 +5,6 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
@@ -54,26 +53,6 @@ internal fun AxiomCodingScreen(
             ),
         verticalArrangement = Arrangement.spacedBy(Space.s12)
     ) {
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(Space.s8)
-        ) {
-            BasicText(
-                text = Strings.axiomCoding,
-                style = p.uiHeaderStyle.copy(fontSize = 20.sp),
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.weight(1f)
-            )
-            SepiaButton(
-                text = Strings.axiomCodingNewTask,
-                onClick = onNewTask,
-                style = SepiaButtonStyle.PRIMARY,
-                enabled = storageAvailable
-            )
-        }
-
         if (!storageAvailable) {
             AxiomNotice(
                 text = Strings.axiomCodingStorageUnavailable,
