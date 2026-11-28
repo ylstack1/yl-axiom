@@ -73,7 +73,7 @@ internal val compactStateJson = Json {
 enum class SidebarTab {
     ASSISTANTS,
     TOPICS,
-    PINNED
+    CODING
 }
 
 /**

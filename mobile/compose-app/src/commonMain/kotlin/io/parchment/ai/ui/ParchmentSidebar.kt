@@ -81,7 +81,7 @@ internal fun ParchmentSidebar(
                 onValueChange = { searchQuery = it },
                 placeholder = when (selectedTab) {
                     SidebarTab.ASSISTANTS -> Strings.searchAssistants
-                    SidebarTab.PINNED -> Strings.searchPinned
+                    SidebarTab.CODING -> Strings.searchChats
                     SidebarTab.TOPICS -> Strings.searchChats
                 },
                 minHeight = ControlHeight.compact,
@@ -107,7 +107,7 @@ internal fun ParchmentSidebar(
                 .padding(Space.s2),
             horizontalArrangement = Arrangement.spacedBy(Space.s4)
         ) {
-            listOf(SidebarTab.ASSISTANTS to Strings.assistants, SidebarTab.TOPICS to Strings.chats, SidebarTab.PINNED to Strings.pinned).forEach { (tab, label) ->
+            listOf(SidebarTab.ASSISTANTS to Strings.assistants, SidebarTab.TOPICS to Strings.chats, SidebarTab.CODING to Strings.axiomCoding).forEach { (tab, label) ->
                 val isSel = selectedTab == tab
                 val tabInteraction = remember { MutableInteractionSource() }
                 val tabHovered by tabInteraction.collectIsHoveredAsState()
@@ -150,7 +150,9 @@ internal fun ParchmentSidebar(
             }
         }
 
-        if (selectedTab == SidebarTab.PINNED) {
+        if (selectedTab == SidebarTab.CODING) {
+            // Coding mode: the main content switches to the Axiom Coding screen.
+            // The sidebar shows the chat list as a fallback.
             PinnedRepliesPanel(appState.sessions, activeSession.id, searchQuery, onOpenPinnedReply, onUnpinReply)
         } else if (selectedTab == SidebarTab.ASSISTANTS) {
             val filteredAssistants = remember(appState.assistants, searchQuery) {

@@ -562,8 +562,8 @@ fun ParchmentApp(
                                 true
                             }
                             appMode == AppMode.CODING -> {
-                                appMode = AppMode.CHAT
-                                true
+                                // Coding is a full mode; no back-to-chat navigation.
+                                false
                             }
                             else -> false
                         }
@@ -1021,7 +1021,14 @@ fun ParchmentApp(
                                     activeSession = sidebarActiveSession,
                                     selectedTab = sidebarTab,
                                     isCompactScreen = isCompactScreen,
-                                    onSelectTab = stableCallback { sidebarTab = it },
+                                    onSelectTab = stableCallback { tab ->
+                                        sidebarTab = tab
+                                        if (tab == SidebarTab.CODING) {
+                                            appMode = AppMode.CODING
+                                        } else if (appMode == AppMode.CODING) {
+                                            appMode = AppMode.CHAT
+                                        }
+                                    },
                                     modifier = mod,
                                     onSelectAssistant = stableCallback { asst ->
                                         val assistantSessions = appState.sessions.filter { it.assistantId == asst.id }
