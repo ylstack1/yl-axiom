@@ -1330,6 +1330,11 @@ fun ParchmentApp(
                                                 AxiomCodingScreen(
                                                     tasks = axiomTasks,
                                                     storageAvailable = axiomStorageReady,
+                                                    profile = appState.profiles.firstOrNull(),
+                                                    session = appState.sessions.firstOrNull(),
+                                                    storageDir = java.io.File(
+                                                        PlatformStorage.getAppStorageDirectoryPath()
+                                                    ),
                                                     onNewTask = stableAction {
                                                         axiomNewTaskTitle = ""
                                                         showAxiomNewTask = true

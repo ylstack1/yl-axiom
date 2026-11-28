@@ -9,11 +9,9 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicText
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.runtime.Composable
@@ -26,9 +24,21 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import io.parchment.ai.harness.AxiomCodingStore
 import io.parchment.ai.harness.CodingTaskSummary
+import io.parchment.ai.model.ChatSession
+import io.parchment.ai.model.MessageNode
+import io.parchment.ai.model.ProviderProfile
+import io.parchment.ai.network.AiProviderEngine
+import io.parchment.ai.network.StreamUpdate
+import io.parchment.ai.platform.PlatformStorage
 import io.parchment.ai.strings.Strings
+import java.io.File
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.collect
+import kotlinx.coroutines.withContext
 
 /**
  * Axiom Coding workspace.
@@ -43,6 +53,9 @@ import io.parchment.ai.strings.Strings
 internal fun AxiomCodingScreen(
     tasks: List<CodingTaskSummary>,
     storageAvailable: Boolean,
+    profile: ProviderProfile,
+    session: ChatSession,
+    storageDir: File,
     onNewTask: () -> Unit,
     onOpenTask: (String) -> Unit,
     onDeleteTask: (String) -> Unit,
@@ -84,7 +97,9 @@ internal fun AxiomCodingScreen(
                 verticalArrangement = Arrangement.spacedBy(Space.s12)
             ) {
                 if (tasks.isEmpty()) {
-                    AxiomCodingEmpty(modifier = Modifier.fillMaxWidth())
+                    AxiomCodingEmpty(
+                        modifier = Modifier.fillMaxWidth()
+                    )
                 } else {
                     tasks.forEach { task ->
                         AxiomTaskRow(
@@ -131,9 +146,9 @@ internal fun AxiomCodingScreen(
                         AxiomCodingView(
                             task = selected,
                             storageAvailable = storageAvailable,
-                            onRunTask = {
-                                onOpenTask(selectedTaskId!!)
-                            },
+                            profile = profile,
+                            session = session,
+                            storageDir = storageDir,
                             onDelete = { onDeleteTask(selectedTaskId!!) }
                         )
                     }
@@ -219,7 +234,9 @@ private fun AxiomTaskRow(
 private fun AxiomCodingView(
     task: CodingTaskSummary,
     storageAvailable: Boolean,
-    onRunTask: () -> Unit,
+    profile: ProviderProfile,
+    session: ChatSession,
+    storageDir: File,
     onDelete: () -> Unit,
     modifier: Modifier = Modifier
 ) {
@@ -253,7 +270,24 @@ private fun AxiomCodingView(
                 text = Strings.axiomCodingRun,
                 compact = true,
                 style = SepiaButtonStyle.PRIMARY,
-                onClick = onRunTask,
+                onClick = {
+                    running = true
+                    appProcessScope.launch {
+                        val result = runCatching {
+                            AxiomCodingStore.runAgentTurn(
+                                storageDir = storageDir,
+                                taskId = task.id,
+                                subtaskId = task.id,
+                                profile = profile,
+                                session = session,
+                                historyNodes = emptyList(),
+                                prompt = "Implement the coding task titled '${task.title}'. Description: ${task.description.orEmpty()}"
+                            )
+                        }.getOrNull()
+                        output = result
+                        running = false
+                    }
+                },
                 enabled = !running && storageAvailable
             )
         }
@@ -282,12 +316,12 @@ private fun AxiomCodingView(
         ) {
             BasicText(
                 text = task.stateLabel(),
-                style = p.uiLabelStyle.copy(color = p.mutedInk),
+                style = p.uiCaptionStyle.copy(color = p.mutedInk),
                 maxLines = 1
             )
             BasicText(
                 text = Strings.axiomCodingStepTotal(task.subtaskCount),
-                style = p.uiLabelStyle.copy(color = p.mutedInk),
+                style = p.uiCaptionStyle.copy(color = p.mutedInk),
                 maxLines = 1
             )
         }
