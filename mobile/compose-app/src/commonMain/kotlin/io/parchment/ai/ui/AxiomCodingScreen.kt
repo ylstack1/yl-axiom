@@ -145,10 +145,10 @@ internal fun AxiomCodingScreen(
 
 /** Empty coding view when no task is selected. */
 @Composable
-private fun AxiomCodingEmpty() {
+private fun AxiomCodingEmpty(modifier: Modifier = Modifier) {
     val p = LocalParchmentPalette.current
     Column(
-        modifier = Modifier.fillMaxSize(),
+        modifier = modifier.fillMaxSize(),
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.spacedBy(Space.s24)
     ) {
